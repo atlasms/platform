@@ -7,18 +7,20 @@
     Idempotent: safe to re-run. It will
       1. verify the `project` scope is present,
       2. find an existing org project, or MOVE a user-level one up to the org, or create a new one,
-      3. link the docs repo,
+      3. link the repo,
       4. create the Phase / Estimate / Service / Requirement fields if missing,
-      5. print the remaining manual (web-UI-only) steps.
+      5. generate the S01..S31 iterations,
+      6. create the five views,
+      7. print the few steps no API can perform.
 
     It never deletes anything. If a user-level copy is left behind after a move, it tells you
-    and lets you delete it yourself.
+    and lets you delete it yourself. It will not rewrite iterations once the project has items.
 
     Design: docs/roadmap/20-delivery-process.md#9-github-setup-commands
 
 .EXAMPLE
     pwsh ./scripts/setup-github-project.ps1
-    pwsh ./scripts/setup-github-project.ps1 -Org atlasms -Repo docs -Title "Atlas Delivery"
+    pwsh ./scripts/setup-github-project.ps1 -Org atlasms -Repo platform -Title "Atlas Delivery"
 #>
 [CmdletBinding()]
 param(
@@ -172,7 +174,7 @@ $existingViews = (Invoke-Gh api graphql -f query=$qViews -F org=$Org -F num=$N |
 $viewSpecs = @(
     @{ name = 'Board';     layout = 'BOARD_LAYOUT';   filter = 'iteration:@current' },
     @{ name = 'Iteration'; layout = 'TABLE_LAYOUT';   filter = 'iteration:@current' },
-    @{ name = 'Epics';     layout = 'TABLE_LAYOUT';   filter = 'type:Epic' },
+    @{ name = 'Epics';     layout = 'TABLE_LAYOUT';   filter = 'type:\"Epic\"' },
     @{ name = 'Roadmap';   layout = 'ROADMAP_LAYOUT'; filter = '' },
     @{ name = 'Blocked';   layout = 'TABLE_LAYOUT';   filter = 'status:Blocked' }
 )

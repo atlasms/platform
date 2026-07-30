@@ -177,7 +177,7 @@ both.
 |------|--------|--------|
 | **Board** | board | Group by *Status*; filter `iteration:@current` |
 | **Iteration** | table | Filter `iteration:@current`; show hierarchy |
-| **Epics** | table | Filter `type:Epic`; group by *Phase* |
+| **Epics** | table | Filter `type:"Epic"` (the quoted form is what GitHub documents); group by *Phase* |
 | **Roadmap** | roadmap | Marker: *Iteration*; group by *Phase* |
 | **Blocked** | table | Filter `status:Blocked` — reviewed daily |
 
