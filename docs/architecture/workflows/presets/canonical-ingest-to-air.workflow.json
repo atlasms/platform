@@ -1,0 +1,47 @@
+{
+  "id": "01J9ZKQ2M8XABCDEFGHJKMNPQR",
+  "channelId": "ch12",
+  "name": "Canonical ingest-to-air",
+  "description": "Preset: ingest → transcode → ready → manual review → schedulable/rejected. Exercises command+await, wait-event, human-task (approve), and an exclusive branch.",
+  "version": 1,
+  "status": "published",
+  "vars": [
+    { "name": "assetId", "type": "string" },
+    { "name": "profile", "type": "string", "initial": "broadcast" },
+    { "name": "renditions", "type": "array" },
+    { "name": "verdict", "type": "string" }
+  ],
+  "steps": [
+    { "id": "s_start", "kind": "start", "name": "On ingest", "position": { "x": 0, "y": 0 },
+      "config": { "trigger": { "event": "ingest.accepted" } } },
+    { "id": "s_transcode", "kind": "command", "name": "Transcode", "position": { "x": 180, "y": 0 },
+      "retry": { "maxAttempts": 3, "backoff": { "type": "exponential", "initial": "PT30S", "factor": 2, "max": "PT10M" } },
+      "onError": "compensate",
+      "config": {
+        "action": "transcode",
+        "request": { "event": "transcode.job.create", "input": { "profile": "= vars.profile", "assetId": "= vars.assetId" } },
+        "await": { "event": "transcode.completed", "output": { "vars.renditions": "= incoming.renditions" } }
+      } },
+    { "id": "s_wait_ready", "kind": "wait-event", "name": "Await ready", "position": { "x": 360, "y": 0 },
+      "config": { "event": "asset.ready", "correlate": "= incoming.assetId = vars.assetId" } },
+    { "id": "s_review", "kind": "human-task", "name": "Review & approve", "position": { "x": 540, "y": 0 },
+      "config": { "taskType": "approve", "assignee": { "role": "editor" }, "reviewPointId": "pre-schedule", "dueIn": "PT4H",
+                  "output": { "vars.verdict": "= incoming.outcome" },
+                  "escalation": { "after": "PT2H", "action": "notify", "to": { "role": "chief-editor" } } } },
+    { "id": "s_gate", "kind": "branch", "name": "Approved?", "position": { "x": 720, "y": 0 },
+      "config": { "default": "t_reject" } },
+    { "id": "s_end_ok", "kind": "end", "name": "Schedulable", "position": { "x": 900, "y": -60 },
+      "config": { "status": "approved" } },
+    { "id": "s_end_rej", "kind": "end", "name": "Rejected", "position": { "x": 900, "y": 60 },
+      "config": { "status": "rejected" } }
+  ],
+  "transitions": [
+    { "id": "t1", "from": "s_start", "to": "s_transcode" },
+    { "id": "t2", "from": "s_transcode", "to": "s_wait_ready" },
+    { "id": "t3", "from": "s_wait_ready", "to": "s_review" },
+    { "id": "t4", "from": "s_review", "to": "s_gate" },
+    { "id": "t_ok", "from": "s_gate", "to": "s_end_ok", "name": "approved", "when": "= vars.verdict = \"approved\"" },
+    { "id": "t_reject", "from": "s_gate", "to": "s_end_rej", "name": "rejected", "isDefault": true }
+  ],
+  "metadata": { "createdBy": "system", "createdAt": "2026-07-24T10:00:00Z", "publishedBy": "system", "publishedAt": "2026-07-24T10:00:00Z" }
+}

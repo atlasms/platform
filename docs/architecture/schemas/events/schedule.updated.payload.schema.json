@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/schedule.updated.payload.schema.json",
+  "title": "schedule.updated payload",
+  "description": "Emitted by Scheduling when a program table changes. Consumed by Integration (EPG), WebSocket.",
+  "type": "object",
+  "required": ["scheduleId"],
+  "additionalProperties": false,
+  "properties": {
+    "scheduleId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "state": { "enum": ["draft", "validated", "sending", "sent", "failed"] },
+    "itemCount": { "type": "integer", "minimum": 0 }
+  }
+}

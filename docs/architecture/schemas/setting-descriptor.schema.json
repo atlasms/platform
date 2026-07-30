@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/setting-descriptor.schema.json",
+  "title": "Atlas setting descriptor",
+  "description": "Declares an admin-editable runtime setting: its type, bounds, default, scope and sensitivity. The DESCRIPTOR ships with the code that reads the setting; only the VALUE is stored in the database. Studio generates the admin UI from these. Design: docs/architecture/configuration-and-reference-data.md §2.4. NOT bootstrap config (env/secrets) — that stays in service-kit.",
+  "type": "object",
+  "required": ["key", "area", "type", "scope"],
+  "additionalProperties": false,
+  "properties": {
+    "key": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z0-9-]+)*$",
+      "description": "Dotted key, unique within its area.",
+      "examples": ["restore.concurrency", "retention.rejectedDays"]
+    },
+    "area": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Owning service or module — the row's owner (see design §4).",
+      "examples": ["hsm", "mam", "notifications", "platform"]
+    },
+    "type": {
+      "enum": [
+        "string", "text", "int", "number", "boolean",
+        "duration", "cron", "date-time",
+        "oneOf", "manyOf", "json", "template", "reference"
+      ],
+      "description": "Value type. `duration` is ISO-8601 (P30D); `template` is a localized message template; `reference` points at a registry/vocabulary entry named by `refTarget`."
+    },
+    "label": { "type": "string", "description": "Human label for the generated admin UI; falls back to the key." },
+    "description": { "type": "string", "description": "Help text rendered under the control." },
+    "group": { "type": "string", "description": "Settings-page section this control is grouped under." },
+    "default": {
+      "description": "Value used when no row exists at any scope level. A system with an empty settings table MUST be fully operable."
+    },
+    "required": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when there is no meaningful default and the deployment must supply a value."
+    },
+    "scope": {
+      "enum": ["deployment", "channel", "category", "user"],
+      "description": "The DEEPEST level allowed to set this key. Resolution is nearest-wins: code default -> deployment -> channel -> category -> user (design §2.5)."
+    },
+    "min": { "type": "number", "description": "Inclusive lower bound for int/number." },
+    "max": { "type": "number", "description": "Inclusive upper bound for int/number." },
+    "minLength": { "type": "integer", "minimum": 0 },
+    "maxLength": { "type": "integer", "minimum": 0 },
+    "pattern": { "type": "string", "description": "Regex the string value must match." },
+    "options": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Allowed values for `oneOf`/`manyOf`. These are CODE-KNOWN (Tier 0/1) choices — an admin-extensible list is a vocabulary instead, referenced via type `reference`.",
+      "items": {
+        "type": "object",
+        "required": ["value"],
+        "additionalProperties": false,
+        "properties": {
+          "value": { "type": ["string", "number", "boolean"] },
+          "label": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "refTarget": {
+      "type": "string",
+      "description": "For type `reference`: the registry or vocabulary whose entries are selectable.",
+      "examples": ["vocabulary.classification", "registry.transcode-profile", "registry.storage-target"]
+    },
+    "schema": {
+      "type": "object",
+      "description": "For type `json`: an inline JSON Schema the value must validate against."
+    },
+    "sensitive": {
+      "type": "boolean",
+      "default": false,
+      "description": "Value is stored as a vault reference, redacted in API responses, masked in the UI, and shown only as `changed` in audit diffs."
+    },
+    "restart": {
+      "type": "boolean",
+      "default": false,
+      "description": "Change does not take effect until the owning service restarts; Studio warns and the service reports it as pending."
+    },
+    "permission": {
+      "type": "string",
+      "description": "Overrides the default `config:admin` grant required to write this key.",
+      "examples": ["storage:admin", "workflow:admin"]
+    },
+    "deprecated": { "type": "boolean", "default": false },
+    "replacedBy": {
+      "type": "string",
+      "description": "Key that supersedes this one; the migration runner copies the value and CI flags orphaned rows."
+    },
+    "since": { "type": "string", "description": "Release the setting was introduced in." }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "oneOf" } }, "required": ["type"] },
+      "then": { "required": ["options"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "manyOf" } }, "required": ["type"] },
+      "then": { "required": ["options"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "reference" } }, "required": ["type"] },
+      "then": { "required": ["refTarget"] }
+    }
+  ],
+  "examples": [
+    {
+      "key": "retention.rejectedDays",
+      "area": "hsm",
+      "type": "duration",
+      "label": "Rejected-asset retention",
+      "description": "How long a rejected asset is kept before it is purged.",
+      "default": "P30D",
+      "scope": "channel"
+    },
+    {
+      "key": "checksum.algorithm",
+      "area": "hsm",
+      "type": "oneOf",
+      "default": "sha256",
+      "options": [{ "value": "sha256" }, { "value": "xxh3" }],
+      "scope": "deployment",
+      "restart": true,
+      "permission": "storage:admin"
+    }
+  ]
+}

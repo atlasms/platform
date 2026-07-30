@@ -1,0 +1,9 @@
+{
+  "name": "@atlas/data",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Data-plane conventions over node:sqlite: a migration runner, withTransaction (unit of work), a JSON row repository, and a SQL-backed outbox store that plugs into @atlas/messaging's OutboxRelay. Demonstrates the REAL transactional outbox (state change + outbox row in one tx, atomic rollback).",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "node --no-warnings --import tsx --test test/data.test.ts" }
+}

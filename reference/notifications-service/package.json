@@ -1,0 +1,9 @@
+{
+  "name": "@atlas/notifications-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Notifications vertical slice: turns workflow.task.created and asset.expired into per-user inbox items (tasks + notifications), honoring preferences. Includes a three-service fan-out test where one asset.expired drives both Scheduling and Notifications.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "node --import tsx --test test/notifications-service.test.ts test/fanout.test.ts" }
+}

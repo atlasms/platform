@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/file.moved.payload.schema.json",
+  "title": "file.moved payload",
+  "description": "Emitted by HSM when a rendition moves between tiers. Consumed by MAM, Logging.",
+  "type": "object",
+  "required": ["assetId", "fromTier", "toTier"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "renditionKind": { "$ref": "../common.schema.json#/$defs/RenditionKind" },
+    "fromTier": { "$ref": "../common.schema.json#/$defs/Tier" },
+    "toTier": { "$ref": "../common.schema.json#/$defs/Tier" },
+    "path": { "type": "string" }
+  }
+}

@@ -1,0 +1,348 @@
+openapi: 3.1.0
+info:
+  title: Atlas MAM API
+  version: 0.1.0
+  description: >-
+    Stub contract for Metadata & Asset Management — assets, versions, approval, faceted search,
+    field schemas, taxonomies, and the people register. See ../services/mam.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: assets
+  - name: search
+  - name: taxonomy
+  - name: people
+  - name: admin
+  - name: editor
+  - name: reference
+  - name: config
+paths:
+  /assets:
+    get:
+      operationId: listAssets
+      tags: [assets]
+      summary: List/browse assets (scope asset:read, dept-scoped)
+      responses:
+        '200': { description: Assets, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Asset' } } } } }
+    post:
+      operationId: createAsset
+      tags: [assets]
+      summary: Create an asset (scope asset:write)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+  /assets/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getAsset
+      tags: [assets]
+      summary: Get an asset (core + extensible metadata)
+      responses:
+        '200': { description: Asset, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: updateAsset
+      tags: [assets]
+      summary: Update asset metadata (scope asset:write)
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+  /assets/{id}/versions:
+    post:
+      operationId: createAssetVersion
+      tags: [assets]
+      summary: Create a new version (clone metadata on replace, FR-MAM-6)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '201': { description: New version, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+  /assets/{id}/approve:
+    post:
+      operationId: approveAsset
+      tags: [assets]
+      summary: Approve an asset for air - manual verdict (scope asset:approve)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { content: { application/json: { schema: { type: object, properties: { expiresAt: { type: string, format: date-time, description: 'When the media becomes unusable and needs re-review (FR-APP-7). Omit to inherit the category default; null for permanent.' }, reviewPointId: { type: string } } } } } }
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+  /assets/{id}/reject:
+    post:
+      operationId: rejectAsset
+      tags: [assets]
+      summary: Reject an asset - manual verdict (scope asset:approve)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { content: { application/json: { schema: { type: object, properties: { reason: { type: string }, retainUntil: { type: string, format: date-time, description: 'When the rejected media is purged if not replaced (FR-APP-8).' }, reviewPointId: { type: string } } } } } }
+      responses:
+        '200': { description: Rejected }
+  /assets/{id}/verdicts:
+    get:
+      operationId: listVerdicts
+      tags: [assets]
+      summary: Retained review-verdict history for an asset (scope asset:read)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Verdict history }
+  /assets/{id}/people:
+    post:
+      operationId: linkPerson
+      tags: [people]
+      summary: Associate a person + role with an asset (scope asset:write)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [personId], properties: { personId: { $ref: '#/components/schemas/Ulid' }, roleForAsset: { type: string } } } } }
+      responses:
+        '204': { description: Linked }
+  /search:
+    get:
+      operationId: simpleSearch
+      tags: [search]
+      summary: Simple free-text search (scope asset:read)
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Results, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Asset' } } } } }
+    post:
+      operationId: advancedSearch
+      tags: [search]
+      summary: Advanced faceted search (category + subject + tag + person, FR-TAX-5)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                q: { type: string }
+                categories: { type: array, items: { type: string } }
+                subjects: { type: array, items: { type: string } }
+                tags: { type: array, items: { type: string } }
+                personIds: { type: array, items: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Results, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Asset' } } } } }
+  /field-schemas:
+    get: { operationId: listFieldSchemas, tags: [admin], summary: List custom field schemas, responses: { '200': { description: Schemas } } }
+    post: { operationId: createFieldSchema, tags: [admin], summary: Define type/category custom fields (scope metadata:admin), responses: { '201': { description: Created } } }
+  /tags:
+    get: { operationId: listTags, tags: [taxonomy], summary: List tags, responses: { '200': { description: Tags } } }
+    post: { operationId: createTag, tags: [taxonomy], summary: Create a tag (scope taxonomy:admin), responses: { '201': { description: Created } } }
+  /categories:
+    get: { operationId: listCategories, tags: [taxonomy], summary: List categories (hierarchical), responses: { '200': { description: Categories } } }
+    post: { operationId: createCategory, tags: [taxonomy], summary: Create a category, responses: { '201': { description: Created } } }
+  /subjects:
+    get: { operationId: listSubjects, tags: [taxonomy], summary: List subjects (controlled vocabulary), responses: { '200': { description: Subjects } } }
+    post: { operationId: createSubject, tags: [taxonomy], summary: Create a subject, responses: { '201': { description: Created } } }
+  /people:
+    get: { operationId: listPeople, tags: [people], summary: List the people register, responses: { '200': { description: People } } }
+    post:
+      operationId: createPerson
+      tags: [people]
+      summary: Create a person (name, role, optional image only - FR-PPL-2)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }
+  /assets/{id}/edit-projects:
+    post:
+      operationId: createEditProject
+      tags: [editor]
+      summary: Start a media-editor project over an asset's renditions (scope asset:write). See ../services/media-editor.md.
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/EditProject' } } } }
+  /edit-projects/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getEditProject
+      tags: [editor]
+      summary: Get an edit project (timeline) (scope asset:read)
+      responses:
+        '200': { description: Edit project, content: { application/json: { schema: { $ref: '#/components/schemas/EditProject' } } } }
+    patch:
+      operationId: updateEditProject
+      tags: [editor]
+      summary: Save the timeline (clips, in/out, transitions, filters) (scope asset:write)
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/EditProject' } } } }
+      responses:
+        '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/EditProject' } } } }
+  /edit-projects/{id}/render:
+    post:
+      operationId: renderEditProject
+      tags: [editor]
+      summary: Flatten the timeline into a rendition - issues editor.render.requested to MTS (scope asset:write, FR-EDT-4)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { content: { application/json: { schema: { type: object, properties: { outputProfile: { type: string }, targetAssetId: { $ref: '#/components/schemas/Ulid' } } } } } }
+      responses:
+        '202': { description: Render accepted; result arrives as a new version via transcode.completed }
+  /reference:
+    get:
+      operationId: getReferenceSnapshot
+      tags: [reference]
+      summary: The cached reference snapshot MAM owns (vocabularies + resolved settings) with a configVersion (scope config:read). Supports If-None-Match. See ../configuration-and-reference-data.md §5.
+      parameters:
+        - { name: If-None-Match, in: header, schema: { type: string } }
+      responses:
+        '200':
+          description: Snapshot
+          headers: { ETag: { schema: { type: string } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ReferenceSnapshot' } } }
+        '304': { description: Not modified }
+  /vocabularies/{vocabulary}:
+    parameters:
+      - { name: vocabulary, in: path, required: true, schema: { type: string }, description: 'classification | subject | structure | tag | cast-role | ...' }
+    get:
+      operationId: listVocabularyTerms
+      tags: [reference]
+      summary: List terms of a vocabulary (scope taxonomy:read)
+      responses:
+        '200': { description: Terms, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/VocabularyTerm' } } } } }
+    post:
+      operationId: createVocabularyTerm
+      tags: [reference]
+      summary: Add a term (scope taxonomy:admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/VocabularyTerm' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/VocabularyTerm' } } } }
+  /vocabularies/{vocabulary}/{termId}:
+    parameters:
+      - { name: vocabulary, in: path, required: true, schema: { type: string } }
+      - { name: termId, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    patch:
+      operationId: updateVocabularyTerm
+      tags: [reference]
+      summary: Rename / reorder / deprecate a term (scope taxonomy:admin). Never hard-deletes an in-use term.
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/VocabularyTerm' } } } }
+      responses:
+        '200': { description: Updated }
+  /vocabularies/{vocabulary}/{termId}/merge:
+    post:
+      operationId: mergeVocabularyTerm
+      tags: [reference]
+      summary: Merge this term into another; old references redirect via replacedById (scope taxonomy:admin, one audited event)
+      parameters:
+        - { name: vocabulary, in: path, required: true, schema: { type: string } }
+        - { name: termId, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [into], properties: { into: { $ref: '#/components/schemas/Ulid' } } } } } }
+      responses:
+        '200': { description: Merged }
+  /settings:
+    get:
+      operationId: listSettings
+      tags: [config]
+      summary: Resolved settings for this service with their descriptors and origin level (scope config:read)
+      responses:
+        '200': { description: Settings }
+    patch:
+      operationId: updateSetting
+      tags: [config]
+      summary: Set a setting value at a scope level within its descriptor bounds (scope config:admin, scoped by level). Emits config.changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, value]
+              properties:
+                key: { type: string }
+                value: {}
+                scopeLevel: { type: string, enum: [deployment, channel, category, user] }
+                scopeId: { type: string }
+      responses:
+        '200': { description: Updated }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    Asset:
+      type: object
+      required: [title]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        title: { type: string }
+        description: { type: string }
+        durationSec: { type: number }
+        fileType: { type: string }
+        resolution: { type: string }
+        aspectRatio: { type: string }
+        audioChannels: { type: integer }
+        state: { type: string, enum: [created, processing, ready, approved, expired, rejected, replaced, purged] }
+        version: { type: integer }
+        expiresAt: { type: string, format: date-time, description: 'Usable-until; past this the media is unusable and needs re-review (FR-APP-7). Absent = permanent.' }
+        retainUntil: { type: string, format: date-time, description: 'For rejected media: purge time (FR-APP-8).' }
+        tags: { type: array, items: { type: string } }
+        extended: { type: object, additionalProperties: true }
+    Person:
+      type: object
+      required: [name]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        name: { type: string }
+        roleInMedia: { type: string }
+        hasImage: { type: boolean }
+    EditProject:
+      type: object
+      description: A media-editor timeline over one source asset (basic-NLE, D3). Full model in ../services/media-editor.md.
+      required: [sourceAssetId, mediaKind]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        sourceAssetId: { $ref: '#/components/schemas/Ulid' }
+        mediaKind: { type: string, enum: [video, audio, photo] }
+        state: { type: string, enum: [draft, rendering, rendered, failed] }
+        timeline:
+          type: object
+          properties:
+            clips:
+              type: array
+              items:
+                type: object
+                required: [renditionRef, inSec, outSec]
+                properties:
+                  renditionRef: { type: string }
+                  inSec: { type: number }
+                  outSec: { type: number }
+                  transitionIn: { type: string }
+                  filters: { type: array, items: { type: string } }
+        updatedAt: { type: string, format: date-time }
+    VocabularyTerm:
+      type: object
+      description: See ../schemas/vocabulary-term.schema.json.
+      required: [vocabulary, key, labels]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        vocabulary: { type: string }
+        key: { type: string }
+        labels: { type: object, additionalProperties: { type: string } }
+        parentId: { $ref: '#/components/schemas/Ulid' }
+        sortOrder: { type: integer }
+        deprecatedAt: { type: string, format: date-time, nullable: true }
+        replacedById: { $ref: '#/components/schemas/Ulid' }
+    ReferenceSnapshot:
+      type: object
+      description: Versioned bundle of this service's reference data. See ../configuration-and-reference-data.md §5.
+      required: [configVersion]
+      properties:
+        configVersion: { type: integer }
+        vocabularies: { type: object, additionalProperties: { type: array, items: { $ref: '#/components/schemas/VocabularyTerm' } } }
+        settings: { type: object, additionalProperties: true }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

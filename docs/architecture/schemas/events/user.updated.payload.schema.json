@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/user.updated.payload.schema.json",
+  "title": "user.updated payload",
+  "description": "Emitted by IAM when a user account changes (profile, state, role/rule assignment). Consumed by the WebSocket service and Logging. Carries only the names of changed fields — actual before/after values ride the audit delta (Logging §6.4), keeping PII off the broadcast bus.",
+  "type": "object",
+  "required": ["userId", "changed", "at"],
+  "additionalProperties": false,
+  "properties": {
+    "userId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "changed": { "type": "array", "items": { "type": "string" }, "description": "Field names that changed, e.g. [\"state\", \"assignments\"]." },
+    "state": { "enum": ["active", "disabled", "locked", "invited"], "description": "New state, when state changed." },
+    "at": { "type": "string", "format": "date-time" }
+  }
+}

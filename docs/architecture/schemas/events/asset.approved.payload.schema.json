@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/asset.approved.payload.schema.json",
+  "title": "asset.approved payload",
+  "description": "Emitted by MAM when an asset is approved for air. Consumed by Scheduling, Integration, Logging.",
+  "type": "object",
+  "required": ["assetId", "approver"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "approver": { "type": "string", "description": "User id who approved (manual verdict)." },
+    "approvedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time", "description": "When the media becomes unusable and requires re-review. Absent = permanent approval. Defaults from the asset's category (FR-TAX-7), overridable per asset." },
+    "reviewPointId": { "type": "string", "description": "Optional id of the workflow review step that produced this verdict (FR-APP-5)." }
+  }
+}

@@ -1,0 +1,72 @@
+openapi: 3.1.0
+info:
+  title: Atlas WebSocket Service
+  version: 0.1.0
+  description: >-
+    Stub contract for the WebSocket (Pusher) service. The primary interface is a WSS stream at
+    `/ws` whose JSON frame protocol (subscribe/unsubscribe/event/progress/resume/ping) is
+    documented in ../services/websocket.md — OpenAPI describes only the HTTP surface (upgrade
+    handshake, health, stats).
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host:
+        default: atlas.example
+security:
+  - bearerAuth: []
+tags:
+  - name: ws
+  - name: health
+paths:
+  /ws:
+    get:
+      operationId: openWebSocket
+      tags: [ws]
+      summary: Establish a WSS connection (HTTP Upgrade)
+      description: >-
+        Requires a valid access token. On success the connection upgrades to WSS and speaks the
+        frame protocol in the service spec. Permission filtering applies to every outbound frame.
+      responses:
+        '101': { description: Switching Protocols (upgraded to WSS) }
+        '401': { $ref: '#/components/responses/Error' }
+  /ws/stats:
+    get:
+      operationId: getWsStats
+      tags: [ws]
+      summary: Connection and fan-out metrics (internal)
+      responses:
+        '200':
+          description: Stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connections: { type: integer }
+                  subscriptions: { type: integer }
+                  deliveredPerSec: { type: number }
+  /healthz:
+    get:
+      operationId: getHealthz
+      tags: [health]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200': { description: OK }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        correlationId: { type: string }
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

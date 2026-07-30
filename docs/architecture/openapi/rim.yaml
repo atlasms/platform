@@ -1,0 +1,118 @@
+openapi: 3.1.0
+info:
+  title: Atlas RIM API
+  version: 0.1.0
+  description: >-
+    Stub contract for Recording & Ingest Management — uploads, watchers, recorders, acceptance
+    rules, and the ingest queue. See ../services/rim.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: upload
+  - name: ingest
+  - name: admin
+paths:
+  /uploads:
+    post:
+      operationId: startUpload
+      tags: [upload]
+      summary: Start a chunked/resumable upload (scope ingest:write)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, sizeBytes]
+              properties:
+                filename: { type: string }
+                sizeBytes: { type: integer }
+      responses:
+        '201':
+          description: Upload created
+          content: { application/json: { schema: { type: object, properties: { uploadId: { $ref: '#/components/schemas/Ulid' } } } } }
+  /uploads/{id}/parts/{n}:
+    put:
+      operationId: putUploadPart
+      tags: [upload]
+      summary: Upload a chunk (resumable)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: n, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content: { application/octet-stream: { schema: { type: string, format: binary } } }
+      responses:
+        '204': { description: Part stored }
+  /uploads/{id}/complete:
+    post:
+      operationId: completeUpload
+      tags: [upload]
+      summary: Finalize an upload; creates an ingest job
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '202': { description: Ingest job created, content: { application/json: { schema: { $ref: '#/components/schemas/IngestJob' } } } }
+  /ingest/queue:
+    get:
+      operationId: getIngestQueue
+      tags: [ingest]
+      summary: The Ingest/Import page listing (scope ingest:read)
+      responses:
+        '200': { description: Queue, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/IngestJob' } } } } }
+  /ingest/{id}/accept:
+    post:
+      operationId: acceptIngest
+      tags: [ingest]
+      summary: Accept a quarantined job (scope ingest:approve)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/IngestJob' } } } }
+  /ingest/{id}/reject:
+    post:
+      operationId: rejectIngest
+      tags: [ingest]
+      summary: Reject a quarantined job (scope ingest:approve)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { content: { application/json: { schema: { type: object, properties: { reason: { type: string } } } } } }
+      responses:
+        '200': { description: Rejected, content: { application/json: { schema: { $ref: '#/components/schemas/IngestJob' } } } }
+  /watchers:
+    get: { operationId: listWatchers, tags: [admin], summary: List folder watchers, responses: { '200': { description: Watchers } } }
+    post: { operationId: createWatcher, tags: [admin], summary: Create a folder watcher, responses: { '201': { description: Created } } }
+  /recorders:
+    get: { operationId: listRecorders, tags: [admin], summary: List recorders, responses: { '200': { description: Recorders } } }
+    post: { operationId: createRecorder, tags: [admin], summary: Create a recorder, responses: { '201': { description: Created } } }
+  /acceptance-rules:
+    get: { operationId: listAcceptanceRules, tags: [admin], summary: List acceptance rule sets, responses: { '200': { description: Rules } } }
+    post: { operationId: createAcceptanceRules, tags: [admin], summary: Create an acceptance rule set, responses: { '201': { description: Created } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    IngestJob:
+      type: object
+      required: [id, state]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        source: { type: string }
+        state: { type: string, enum: [detected, validating, rejected, quarantined, accepted, registered] }
+        sizeBytes: { type: integer }
+        assetId: { $ref: '#/components/schemas/Ulid' }
+        reason: { type: string }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/rundown.ready.payload.schema.json",
+  "title": "rundown.ready payload",
+  "description": "Emitted by Newsroom when a rundown is marked ready for air. Consumed by Scheduling (bulletin hand-off), Notifications and Logging.",
+  "type": "object",
+  "required": ["rundownId", "readyAt"],
+  "additionalProperties": false,
+  "properties": {
+    "rundownId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "date": { "type": "string", "format": "date" },
+    "readyAt": { "type": "string", "format": "date-time" },
+    "by": { "type": "string" }
+  }
+}

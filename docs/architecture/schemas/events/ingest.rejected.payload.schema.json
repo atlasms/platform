@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/ingest.rejected.payload.schema.json",
+  "title": "ingest.rejected payload",
+  "description": "Emitted by RIM when incoming media fails an acceptance rule.",
+  "type": "object",
+  "required": ["reason"],
+  "additionalProperties": false,
+  "properties": {
+    "ingestJobId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "source": { "type": "string" },
+    "reason": { "type": "string", "description": "Human-readable rejection reason." },
+    "ruleId": { "type": "string", "description": "The acceptance rule that failed." },
+    "quarantined": { "type": "boolean", "description": "True if held for review rather than discarded." }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/workflow.task.created.payload.schema.json",
+  "title": "workflow.task.created payload",
+  "description": "Emitted by BMS when a human-in-the-loop task is created. Consumed by Notifications.",
+  "type": "object",
+  "required": ["taskId", "assignee"],
+  "additionalProperties": false,
+  "properties": {
+    "taskId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "workflowInstanceId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "assignee": { "type": "string", "description": "User or group id." },
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "kind": { "enum": ["approve", "edit", "review"] },
+    "dueAt": { "type": "string", "format": "date-time" }
+  }
+}

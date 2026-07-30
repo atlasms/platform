@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/checksum.mismatch.payload.schema.json",
+  "title": "checksum.mismatch payload",
+  "description": "Emitted by HSM when an integrity check fails. Raises an alert (Notifications, Logging).",
+  "type": "object",
+  "required": ["assetId", "rendition"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "rendition": { "$ref": "../common.schema.json#/$defs/RenditionKind" },
+    "expected": { "$ref": "../common.schema.json#/$defs/Checksum" },
+    "actual": { "$ref": "../common.schema.json#/$defs/Checksum" }
+  }
+}

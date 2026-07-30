@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/transcode.completed.payload.schema.json",
+  "title": "transcode.completed payload",
+  "description": "Emitted by MTS when all renditions for a job are produced and checksummed. Consumed by MAM and HSM.",
+  "type": "object",
+  "required": ["assetId", "renditions"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "jobId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "renditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "../common.schema.json#/$defs/Rendition" }
+    }
+  }
+}

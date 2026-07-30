@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/publish.failed.payload.schema.json",
+  "title": "publish.failed payload",
+  "description": "Emitted by Integration/Feeds when an outbound publish/connector delivery fails. Consumed by Notifications (alert) and Logging.",
+  "type": "object",
+  "required": ["connectorId", "kind", "subjectRef", "destination", "error", "at"],
+  "additionalProperties": false,
+  "properties": {
+    "connectorId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "kind": { "enum": ["epg", "hbbtv", "social", "web"] },
+    "subjectRef": { "$ref": "../common.schema.json#/$defs/EntityRef" },
+    "destination": { "type": "string" },
+    "error": { "$ref": "../common.schema.json#/$defs/Error" },
+    "at": { "type": "string", "format": "date-time" }
+  }
+}

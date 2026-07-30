@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/ai.enrichment.completed.payload.schema.json",
+  "title": "ai.enrichment.completed payload",
+  "description": "Emitted by AI Enrichment when a job's tasks finish. Results are recorded as derived/suggestions in MAM (FR-AI-3).",
+  "type": "object",
+  "required": ["assetId", "results"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "jobId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "tier": { "enum": ["online", "offline"] },
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["task"],
+        "additionalProperties": false,
+        "properties": {
+          "task": { "enum": ["faces", "objects", "shots", "scenes", "stt", "language-id", "keywords", "summary"] },
+          "output": { "description": "Task-specific result payload." },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    }
+  }
+}

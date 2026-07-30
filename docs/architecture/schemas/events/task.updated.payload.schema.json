@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/task.updated.payload.schema.json",
+  "title": "task.updated payload",
+  "description": "Emitted by Notifications & Messaging when a task changes state (completed, forwarded/reassigned, cancelled). Consumed by the WebSocket service, BMS (to advance a waiting human step), and Logging.",
+  "type": "object",
+  "required": ["id", "state", "at"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "state": { "enum": ["open", "forwarded", "done", "cancelled"] },
+    "by": { "type": "string", "description": "User id who effected the change." },
+    "forwardedTo": { "type": "string", "description": "New assignee when state is forwarded." },
+    "outcome": { "type": "string", "description": "For a completed decision task: the verdict, e.g. \"approved\"/\"rejected\"." },
+    "at": { "type": "string", "format": "date-time" }
+  }
+}

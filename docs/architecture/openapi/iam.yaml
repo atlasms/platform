@@ -1,0 +1,182 @@
+openapi: 3.1.0
+info:
+  title: Atlas IAM API
+  version: 0.1.0
+  description: >-
+    Stub contract for Identity & Access Management — authentication, tokens, and CRUD for users,
+    groups, roles, and permission rules. See ../services/iam.md. `/groups`, `/roles`, `/rules`
+    mirror the `/users` collection shape (listed here once).
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host:
+        default: atlas.example
+security:
+  - bearerAuth: []
+tags:
+  - name: auth
+  - name: admin
+paths:
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Authenticate; returns access + refresh (or triggers MFA/SSO)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login, password]
+              properties:
+                login: { type: string }
+                password: { type: string, format: password }
+      responses:
+        '200': { description: Tokens, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+  /auth/refresh:
+    post:
+      operationId: refresh
+      tags: [auth]
+      summary: Rotate the refresh token and mint a new access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [refreshToken], properties: { refreshToken: { type: string } } }
+      responses:
+        '200': { description: Tokens, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Revoke the refresh-token family
+      responses:
+        '204': { description: Logged out }
+  /.well-known/jwks.json:
+    get:
+      operationId: getJwks
+      tags: [auth]
+      summary: Public keys for local JWT validation (served at root, not /api/v1)
+      security: []
+      responses:
+        '200': { description: JWKS, content: { application/json: { schema: { type: object } } } }
+  /users:
+    get:
+      operationId: listUsers
+      tags: [admin]
+      summary: List users (scope-filtered)
+      parameters:
+        - { name: channelId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Users, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/User' } } } } }
+    post:
+      operationId: createUser
+      tags: [admin]
+      summary: Create a user (admin scope)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/User' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+  /users/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getUser
+      tags: [admin]
+      summary: Get a user
+      responses:
+        '200': { description: User, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: updateUser
+      tags: [admin]
+      summary: Update a user
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+    delete:
+      operationId: deleteUser
+      tags: [admin]
+      summary: Delete a user
+      responses:
+        '204': { description: Deleted }
+  /groups/{id}/members:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    post:
+      operationId: addGroupMember
+      tags: [admin]
+      summary: Add a user to a group
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [userId], properties: { userId: { $ref: '#/components/schemas/Ulid' } } } } } }
+      responses:
+        '204': { description: Added }
+    delete:
+      operationId: removeGroupMember
+      tags: [admin]
+      summary: Remove a user from a group
+      parameters:
+        - { name: userId, in: query, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '204': { description: Removed }
+  /users/{id}/effective-permissions:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getEffectivePermissions
+      tags: [admin]
+      summary: Resolved permission set (union of user + group rules, FR-IAM-4)
+      responses:
+        '200':
+          description: Effective permissions
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/PermissionRule' } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    TokenPair:
+      type: object
+      required: [accessToken, refreshToken, permissionVersion]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        permissionVersion: { type: integer }
+    User:
+      type: object
+      required: [id, login]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        login: { type: string }
+        displayName: { type: string }
+        channelIds: { type: array, items: { type: string } }
+        status: { type: string, enum: [active, disabled] }
+        mfaEnrolled: { type: boolean }
+    PermissionRule:
+      type: object
+      required: [action, resourceType]
+      properties:
+        action: { type: string, examples: ['asset:write'] }
+        resourceType: { type: string }
+        scope: { type: string, description: 'channel/department/resource selector' }
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        correlationId: { type: string }
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

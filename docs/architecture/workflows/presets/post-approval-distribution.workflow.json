@@ -1,0 +1,40 @@
+{
+  "id": "01J9ZKQ2M8XABCDEFGHJKMNPQT",
+  "channelId": "ch12",
+  "name": "Post-approval distribution",
+  "description": "Preset: on approval, fan out to web + social publish and an archive sub-flow in parallel, then settle after a delay. Exercises parallel split/join, sub-flow, and a timer.",
+  "version": 1,
+  "status": "published",
+  "vars": [
+    { "name": "assetId", "type": "string" }
+  ],
+  "steps": [
+    { "id": "s_start", "kind": "start", "name": "On approved", "position": { "x": 0, "y": 0 },
+      "config": { "trigger": { "event": "asset.approved" } } },
+    { "id": "s_split", "kind": "parallel", "name": "Fan out", "position": { "x": 180, "y": 0 },
+      "config": { "mode": "split" } },
+    { "id": "s_web", "kind": "command", "name": "Publish web", "position": { "x": 360, "y": -80 },
+      "config": { "action": "publish-web", "request": { "event": "publish.web.requested", "input": { "assetId": "= vars.assetId" } } } },
+    { "id": "s_social", "kind": "command", "name": "Publish social", "position": { "x": 360, "y": 0 },
+      "config": { "action": "publish-social", "request": { "event": "publish.social.requested", "input": { "assetId": "= vars.assetId" } } } },
+    { "id": "s_archive", "kind": "sub-flow", "name": "Archive", "position": { "x": 360, "y": 80 },
+      "config": { "workflowId": "01J9ZKQ2M8XABCDEFGHJKMNPQV", "version": "latest", "input": { "assetId": "= vars.assetId" } } },
+    { "id": "s_join", "kind": "parallel", "name": "Join", "position": { "x": 540, "y": 0 },
+      "config": { "mode": "join" } },
+    { "id": "s_settle", "kind": "timer", "name": "Settle", "position": { "x": 720, "y": 0 },
+      "config": { "mode": "duration", "value": "PT1H" } },
+    { "id": "s_end", "kind": "end", "name": "Done", "position": { "x": 900, "y": 0 }, "config": {} }
+  ],
+  "transitions": [
+    { "id": "t1", "from": "s_start", "to": "s_split" },
+    { "id": "t2", "from": "s_split", "to": "s_web" },
+    { "id": "t3", "from": "s_split", "to": "s_social" },
+    { "id": "t4", "from": "s_split", "to": "s_archive" },
+    { "id": "t5", "from": "s_web", "to": "s_join" },
+    { "id": "t6", "from": "s_social", "to": "s_join" },
+    { "id": "t7", "from": "s_archive", "to": "s_join" },
+    { "id": "t8", "from": "s_join", "to": "s_settle" },
+    { "id": "t9", "from": "s_settle", "to": "s_end" }
+  ],
+  "metadata": { "createdBy": "system", "createdAt": "2026-07-24T10:00:00Z" }
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/schedule.validated.payload.schema.json",
+  "title": "schedule.validated payload",
+  "description": "Emitted by Scheduling after an on-demand validation run (editor request or send-to-air pre-flight; FR-SCH-2). Consumed by the WebSocket service (surface results in the editor) and Logging. Validation is advisory and never a per-write gate.",
+  "type": "object",
+  "required": ["scheduleId", "valid", "validatedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "scheduleId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "valid": { "type": "boolean" },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "enum": ["gap", "overlap", "rights", "availability", "expiry", "anchor"] },
+          "itemId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+          "severity": { "$ref": "../common.schema.json#/$defs/Severity" },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "validatedAt": { "type": "string", "format": "date-time" }
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/vocabulary-term.schema.json",
+  "title": "Atlas vocabulary term",
+  "description": "One entry in an operator-managed controlled vocabulary (classification, subject, structure, tag, cast role, rejection reason, genre, ...). Pure data: no application code branches on a term. Assets reference the stable `id`, never the label. Design: docs/architecture/configuration-and-reference-data.md §2.3; data model: docs/architecture/data-model.md#13-taxonomy--vocab-entities--owned-by-mam-relational.",
+  "type": "object",
+  "required": ["id", "vocabulary", "channelId", "key", "labels"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "$ref": "common.schema.json#/$defs/Ulid",
+      "description": "Stable identity. This is what assets, schedules and audit entries reference — renaming a label never rewrites a reference."
+    },
+    "vocabulary": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Which vocabulary this term belongs to. The SET of vocabularies is code-known (Tier 0 — each has its own table, index and UI); the TERMS are data.",
+      "examples": ["classification", "subject", "structure", "tag", "cast-role", "rejection-reason", "genre", "supply-type", "production-group"]
+    },
+    "channelId": { "$ref": "common.schema.json#/$defs/ChannelId" },
+    "key": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Stable slug, unique per (vocabulary, channelId). Lets inbound feeds, imports and seed bundles map external values to terms without knowing Atlas ULIDs."
+    },
+    "labels": {
+      "type": "object",
+      "description": "Display labels by BCP-47 locale tag. Mutable — renaming is safe. At least one entry required.",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$" },
+      "additionalProperties": { "type": "string", "minLength": 1 },
+      "examples": [{ "en": "Current affairs", "fa": "رویدادهای جاری" }]
+    },
+    "description": { "type": "string", "description": "Optional editorial guidance shown in the picker." },
+    "parentId": {
+      "oneOf": [{ "$ref": "common.schema.json#/$defs/Ulid" }, { "type": "null" }],
+      "description": "Only meaningful for hierarchical vocabularies (category). Null/absent for flat ones."
+    },
+    "sortOrder": {
+      "type": "integer",
+      "description": "Manual ordering in pickers; ties broken by label collation."
+    },
+    "colour": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$",
+      "description": "Optional chip colour in Studio."
+    },
+    "external": {
+      "type": "object",
+      "description": "Mappings to third-party identifiers, so feeds/EPG exports can round-trip this term.",
+      "additionalProperties": { "type": "string" },
+      "examples": [{ "epg": "NEWS", "imdbGenre": "Documentary" }]
+    },
+    "deprecatedAt": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Set INSTEAD of deleting: hides the term from pickers while every existing reference, archived asset and audit entry still resolves. Hard delete is offered only at zero references, and is audited."
+    },
+    "replacedById": {
+      "oneOf": [{ "$ref": "common.schema.json#/$defs/Ulid" }, { "type": "null" }],
+      "description": "Set by a merge operation; readers follow the redirect so historical references stay valid. A merge is ONE audited event, not N retag writes."
+    },
+    "usageCount": {
+      "type": "integer",
+      "minimum": 0,
+      "readOnly": true,
+      "description": "Denormalized reference count, maintained asynchronously. Drives the 'safe to delete?' affordance; never authoritative for enforcement."
+    },
+    "createdBy": { "$ref": "common.schema.json#/$defs/Ulid" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "examples": [
+    {
+      "id": "01J9ZKQ2M8XABCDEFGHJKMNPQR",
+      "vocabulary": "classification",
+      "channelId": "ch12",
+      "key": "current-affairs",
+      "labels": { "en": "Current affairs" },
+      "sortOrder": 20,
+      "deprecatedAt": null,
+      "replacedById": null
+    }
+  ]
+}

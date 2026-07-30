@@ -1,0 +1,84 @@
+openapi: 3.1.0
+info:
+  title: Atlas Logging & Analytics API
+  version: 0.1.0
+  description: >-
+    Stub contract for Logging & Analytics — permission-filtered log browse/query, metrics,
+    analytics reports, and governance config. See ../services/logging-analytics.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: logs
+  - name: metrics
+  - name: reports
+  - name: admin
+paths:
+  /logs:
+    get:
+      operationId: browseLogs
+      tags: [logs]
+      summary: Browse logs (permission-filtered, FR-LOG-2)
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: correlationId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Log records, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LogRecord' } } } } }
+  /logs/query:
+    post:
+      operationId: queryLogs
+      tags: [logs]
+      summary: Structured/faceted log query (scope logs:read)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses:
+        '200': { description: Results, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LogRecord' } } } } }
+  /metrics:
+    get:
+      operationId: getMetrics
+      tags: [metrics]
+      summary: Operational metrics for dashboards (scope ops:read)
+      responses:
+        '200': { description: Metrics, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /reports/{name}:
+    get:
+      operationId: getReport
+      tags: [reports]
+      summary: Run/fetch an analytics report (scope analytics:read)
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Report, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /retention-policies:
+    get: { operationId: listRetentionPolicies, tags: [admin], summary: List retention policies, responses: { '200': { description: Policies } } }
+    post: { operationId: createRetentionPolicy, tags: [admin], summary: Create a retention policy (scope compliance:admin), responses: { '201': { description: Created } } }
+  /visibility-rules:
+    get: { operationId: listVisibilityRules, tags: [admin], summary: List log-visibility rules, responses: { '200': { description: Rules } } }
+    post: { operationId: createVisibilityRule, tags: [admin], summary: Create a visibility rule (scope compliance:admin), responses: { '201': { description: Created } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    LogRecord:
+      type: object
+      required: [at, service]
+      properties:
+        at: { type: string, format: date-time }
+        service: { type: string }
+        level: { type: string, enum: [debug, info, warn, error] }
+        message: { type: string }
+        actor: { type: string }
+        resourceType: { type: string }
+        resourceId: { type: string }
+        correlationId: { type: string }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

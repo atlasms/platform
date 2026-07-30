@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/ai.enrichment.failed.payload.schema.json",
+  "title": "ai.enrichment.failed payload",
+  "description": "Emitted by AI Enrichment when an enrichment task fails. Off the critical path — consumed by Notifications and Logging; never blocks ingest or approval.",
+  "type": "object",
+  "required": ["assetId", "task", "error", "at"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "task": { "enum": ["faces", "objects", "shots", "scenes", "stt", "language-id", "keywords", "summary"] },
+    "error": { "$ref": "../common.schema.json#/$defs/Error" },
+    "at": { "type": "string", "format": "date-time" }
+  }
+}

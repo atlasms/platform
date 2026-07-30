@@ -1,0 +1,11 @@
+{
+  "name": "@atlas/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Executable message contracts: the envelope + every event payload schema, an envelope builder/validator, ULID, and subject helpers. Reads the single-source schemas in docs/architecture/schemas.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "node --import tsx --test test/contracts.test.ts" },
+  "dependencies": { "ajv": "^8.20.0", "ajv-formats": "^3.0.1" },
+  "devDependencies": { "tsx": "^4.23.1" }
+}

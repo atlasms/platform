@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/asset.ready.payload.schema.json",
+  "title": "asset.ready payload",
+  "description": "Emitted by MAM when renditions are attached and mandatory metadata is present.",
+  "type": "object",
+  "required": ["assetId"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@atlas/mam-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A thin MAM vertical slice assembled from @atlas/contracts + messaging + service-kit: ingest.accepted -> create -> transcode.completed -> ready, plus approve/reject. Shows the foundation libs composing into a working, event-driven service with the asset/review lifecycle.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "node --import tsx --test test/mam-service.test.ts" }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/recording.segment.completed.payload.schema.json",
+  "title": "recording.segment.completed payload",
+  "description": "Emitted by RIM when a recorder finalizes a segment file.",
+  "type": "object",
+  "required": ["recorderId", "index", "path"],
+  "additionalProperties": false,
+  "properties": {
+    "recorderId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "index": { "type": "integer", "minimum": 0, "description": "Sequential segment index." },
+    "path": { "type": "string" },
+    "tcIn": { "type": "string", "description": "Start timecode HH:MM:SS:FF." },
+    "tcOut": { "type": "string", "description": "End timecode HH:MM:SS:FF." },
+    "checksum": { "$ref": "../common.schema.json#/$defs/Checksum" }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "atlas-reference",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared dependency root for the Atlas reference packages (contracts, messaging, service-kit, bms-workflow, mam-service, scheduling-service). Run `npm install` here once; each package's tests then resolve deps (and sibling packages) from this node_modules. See README.md.",
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "bpmn-moddle": "^10.0.0",
+    "fastify": "^5.2.0",
+    "feelin": "^7.0.1",
+    "jose": "^6.2.4"
+  },
+  "devDependencies": { "tsx": "^4.23.1" }
+}

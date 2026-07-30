@@ -1,0 +1,114 @@
+openapi: 3.1.0
+info:
+  title: Atlas Newsroom API
+  version: 0.1.0
+  description: >-
+    Stub contract for the Newsroom — rundowns, stories, scripts, wires, and handoff to
+    Scheduling. See ../services/newsroom.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: rundowns
+  - name: stories
+  - name: scripts
+  - name: wires
+paths:
+  /rundowns:
+    get:
+      operationId: listRundowns
+      tags: [rundowns]
+      summary: List rundowns (scope news:read)
+      responses:
+        '200': { description: Rundowns, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Rundown' } } } } }
+    post:
+      operationId: createRundown
+      tags: [rundowns]
+      summary: Create a rundown (scope news:write)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Rundown' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Rundown' } } } }
+  /rundowns/{id}/order:
+    patch:
+      operationId: reorderRundown
+      tags: [rundowns]
+      summary: Reorder stories within a rundown
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { orderedStoryIds: { type: array, items: { $ref: '#/components/schemas/Ulid' } } } } } } }
+      responses:
+        '200': { description: Reordered }
+  /rundowns/{id}/handoff:
+    post:
+      operationId: handoffRundown
+      tags: [rundowns]
+      summary: Send a ready rundown to Scheduling (scope news:send)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '202': { description: Handed off }
+  /stories:
+    get: { operationId: listStories, tags: [stories], summary: List stories, responses: { '200': { description: Stories } } }
+    post:
+      operationId: createStory
+      tags: [stories]
+      summary: Create a story (scope news:write)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Story' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Story' } } } }
+  /scripts/{storyId}:
+    parameters:
+      - { name: storyId, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getScript
+      tags: [scripts]
+      summary: Get a story's script
+      responses:
+        '200': { description: Script, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+    put:
+      operationId: putScript
+      tags: [scripts]
+      summary: Edit a script (collaborative; scope news:write)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses:
+        '200': { description: Saved }
+  /wires:
+    get:
+      operationId: listWires
+      tags: [wires]
+      summary: Incoming wire/feed items (scope news:read)
+      responses:
+        '200': { description: Wires }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    Rundown:
+      type: object
+      required: [channelId]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        state: { type: string, enum: [draft, ready, onair] }
+        orderedStoryIds: { type: array, items: { $ref: '#/components/schemas/Ulid' } }
+    Story:
+      type: object
+      required: [slug]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        slug: { type: string }
+        assignee: { type: string }
+        status: { type: string, enum: [assigned, writing, review, ready, onair] }
+        estDurationSec: { type: number }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

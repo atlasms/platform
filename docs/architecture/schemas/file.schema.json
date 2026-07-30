@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/file.schema.json",
+  "title": "Atlas File",
+  "description": "A single physical file in the system, recorded with its technical info and integrity checksum. Every file belongs to EXACTLY ONE asset (assetId) and is never shared between assets; an asset has many files (original, broadcast, proxy, thumbnail, ...). HSM is the system of record for location/tier/integrity; MAM references the logical set. See docs/architecture/data-model.md#15-files.",
+  "type": "object",
+  "required": ["id", "channelId", "assetId", "kind", "checksum", "storage"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "$ref": "common.schema.json#/$defs/Ulid" },
+    "channelId": { "$ref": "common.schema.json#/$defs/ChannelId" },
+    "assetId": {
+      "$ref": "common.schema.json#/$defs/Ulid",
+      "description": "The owning asset. Exactly one — a file is never shared across assets."
+    },
+    "kind": { "$ref": "common.schema.json#/$defs/RenditionKind" },
+    "variant": {
+      "type": "string",
+      "description": "Distinguishes multiple files of the same kind, e.g. a subtitle language ('en') or a thumbnail index ('02'). Unique per (assetId, kind, variant)."
+    },
+    "storage": {
+      "type": "object",
+      "description": "Where the bytes live. System of record: HSM.",
+      "required": ["path", "tier", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "targetId": { "type": "string", "description": "HSM StorageTarget id." },
+        "path": { "type": "string", "description": "HSM-resolved logical path." },
+        "tier": { "$ref": "common.schema.json#/$defs/Tier" },
+        "status": {
+          "enum": ["available", "restoring", "missing", "quarantined"],
+          "description": "'quarantined' after a checksum mismatch; 'missing' if the ledger entry has no bytes."
+        }
+      }
+    },
+    "checksum": {
+      "$ref": "common.schema.json#/$defs/Checksum",
+      "description": "System-generated on placement; re-verified by HSM integrity sweeps."
+    },
+    "lastVerifiedAt": { "type": "string", "format": "date-time" },
+    "sizeBytes": { "type": "integer", "minimum": 0 },
+    "technical": {
+      "$ref": "common.schema.json#/$defs/TechnicalMetadata",
+      "description": "ffprobe-derived: container, codecs, duration, dimensions, aspect, audio channels, frame rate (+ additive fields such as bitrate)."
+    },
+    "provenance": {
+      "type": "object",
+      "description": "How this file came to exist.",
+      "additionalProperties": false,
+      "properties": {
+        "producedBy": { "enum": ["ingest", "transcode", "editor", "import"] },
+        "jobId": { "$ref": "common.schema.json#/$defs/Ulid" },
+        "profile": { "type": "string", "description": "MTS profile that produced it, when applicable." }
+      }
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "deletedAt": { "type": "string", "format": "date-time", "description": "Set when purged per policy; the row is retained for audit." }
+  }
+}

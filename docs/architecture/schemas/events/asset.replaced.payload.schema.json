@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/asset.replaced.payload.schema.json",
+  "title": "asset.replaced payload",
+  "description": "Emitted by MAM when a new version supersedes a prior asset (metadata cloned, new id). Consumed by Scheduling, Logging.",
+  "type": "object",
+  "required": ["oldId", "newId"],
+  "additionalProperties": false,
+  "properties": {
+    "oldId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "newId": { "$ref": "../common.schema.json#/$defs/Ulid" }
+  }
+}

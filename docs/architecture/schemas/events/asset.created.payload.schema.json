@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/asset.created.payload.schema.json",
+  "title": "asset.created payload",
+  "description": "Emitted by MAM when an asset record is created (usually from ingest.accepted).",
+  "type": "object",
+  "required": ["assetId", "core"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "core": {
+      "type": "object",
+      "description": "The core fields required for every asset (FR-MAM-1).",
+      "additionalProperties": false,
+      "required": ["title", "fileType"],
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "durationSec": { "type": "number", "minimum": 0 },
+        "fileType": { "type": "string" },
+        "resolution": { "type": "string", "examples": ["1920x1080"] },
+        "aspectRatio": { "type": "string", "examples": ["16:9"] },
+        "audioChannels": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -1,0 +1,80 @@
+openapi: 3.1.0
+info:
+  title: Atlas Integration / Feeds API
+  version: 0.1.0
+  description: >-
+    Stub contract for Integration / Feeds — inbound import feeds, outbound APIs/feeds,
+    connectors, and delivery logs. External connectors are optional and disabled in air-gapped
+    installs (FR-PLat-8). See ../services/integration-feeds.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: feeds-in
+  - name: feeds-out
+  - name: connectors
+paths:
+  /feeds/in:
+    get: { operationId: listInboundFeeds, tags: [feeds-in], summary: List inbound import feeds, responses: { '200': { description: Feeds } } }
+    post:
+      operationId: createInboundFeed
+      tags: [feeds-in]
+      summary: Author an inbound JSON/XML import feed with mapping (scope integration:admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Feed' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Feed' } } } }
+  /feeds/out:
+    get: { operationId: listOutboundFeeds, tags: [feeds-out], summary: List outbound APIs/feeds, responses: { '200': { description: Feeds } } }
+    post:
+      operationId: createOutboundFeed
+      tags: [feeds-out]
+      summary: Author a customized output API/feed (scope integration:admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Feed' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Feed' } } } }
+  /feeds/{id}/run:
+    post:
+      operationId: runFeed
+      tags: [feeds-in]
+      summary: Trigger a feed run on demand (scope integration:run)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '202': { description: Run started }
+  /feeds/{id}/deliveries:
+    get:
+      operationId: getFeedDeliveries
+      tags: [feeds-out]
+      summary: Delivery log/receipts (scope integration:read)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Deliveries }
+  /connectors:
+    get: { operationId: listConnectors, tags: [connectors], summary: List connectors (EPG/HbbTV/social/web), responses: { '200': { description: Connectors } } }
+    post: { operationId: createConnector, tags: [connectors], summary: Configure a connector (scope integration:admin), responses: { '201': { description: Created } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    Feed:
+      type: object
+      required: [name]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        name: { type: string }
+        format: { type: string, enum: [json, xml] }
+        schedule: { type: string, description: 'cron or trigger' }
+        mapping: { type: object, additionalProperties: true }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

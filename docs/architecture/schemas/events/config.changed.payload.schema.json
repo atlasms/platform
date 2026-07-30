@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/config.changed.payload.schema.json",
+  "title": "config.changed payload",
+  "description": "Emitted by any service that owns admin-editable reference data (registries, vocabularies, settings) after a write. Consumers invalidate their cached reference snapshot and revalidate with If-None-Match. Design: docs/architecture/configuration-and-reference-data.md §5.",
+  "type": "object",
+  "required": ["area", "tier", "configVersion"],
+  "additionalProperties": false,
+  "properties": {
+    "area": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*(\\.[a-z0-9-]+)*$",
+      "description": "Owning service/module, optionally dotted to the affected collection.",
+      "examples": ["hsm", "mam.vocabulary.classification", "notifications.registry.notification-type"]
+    },
+    "tier": {
+      "enum": ["registry", "vocabulary", "setting"],
+      "description": "Which tier changed (Tier 1 / 2 / 3). Tier 0 enums never emit this — they change by release."
+    },
+    "keys": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Setting keys or entry ids affected. Omitted for a bulk change; consumers then refetch the whole area."
+    },
+    "scopeLevel": {
+      "enum": ["deployment", "channel", "category", "user"],
+      "description": "Level the value was written at, for settings."
+    },
+    "scopeId": {
+      "type": "string",
+      "description": "Id of the scope instance (channelId, categoryId, userId) when scopeLevel is not `deployment`."
+    },
+    "configVersion": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic version of the emitting area's snapshot after the change."
+    },
+    "restartRequired": {
+      "type": "boolean",
+      "description": "True when at least one changed descriptor declares `restart: true`; the owning service reports the change as pending."
+    },
+    "actorId": { "$ref": "../common.schema.json#/$defs/Ulid" }
+  }
+}

@@ -1,0 +1,110 @@
+openapi: 3.1.0
+info:
+  title: Atlas Notifications & Messaging API
+  version: 0.1.0
+  description: >-
+    Stub contract for Notifications & Messaging — inbox, tasks, messages, notifications, and
+    per-user delivery preferences. See ../services/notifications.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: inbox
+  - name: messages
+  - name: tasks
+  - name: notifications
+  - name: preferences
+paths:
+  /inbox:
+    get:
+      operationId: getInbox
+      tags: [inbox]
+      summary: Unified inbox (tasks + messages + notifications) for the caller
+      responses:
+        '200': { description: Inbox, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /messages:
+    get:
+      operationId: listMessages
+      tags: [messages]
+      summary: List messages
+      responses:
+        '200': { description: Messages, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Message' } } } } }
+    post:
+      operationId: sendMessage
+      tags: [messages]
+      summary: Send a direct or group message (scope message:send)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+      responses:
+        '201': { description: Sent, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+  /tasks:
+    get:
+      operationId: listTasks
+      tags: [tasks]
+      summary: List tasks assigned to or created by the caller
+      responses:
+        '200': { description: Tasks, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Task' } } } } }
+    post:
+      operationId: createTask
+      tags: [tasks]
+      summary: Create/assign a task (FR-APP-1)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+  /tasks/{id}:
+    patch:
+      operationId: updateTask
+      tags: [tasks]
+      summary: Update a task (forward or complete)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+  /notifications/{id}:
+    patch:
+      operationId: updateNotification
+      tags: [notifications]
+      summary: Mark a notification read/dismissed
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { content: { application/json: { schema: { type: object, properties: { read: { type: boolean } } } } } }
+      responses:
+        '200': { description: Updated }
+  /preferences:
+    get: { operationId: getPreferences, tags: [preferences], summary: Get per-user delivery preferences, responses: { '200': { description: Preferences } } }
+    put: { operationId: putPreferences, tags: [preferences], summary: Update delivery preferences, responses: { '200': { description: Saved } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    Message:
+      type: object
+      required: [to, body]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        from: { type: string }
+        to: { type: array, items: { type: string }, description: 'user or group ids' }
+        body: { type: string }
+        threadId: { $ref: '#/components/schemas/Ulid' }
+    Task:
+      type: object
+      required: [assignee]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        assignee: { type: string }
+        kind: { type: string, enum: [approve, edit, review] }
+        subjectRef: { type: string }
+        state: { type: string, enum: [open, forwarded, done, cancelled] }
+        dueAt: { type: string, format: date-time }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

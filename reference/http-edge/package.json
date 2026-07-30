@@ -1,0 +1,9 @@
+{
+  "name": "@atlas/http-edge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The HTTP edge pattern (Fastify) applied to mam-service: correlation context, JWT/JWKS auth + permission checks, error taxonomy -> problem+JSON, and health/readiness routes. Tested headlessly via app.inject().",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "node --import tsx --test test/http-edge.test.ts" }
+}

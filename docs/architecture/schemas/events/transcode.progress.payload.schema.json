@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/transcode.progress.payload.schema.json",
+  "title": "transcode.progress payload",
+  "description": "Best-effort progress from MTS; drives progress bars, not state. May be dropped under load.",
+  "type": "object",
+  "required": ["jobId", "percent"],
+  "additionalProperties": false,
+  "properties": {
+    "jobId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "percent": { "type": "number", "minimum": 0, "maximum": 100 },
+    "speed": { "type": "number", "description": "Realtime factor, e.g. 2.0 = 2x realtime." }
+  }
+}

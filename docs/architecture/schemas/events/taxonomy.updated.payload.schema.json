@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/taxonomy.updated.payload.schema.json",
+  "title": "taxonomy.updated payload",
+  "description": "Emitted by MAM when an operator-managed vocabulary entry changes. Consumed by Search, WebSocket. The `kind` enum is Tier 0 (the SET of vocabularies is code-known); the terms themselves are data — see docs/architecture/configuration-and-reference-data.md.",
+  "type": "object",
+  "required": ["kind", "action", "id"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "enum": ["tag", "category", "subject", "classification", "structure"] },
+    "action": { "enum": ["created", "updated", "deleted", "moved", "deprecated", "merged"] },
+    "id": { "type": "string" },
+    "label": { "type": "string" },
+    "parentId": { "type": "string", "description": "For hierarchical categories." },
+    "replacedById": { "type": "string", "description": "For action `merged`: the surviving term old references redirect to." },
+    "configVersion": { "type": "integer", "minimum": 0, "description": "Snapshot version after this change; consumers may revalidate their cached reference snapshot." }
+  }
+}

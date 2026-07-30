@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/feed.item.received.payload.schema.json",
+  "title": "feed.item.received payload",
+  "description": "Emitted by Integration/Feeds when an inbound feed yields an item mapped to Atlas data. Consumed by Newsroom (wires), MAM (asset/metadata creation) and Logging.",
+  "type": "object",
+  "required": ["feedId", "itemId", "targetType", "receivedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "feedId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "itemId": { "type": "string", "description": "The source system's item id (external), used for dedupe." },
+    "targetType": { "type": "string", "description": "What the mapping produces, e.g. \"wire\", \"asset\", \"metadata\"." },
+    "mappedAssetId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "Set when the item was mapped onto an asset." },
+    "receivedAt": { "type": "string", "format": "date-time" }
+  }
+}

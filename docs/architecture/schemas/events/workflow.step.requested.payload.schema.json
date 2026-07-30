@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/workflow.step.requested.payload.schema.json",
+  "title": "workflow.step.requested payload",
+  "description": "Emitted by BMS when a workflow instance reaches a step that another service must perform. Consumed by the target service and Logging. Concrete command steps are realized by issuing the target service's own command (e.g. a transcode step issues transcode.job.create); this event is the observable record that BMS requested the step.",
+  "type": "object",
+  "required": ["instanceId", "definitionId", "stepId", "stepKind"],
+  "additionalProperties": false,
+  "properties": {
+    "instanceId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "definitionId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "The published workflow definition this instance runs." },
+    "stepId": { "type": "string", "description": "Node id within the workflow definition (NCName)." },
+    "stepKind": {
+      "enum": ["command", "human-task", "wait-event", "timer", "sub-flow"],
+      "description": "Matches the workflow-definition node kind driving this step."
+    },
+    "target": { "type": "string", "description": "The service expected to act (e.g. \"mts\", \"hsm\"). Absent for internal steps." },
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "The asset in flow, when the step is asset-scoped." },
+    "params": { "type": "object", "description": "Step-specific parameters; the target validates them against its own command contract." }
+  }
+}

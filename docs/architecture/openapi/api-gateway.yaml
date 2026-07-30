@@ -1,0 +1,79 @@
+openapi: 3.1.0
+info:
+  title: Atlas API Gateway
+  version: 0.1.0
+  description: >-
+    Stub contract for the API Gateway — the single ingress that terminates TLS, validates JWTs,
+    enforces coarse scopes, and proxies to owning services. It adds no domain endpoints of its
+    own; the only gateway-native routes are health and the BFF aggregation views. See
+    ../services/api-gateway.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host:
+        default: atlas.example
+security:
+  - bearerAuth: []
+tags:
+  - name: health
+  - name: bff
+paths:
+  /healthz:
+    get:
+      operationId: getHealthz
+      tags: [health]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200': { description: OK }
+  /readyz:
+    get:
+      operationId: getReadyz
+      tags: [health]
+      summary: Readiness probe
+      security: []
+      responses:
+        '200': { description: Ready }
+        '503': { description: Not ready }
+  /bff/{view}:
+    get:
+      operationId: getBffView
+      tags: [bff]
+      summary: Aggregated Studio view (composes several services in one response)
+      description: >-
+        e.g. `bff/asset-detail?id=...` fans out to MAM + HSM + MTS + AI in parallel and returns a
+        partial response if a non-critical part is slow. Read-only aggregation.
+      parameters:
+        - name: view
+          in: path
+          required: true
+          schema: { type: string, examples: [asset-detail] }
+        - name: id
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/Ulid' }
+      responses:
+        '200':
+          description: Aggregated view
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '4XX': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        correlationId: { type: string }
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

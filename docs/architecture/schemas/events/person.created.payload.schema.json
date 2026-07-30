@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/person.created.payload.schema.json",
+  "title": "person.created payload",
+  "description": "Emitted by MAM when a person is added to the register (name, role, optional image only - FR-PPL-2).",
+  "type": "object",
+  "required": ["personId", "name"],
+  "additionalProperties": false,
+  "properties": {
+    "personId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "name": { "type": "string" },
+    "roleInMedia": { "type": "string", "description": "e.g. presenter, guest." },
+    "hasImage": { "type": "boolean" }
+  }
+}

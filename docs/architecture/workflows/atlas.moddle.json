@@ -1,0 +1,123 @@
+{
+  "name": "Atlas",
+  "prefix": "atlas",
+  "uri": "http://atlas.example/bpmn",
+  "xml": { "tagAlias": "lowerCase" },
+  "associations": [],
+  "types": [
+    {
+      "name": "Retry",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "maxAttempts", "isAttr": true, "type": "Integer" },
+        { "name": "backoffType", "isAttr": true, "type": "String" },
+        { "name": "initial", "isAttr": true, "type": "String" },
+        { "name": "max", "isAttr": true, "type": "String" },
+        { "name": "factor", "isAttr": true, "type": "Real" }
+      ]
+    },
+    {
+      "name": "OnError",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "mode", "isAttr": true, "type": "String" },
+        { "name": "transitionTo", "isAttr": true, "type": "String" },
+        { "name": "compensation", "isAttr": true, "type": "String" }
+      ]
+    },
+    {
+      "name": "Command",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "action", "isAttr": true, "type": "String" },
+        { "name": "event", "isAttr": true, "type": "String" }
+      ]
+    },
+    {
+      "name": "Await",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "event", "isAttr": true, "type": "String" },
+        { "name": "correlate", "isAttr": true, "type": "String" }
+      ]
+    },
+    {
+      "name": "End",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "status", "isAttr": true, "type": "String" },
+        { "name": "terminate", "isAttr": true, "type": "Boolean" }
+      ]
+    },
+    {
+      "name": "Io",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "mappings", "type": "Mapping", "isMany": true }
+      ]
+    },
+    {
+      "name": "Mapping",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "direction", "isAttr": true, "type": "String" },
+        { "name": "target", "isAttr": true, "type": "String" },
+        { "name": "source", "isAttr": true, "type": "String" }
+      ]
+    },
+    {
+      "name": "Assignment",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "taskType", "isAttr": true, "type": "String" },
+        { "name": "userId", "isAttr": true, "type": "String" },
+        { "name": "role", "isAttr": true, "type": "String" },
+        { "name": "expression", "isAttr": true, "type": "String" },
+        { "name": "reviewPointId", "isAttr": true, "type": "String" },
+        { "name": "dueIn", "isAttr": true, "type": "String" }
+      ]
+    },
+    {
+      "name": "Escalation",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "after", "isAttr": true, "type": "String" },
+        { "name": "action", "isAttr": true, "type": "String" },
+        { "name": "userId", "isAttr": true, "type": "String" },
+        { "name": "role", "isAttr": true, "type": "String" }
+      ]
+    },
+    {
+      "name": "Call",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "workflowId", "isAttr": true, "type": "String" },
+        { "name": "version", "isAttr": true, "type": "String" }
+      ]
+    },
+    {
+      "name": "Trigger",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "event", "isAttr": true, "type": "String" },
+        { "name": "filter", "isAttr": true, "type": "String" }
+      ]
+    },
+    {
+      "name": "Vars",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "vars", "type": "Var", "isMany": true }
+      ]
+    },
+    {
+      "name": "Var",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "name", "isAttr": true, "type": "String" },
+        { "name": "type", "isAttr": true, "type": "String" },
+        { "name": "initial", "isAttr": true, "type": "String" }
+      ]
+    }
+  ]
+}

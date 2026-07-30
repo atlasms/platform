@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/envelope.schema.json",
+  "title": "Atlas Message Envelope",
+  "description": "Common wrapper for every command, event, progress, and response message on the broker. See docs/architecture/04-messaging-and-data.md#13-message-envelope. A concrete message sets `type` to an event/command name and `payload` to the matching events/<name>.payload.schema.json.",
+  "type": "object",
+  "required": ["messageId", "type", "channelId", "occurredAt", "schemaVersion", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "messageId": {
+      "$ref": "common.schema.json#/$defs/Ulid",
+      "description": "Unique per message; consumers dedupe on this (at-least-once delivery)."
+    },
+    "correlationId": {
+      "$ref": "common.schema.json#/$defs/Ulid",
+      "description": "Ties all messages in one flow together."
+    },
+    "causationId": {
+      "$ref": "common.schema.json#/$defs/Ulid",
+      "description": "The messageId that caused this one."
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z0-9-]+)+$",
+      "description": "Dotted event/command name matching a events/<type>.payload.schema.json file, e.g. transcode.completed, asset.approved.",
+      "examples": ["asset.approved", "transcode.completed", "ingest.detected"]
+    },
+    "channelId": { "$ref": "common.schema.json#/$defs/ChannelId" },
+    "actor": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["service", "user"] },
+        "id": { "type": "string", "examples": ["mts-7", "user-42"] }
+      }
+    },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Payload contract version; additive changes only within a major version."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Type-specific body; validate against the matching events/<type>.payload.schema.json."
+    }
+  }
+}

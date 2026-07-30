@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/alert.raised.payload.schema.json",
+  "title": "alert.raised payload",
+  "description": "Emitted by Logging & Analytics when a monitored threshold or condition trips (DLQ growth, checksum-mismatch rate, restore-ETA breach, storage target down). Consumed by Notifications for delivery.",
+  "type": "object",
+  "required": ["alertId", "source", "kind", "severity", "message", "raisedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "alertId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "source": { "type": "string", "description": "Service or subsystem that is the subject of the alert." },
+    "kind": { "type": "string", "description": "Alert rule id/name, e.g. \"dlq-depth\", \"checksum-mismatch\", \"restore-eta-breach\"." },
+    "severity": { "$ref": "../common.schema.json#/$defs/Severity" },
+    "subjectRef": { "$ref": "../common.schema.json#/$defs/EntityRef" },
+    "message": { "type": "string" },
+    "metric": {
+      "type": "object",
+      "description": "Optional numeric context.",
+      "properties": {
+        "name": { "type": "string" },
+        "value": { "type": "number" },
+        "threshold": { "type": "number" }
+      }
+    },
+    "raisedAt": { "type": "string", "format": "date-time" }
+  }
+}

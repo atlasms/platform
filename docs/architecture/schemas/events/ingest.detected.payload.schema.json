@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/ingest.detected.payload.schema.json",
+  "title": "ingest.detected payload",
+  "description": "Emitted by RIM when new incoming content is detected, before acceptance.",
+  "type": "object",
+  "required": ["source", "path"],
+  "additionalProperties": false,
+  "properties": {
+    "source": { "type": "string", "description": "Source id that detected the content." },
+    "sourceKind": { "enum": ["upload", "ftp", "watch", "recorder"] },
+    "path": { "type": "string", "description": "Received/staging path." },
+    "sizeBytes": { "type": "integer", "minimum": 0 }
+  }
+}

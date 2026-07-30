@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/editor.render.requested.payload.schema.json",
+  "title": "editor.render.requested payload (command)",
+  "description": "Command issued by the Studio-hosted media editor (via the BFF) to flatten an edit timeline into a new rendition. Consumed by MTS, which renders it and emits transcode.completed. Design: docs/architecture/services/media-editor.md.",
+  "type": "object",
+  "required": ["editProjectId", "sourceAssetId", "mediaKind", "timeline", "outputProfile"],
+  "additionalProperties": false,
+  "properties": {
+    "editProjectId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "sourceAssetId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "Asset whose renditions the timeline references." },
+    "targetAssetId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "Existing asset to add the rendered result to as a new version; absent = create a new asset." },
+    "mediaKind": { "enum": ["video", "audio", "photo"], "description": "The editor operates on video, audio, or image (basic-NLE, D3)." },
+    "timeline": {
+      "type": "object",
+      "description": "The edit decision list: an ordered set of clips (source in/out → timeline position) plus optional transitions and filters. Interpreted by the render worker; the authoritative shape is the EditProject timeline (media-editor.md §3).",
+      "required": ["clips"],
+      "properties": {
+        "clips": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["renditionRef", "inSec", "outSec"],
+            "properties": {
+              "renditionRef": { "type": "string", "description": "File/rendition of the source asset this clip draws from." },
+              "inSec": { "type": "number", "minimum": 0 },
+              "outSec": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "outputProfile": { "type": "string", "description": "MTS profile id (Tier-1 registry) to encode the flattened result with." },
+    "requestedBy": { "type": "string", "description": "User id who triggered the render." }
+  }
+}

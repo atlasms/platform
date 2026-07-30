@@ -1,0 +1,218 @@
+openapi: 3.1.0
+info:
+  title: Atlas Editorial (Web Editor & Projects) API
+  version: 0.1.0
+  description: >-
+    Stub contract for Editorial — persistent editing projects, OTIO-compatible timelines,
+    server-side render, and NLE interchange. v2.0 promotion of the v1.0 Media Editor capability
+    (../services/media-editor.md); preserves the EditProject and editor.render.requested
+    contracts. See ../services/editorial.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: projects
+  - name: timeline
+  - name: render
+  - name: interchange
+  - name: review
+paths:
+  /projects:
+    get:
+      operationId: listEditProjects
+      tags: [projects]
+      summary: List editing projects (scope edit:read)
+      responses:
+        '200': { description: Projects, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/EditProject' } } } } }
+    post:
+      operationId: createEditProject
+      tags: [projects]
+      summary: Create an editing project (FR-EDT-11)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EditProject' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/EditProject' } } } }
+  /projects/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getEditProject
+      tags: [projects]
+      summary: Open a project
+      responses:
+        '200': { description: Project, content: { application/json: { schema: { $ref: '#/components/schemas/EditProject' } } } }
+    patch:
+      operationId: updateEditProject
+      tags: [projects]
+      summary: Update project metadata (scope edit:write)
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/EditProject' } } } }
+      responses:
+        '200': { description: Updated }
+  /projects/{id}/lock:
+    post:
+      operationId: lockProject
+      tags: [projects]
+      summary: Acquire the edit lock (FR-EDT-14 - never last-write-wins)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Locked }
+        '409': { description: 'Already locked', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /projects/{id}/unlock:
+    post:
+      operationId: unlockProject
+      tags: [projects]
+      summary: Release the edit lock
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '204': { description: Released }
+  /projects/{id}/timeline:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getTimeline
+      tags: [timeline]
+      summary: Read the OTIO-compatible timeline (FR-EDT-12)
+      responses:
+        '200': { description: Timeline, content: { application/json: { schema: { $ref: '#/components/schemas/Timeline' } } } }
+    put:
+      operationId: putTimeline
+      tags: [timeline]
+      summary: Save the timeline as a new version (scope edit:write)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Timeline' } } } }
+      responses:
+        '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/EditProject' } } } }
+  /projects/{id}/versions:
+    get:
+      operationId: listProjectVersions
+      tags: [projects]
+      summary: Version history
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Versions }
+  /projects/{id}/render:
+    post:
+      operationId: renderProject
+      tags: [render]
+      summary: Request a server-side render via MTS (FR-EDT-15, scope edit:render)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { content: { application/json: { schema: { type: object, properties: { presetId: { type: string } } } } } }
+      responses:
+        '202': { description: Render queued, content: { application/json: { schema: { type: object, properties: { renderJobId: { $ref: '#/components/schemas/Ulid' } } } } } }
+  /projects/{id}/notes:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: listReviewNotes
+      tags: [review]
+      summary: Frame-accurate review comments (FR-EDT-20)
+      responses:
+        '200': { description: Notes, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ReviewNote' } } } } }
+    post:
+      operationId: addReviewNote
+      tags: [review]
+      summary: Add a review comment at a timecode
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ReviewNote' } } } }
+      responses:
+        '201': { description: Added }
+  /projects/{id}/export:
+    get:
+      operationId: exportProject
+      tags: [interchange]
+      summary: Export for a desktop NLE (FR-EDT-16). Native .prproj is NOT supported (FR-EDT-19).
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: format, in: query, required: true, schema: { type: string, enum: [otio, aaf, fcpxml, edl] } }
+      responses:
+        '200':
+          description: 'Interchange document plus fidelity report header'
+          headers:
+            X-Atlas-Fidelity-Report: { schema: { type: string }, description: 'Summary of what was not carried across (FR-EDT-18)' }
+          content:
+            application/octet-stream: { schema: { type: string, format: binary } }
+  /projects/import:
+    post:
+      operationId: importProject
+      tags: [interchange]
+      summary: Import OTIO/AAF/FCPXML/EDL into a new project (FR-EDT-17)
+      parameters:
+        - { name: format, in: query, required: true, schema: { type: string, enum: [otio, aaf, fcpxml, edl] } }
+      requestBody: { required: true, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+      responses:
+        '201':
+          description: Imported project with fidelity report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project: { $ref: '#/components/schemas/EditProject' }
+                  fidelityReport: { $ref: '#/components/schemas/FidelityReport' }
+        '422': { description: 'Unsupported or malformed interchange file', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    EditProject:
+      type: object
+      required: [title]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        projectId: { $ref: '#/components/schemas/Ulid' }
+        title: { type: string }
+        state: { type: string, enum: [draft, editing, rendering, rendered, delivered] }
+        currentVersion: { type: integer }
+        lockedBy: { type: string }
+    Timeline:
+      type: object
+      description: 'OpenTimelineIO-compatible structure (FR-EDT-12); tracks of clips with effect specs.'
+      properties:
+        otioSchema: { type: string, examples: ['Timeline.1'] }
+        tracks:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [video, audio] }
+              clips:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    sourceAssetId: { $ref: '#/components/schemas/Ulid' }
+                    sourceIn: { type: string }
+                    sourceOut: { type: string }
+                    timelineIn: { type: string }
+                    effects: { type: array, items: { type: object, additionalProperties: true } }
+    ReviewNote:
+      type: object
+      required: [timecode, body]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        version: { type: integer }
+        timecode: { type: string, description: 'HH:MM:SS:FF' }
+        author: { type: string }
+        body: { type: string }
+        resolved: { type: boolean }
+    FidelityReport:
+      type: object
+      description: 'What an interchange operation could not carry across (FR-EDT-18).'
+      properties:
+        format: { type: string }
+        carried: { type: array, items: { type: string } }
+        dropped: { type: array, items: { type: string }, description: 'e.g. plugin effects, grades, nested sequences' }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

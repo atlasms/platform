@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/gateway.access.logged.payload.schema.json",
+  "title": "gateway.access.logged payload",
+  "description": "Access record for a request through the API Gateway. High-volume: normally shipped via the log pipeline (not the broadcast bus) and MAY be sampled; defined here so the audit sink has one shape. Consumed by Logging & Analytics.",
+  "type": "object",
+  "required": ["requestId", "method", "path", "status", "at"],
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "method": { "type": "string", "examples": ["GET", "POST"] },
+    "path": { "type": "string" },
+    "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+    "userId": { "type": "string", "description": "Authenticated subject, when present." },
+    "ip": { "type": "string" },
+    "latencyMs": { "type": "number", "minimum": 0 },
+    "at": { "type": "string", "format": "date-time" }
+  }
+}

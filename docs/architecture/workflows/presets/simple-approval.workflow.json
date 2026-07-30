@@ -1,0 +1,32 @@
+{
+  "id": "01J9ZKQ2M8XABCDEFGHJKMNPQS",
+  "channelId": "ch12",
+  "name": "Simple approval",
+  "description": "Preset: a bare review gate — assign, approve/reject, publish on approval. Minimal human-task + branch + fire-and-forget command.",
+  "version": 1,
+  "status": "published",
+  "vars": [
+    { "name": "assetId", "type": "string" },
+    { "name": "verdict", "type": "string" }
+  ],
+  "steps": [
+    { "id": "s_start", "kind": "start", "name": "Start", "position": { "x": 0, "y": 0 }, "config": {} },
+    { "id": "s_task", "kind": "human-task", "name": "Approve", "position": { "x": 180, "y": 0 },
+      "config": { "taskType": "approve", "assignee": { "role": "editor" }, "reviewPointId": "manual",
+                  "output": { "vars.verdict": "= incoming.outcome" } } },
+    { "id": "s_gate", "kind": "branch", "name": "Approved?", "position": { "x": 360, "y": 0 },
+      "config": { "default": "t_no" } },
+    { "id": "s_publish", "kind": "command", "name": "Publish", "position": { "x": 540, "y": -60 },
+      "config": { "action": "publish", "request": { "event": "publish.web.requested", "input": { "assetId": "= vars.assetId" } } } },
+    { "id": "s_end_yes", "kind": "end", "name": "Published", "position": { "x": 720, "y": -60 }, "config": { "status": "published" } },
+    { "id": "s_end_no", "kind": "end", "name": "Rejected", "position": { "x": 540, "y": 60 }, "config": { "status": "rejected" } }
+  ],
+  "transitions": [
+    { "id": "t1", "from": "s_start", "to": "s_task" },
+    { "id": "t2", "from": "s_task", "to": "s_gate" },
+    { "id": "t_yes", "from": "s_gate", "to": "s_publish", "name": "approved", "when": "= vars.verdict = \"approved\"" },
+    { "id": "t_pub", "from": "s_publish", "to": "s_end_yes" },
+    { "id": "t_no", "from": "s_gate", "to": "s_end_no", "name": "rejected", "isDefault": true }
+  ],
+  "metadata": { "createdBy": "system", "createdAt": "2026-07-24T10:00:00Z" }
+}

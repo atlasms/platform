@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/playout.export.completed.payload.schema.json",
+  "title": "playout.export.completed payload",
+  "description": "Emitted by HSM when hi-res files + playlist are delivered to the control-room destination. Consumed by Scheduling, Logging.",
+  "type": "object",
+  "required": ["scheduleId", "destination"],
+  "additionalProperties": false,
+  "properties": {
+    "scheduleId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "destination": { "type": "string", "description": "Control-room network destination." },
+    "format": { "type": "string", "examples": ["mcrlist"], "description": "Serialized playlist format." },
+    "fileCount": { "type": "integer", "minimum": 0 }
+  }
+}

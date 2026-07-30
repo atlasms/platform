@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/rundown.updated.payload.schema.json",
+  "title": "rundown.updated payload",
+  "description": "Emitted by Newsroom when a rundown changes (story order, timing, state). Consumed by the WebSocket service and Logging.",
+  "type": "object",
+  "required": ["rundownId", "at"],
+  "additionalProperties": false,
+  "properties": {
+    "rundownId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "date": { "type": "string", "format": "date", "description": "The rundown's broadcast date/slot." },
+    "state": { "type": "string", "description": "Rundown state, e.g. draft/ready/onair/done." },
+    "changed": { "type": "array", "items": { "type": "string" } },
+    "by": { "type": "string" },
+    "at": { "type": "string", "format": "date-time" }
+  }
+}

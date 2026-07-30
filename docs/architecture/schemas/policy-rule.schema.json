@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/policy-rule.schema.json",
+  "title": "Atlas Policy Rule (grant)",
+  "description": "The atomic authorization grant: these permissions, within this scope, on these field groups. Rules are assigned to users or groups (directly or via a Role); a subject's effective policy is the union of all reachable rules. Evaluated by the shared @atlas/policy evaluator on BOTH the server (enforcement) and Studio (UI gating). See docs/architecture/authorization-model.md.",
+  "type": "object",
+  "required": ["id", "effect", "permissions"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "$ref": "common.schema.json#/$defs/Ulid" },
+    "description": { "type": "string" },
+    "effect": {
+      "enum": ["allow", "deny"],
+      "default": "allow",
+      "description": "Base model is additive (allow only). 'deny' requires the optional deny extension, where deny overrides allow (authorization-model.md §7)."
+    },
+    "permissions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^(\\*|[a-z][a-z0-9-]*):(\\*|[a-z][a-z0-9-]*)$",
+        "description": "resource:action, e.g. asset:write, schedule:send. '*' is allowed for either part."
+      }
+    },
+    "scope": {
+      "type": "object",
+      "description": "Predicates the resource context must satisfy. An OMITTED predicate means 'any'.",
+      "additionalProperties": false,
+      "properties": {
+        "channelIds": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/$defs/ChannelId" },
+          "description": "Channels this grant applies to."
+        },
+        "categoryPaths": {
+          "type": "array",
+          "items": { "type": "string", "examples": ["/sports/football/"] },
+          "description": "Category subtree scoping — each entry is matched as a PREFIX of the resource's materialized category path, so one grant covers a whole branch."
+        },
+        "states": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Resource lifecycle states this grant applies to, e.g. [\"ready\"]."
+        },
+        "ownedOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, only resources whose owner is the subject."
+        }
+      }
+    },
+    "fieldGroups": {
+      "type": "array",
+      "items": { "type": "string", "examples": ["core", "taxonomy", "cast", "rights", "web"] },
+      "description": "Narrows a write-type permission to these field groups. Omitted = all groups."
+    }
+  }
+}

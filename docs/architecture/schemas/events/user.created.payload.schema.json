@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/user.created.payload.schema.json",
+  "title": "user.created payload",
+  "description": "Emitted by IAM when a user account is created. Consumed by Notifications (welcome/onboarding) and Logging. Carries no credentials or sensitive PII.",
+  "type": "object",
+  "required": ["userId", "username", "state", "createdAt"],
+  "additionalProperties": false,
+  "properties": {
+    "userId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "username": { "type": "string" },
+    "name": { "type": "string", "description": "Display name." },
+    "state": { "enum": ["active", "disabled", "locked", "invited"] },
+    "createdBy": { "type": "string" },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

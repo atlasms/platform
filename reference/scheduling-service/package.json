@@ -1,0 +1,9 @@
+{
+  "name": "@atlas/scheduling-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Scheduling vertical slice: consumes MAM's asset.approved/expired/deleted/replaced, builds program tables, and enforces the approved-and-not-expired guard at send-to-air (FR-SCH-3/5a). Includes a two-service integration test with @atlas/mam-service.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "node --import tsx --test test/scheduling-service.test.ts test/integration.test.ts" }
+}

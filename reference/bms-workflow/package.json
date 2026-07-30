@@ -1,0 +1,23 @@
+{
+  "name": "@atlas/bms-workflow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference implementation of the Atlas BMS workflow contract: types, validator (schema + graph + FEEL), and the BPMN 2.0 converter. Proven against docs/architecture/workflows fixtures.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "node --import tsx --test test/validate.test.ts test/bpmn.test.ts test/interpreter.test.ts test/canvas.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "bpmn-moddle": "^10.0.0",
+    "feelin": "^7.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
+  }
+}

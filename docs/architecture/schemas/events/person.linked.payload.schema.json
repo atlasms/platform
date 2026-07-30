@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/person.linked.payload.schema.json",
+  "title": "person.linked payload",
+  "description": "Emitted by MAM when a person is associated with an asset in a role.",
+  "type": "object",
+  "required": ["personId", "assetId"],
+  "additionalProperties": false,
+  "properties": {
+    "personId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "roleForAsset": { "type": "string", "description": "Role of this person for this asset." },
+    "confirmedBy": { "type": "string", "description": "User id, when a link originated from an AI suggestion." }
+  }
+}

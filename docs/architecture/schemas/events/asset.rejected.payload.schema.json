@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/asset.rejected.payload.schema.json",
+  "title": "asset.rejected payload",
+  "description": "Emitted by MAM when an asset is rejected in review. Consumed by Notifications, Logging.",
+  "type": "object",
+  "required": ["assetId", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "reason": { "type": "string" },
+    "rejectedBy": { "type": "string", "description": "User id who rejected (manual verdict)." },
+    "rejectedAt": { "type": "string", "format": "date-time" },
+    "retainUntil": { "type": "string", "format": "date-time", "description": "When the rejected media is purged if not replaced first (FR-APP-8). Absent = kept until manual/policy disposition." },
+    "reviewPointId": { "type": "string", "description": "Optional id of the workflow review step that produced this verdict (FR-APP-5)." }
+  }
+}

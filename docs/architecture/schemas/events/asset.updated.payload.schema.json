@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/asset.updated.payload.schema.json",
+  "title": "asset.updated payload",
+  "description": "Emitted by MAM when asset metadata changes. Consumed by WebSocket, Search, Logging.",
+  "type": "object",
+  "required": ["assetId", "changedFields"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "changedFields": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Names of the fields that changed."
+    },
+    "source": { "enum": ["user", "ai", "technical"], "description": "Provenance of the change (FR-MAM-8)." }
+  }
+}

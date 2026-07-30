@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/workflow-definition.schema.json",
+  "title": "Atlas Workflow Definition",
+  "description": "The versioned, BPMN-2.0-convertible workflow graph that the Studio designer edits and the BMS engine executes. One schema serves editor, storage, and engine. See docs/architecture/bms-workflow-dsl-and-designer.md and services/bms.md §3.2/§3.3.",
+  "type": "object",
+  "required": ["id", "channelId", "name", "version", "status", "steps", "transitions"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "$ref": "common.schema.json#/$defs/Ulid" },
+    "channelId": { "$ref": "common.schema.json#/$defs/ChannelId" },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "scope": {
+      "type": "object",
+      "description": "Where this flow applies. Empty = channel-wide default.",
+      "additionalProperties": false,
+      "properties": {
+        "categoryId": { "type": "string" },
+        "mediaType": { "type": "string" },
+        "usage": { "type": "string" }
+      }
+    },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["draft", "published"] },
+    "vars": {
+      "type": "array",
+      "description": "Declared workflow variables (the instance's typed state).",
+      "items": { "$ref": "#/$defs/VarDecl" }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "$ref": "#/$defs/Step" },
+      "contains": { "type": "object", "properties": { "kind": { "const": "start" } } },
+      "minContains": 1,
+      "maxContains": 1,
+      "description": "Nodes. Exactly one 'start'; at least one 'end'."
+    },
+    "transitions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Transition" },
+      "description": "Directed edges (control flow). Conditions live on edges leaving a 'branch'."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "publishedBy": { "type": "string" },
+        "publishedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "$defs": {
+    "Duration": {
+      "type": "string",
+      "description": "ISO 8601 duration, e.g. PT30M, P7D.",
+      "pattern": "^P(?!$)(\\d+Y)?(\\d+M)?(\\d+W)?(\\d+D)?(T(?!$)(\\d+H)?(\\d+M)?(\\d+S)?)?$"
+    },
+    "Feel": {
+      "type": "string",
+      "description": "A FEEL expression (Friendly Enough Expression Language, per DMN/BPMN). By convention prefixed with '=' (e.g. '= incoming.assetId'). Evaluated in a sandbox against the instance context {vars, incoming, steps, now}. The same string maps 1:1 onto a BPMN conditionExpression (language='feel')."
+    },
+    "DataMapping": {
+      "type": "object",
+      "description": "target dotted-path (into vars) -> FEEL expression over the context.",
+      "additionalProperties": { "$ref": "#/$defs/Feel" }
+    },
+    "Retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxAttempts"],
+      "properties": {
+        "maxAttempts": { "type": "integer", "minimum": 1 },
+        "backoff": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "enum": ["fixed", "exponential"] },
+            "initial": { "$ref": "#/$defs/Duration" },
+            "max": { "$ref": "#/$defs/Duration" },
+            "factor": { "type": "number", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "VarDecl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+        "type": { "enum": ["string", "number", "boolean", "object", "array"] },
+        "initial": true,
+        "description": { "type": "string" }
+      }
+    },
+    "Transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "from", "to"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "from": { "type": "string", "description": "source step id" },
+        "to": { "type": "string", "description": "target step id" },
+        "name": { "type": "string" },
+        "when": { "$ref": "#/$defs/Feel", "description": "boolean; only meaningful on edges leaving a 'branch'." },
+        "isDefault": { "type": "boolean", "description": "the fallback edge of a 'branch' when no 'when' matches." }
+      }
+    },
+    "Step": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["start", "end", "command", "human-task", "wait-event", "timer", "branch", "parallel", "sub-flow"] },
+        "name": { "type": "string" },
+        "position": {
+          "type": "object",
+          "description": "Canvas x/y -> BPMN DI. Presentation-only; the engine ignores it.",
+          "additionalProperties": false,
+          "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+        },
+        "retry": { "$ref": "#/$defs/Retry" },
+        "timeout": { "$ref": "#/$defs/Duration" },
+        "onError": {
+          "description": "What to do when the step fails past retries.",
+          "oneOf": [
+            { "enum": ["fail", "compensate"] },
+            { "type": "object", "additionalProperties": false, "required": ["transitionTo"], "properties": { "transitionTo": { "type": "string" } } }
+          ]
+        },
+        "compensation": { "type": "string", "description": "step id whose action undoes this step (saga)." },
+        "config": { "type": "object" }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "start" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/StartConfig" } } } },
+        { "if": { "properties": { "kind": { "const": "end" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/EndConfig" } } } },
+        { "if": { "properties": { "kind": { "const": "command" } } }, "then": { "required": ["config"], "properties": { "config": { "$ref": "#/$defs/CommandConfig" } } } },
+        { "if": { "properties": { "kind": { "const": "human-task" } } }, "then": { "required": ["config"], "properties": { "config": { "$ref": "#/$defs/HumanTaskConfig" } } } },
+        { "if": { "properties": { "kind": { "const": "wait-event" } } }, "then": { "required": ["config"], "properties": { "config": { "$ref": "#/$defs/WaitEventConfig" } } } },
+        { "if": { "properties": { "kind": { "const": "timer" } } }, "then": { "required": ["config"], "properties": { "config": { "$ref": "#/$defs/TimerConfig" } } } },
+        { "if": { "properties": { "kind": { "const": "branch" } } }, "then": { "properties": { "config": { "$ref": "#/$defs/BranchConfig" } } } },
+        { "if": { "properties": { "kind": { "const": "parallel" } } }, "then": { "required": ["config"], "properties": { "config": { "$ref": "#/$defs/ParallelConfig" } } } },
+        { "if": { "properties": { "kind": { "const": "sub-flow" } } }, "then": { "required": ["config"], "properties": { "config": { "$ref": "#/$defs/SubFlowConfig" } } } }
+      ]
+    },
+    "StartConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "BPMN Start Event. Optional event trigger that instantiates the flow.",
+      "properties": {
+        "trigger": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "event": { "type": "string", "description": "broker subject that starts an instance, e.g. ingest.accepted" },
+            "filter": { "$ref": "#/$defs/Feel" }
+          }
+        }
+      }
+    },
+    "EndConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "BPMN End Event.",
+      "properties": {
+        "terminate": { "type": "boolean", "description": "terminate the whole instance (BPMN terminate end event) vs. end this path only." },
+        "status": { "type": "string" }
+      }
+    },
+    "CommandConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "BPMN Service Task. Emits a command event and (optionally) awaits its completion event.",
+      "required": ["action", "request"],
+      "properties": {
+        "action": { "type": "string", "description": "logical action, e.g. 'transcode', 'move-online'." },
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event"],
+          "properties": {
+            "event": { "type": "string", "description": "command subject to emit, e.g. transcode.job.create" },
+            "input": { "$ref": "#/$defs/DataMapping" }
+          }
+        },
+        "await": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "event": { "type": "string", "description": "completion subject, e.g. transcode.completed" },
+            "correlate": { "$ref": "#/$defs/Feel", "description": "boolean matching the completion to this step (default: envelope correlationId echo)." },
+            "output": { "$ref": "#/$defs/DataMapping" }
+          }
+        }
+      }
+    },
+    "HumanTaskConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "BPMN User Task. Assigns work to a person/role; the flow waits for completion.",
+      "required": ["taskType", "assignee"],
+      "properties": {
+        "taskType": { "enum": ["approve", "review", "edit", "generic"] },
+        "assignee": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "userId": { "type": "string" },
+            "role": { "type": "string" },
+            "expression": { "$ref": "#/$defs/Feel" }
+          }
+        },
+        "reviewPointId": { "type": "string", "description": "correlates to the MAM review verdict (FR-APP-5)." },
+        "form": { "type": "object", "additionalProperties": true },
+        "dueIn": { "$ref": "#/$defs/Duration" },
+        "output": { "$ref": "#/$defs/DataMapping" },
+        "escalation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["after", "action"],
+          "properties": {
+            "after": { "$ref": "#/$defs/Duration" },
+            "action": { "enum": ["reassign", "notify"] },
+            "to": { "type": "object", "additionalProperties": false, "properties": { "userId": { "type": "string" }, "role": { "type": "string" } } }
+          }
+        }
+      }
+    },
+    "WaitEventConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "BPMN Message/Signal Intermediate Catch Event. Blocks until an external event arrives.",
+      "required": ["event", "correlate"],
+      "properties": {
+        "event": { "type": "string" },
+        "correlate": { "$ref": "#/$defs/Feel" },
+        "output": { "$ref": "#/$defs/DataMapping" }
+      }
+    },
+    "TimerConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "BPMN Timer Event.",
+      "required": ["mode", "value"],
+      "properties": {
+        "mode": { "enum": ["duration", "date", "cron"] },
+        "value": { "type": "string", "description": "ISO 8601 duration | ISO 8601 date-time | cron expression, per mode." }
+      }
+    },
+    "BranchConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "BPMN Exclusive (XOR) Gateway. Diverging: picks the first outgoing edge whose 'when' is true, else the default. Converging when it has many in-edges.",
+      "properties": {
+        "default": { "type": "string", "description": "transition id taken when no 'when' matches." }
+      }
+    },
+    "ParallelConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "BPMN Parallel (AND) Gateway.",
+      "required": ["mode"],
+      "properties": { "mode": { "enum": ["split", "join"] } }
+    },
+    "SubFlowConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "BPMN Call Activity. Invokes another published workflow as a child.",
+      "required": ["workflowId"],
+      "properties": {
+        "workflowId": { "$ref": "common.schema.json#/$defs/Ulid" },
+        "version": { "oneOf": [ { "type": "integer", "minimum": 1 }, { "const": "latest" } ] },
+        "input": { "$ref": "#/$defs/DataMapping" },
+        "output": { "$ref": "#/$defs/DataMapping" }
+      }
+    }
+  }
+}

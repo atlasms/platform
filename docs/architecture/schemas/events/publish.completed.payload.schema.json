@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/publish.completed.payload.schema.json",
+  "title": "publish.completed payload",
+  "description": "Emitted by Integration/Feeds when an outbound publish/connector delivery succeeds (EPG, HbbTV, social, web). Consumed by Logging.",
+  "type": "object",
+  "required": ["connectorId", "kind", "subjectRef", "destination", "publishedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "connectorId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "kind": { "enum": ["epg", "hbbtv", "social", "web"] },
+    "subjectRef": { "$ref": "../common.schema.json#/$defs/EntityRef" },
+    "destination": { "type": "string" },
+    "receipt": { "type": "string", "description": "Provider-returned delivery receipt/id, when available." },
+    "publishedAt": { "type": "string", "format": "date-time" }
+  }
+}

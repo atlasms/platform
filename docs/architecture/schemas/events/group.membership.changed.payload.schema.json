@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/group.membership.changed.payload.schema.json",
+  "title": "group.membership.changed payload",
+  "description": "Emitted by IAM when a user is added to or removed from a group. Because effective permissions are the union of user and group rules, this bumps the user's permVersion and is consumed by the gateway/cache and the WebSocket service; also by Logging.",
+  "type": "object",
+  "required": ["userId", "groupId", "action", "at"],
+  "additionalProperties": false,
+  "properties": {
+    "userId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "groupId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "action": { "enum": ["added", "removed"] },
+    "permVersion": { "type": "integer", "minimum": 0, "description": "The user's new permission version after this change." },
+    "by": { "type": "string" },
+    "at": { "type": "string", "format": "date-time" }
+  }
+}

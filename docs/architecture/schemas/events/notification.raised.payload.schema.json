@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/notification.raised.payload.schema.json",
+  "title": "notification.raised payload",
+  "description": "Emitted by Notifications & Messaging when a system notification is raised for a user (job done, approval needed, mention, alert). Consumed by the WebSocket service for live delivery. The `type` is a Tier-1 notification-type registry key (see configuration-and-reference-data.md §2.2).",
+  "type": "object",
+  "required": ["id", "userId", "type", "severity", "createdAt"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "userId": { "type": "string", "description": "Recipient user id." },
+    "type": { "type": "string", "description": "Notification-type registry key, e.g. \"asset.approval-needed\", \"transcode.failed\"." },
+    "subjectRef": { "$ref": "../common.schema.json#/$defs/EntityRef" },
+    "severity": { "$ref": "../common.schema.json#/$defs/Severity" },
+    "title": { "type": "string" },
+    "body": { "type": "string" },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

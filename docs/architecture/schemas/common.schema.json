@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/common.schema.json",
+  "title": "Atlas common definitions",
+  "description": "Reusable $defs referenced by the envelope and event payload schemas. See docs/architecture/schemas/README.md.",
+  "$defs": {
+    "Ulid": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "ULID identifier (used for messageId/correlationId and most entity ids)."
+    },
+    "ChannelId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Channel/tenant scope id; present on every row and message.",
+      "examples": ["ch12"]
+    },
+    "Tier": {
+      "enum": ["online", "near-line", "offline"],
+      "description": "HSM storage tier."
+    },
+    "RenditionKind": {
+      "enum": ["original", "proxy", "broadcast", "thumbnail", "vtt-filmstrip", "hover-preview"],
+      "description": "The kind of generated media version."
+    },
+    "Checksum": {
+      "type": "object",
+      "required": ["algorithm", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": { "type": "string", "examples": ["sha256", "xxh3"] },
+        "value": { "type": "string", "minLength": 1 }
+      }
+    },
+    "Rendition": {
+      "type": "object",
+      "required": ["kind", "path", "checksum"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "$ref": "#/$defs/RenditionKind" },
+        "path": { "type": "string", "description": "HSM-resolved logical path." },
+        "checksum": { "$ref": "#/$defs/Checksum" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "durationSec": { "type": "number", "minimum": 0 }
+      }
+    },
+    "TechnicalMetadata": {
+      "type": "object",
+      "description": "ffprobe-derived technical metadata; additive fields allowed.",
+      "additionalProperties": true,
+      "properties": {
+        "container": { "type": "string" },
+        "videoCodec": { "type": "string" },
+        "audioCodec": { "type": "string" },
+        "durationSec": { "type": "number", "minimum": 0 },
+        "width": { "type": "integer", "minimum": 0 },
+        "height": { "type": "integer", "minimum": 0 },
+        "aspectRatio": { "type": "string", "examples": ["16:9"] },
+        "audioChannels": { "type": "integer", "minimum": 0 },
+        "frameRate": { "type": "number", "minimum": 0 }
+      }
+    },
+    "Error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" }
+      }
+    },
+    "EntityRef": {
+      "type": "object",
+      "description": "A generic pointer to any Atlas entity, used by cross-cutting events (tasks, notifications, alerts, publishing, audit).",
+      "required": ["entityType", "entityId"],
+      "additionalProperties": false,
+      "properties": {
+        "entityType": {
+          "type": "string",
+          "description": "The referenced entity's kind.",
+          "examples": ["asset", "schedule", "workflowInstance", "story", "rundown", "user", "feed"]
+        },
+        "entityId": { "type": "string", "description": "Id of the referenced entity (usually a ULID; may be an external id for feed items)." }
+      }
+    },
+    "Severity": {
+      "enum": ["info", "warning", "critical"],
+      "description": "Uniform severity for notifications, tasks and alerts."
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/transcode.job.create.payload.schema.json",
+  "title": "transcode.job.create payload (command)",
+  "description": "Command issued by BMS/RIM to MTS to enqueue a transcode job.",
+  "type": "object",
+  "required": ["assetId", "presetIds"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "presetIds": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Transcode profile ids to produce."
+    },
+    "inputPath": { "type": "string", "description": "HSM-resolved input path." },
+    "outputPaths": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Optional preset-id -> desired output path."
+    },
+    "priority": { "type": "integer", "description": "Higher runs sooner." }
+  }
+}

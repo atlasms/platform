@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/transcode.failed.payload.schema.json",
+  "title": "transcode.failed payload",
+  "description": "Emitted by MTS after a job exhausts retries. Consumed by Notifications and BMS.",
+  "type": "object",
+  "required": ["assetId", "error"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "jobId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "attempts": { "type": "integer", "minimum": 1 },
+    "error": { "$ref": "../common.schema.json#/$defs/Error" }
+  }
+}

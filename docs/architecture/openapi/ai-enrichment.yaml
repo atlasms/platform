@@ -1,0 +1,87 @@
+openapi: 3.1.0
+info:
+  title: Atlas AI Enrichment API
+  version: 0.1.0
+  description: >-
+    Stub contract for AI Enrichment — enqueue enrichment, provider/tier config, and human
+    confirmation of suggestions. Online-first; off the critical path (FR-AI-*). See
+    ../services/ai-enrichment.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: enrich
+  - name: suggestions
+  - name: admin
+paths:
+  /enrich:
+    post:
+      operationId: enqueueEnrichment
+      tags: [enrich]
+      summary: Enqueue enrichment for an asset (normally event-triggered)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assetId]
+              properties:
+                assetId: { $ref: '#/components/schemas/Ulid' }
+                tasks: { type: array, items: { type: string, enum: [faces, objects, shots, scenes, stt, language-id, keywords, summary] } }
+      responses:
+        '202': { description: Job queued, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
+  /jobs/{id}:
+    get:
+      operationId: getEnrichmentJob
+      tags: [enrich]
+      summary: Enrichment job status
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Job, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
+  /suggestions/{id}/accept:
+    post:
+      operationId: acceptSuggestion
+      tags: [suggestions]
+      summary: Accept a suggestion; writes it to MAM as user-confirmed (scope asset:write)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Accepted }
+  /suggestions/{id}/reject:
+    post:
+      operationId: rejectSuggestion
+      tags: [suggestions]
+      summary: Reject a suggestion (scope asset:write)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Rejected }
+  /providers:
+    get: { operationId: listProviders, tags: [admin], summary: List AI providers/tiers, responses: { '200': { description: Providers } } }
+    post: { operationId: createProvider, tags: [admin], summary: Configure a provider/tier (scope ai:admin), responses: { '201': { description: Created } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    Job:
+      type: object
+      required: [id, state]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        assetId: { $ref: '#/components/schemas/Ulid' }
+        tier: { type: string, enum: [online, offline] }
+        state: { type: string, enum: [queued, running, completed, failed] }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

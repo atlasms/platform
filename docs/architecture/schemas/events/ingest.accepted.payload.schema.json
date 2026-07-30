@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/ingest.accepted.payload.schema.json",
+  "title": "ingest.accepted payload",
+  "description": "Emitted by RIM when media passes acceptance; the fan-out that triggers MAM/MTS/AI.",
+  "type": "object",
+  "required": ["assetId", "checksum"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "source": { "type": "string" },
+    "path": { "type": "string", "description": "HSM-placed original path." },
+    "checksum": { "$ref": "../common.schema.json#/$defs/Checksum" },
+    "technicalMetadata": { "$ref": "../common.schema.json#/$defs/TechnicalMetadata" }
+  }
+}

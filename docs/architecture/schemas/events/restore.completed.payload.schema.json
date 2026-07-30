@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/restore.completed.payload.schema.json",
+  "title": "restore.completed payload",
+  "description": "Emitted by HSM when a near-line/offline asset is back online. Consumed by Scheduling, Notifications.",
+  "type": "object",
+  "required": ["assetId"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "renditionKind": { "$ref": "../common.schema.json#/$defs/RenditionKind" },
+    "restoreRequestId": { "$ref": "../common.schema.json#/$defs/Ulid" }
+  }
+}

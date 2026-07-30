@@ -1,0 +1,166 @@
+openapi: 3.1.0
+info:
+  title: Atlas Planning & Resource Scheduling API
+  version: 0.1.0
+  description: >-
+    Stub contract for Planning — projects, planning items, assignments, resources, and
+    conflict-free bookings. Pre-production only; the broadcast program table is the separate
+    Scheduling service. v2.0 scope (news subset in v1.0). See ../services/planning.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: projects
+  - name: planning
+  - name: resources
+  - name: bookings
+paths:
+  /projects:
+    get:
+      operationId: listProjects
+      tags: [projects]
+      summary: List projects/productions (scope planning:read)
+      responses:
+        '200': { description: Projects, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Project' } } } } }
+    post:
+      operationId: createProject
+      tags: [projects]
+      summary: Create a project (scope planning:write)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } } }
+  /planning-items:
+    get:
+      operationId: listPlanningItems
+      tags: [planning]
+      summary: List planning items (stories, events, programmes)
+      responses:
+        '200': { description: Items, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/PlanningItem' } } } } }
+    post:
+      operationId: createPlanningItem
+      tags: [planning]
+      summary: Create a planning item (FR-PLN-2)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PlanningItem' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/PlanningItem' } } } }
+  /planning-items/{id}/call-sheet:
+    get:
+      operationId: getCallSheet
+      tags: [planning]
+      summary: Generated call sheet (FR-PLN-8)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Call sheet, content: { application/pdf: { schema: { type: string, format: binary } } } }
+  /planning-items/{id}/promote-to-schedule:
+    post:
+      operationId: promoteToSchedule
+      tags: [planning]
+      summary: Create/link a broadcast program-table slot before media exists (FR-PLN-12)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '202': { description: Promoted }
+  /assignments:
+    get: { operationId: listAssignments, tags: [planning], summary: List assignments, responses: { '200': { description: Assignments } } }
+    post:
+      operationId: createAssignment
+      tags: [planning]
+      summary: Assign work with a brief and due date (scope planning:assign)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Assignment' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Assignment' } } } }
+  /resources:
+    get: { operationId: listResources, tags: [resources], summary: Crew/facility/equipment registry, responses: { '200': { description: Resources } } }
+    post: { operationId: createResource, tags: [resources], summary: Register a resource (scope planning:admin), responses: { '201': { description: Created } } }
+  /resources/availability:
+    get:
+      operationId: getAvailability
+      tags: [resources]
+      summary: Availability over a time window (FR-PLN-7)
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: kind, in: query, schema: { type: string, enum: [person, facility, equipment, vehicle, room] } }
+      responses:
+        '200': { description: Availability }
+  /bookings:
+    post:
+      operationId: createBooking
+      tags: [bookings]
+      summary: Book a resource; 409 on conflict (FR-PLN-5, DB-enforced non-overlap)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Booking' } } } }
+      responses:
+        '201': { description: Booked, content: { application/json: { schema: { $ref: '#/components/schemas/Booking' } } } }
+        '409': { description: 'Conflicting booking', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /bookings/{id}:
+    patch:
+      operationId: updateBooking
+      tags: [bookings]
+      summary: Confirm or release a booking
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { content: { application/json: { schema: { type: object, properties: { state: { type: string, enum: [held, confirmed, released] } } } } } }
+      responses:
+        '200': { description: Updated }
+  /shot-lists:
+    get: { operationId: listShotLists, tags: [planning], summary: Shot lists linked to planning items, responses: { '200': { description: Shot lists } } }
+    post: { operationId: createShotList, tags: [planning], summary: Create a shot list (FR-PLN-10), responses: { '201': { description: Created } } }
+  /breakdowns:
+    get: { operationId: listBreakdowns, tags: [planning], summary: Script breakdowns, responses: { '200': { description: Breakdowns } } }
+    post: { operationId: createBreakdown, tags: [planning], summary: Tag script elements into a requirement set (FR-PLN-9), responses: { '201': { description: Created } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    Project:
+      type: object
+      required: [title]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        title: { type: string }
+        type: { type: string, enum: [production, coverage, series] }
+        state: { type: string, enum: [draft, active, completed, cancelled] }
+    PlanningItem:
+      type: object
+      required: [title]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        projectId: { $ref: '#/components/schemas/Ulid' }
+        kind: { type: string, enum: [story, event, programme] }
+        title: { type: string }
+        plannedFor: { type: string, format: date-time }
+        status: { type: string }
+    Assignment:
+      type: object
+      required: [planningItemId, assigneeRef]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        planningItemId: { $ref: '#/components/schemas/Ulid' }
+        assigneeRef: { type: string, description: 'user or group id' }
+        role: { type: string }
+        brief: { type: string }
+        dueAt: { type: string, format: date-time }
+    Booking:
+      type: object
+      required: [resourceId, from, to]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        resourceId: { $ref: '#/components/schemas/Ulid' }
+        planningItemId: { $ref: '#/components/schemas/Ulid' }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        state: { type: string, enum: [held, confirmed, released, consumed] }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

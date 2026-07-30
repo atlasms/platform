@@ -1,0 +1,80 @@
+openapi: 3.1.0
+info:
+  title: Atlas MTS API
+  version: 0.1.0
+  description: >-
+    Stub contract for the Media Transcoding System. Thin and mostly queue-driven — jobs are
+    normally enqueued via the broker by BMS/RIM, not users. See ../services/mts.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: jobs
+  - name: admin
+  - name: internal
+paths:
+  /jobs:
+    post:
+      operationId: enqueueJob
+      tags: [internal]
+      summary: Enqueue a transcode job (normally from BMS/RIM)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assetId, presetIds]
+              properties:
+                assetId: { $ref: '#/components/schemas/Ulid' }
+                presetIds: { type: array, items: { type: string }, minItems: 1 }
+                inputPath: { type: string }
+      responses:
+        '202': { description: Job queued, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
+  /jobs/{id}:
+    get:
+      operationId: getJob
+      tags: [jobs]
+      summary: Job status/progress (scope asset:read)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Job, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+  /profiles:
+    get: { operationId: listProfiles, tags: [admin], summary: List transcode profiles, responses: { '200': { description: Profiles } } }
+    post: { operationId: createProfile, tags: [admin], summary: Create a transcode profile per channel/type, responses: { '201': { description: Created } } }
+  /workers:
+    get:
+      operationId: getWorkers
+      tags: [admin]
+      summary: Current worker topology (for dashboards)
+      responses:
+        '200':
+          description: Workers
+          content: { application/json: { schema: { type: object, properties: { count: { type: integer }, queueDepth: { type: integer } } } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    Job:
+      type: object
+      required: [id, assetId, state]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        assetId: { $ref: '#/components/schemas/Ulid' }
+        state: { type: string, enum: [queued, running, completed, failed, dead-letter] }
+        percent: { type: number }
+        attempts: { type: integer }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

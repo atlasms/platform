@@ -1,0 +1,128 @@
+openapi: 3.1.0
+info:
+  title: Atlas HSM API
+  version: 0.1.0
+  description: >-
+    Stub contract for the Hierarchical Storage Manager — asset location, restore, file
+    operations, and send-to-air export. File operations and export are internal (service-to-
+    service). See ../services/hsm.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: location
+  - name: internal
+  - name: admin
+paths:
+  /assets/{id}/location:
+    get:
+      operationId: getAssetLocation
+      tags: [location]
+      summary: Current tier/status/checksum of each rendition (scope asset:read)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200':
+          description: Locations
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/FileEntry' } }
+  /assets/{id}/restore:
+    post:
+      operationId: requestRestore
+      tags: [location]
+      summary: Request restore to online; returns an ETA (scope asset:restore)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '202':
+          description: Restore accepted
+          content:
+            application/json:
+              schema: { type: object, properties: { restoreRequestId: { $ref: '#/components/schemas/Ulid' }, etaSeconds: { type: integer } } }
+  /files/operations:
+    post:
+      operationId: fileOperation
+      tags: [internal]
+      summary: Copy/move/delete (internal, permissioned; not user-facing)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, assetId]
+              properties:
+                kind: { type: string, enum: [copy, move, delete] }
+                assetId: { $ref: '#/components/schemas/Ulid' }
+                toTier: { type: string, enum: [online, near-line, offline] }
+      responses:
+        '202': { description: Operation accepted, content: { application/json: { schema: { $ref: '#/components/schemas/Operation' } } } }
+  /playout/exports:
+    post:
+      operationId: createPlayoutExport
+      tags: [internal]
+      summary: Copy schedule outputs (hi-res + playlist) to a network destination with path rewrite
+      description: Called by Scheduling on send-to-air; enforces approved-only + control-room path rewrite (FR-SCH-5a).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scheduleId, destination]
+              properties:
+                scheduleId: { $ref: '#/components/schemas/Ulid' }
+                destination: { type: string }
+                pathRewriteRuleId: { type: string }
+      responses:
+        '202': { description: Export accepted, content: { application/json: { schema: { $ref: '#/components/schemas/Operation' } } } }
+  /operations/{id}:
+    get:
+      operationId: getOperation
+      tags: [location]
+      summary: Progress of a long-running operation
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Operation, content: { application/json: { schema: { $ref: '#/components/schemas/Operation' } } } }
+  /tier-policies:
+    get: { operationId: listTierPolicies, tags: [admin], summary: List tier policies, responses: { '200': { description: Policies } } }
+    post: { operationId: createTierPolicy, tags: [admin], summary: Create a tier policy, responses: { '201': { description: Created } } }
+  /storage-targets:
+    get: { operationId: listStorageTargets, tags: [admin], summary: List storage targets, responses: { '200': { description: Targets } } }
+    post: { operationId: createStorageTarget, tags: [admin], summary: Create a storage target, responses: { '201': { description: Created } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    FileEntry:
+      type: object
+      required: [assetId, tier, status]
+      properties:
+        assetId: { $ref: '#/components/schemas/Ulid' }
+        renditionKind: { type: string, enum: [original, proxy, broadcast, thumbnail, vtt-filmstrip, hover-preview] }
+        tier: { type: string, enum: [online, near-line, offline] }
+        status: { type: string, enum: [online, near-line, offline, restoring] }
+        path: { type: string }
+        checksum: { type: object, properties: { algorithm: { type: string }, value: { type: string } } }
+    Operation:
+      type: object
+      required: [id, kind, state]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        kind: { type: string, enum: [copy, move, delete, restore, export] }
+        state: { type: string, enum: [queued, running, completed, failed] }
+        progress: { type: number }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/workflow.completed.payload.schema.json",
+  "title": "workflow.completed payload",
+  "description": "Emitted by BMS when a workflow instance reaches a terminal state. Consumed by Notifications and Logging.",
+  "type": "object",
+  "required": ["instanceId", "definitionId", "outcome"],
+  "additionalProperties": false,
+  "properties": {
+    "instanceId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "definitionId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "The asset the flow was about, when asset-scoped." },
+    "outcome": { "enum": ["completed", "failed", "cancelled", "compensated"] },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "error": { "$ref": "../common.schema.json#/$defs/Error", "description": "Present when outcome is failed." }
+  }
+}

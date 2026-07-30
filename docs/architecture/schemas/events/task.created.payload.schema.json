@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/task.created.payload.schema.json",
+  "title": "task.created payload",
+  "description": "Emitted by Notifications & Messaging when a task is created (assigned to a user or group). Consumed by the WebSocket service and Logging. A workflow human-task (workflow.task.created from BMS) is materialized as one of these.",
+  "type": "object",
+  "required": ["id", "assignee", "assigneeKind", "kind", "createdAt"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "assignee": { "type": "string", "description": "User id or group id." },
+    "assigneeKind": { "enum": ["user", "group"] },
+    "kind": { "enum": ["approve", "edit", "review", "generic"] },
+    "subjectRef": { "$ref": "../common.schema.json#/$defs/EntityRef", "description": "What the task is about (asset, workflow instance, story...)." },
+    "dueAt": { "type": "string", "format": "date-time" },
+    "createdBy": { "type": "string" },
+    "workflowInstanceId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "Set when the task originates from a BMS human step." },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/asset.expired.payload.schema.json",
+  "title": "asset.expired payload",
+  "description": "Emitted by MAM when a previously-approved asset reaches its expiry (expiresAt) and becomes unusable, requiring manual re-review (FR-APP-7). Fired by MAM's internal scheduler, not a user action. Consumed by Scheduling (drop from schedulable set), Notifications, Logging.",
+  "type": "object",
+  "required": ["assetId", "expiredAt"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "expiredAt": { "type": "string", "format": "date-time", "description": "The expiresAt that has now been reached." },
+    "priorApprover": { "type": "string", "description": "User id whose approval just lapsed." },
+    "expirySource": { "enum": ["asset", "category"], "description": "Whether expiresAt came from a per-asset override or the inherited category default (FR-TAX-7)." }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/asset.deleted.payload.schema.json",
+  "title": "asset.deleted payload",
+  "description": "Emitted by MAM when an asset is purged — chiefly a rejected asset whose retention window (retainUntil) has lapsed without replacement (FR-APP-8), or an explicit administrative deletion. Consumed by HSM (remove bytes per policy) and Logging.",
+  "type": "object",
+  "required": ["assetId", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "reason": { "enum": ["rejected-retention", "manual", "policy"], "description": "Why the asset was purged." },
+    "deletedBy": { "type": "string", "description": "User id for a manual deletion; absent when the scheduler purges automatically." },
+    "deletedAt": { "type": "string", "format": "date-time" }
+  }
+}

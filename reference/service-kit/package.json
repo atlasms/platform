@@ -1,0 +1,11 @@
+{
+  "name": "@atlas/service-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The per-service template: typed config loading, an error taxonomy (-> HTTP problem+JSON), correlation-id context, health/readiness, a structured logger, and JWT/JWKS verification. Every service imports this.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "node --import tsx --test test/service-kit.test.ts" },
+  "dependencies": { "jose": "^6.2.4" },
+  "devDependencies": { "tsx": "^4.23.1" }
+}

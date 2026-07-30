@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/transcode.started.payload.schema.json",
+  "title": "transcode.started payload",
+  "description": "Emitted by MTS when a worker begins a job.",
+  "type": "object",
+  "required": ["jobId", "assetId"],
+  "additionalProperties": false,
+  "properties": {
+    "jobId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "workerId": { "type": "string" }
+  }
+}

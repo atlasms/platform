@@ -1,0 +1,104 @@
+openapi: 3.1.0
+info:
+  title: Atlas Scheduling API
+  version: 0.1.0
+  description: >-
+    Stub contract for Scheduling — program tables, validation, send-to-air, and export profiles.
+    See ../services/scheduling.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: schedules
+  - name: admin
+paths:
+  /schedules:
+    get:
+      operationId: listSchedules
+      tags: [schedules]
+      summary: List program tables (scope schedule:read)
+      responses:
+        '200': { description: Schedules, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Schedule' } } } } }
+    post:
+      operationId: createSchedule
+      tags: [schedules]
+      summary: Create a program table (scope schedule:write)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Schedule' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Schedule' } } } }
+  /schedules/{id}/items:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: listScheduleItems
+      tags: [schedules]
+      summary: List items in a schedule
+      responses:
+        '200': { description: Items, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScheduleItem' } } } } }
+    post:
+      operationId: addScheduleItem
+      tags: [schedules]
+      summary: Add/replace items (scope schedule:write)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleItem' } } } }
+      responses:
+        '201': { description: Added }
+  /schedules/{id}/validate:
+    post:
+      operationId: validateSchedule
+      tags: [schedules]
+      summary: Validate gaps/overlaps/rights/availability (FR-SCH-2/3)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema: { type: object, properties: { valid: { type: boolean }, problems: { type: array, items: { type: string } } } }
+  /schedules/{id}/send-to-air:
+    post:
+      operationId: sendToAir
+      tags: [schedules]
+      summary: Serialize the playlist and trigger HSM delivery (scope schedule:send; audited)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '202': { description: Sending }
+        '409': { $ref: '#/components/responses/Error' }
+  /export-profiles:
+    get: { operationId: listExportProfiles, tags: [admin], summary: List export profiles, responses: { '200': { description: Profiles } } }
+    post: { operationId: createExportProfile, tags: [admin], summary: Create an export profile (format + destination + path-rewrite), responses: { '201': { description: Created } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    Schedule:
+      type: object
+      required: [channelId]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        timezone: { type: string }
+        state: { type: string, enum: [draft, validated, sending, sent, failed] }
+    ScheduleItem:
+      type: object
+      required: [assetId, startTc]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        assetId: { $ref: '#/components/schemas/Ulid' }
+        renditionKind: { type: string }
+        startTc: { type: string, description: 'HH:MM:SS:FF' }
+        durationSec: { type: number }
+        order: { type: integer }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

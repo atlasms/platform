@@ -1,0 +1,211 @@
+openapi: 3.1.0
+info:
+  title: Atlas BMS API
+  version: 0.1.0
+  description: >-
+    Stub contract for the Business Process Management System (workflow engine) — workflow
+    definitions, running instances, and human tasks. See ../services/bms.md.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host: { default: atlas.example }
+security:
+  - bearerAuth: []
+tags:
+  - name: workflows
+  - name: instances
+  - name: tasks
+paths:
+  /workflows:
+    get:
+      operationId: listWorkflows
+      tags: [workflows]
+      summary: List workflow definitions (scope workflow:admin)
+      responses:
+        '200': { description: Definitions, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkflowDefinition' } } } } }
+    post:
+      operationId: createWorkflow
+      tags: [workflows]
+      summary: Create a workflow definition
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowDefinition' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowDefinition' } } } }
+  /workflows/palette:
+    get:
+      operationId: getPalette
+      tags: [workflows]
+      summary: Step kinds + their config schemas (drives the designer palette, FR-BMS-8)
+      responses:
+        '200': { description: Palette, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/PaletteEntry' } } } } }
+  /workflows/{id}/validate:
+    post:
+      operationId: validateWorkflow
+      tags: [workflows]
+      summary: Validate a draft graph without publishing (live designer feedback, FR-BMS-9)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowDefinition' } } } }
+      responses:
+        '200': { description: 'Validation result', content: { application/json: { schema: { $ref: '#/components/schemas/ValidationResult' } } } }
+  /workflows/{id}/publish:
+    post:
+      operationId: publishWorkflow
+      tags: [workflows]
+      summary: Validate + publish a new immutable definition version (FR-BMS-9)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Published, content: { application/json: { schema: { $ref: '#/components/schemas/PublishResult' } } } }
+        '422': { description: 'Validation failed - never publishes an invalid graph', content: { application/json: { schema: { $ref: '#/components/schemas/ValidationResult' } } } }
+  /workflows/{id}/export:
+    get:
+      operationId: exportWorkflow
+      tags: [workflows]
+      summary: Export the definition as BPMN 2.0 XML with DI layout (FR-BMS-10)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: format, in: query, required: false, schema: { type: string, enum: [bpmn], default: bpmn } }
+      responses:
+        '200': { description: 'BPMN 2.0 document', content: { application/xml: { schema: { type: string } } } }
+  /workflows/import:
+    post:
+      operationId: importWorkflow
+      tags: [workflows]
+      summary: Import a BPMN 2.0 file to a draft definition, validated (FR-BMS-10)
+      requestBody: { required: true, content: { application/xml: { schema: { type: string } } } }
+      responses:
+        '201': { description: 'Draft definition', content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowDefinition' } } } }
+        '422': { description: 'Unsupported BPMN elements', content: { application/json: { schema: { $ref: '#/components/schemas/ImportError' } } } }
+  /instances:
+    get:
+      operationId: listInstances
+      tags: [instances]
+      summary: List running flow instances (scope workflow:read)
+      responses:
+        '200': { description: Instances, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkflowInstance' } } } } }
+  /instances/{id}:
+    get:
+      operationId: getInstance
+      tags: [instances]
+      summary: Running flow state + current position (FR-BMS-6)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Instance, content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowInstance' } } } }
+  /instances/{id}/signal:
+    post:
+      operationId: signalInstance
+      tags: [instances]
+      summary: Send an external signal to a waiting instance
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { content: { application/json: { schema: { type: object, properties: { name: { type: string }, data: { type: object } } } } } }
+      responses:
+        '202': { description: Signalled }
+  /tasks/{id}/complete:
+    post:
+      operationId: completeTask
+      tags: [tasks]
+      summary: Complete a human-in-the-loop step (assignee only)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { content: { application/json: { schema: { type: object, properties: { outcome: { type: string } } } } } }
+      responses:
+        '200': { description: Completed }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    WorkflowDefinition:
+      type: object
+      required: [name]
+      description: 'Directed graph edited by the Studio designer and executed by the engine (spec §3.2). BPMN-2.0-convertible (spec §3.3).'
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        name: { type: string }
+        scope: { type: string, description: 'category/type/usage' }
+        version: { type: integer }
+        published: { type: boolean }
+        steps: { type: array, items: { $ref: '#/components/schemas/Step' } }
+        transitions: { type: array, items: { type: object, properties: { from: { type: string }, to: { type: string }, when: { type: string, description: 'condition → BPMN conditionExpression' } } } }
+    Step:
+      type: object
+      required: [id, kind]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [command, wait-event, human-task, timer, branch, parallel, sub-flow], description: 'maps to a BPMN element (spec §3.3)' }
+        config: { type: object, additionalProperties: true }
+        position: { type: object, description: 'canvas x/y → BPMN DI; presentation-only, ignored by the engine', properties: { x: { type: number }, y: { type: number } } }
+        retry: { type: object, additionalProperties: true }
+        timeout: { type: string }
+        compensation: { type: string, description: 'step id to run on failure' }
+    WorkflowInstance:
+      type: object
+      required: [id, state]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        assetId: { $ref: '#/components/schemas/Ulid' }
+        state: { type: string, enum: [running, waiting, compensating, completed, failed] }
+        currentStep: { type: string }
+    PaletteEntry:
+      type: object
+      required: [kind, label]
+      description: 'One draggable step kind for the designer palette (see workflows/palette.json).'
+      properties:
+        kind: { type: string, enum: [start, end, command, human-task, wait-event, timer, branch, parallel, sub-flow] }
+        label: { type: string }
+        icon: { type: string }
+        category: { type: string, enum: [events, activities, gateways] }
+        bpmn: { type: string, description: 'the BPMN element this maps to' }
+        waits: { type: string, enum: [no, yes, if-await, at-join, on-trigger] }
+        configSchema: { type: object, description: 'inlined JSON Schema for this kind config (a $def of workflow-definition.schema.json)' }
+        configSchemaRef: { type: string, description: 'alternative to configSchema: a JSON-pointer/URI to the $def' }
+        hint: { type: string }
+    ValidationIssue:
+      type: object
+      required: [severity, message]
+      description: 'One diagnostic. Anchored to a step or a transition (never both).'
+      properties:
+        severity: { type: string, enum: [error, warning] }
+        code: { type: string, description: 'stable machine code, e.g. UNREACHABLE_STEP, FEEL_PARSE, BRANCH_NO_DEFAULT, UNBOUND_VAR' }
+        message: { type: string }
+        stepId: { type: string }
+        transitionId: { type: string }
+        path: { type: string, description: 'JSON pointer into the definition, e.g. /steps/3/config/await/correlate' }
+    ValidationResult:
+      type: object
+      required: [valid, issues]
+      properties:
+        valid: { type: boolean, description: 'false if any issue has severity=error' }
+        issues: { type: array, items: { $ref: '#/components/schemas/ValidationIssue' } }
+    PublishResult:
+      type: object
+      required: [workflowId, version, publishedAt]
+      properties:
+        workflowId: { $ref: '#/components/schemas/Ulid' }
+        version: { type: integer }
+        publishedAt: { type: string, format: date-time }
+    ImportError:
+      type: object
+      required: [code, message]
+      description: 'BPMN import rejected: constructs outside the Atlas subset are reported, never silently dropped.'
+      properties:
+        code: { type: string, enum: [UNSUPPORTED_BPMN, MALFORMED_XML] }
+        message: { type: string }
+        unsupported:
+          type: array
+          items:
+            type: object
+            properties:
+              elementId: { type: string }
+              elementType: { type: string, description: 'e.g. bpmn:inclusiveGateway, bpmn:subProcess (event)' }
+              reason: { type: string }
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+  responses:
+    Error:
+      description: Error response
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

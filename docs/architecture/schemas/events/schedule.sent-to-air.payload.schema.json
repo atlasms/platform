@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/schedule.sent-to-air.payload.schema.json",
+  "title": "schedule.sent-to-air payload",
+  "description": "Emitted by Scheduling to trigger HSM delivery of hi-res files + playlist. Consumed by HSM, Logging.",
+  "type": "object",
+  "required": ["scheduleId"],
+  "additionalProperties": false,
+  "properties": {
+    "scheduleId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "destination": { "type": "string", "description": "Control-room network destination." },
+    "format": { "type": "string", "examples": ["mcrlist"] },
+    "pathRewriteRuleId": { "type": "string", "description": "Rule ensuring src_path resolves on the playout host (FR-SCH-5a)." }
+  }
+}

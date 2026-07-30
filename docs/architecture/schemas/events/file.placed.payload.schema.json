@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/file.placed.payload.schema.json",
+  "title": "file.placed payload",
+  "description": "Emitted by HSM when a rendition's bytes are placed on a tier. Consumed by MAM, Logging.",
+  "type": "object",
+  "required": ["assetId", "tier", "path"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "renditionKind": { "$ref": "../common.schema.json#/$defs/RenditionKind" },
+    "tier": { "$ref": "../common.schema.json#/$defs/Tier" },
+    "path": { "type": "string" },
+    "checksum": { "$ref": "../common.schema.json#/$defs/Checksum" }
+  }
+}
