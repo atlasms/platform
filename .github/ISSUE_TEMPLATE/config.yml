@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Epic or planned story
+    url: https://github.com/atlasms/platform/blob/main/docs/roadmap/21-epic-breakdown.md
+    about: >-
+      Epics and Phase 0-1 stories are generated from the epic breakdown doc. Edit the doc and
+      re-run scripts/seed-github-backlog.mjs rather than hand-creating them, so the doc stays
+      the source of truth.
+  - name: How we work (cadence, WIP limits, Definition of Done)
+    url: https://github.com/atlasms/platform/blob/main/docs/roadmap/20-delivery-process.md
+    about: The delivery working agreement — read before pulling your first story.

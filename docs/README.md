@@ -38,6 +38,8 @@ area you care about.
 | 15 | [Review Lifecycle — Implementation Plan](roadmap/15-review-lifecycle-implementation-plan.md) | Engineers, delivery | Step-by-step build plan for manual review, approval expiry, category-inherited expiry, and rejected-retention purge (Beta / Phase 2). |
 | 16 | [System Implementation Plan](roadmap/16-system-implementation-plan.md) | Engineers, delivery | The **general** build plan: foundations, shared contracts, service build order, phase→deliverable mapping, cross-cutting standards. |
 | 16+ | [Per-Service Implementation Plans](roadmap/services/README.md) | Engineers | One **build plan per service** (backbone → MVP → Beta → v1.0), behind the [service specs](architecture/services/). |
+| 20 | [Delivery Process](roadmap/20-delivery-process.md) | Whole team | The **working agreement**: Scrumban cadence, board + WIP limits, work-item taxonomy, Definition of Ready/Done, metrics, and how it all maps to **GitHub Projects**. |
+| 21 | [Epic Breakdown](roadmap/21-epic-breakdown.md) | Delivery, engineers | The backlog: **46 epics** across the five phases, storied in full for Phases 0–1 — the source the GitHub issues are generated from. |
 | 10 | [Third-Party Developer Guide](integrations/10-third-party-developer-guide.md) | Integrators | How external systems and developers connect to Atlas. |
 | 14 | [Playout Export — MCRList](integrations/14-playout-mcrlist-format.md) | Integrators, playout | The Cinegy Air `mcrs_playlist` format Atlas exports at send-to-air. |
 | 18 | [Market & Positioning](strategy/18-market-and-positioning.md) | Leadership, sales | Target customers, competitive landscape (Dalet, Avid, Superdesk…), differentiation. |

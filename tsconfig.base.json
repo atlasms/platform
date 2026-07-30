@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+
+    // Libraries have NO build step — package `exports` point straight at ./src/index.ts and
+    // tsx/Node resolve the TypeScript at runtime, so imports carry explicit `.ts` extensions.
+    // This is the supported way to typecheck that layout, and is only legal with noEmit.
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@atlas/contracts": ["libs/contracts/src/index.ts"],
+      "@atlas/messaging": ["libs/messaging/src/index.ts"],
+      "@atlas/service-kit": ["libs/service-kit/src/index.ts"],
+      "@atlas/policy": ["libs/policy/src/index.ts"],
+      "@atlas/reference": ["libs/reference/src/index.ts"],
+      "@atlas/data": ["libs/data/src/index.ts"],
+      "@atlas/bms-workflow": ["libs/bms-workflow/src/index.ts"]
+    }
+  },
+  "exclude": ["node_modules", "dist", ".nx", "reference"]
+}

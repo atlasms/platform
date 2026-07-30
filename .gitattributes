@@ -1,0 +1,37 @@
+# Normalize line endings so a mixed Windows/Linux/macOS team gets deterministic
+# diffs and CI results. Text is stored LF in the repo regardless of checkout.
+* text=auto eol=lf
+
+# Windows-only tooling that genuinely needs CRLF.
+*.ps1   text eol=crlf
+*.psm1  text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+# Must stay LF or they break when executed on Linux / in containers.
+*.sh          text eol=lf
+Dockerfile*   text eol=lf
+*.mjs         text eol=lf
+*.ts          text eol=lf
+
+# Binary — never touch, never diff.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.mxf binary
+*.mp4 binary
+*.mov binary
+*.wav binary
+
+# Golden fixtures must stay byte-exact or the round-trip tests are meaningless.
+*.golden.*        -text -diff
+**/fixtures/**    -text
+
+# Generated — collapse in PR diffs so reviews stay readable.
+package-lock.json linguist-generated=true -diff
+
+# Keep docs out of the language stats; this is a platform, not a docs project.
+docs/**  linguist-documentation=true

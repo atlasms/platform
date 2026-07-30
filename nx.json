@@ -1,0 +1,45 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "sharedGlobals"],
+    "production": [
+      "default",
+      "!{projectRoot}/test/**/*",
+      "!{projectRoot}/**/*.test.ts",
+      "!{projectRoot}/**/*.md"
+    ],
+    "sharedGlobals": [
+      "{workspaceRoot}/tsconfig.base.json",
+      "{workspaceRoot}/eslint.config.mjs",
+      "{workspaceRoot}/nx.json",
+      "{workspaceRoot}/docs/architecture/schemas/**/*.json"
+    ]
+  },
+  "targetDefaults": {
+    "test": {
+      "cache": true,
+      "inputs": ["default", "^production"],
+      "dependsOn": ["^build"]
+    },
+    "lint": {
+      "cache": true,
+      "inputs": ["default", "{workspaceRoot}/eslint.config.mjs"]
+    },
+    "typecheck": {
+      "cache": true,
+      "inputs": ["default", "^production"],
+      "dependsOn": ["^build"]
+    },
+    "build": {
+      "cache": true,
+      "inputs": ["production", "^production"],
+      "dependsOn": ["^build"],
+      "outputs": ["{projectRoot}/dist"]
+    }
+  },
+  "defaultBase": "main",
+  "parallel": 4,
+  "useInferencePlugins": false,
+  "_comment": "Nx Cloud is deliberately NOT enabled: the build must work fully offline in air-gapped environments (FR-PLat-7 / A9). Caching stays local under .nx/cache.",
+  "analytics": false
+}

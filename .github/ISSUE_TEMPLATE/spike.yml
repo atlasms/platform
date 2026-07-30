@@ -1,0 +1,49 @@
+name: Spike
+description: Time-boxed research answering one specific question.
+title: "Spike: "
+type: Spike
+projects: ["atlasms/2"]
+labels: ["spike"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A spike **always produces a written artifact** — a doc update or an ADR — never just
+        "we looked into it". Spikes are how the
+        [engineering risk register](../../docs/roadmap/16-system-implementation-plan.md#9-risk-register-engineering)
+        gets retired.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: The question
+      description: One decidable question. If you cannot phrase it as a question, this is not a spike.
+      placeholder: Can Node saturate the storage path for HSM byte movement, or do we need the native escape hatch?
+    validations:
+      required: true
+
+  - type: input
+    id: timebox
+    attributes:
+      label: Timebox
+      description: Hard stop. Report what you learned even if inconclusive.
+      placeholder: 3 days
+    validations:
+      required: true
+
+  - type: textarea
+    id: artifact
+    attributes:
+      label: Artifact it will produce
+      description: Which doc gets updated, or which ADR gets written.
+      placeholder: Updates docs/architecture/services/hsm.md §8 with a profiling result and a go/no-go on the escape hatch.
+    validations:
+      required: true
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision it unblocks
+      description: What cannot proceed until this is answered?
+    validations:
+      required: true

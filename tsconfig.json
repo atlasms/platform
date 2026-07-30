@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "Root config for editors and workspace-level tooling. Each package under libs/ and apps/ has its own tsconfig.json that extends tsconfig.base.json — that is where compilation actually happens, and what `nx run-many -t typecheck` drives.",
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "include": [],
+  "references": []
+}
