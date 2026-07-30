@@ -1,0 +1,18 @@
+{
+  "name": "@atlas/policy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The pure authorization evaluator: can(), compile(). Zero runtime dependencies and browser-safe, so the SAME decision function runs in every service (to enforce) and in Studio (to render). A second implementation would be the bug.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.1"
+  }
+}
