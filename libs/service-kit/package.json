@@ -1,0 +1,21 @@
+{
+  "name": "@atlas/service-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The service template: structured logging with correlation context, bootstrap config load/validate, JWT/JWKS verification, the error taxonomy, and health/readiness. Every service starts from this so the cross-cutting behaviour is identical and never re-implemented.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "jose": "^6.2.4"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.1"
+  }
+}
