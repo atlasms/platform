@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.nx/
+coverage/
+package-lock.json
+
+# The reference implementation is frozen and already validated (84 tests).
+# It is formatted when each package is lifted into libs/ (EP-02.1, EP-03.1, ...).
+reference/
+
+# Docs are hand-formatted markdown with deliberate table alignment and
+# line breaks; prettier would reflow them and destroy the diffs.
+docs/
+
+# Golden fixtures must stay byte-exact.
+**/*.golden.*

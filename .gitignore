@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+
+# nx
+.nx/
+.nx/cache/
+.nx/workspace-data/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# test / coverage
+coverage/
+.nyc_output/
+
+# env & secrets — bootstrap config is mounted, never committed
+# (docs/architecture/configuration-and-reference-data.md §3)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# editors / OS
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+npm-debug.log*

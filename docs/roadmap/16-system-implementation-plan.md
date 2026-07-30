@@ -49,8 +49,23 @@ These are the rails. They are the highest-leverage, highest-risk work; invest he
 
 ### 3.1 Monorepo & shared libraries
 
-- **Nx or Turborepo** monorepo; one deployable per service under `apps/`, shared code under
-  `libs/`. Strict TypeScript, one lint/format/test config.
+- **Nx** monorepo *(decided — [EP-01.1](21-epic-breakdown.md#ep-01--monorepo-cicd--environments))*;
+  one deployable per service under `apps/`, shared code under `libs/`. Strict TypeScript, one
+  lint/format/test config.
+
+  > **Why Nx over Turborepo.** Three reasons specific to this build: (1) `nx affected` computes the
+  > dependency graph, which *is* the [consumer-fanout CI](#6-cross-cutting-engineering-standards)
+  > requirement (EP-01.3) rather than something bolted on; (2) generators give us the
+  > **service template** EP-04.9 already assumes (`nx g service <name>`), so every service starts
+  > compliant instead of copied; (3) first-class NestJS **and** Angular plugins — both halves of the
+  > stack. Turborepo is the lighter task runner, but we would rebuild the graph and generators
+  > ourselves. **Nx Cloud is deliberately not enabled** — the build must work fully offline
+  > ([FR-PLat-7](../requirements/05-functional-requirements.md#platform)); caching stays local.
+
+  **Toolchain is fixed by the reference implementation**, not re-litigated: ESM (`"type": "module"`),
+  the built-in **`node:test`** runner with `node:assert/strict`, and **`tsx`** for TypeScript
+  execution — no build step for libraries. This is what lets the 84 existing reference tests lift
+  across unchanged.
 - **Foundational shared libs** (build first, version carefully — everything depends on them). The
   first three exist as **tested reference implementations** in [`reference/`](../../reference/README.md)
   — lift them into `libs/`:
