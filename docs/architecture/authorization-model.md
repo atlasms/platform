@@ -119,6 +119,31 @@ is what Studio uses to decide which fields render editable vs read-only.
 user write **any** asset?"* — right for showing a nav item; the resource-specific check still runs at
 the point of action and on the server.
 
+### 5.1 Lenient vs strict — and why services must use strict {#51-lenient-vs-strict}
+
+The "omitted predicate is any" rule has a sharp edge that surfaced while implementing the evaluator:
+**an incomplete context makes a decision _more_ permissive, not less.** A rule scoped to
+`channelIds: ['ch12']` matches *everywhere* when the caller supplies no `channelId`, because there is
+nothing to fail the predicate against.
+
+```ts
+can(policy, 'asset:write', { categoryPath: '/news/' })              // ← channelId forgotten
+// allowed: true  — a ch12-scoped rights grant matched outside ch12
+```
+
+That is correct for Studio, which deliberately asks broad questions. It is **wrong for enforcement**,
+where forgetting a field must never widen a grant. So the evaluator has two modes:
+
+| Mode | Call | Unsatisfiable predicate | Use |
+|------|------|------------------------|-----|
+| **Lenient** (default) | `can(policy, perm, ctx?)` | treated as "any" — matches | **Studio only** — show/hide/enable |
+| **Strict** | `canEnforce(policy, perm, ctx)` or `can(…, { strict: true })` | **cannot match** | **Every service**, at the point of mutation |
+
+**Normative:** a service enforcing a decision SHALL use `canEnforce` (or `strict: true`) and SHALL
+pass the full resource context it holds. Lenient mode SHALL NOT be used as the security boundary.
+
+Both modes agree whenever the context is complete — that equivalence is itself a test.
+
 ## 6. Delivery & caching
 
 - **JWT stays small**: it carries `sub`, `channelId`, `permVersion` — **not** the rules.
