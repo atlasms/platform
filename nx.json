@@ -12,7 +12,9 @@
       "{workspaceRoot}/tsconfig.base.json",
       "{workspaceRoot}/eslint.config.mjs",
       "{workspaceRoot}/nx.json",
-      "{workspaceRoot}/docs/architecture/schemas/**/*.json"
+      "{workspaceRoot}/package-lock.json",
+      "{workspaceRoot}/docs/architecture/schemas/**/*.json",
+      "{workspaceRoot}/.github/workflows/*.yml"
     ]
   },
   "targetDefaults": {

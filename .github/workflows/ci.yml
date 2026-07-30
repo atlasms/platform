@@ -1,0 +1,72 @@
+name: CI
+
+# EP-01.2 (pipeline) + EP-01.3 (consumer fanout).
+# On a PR we run only what the change AFFECTS; on main we run everything.
+# `nx affected` walks the project graph, so touching a shared lib runs every dependent's
+# tests — that is the consumer-fanout requirement, not a separate mechanism.
+#
+# The event schemas under docs/ are EXECUTABLE: @atlas/contracts loads all 53 of them at
+# runtime, so a malformed schema is a broken build, not a doc typo. nx.json lists them in
+# `sharedGlobals`, which makes a schema change affect every project. Verified:
+#
+#   docs/architecture/schemas/common.schema.json  -> all projects affected
+#   libs/contracts/src/registry.ts                -> contracts only
+#   docs/README.md (prose)                        -> nothing
+#
+# So no separate schema job is needed; re-check with:
+#   npx nx show projects --affected --files=<path>
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A newer push to the same PR cancels the older run; never cancel a run on main.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Nx Cloud is deliberately not used — the build must work air-gapped (FR-PLat-7).
+  NX_CLOUD_ACCESS_TOKEN: ""
+  NX_DAEMON: "false"
+
+jobs:
+  verify:
+    name: lint · typecheck · test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history: `nx affected` diffs against the merge base, and a shallow
+          # clone makes that comparison silently wrong rather than failing loudly.
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Format check
+        run: npm run format:check
+
+      # --- PR: only what this change affects -------------------------------
+      - name: Affected (lint, typecheck, test)
+        if: github.event_name == 'pull_request'
+        run: npx nx affected -t lint typecheck test --base=origin/${{ github.base_ref }} --head=HEAD
+
+      # --- main: everything, no exceptions ---------------------------------
+      - name: All projects (lint, typecheck, test)
+        if: github.event_name == 'push'
+        run: npx nx run-many -t lint typecheck test
