@@ -40,5 +40,6 @@
   "defaultBase": "main",
   "parallel": 4,
   "useInferencePlugins": false,
-  "_comment": "Nx Cloud is deliberately NOT enabled: the build must work fully offline in air-gapped environments (FR-PLat-7 / A9). Caching stays local under .nx/cache."
+  "_comment": "Nx Cloud is deliberately NOT enabled: the build must work fully offline in air-gapped environments (FR-PLat-7 / A9). Caching stays local under .nx/cache.",
+  "analytics": false
 }

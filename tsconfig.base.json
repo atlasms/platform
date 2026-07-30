@@ -22,6 +22,10 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
 
+    // Libraries have NO build step — package `exports` point straight at ./src/index.ts and
+    // tsx/Node resolve the TypeScript at runtime, so imports carry explicit `.ts` extensions.
+    // This is the supported way to typecheck that layout, and is only legal with noEmit.
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "declaration": false,
     "sourceMap": true,

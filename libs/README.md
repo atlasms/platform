@@ -8,7 +8,7 @@ versioned carefully: a change fans out, which is why CI runs **all consumers** o
 
 | Lib            | Purpose                                                                                                              | Lifted from                                                                | Epic     |
 | -------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------- |
-| `contracts`    | Types + envelope build/validate + a payload validator for every event. **The single source of cross-service truth.** | [`reference/contracts`](../reference/contracts/README.md) (8 tests)        | EP-02    |
+| ✅ `contracts` | Types + envelope build/validate + a payload validator for every event. **The single source of cross-service truth.** | [`reference/contracts`](../reference/contracts/README.md) (8 tests)        | EP-02    |
 | `messaging`    | Broker client: publish-with-outbox, subscribe-with-idempotency, retry/DLQ, correlation.                              | [`reference/messaging`](../reference/messaging/README.md) (6 tests)        | EP-03    |
 | `service-kit`  | The service template: health/readiness, logging, **bootstrap** config, JWT/JWKS, errors, tracing.                    | [`reference/service-kit`](../reference/service-kit/README.md) (8 tests)    | EP-04    |
 | `policy`       | The pure authorization evaluator `can()` — zero runtime deps, **browser-safe**.                                      | _(new)_                                                                    | EP-05    |
