@@ -50,8 +50,13 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-04.1** `@atlas/service-kit` | ✅ Lifted — 8 tests                                                                                         |
 | Everything else                  | ⬜ Not started                                                                                              |
 
-**22 tests across 3 projects, all green.** Open PR: **#176**
-(`feat/delivery-process-and-backlog`) — all work so far lives there, unmerged.
+**22 tests across 3 projects, all green.** Everything above is **merged to `main`** (PRs #176–#178).
+
+**CI runs on every PR** (`nx affected`) and on `main` (everything). But ⚠️ **it does not block
+merge** — branch protection needs a paid GitHub plan on a private repo. The ruleset is written and
+one command away: [`.github/rulesets/README.md`](.github/rulesets/README.md). Until then the
+Definition of Done is a convention, not a gate — so **run
+`npx nx run-many -t lint typecheck test` yourself before opening a PR.**
 
 **Suggested next tasks:** `EP-05` (`policy` — new code, not a lift; the browser-safe `can()`
 evaluator that everything depends on) · `EP-03.0` (broker spike — needs a human decision) ·

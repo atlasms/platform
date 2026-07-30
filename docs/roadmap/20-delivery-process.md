@@ -207,6 +207,12 @@ Enable in **Project → ⚙ → Workflows**: *Item added to project* → set Sta
 - **`Closes #<issue>`** in the PR body so merge closes the issue and the automation moves it.
 - Branch protection on `main`: PR required, CI green, ≥1 review (**2** for correctness-critical
   paths).
+  > ⚠️ **Not enforced yet.** Both classic branch protection and rulesets require a paid GitHub plan
+  > on **private** repos, and `atlasms/platform` is private (and should stay private). The ruleset is
+  > written and ready to apply in one command — see
+  > [`.github/rulesets/README.md`](../../.github/rulesets/README.md). Until then CI runs and a
+  > failure is **visible** on the PR but does **not block merge**, so the Definition of Done is a
+  > convention rather than a gate. This is the highest-value thing to unblock.
 - **One repo: `atlasms/platform`** — the Nx/Turborepo monorepo ([EP-01](21-epic-breakdown.md#ep-01--monorepo-cicd--environments))
   holding `docs/`, `libs/`, `apps/` and `scripts/` together. Docs ship in the same PR as the code
   they describe ([§11](#11-working-agreements)), which only works if they share a repo.

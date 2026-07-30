@@ -14,3 +14,6 @@ docs/
 
 # Golden fixtures must stay byte-exact.
 **/*.golden.*
+
+# Local agent/editor state — not ours to format.
+.claude/

@@ -1,0 +1,33 @@
+# Code owners — who must review what.
+#
+# NOTE: this file only *requests* reviewers today. It is only ENFORCED once branch
+# protection is available (see .github/rulesets/README.md — blocked on a GitHub plan
+# upgrade, not on engineering).
+
+# Default: the whole repo.
+*                                   @faridv
+
+# --- Correctness-critical paths -------------------------------------------------
+# These require 2 reviewers + pairing and are explicitly NOT AI-fast-tracked
+# (docs/roadmap/20-delivery-process.md#7-definition-of-done).
+
+/libs/policy/                       @faridv
+/apps/hsm/                          @faridv
+/apps/scheduling/                   @faridv
+
+# --- The shared contract surface ------------------------------------------------
+# A change here fans out to every service and to Studio. The event schemas are
+# executable: @atlas/contracts loads them at runtime.
+
+/libs/contracts/                    @faridv
+/docs/architecture/schemas/         @faridv
+/docs/architecture/openapi/         @faridv
+
+# --- Build, CI and delivery process ---------------------------------------------
+
+/.github/                           @faridv
+/nx.json                            @faridv
+/tsconfig.base.json                 @faridv
+/package.json                       @faridv
+/docs/roadmap/20-delivery-process.md @faridv
+/AGENTS.md                          @faridv
