@@ -9,7 +9,7 @@ versioned carefully: a change fans out, which is why CI runs **all consumers** o
 | Lib            | Purpose                                                                                                              | Lifted from                                                                | Epic     |
 | -------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------- |
 | ✅ `contracts` | Types + envelope build/validate + a payload validator for every event. **The single source of cross-service truth.** | [`reference/contracts`](../reference/contracts/README.md) (8 tests)        | EP-02    |
-| `messaging`    | Broker client: publish-with-outbox, subscribe-with-idempotency, retry/DLQ, correlation.                              | [`reference/messaging`](../reference/messaging/README.md) (6 tests)        | EP-03    |
+| ✅ `messaging` | Broker client: publish-with-outbox, subscribe-with-idempotency, retry/DLQ, correlation.                              | [`reference/messaging`](../reference/messaging/README.md) (6 tests)        | EP-03    |
 | `service-kit`  | The service template: health/readiness, logging, **bootstrap** config, JWT/JWKS, errors, tracing.                    | [`reference/service-kit`](../reference/service-kit/README.md) (8 tests)    | EP-04    |
 | `policy`       | The pure authorization evaluator `can()` — zero runtime deps, **browser-safe**.                                      | _(new)_                                                                    | EP-05    |
 | `reference`    | Admin-editable runtime config: descriptors, validation, scope resolution, snapshot client.                           | _(new)_                                                                    | EP-06    |
@@ -30,6 +30,16 @@ versioned carefully: a change fans out, which is why CI runs **all consumers** o
   package's `test` script so `nx run-many -t test` picks it up.
 - **Dependency direction stays acyclic.** `contracts` depends on nothing; `policy` depends only on
   contract types; services depend on libs, never the reverse.
+- **Cross-package imports use the `@atlas/*` specifier, never a relative path.** The
+  [`reference/`](../reference/) prototype reaches across packages with `../../contracts/src/index.ts`
+  because it predates workspace resolution. **Rewrite those on lift**, and declare the dependency in
+  the importing package's `package.json`. This is what Nx builds its dependency graph from, and the
+  graph is what makes `nx affected` (the [consumer-fanout CI](../docs/roadmap/21-epic-breakdown.md)
+  requirement) actually work. A relative cross-package import compiles fine and silently produces
+  **no graph edge** — so a breaking change in a lib would not run its consumers' tests.
+- **A missing edge can be correct.** `messaging` deliberately does _not_ import `contracts`: it is
+  broker- and schema-agnostic, and the domain envelope travels through it as an opaque `body`. The
+  graph having no `messaging → contracts` edge is the design working, not a lift defect.
 - `policy` and `reference` must stay **browser-safe** — Studio imports them, so no Node built-ins,
   no DB drivers, no server-only dependencies.
 
