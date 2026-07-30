@@ -40,19 +40,27 @@ Then read **only** the specific docs your task touches — e.g.
 
 **Phase 0 (Foundations), iteration S01.** Planning is complete; the build has just started.
 
-| Item                           | State                                                                                                       |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| Design docs                    | ✅ Complete — all aggregates modelled, every event has a payload schema                                     |
-| GitHub backlog                 | ✅ 175 issues (46 Epic / 128 Story / 1 Spike) on org project **#2**                                         |
-| **EP-01.1** monorepo scaffold  | ✅ Done (Nx, strict TS, eslint/prettier)                                                                    |
-| **EP-02.1** `@atlas/contracts` | ✅ Lifted — 8 tests, loads all 53 schemas from `docs/`                                                      |
-| **EP-03** `@atlas/messaging`   | ⚠️ Partial — core + in-memory broker lifted (6 tests). Real broker binding blocked on the **EP-03.0 spike** |
-| Everything else                | ⬜ Not started                                                                                              |
+| Item                             | State                                                                                                       |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Design docs                      | ✅ Complete — all aggregates modelled, every event has a payload schema                                     |
+| GitHub backlog                   | ✅ 175 issues (46 Epic / 128 Story / 1 Spike) on org project **#2**                                         |
+| **EP-01.1** monorepo scaffold    | ✅ Done (Nx, strict TS, eslint/prettier)                                                                    |
+| **EP-02.1** `@atlas/contracts`   | ✅ Lifted — 8 tests, loads all 53 schemas from `docs/`                                                      |
+| **EP-03** `@atlas/messaging`     | ⚠️ Partial — core + in-memory broker lifted (6 tests). Real broker binding blocked on the **EP-03.0 spike** |
+| **EP-04.1** `@atlas/service-kit` | ✅ Lifted — 8 tests                                                                                         |
+| Everything else                  | ⬜ Not started                                                                                              |
 
-Open PR: **#176** (`feat/delivery-process-and-backlog`) — all work so far lives there, unmerged.
+**22 tests across 3 projects, all green.** Open PR: **#176**
+(`feat/delivery-process-and-backlog`) — all work so far lives there, unmerged.
 
-**Suggested next tasks:** `EP-04.1` (lift `service-kit` — first package that imports another, so it
-exercises §6's import rule) · `EP-03.0` (broker spike — needs a human decision) · `EP-01.2/01.3` (CI).
+**Suggested next tasks:** `EP-05` (`policy` — new code, not a lift; the browser-safe `can()`
+evaluator that everything depends on) · `EP-03.0` (broker spike — needs a human decision) ·
+`EP-01.2/01.3` (CI, where `nx affected` gets wired up) · `EP-07.1` (lift `data`).
+
+> **All three foundation libs so far are leaf nodes** — none imports another, so the Nx graph has no
+> edges yet. That is correct, not a defect. The first real edges appear when a **service** lands and
+> imports `contracts` + `messaging` + `service-kit` together; that is also when §6's
+> `@atlas/*`-not-relative-path rule first bites.
 
 ## 4. Find and claim your task
 
