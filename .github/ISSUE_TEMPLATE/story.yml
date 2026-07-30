@@ -1,0 +1,85 @@
+name: Story
+description: A user- or system-visible increment deliverable within one iteration.
+title: "Story: "
+type: Story
+projects: ["atlasms/2"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Stories seeded from [`docs/roadmap/21-epic-breakdown.md`](../../docs/roadmap/21-epic-breakdown.md)
+        are generated — edit the doc and re-run `scripts/seed-github-backlog.mjs`.
+        Use this template for work discovered **during** delivery.
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What is true after this ships? Write the outcome, not the task list.
+      placeholder: A user can upload a file over 2 GB and see resumable progress.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Verifiable by someone who did not build it.
+      value: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+
+  - type: input
+    id: parent
+    attributes:
+      label: Parent epic
+      description: "The epic this belongs under, e.g. EP-17. Link it as a sub-issue after creating."
+      placeholder: EP-17
+    validations:
+      required: true
+
+  - type: input
+    id: requirement
+    attributes:
+      label: Requirement ID
+      description: "FR-* / NFR-* it satisfies, or `enabler` if it has none."
+      placeholder: FR-MAM-6
+    validations:
+      required: true
+
+  - type: textarea
+    id: contracts
+    attributes:
+      label: Contracts touched
+      description: OpenAPI paths and event payload schemas. Contracts merge **before or with** the implementation.
+      placeholder: |
+        - openapi/mam.yaml: POST /assets/{id}/versions
+        - schemas/events/asset.replaced.payload.schema.json
+
+  - type: dropdown
+    id: estimate
+    attributes:
+      label: Estimate
+      description: Anything above 8 must be split before it is pulled.
+      options: ["1", "2", "3", "5", "8"]
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: ready
+    attributes:
+      label: Definition of Ready
+      description: "See [§6](../../docs/roadmap/20-delivery-process.md#6-definition-of-ready-to-pull-a-story)."
+      options:
+        - label: Dependencies known and either met or explicitly stubbed
+        - label: Test approach agreed (unit / contract / integration / manual)
+
+  - type: checkboxes
+    id: critical
+    attributes:
+      label: Risk flags
+      options:
+        - label: "◆ Correctness-critical (HSM file ops, send-to-air, authorization) — needs 2 reviewers + pairing, not AI-fast-tracked"
+        - label: "⚑ On the critical path"

@@ -1,0 +1,78 @@
+name: Bug
+description: A defect in delivered work.
+title: "Bug: "
+type: Bug
+projects: ["atlasms/2"]
+labels: ["bug"]
+body:
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      value: |
+        **Expected:**
+        **Actual:**
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Concrete inputs/state that produce the wrong output.
+      value: |
+        1.
+        2.
+    validations:
+      required: true
+
+  - type: input
+    id: correlation
+    attributes:
+      label: Correlation ID
+      description: From the log/trace, if you have one — it ties the whole flow together across services.
+
+  - type: dropdown
+    id: service
+    attributes:
+      label: Service
+      options:
+        - mam
+        - hsm
+        - mts
+        - rim
+        - iam
+        - scheduling
+        - bms
+        - notifications
+        - newsroom
+        - integration
+        - ai
+        - logging
+        - gateway
+        - websocket
+        - studio
+        - shared
+        - unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - "Critical — media path blocked (ingest/approval/send-to-air)"
+        - "High — feature unusable, workaround exists"
+        - "Medium — degraded"
+        - "Low — cosmetic"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: escaped
+    attributes:
+      label: Triage
+      options:
+        - label: "Escaped defect — shipped past the Definition of Done (counts toward the phase metric)"
+        - label: "Data integrity or authorization is involved (raises severity regardless of the above)"
