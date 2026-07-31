@@ -185,6 +185,8 @@ so `../../../docs/...` references keep working unchanged.
 
 - Branch off `main`: `<type>/<issue-number>-<slug>`. Never commit directly to `main`.
 - **Conventional commits**, scoped to the story: `feat(EP-04.1): lift service-kit into libs/`.
+  Types are the usual set plus **`spike`** (a spike is a first-class work item here, and CI
+  enforces the list — see [`ci.yml`](.github/workflows/ci.yml)).
 - Explain **why** in the body, not just what — especially any decision or trade-off.
 - `Closes #<number>` — only if the story is _fully_ done. If partial, use `Refs #<n>` and say what
   remains. (EP-03 closed only `#66` for exactly this reason.)
