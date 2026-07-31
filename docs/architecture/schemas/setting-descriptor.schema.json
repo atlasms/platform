@@ -9,9 +9,9 @@
   "properties": {
     "key": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9]*(\\.[a-z0-9-]+)*$",
-      "description": "Dotted key, unique within its area.",
-      "examples": ["restore.concurrency", "retention.rejectedDays"]
+      "pattern": "^[a-z][a-zA-Z0-9]*(\\.[a-zA-Z0-9-]+)*$",
+      "description": "Dotted key, unique within its area. Segments are lowerCamelCase, matching the TypeScript convention used across the codebase — e.g. `sweep.throughputMBps`.",
+      "examples": ["restore.concurrency", "retention.rejectedDays", "sweep.throughputMBps"]
     },
     "area": {
       "type": "string",
