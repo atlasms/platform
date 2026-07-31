@@ -1,7 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": ".",
+    // No `rootDir`: the base config sets noEmit, so rootDir constrains nothing — but it DOES
+    // reject cross-package imports, because @atlas/* path aliases resolve to source files in a
+    // sibling package. In a no-build-step monorepo that is a false error.
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
