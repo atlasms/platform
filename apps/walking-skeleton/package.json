@@ -1,0 +1,28 @@
+{
+  "name": "@atlas/walking-skeleton",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The Phase 0 exit criteria, executable: a trivial asset created through the gateway, stored atomically with its event, relayed to the broker, and pushed live to a permission-checked subscriber — with one correlation id threaded through every hop.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --no-warnings --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@atlas/api-gateway": "*",
+    "@atlas/contracts": "*",
+    "@atlas/data": "*",
+    "@atlas/messaging": "*",
+    "@atlas/policy": "*",
+    "@atlas/service-kit": "*",
+    "@atlas/websocket": "*",
+    "fastify": "^5.11.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.1"
+  }
+}
