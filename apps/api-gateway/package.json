@@ -1,0 +1,23 @@
+{
+  "name": "@atlas/api-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The single ingress for Studio and third parties: authenticate once, establish correlation, proxy to the owning service with a signed internal identity header set, and log access. Adds no domain endpoints of its own.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@atlas/contracts": "*",
+    "@atlas/service-kit": "*",
+    "fastify": "^5.11.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.1"
+  }
+}
