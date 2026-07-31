@@ -9,6 +9,8 @@ import {
   SqliteOutboxStore,
   outboxMigration,
 } from '../src/index.ts';
+import { withTransactionAsync } from '../src/db.ts';
+import { outboxConformance } from '../src/conformance.ts';
 import { InMemoryBroker, OutboxRelay, type OutboxRecord } from '@atlas/messaging';
 
 interface AssetRow {
@@ -98,4 +100,29 @@ test('SqliteOutboxStore drains through the messaging OutboxRelay', async () => {
   assert.equal(captured.length, 1);
   assert.equal(s.outbox.unsentCount(), 0); // marked sent
   assert.equal(await relay.drain(), 0); // idempotent re-run
+});
+
+// --- shared conformance ------------------------------------------------------
+// The same suite @atlas/data-pg must pass. Holding the sqlite store to the production store's
+// rules is what makes it a legitimate stand-in rather than a convenient fiction.
+outboxConformance('SqliteOutboxStore', {
+  setup: async () => {
+    const db = openDb(':memory:');
+    migrate(db, [
+      outboxMigration,
+      { id: 'fixture', up: 'CREATE TABLE assets (id TEXT PRIMARY KEY)' },
+    ]);
+    const store = new SqliteOutboxStore(db);
+    return {
+      store,
+      transaction: <T>(fn: () => Promise<T>): Promise<T> => withTransactionAsync(db, fn),
+      insertDomainRow: async (id: string) => {
+        db.prepare('INSERT INTO assets (id) VALUES (?)').run(id);
+      },
+      countDomainRows: async () =>
+        (db.prepare('SELECT count(*) c FROM assets').get() as { c: number }).c,
+      enqueue: async (rec) => store.enqueue(rec),
+      cleanup: async () => db.close(),
+    };
+  },
 });

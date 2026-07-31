@@ -1,0 +1,24 @@
+{
+  "name": "@atlas/data-pg",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Postgres implementation of the @atlas/data conventions: async unit of work, migration runner and the transactional outbox. Separate package so @atlas/data stays dependency-free and tests keep running on node:sqlite.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --no-warnings --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@atlas/data": "*",
+    "@atlas/messaging": "*",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.23.1"
+  }
+}
