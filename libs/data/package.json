@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Data-plane conventions: a migration runner, withTransaction (unit of work), a JSON row repository, and a SQL-backed outbox store that plugs into @atlas/messaging's OutboxRelay. Demonstrates the REAL transactional outbox — state change + outbox row in one transaction, proven by an atomic rollback test.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./conformance": "./src/conformance.ts"
   },
   "scripts": {
     "test": "node --no-warnings --import tsx --test test/*.test.ts",
