@@ -129,9 +129,19 @@ them.
 - **EP-03.4 owns a real gap.** The DLQ must be built from `$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.>`
   into a dedicated stream, plus the inspection/replay tool. This is work RabbitMQ would have given
   us for free, and it is now a tracked story rather than an assumption.
-- **Publish-side dedupe comes free.** JetStream collapses duplicate `msgID`s inside a window, so a
-  relay that crashes between `publish()` and `markSent()` does not produce a duplicate at all.
-  Consumers still dedupe — the window is finite and this is a bonus, not the guarantee.
+- **Publish-side dedupe comes free — with a sharp edge.** JetStream collapses duplicate `msgID`s
+  inside a window, so a relay that crashes between `publish()` and `markSent()` does not produce a
+  duplicate at all. Consumers still dedupe — the window is finite and this is a bonus, not the
+  guarantee.
+
+  The edge, found while implementing EP-03.1: **dedupe is keyed across the whole stream, not per
+  subject.** A reused id on a *different* subject is silently discarded while `publish()` resolves
+  successfully. Atlas ids are ULIDs so this holds by construction, but it turns "message ids are
+  unique" from a convention into a correctness requirement. Pinned by a test in
+  [`libs/messaging-nats`](../../libs/messaging-nats/) and recorded in the AGENTS.md trap list.
+- **Durable consumers are named per (service, pattern).** A JetStream durable is a shared cursor:
+  two instances of one service sharing it splits the work correctly, two different services sharing
+  it means each steals half the other's events.
 - **The offline bundle** gains one ~10 MB image.
 - **`InMemoryBroker` remains the test double.** No test in CI talks to a broker; `infra/docker-compose.dev.yml`
   is for local development and the spike.

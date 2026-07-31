@@ -9,6 +9,7 @@ import {
   idempotent,
   type Message,
 } from '../src/index.ts';
+import { brokerConformance } from '../src/conformance.ts';
 
 const m = (id: string, subject: string, body: unknown = {}): Message => ({ id, subject, body });
 
@@ -100,4 +101,12 @@ test('end-to-end: outbox -> broker -> idempotent consumer', async () => {
   await relay.drain();
   await broker.publish(m('evt-1', 'atlas.ch12.asset.approved')); // duplicate from a retry
   assert.deepEqual(received, ['evt-1']);
+});
+
+// --- shared conformance ------------------------------------------------------
+// The same suite the JetStream adapter must pass (@atlas/messaging-nats). Keeping the in-memory
+// broker honest against it is what makes it a usable stand-in rather than a convenient fiction.
+brokerConformance('InMemoryBroker', {
+  make: async () => ({ broker: new InMemoryBroker() }),
+  deadLetterCount: async (broker) => (broker as InMemoryBroker).deadLetters.length,
 });
