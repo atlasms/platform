@@ -40,38 +40,48 @@ Then read **only** the specific docs your task touches — e.g.
 
 **Phase 0 (Foundations), iteration S01.** Planning is complete; the build has just started.
 
-| Item                           | State                                                                                                     |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| Design docs                    | ✅ Complete — all aggregates modelled, every event has a payload schema                                   |
-| GitHub backlog                 | ✅ 175 issues (46 Epic / 128 Story / 1 Spike) on org project **#2**                                       |
-| **EP-01** foundations          | ✅ Monorepo, CI (`nx affected`), CODEOWNERS. ⬜ Remaining: 01.4 containers, 01.5 IaC, 01.7 offline bundle |
-| **EP-02** `@atlas/contracts`   | ✅ Lifted — 8 tests, loads all 53 schemas from `docs/`. ⬜ 02.2–02.6                                      |
-| **EP-03** `@atlas/messaging`   | ⚠️ Partial — core + in-memory broker (6 tests). Real broker blocked on the **EP-03.0 spike**              |
-| **EP-04** `@atlas/service-kit` | ✅ Lifted — 8 tests. ⬜ 04.2–04.9                                                                         |
-| **EP-05** `@atlas/policy`      | ✅ Built (not a lift) — 13 tests. ⬜ 05.5/05.6 need the Studio shell (EP-11)                              |
-| Everything else                | ⬜ Not started                                                                                            |
+| Item                             | State                                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Design docs                      | ✅ Complete                                                                                    |
+| GitHub backlog                   | ✅ 175 issues on org project **#2**                                                            |
+| **EP-01** foundations            | ✅ Monorepo, CI (`nx affected`), CODEOWNERS. ⬜ 01.4 containers, 01.5 IaC, 01.7 offline bundle |
+| **EP-02** `@atlas/contracts`     | ✅ 8 tests — loads all 53 schemas from `docs/`. ⬜ 02.2–02.6                                   |
+| **EP-03** `@atlas/messaging`     | ⚠️ In-memory broker only (6 tests). Real broker blocked on the **EP-03.0 spike**               |
+| **EP-04** `@atlas/service-kit`   | ✅ 8 tests. ⬜ 04.2–04.9                                                                       |
+| **EP-05** `@atlas/policy`        | ✅ 13 tests. ⬜ 05.5/05.6 need the Studio shell                                                |
+| **EP-06** `@atlas/reference`     | ✅ 17 tests. ⬜ 06.6 seed loader (Node-only, cannot live in a browser-safe entry point)        |
+| **EP-07** `@atlas/data`          | ✅ 6 tests. ⬜ 07.4–07.6                                                                       |
+| **EP-08** `api-gateway`          | ✅ 13 tests. ⬜ 08.3 rate limiting, 08.5 reference aggregation                                 |
+| **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                             |
+| **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                 |
+| **EP-13** walking skeleton       | ✅ 9 tests — **the Phase 0 exit criteria, executable**                                         |
+| **EP-11** Studio shell (Angular) | ⬜ Not started — the last big Phase 0 piece, and a different stack                             |
+| **EP-12** observability          | ⬜ Not started                                                                                 |
 
-**35 tests across 4 projects, all green.** Everything above is **merged to `main`** (PRs #176–#180).
+**116 tests across 10 projects, all green**, merged to `main` (PRs #176–#187).
+
+> **Start here to understand how it fits together:**
+> [`apps/walking-skeleton`](apps/walking-skeleton/) wires the whole spine in one process and proves
+> it end to end — gateway auth → service authorization → atomic outbox → relay → broker →
+> permission-checked fan-out, with one correlation id threaded through every hop. Reading that test
+> file is the fastest way to see how the pieces compose.
 
 **CI runs on every PR** (`nx affected`) and on `main` (everything). But ⚠️ **it does not block
 merge** — branch protection needs a paid GitHub plan on a private repo. The ruleset is written and
-one command away: [`.github/rulesets/README.md`](.github/rulesets/README.md). Until then the
-Definition of Done is a convention, not a gate — so **run
+one command away: [`.github/rulesets/README.md`](.github/rulesets/README.md). So **run
 `npx nx run-many -t lint typecheck test` yourself before opening a PR.**
 
-**Suggested next tasks:** `EP-07.1` (lift `data` — store clients, migrations, SQL outbox) ·
-`EP-06` (`reference` — the config library, new code) · `EP-03.0` (broker spike — **needs a human
-decision**, blocks 5 stories) · `EP-04.2+` (thicken service-kit).
+**Suggested next tasks:** `EP-03.0` (broker spike — **needs a human decision**; the skeleton is
+honest only while the broker stays in-memory) · `EP-11` (Studio shell, Angular) · `EP-12`
+(observability) · `EP-17` (MAM — first real Phase 1 service).
 
 > **⚠️ If you enforce authorization, call `canEnforce`, never `can`.** Lenient `can()` treats a
-> predicate it cannot check as "any", so an **incomplete context yields a WIDER grant**. That is
-> intended for Studio's broad questions and wrong for a service.
+> predicate it cannot check as "any", so an **incomplete context yields a WIDER grant**.
 > [authorization-model.md §5.1](docs/architecture/authorization-model.md) is normative.
 
-> **All four foundation libs are leaf nodes** — none imports another, so the Nx graph has no edges
-> yet. That is correct, not a defect. The first real edges appear when a **service** lands and
-> imports several libs together; that is also when §6's `@atlas/*`-not-relative-path rule first
-> bites.
+> **All the foundation libs are leaf nodes**; the edges live above them:
+> `data → messaging`, `api-gateway → contracts, service-kit`,
+> `iam → contracts, policy, service-kit`, `websocket → contracts, messaging, policy, service-kit`.
 
 ## 4. Find and claim your task
 
