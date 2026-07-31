@@ -124,13 +124,14 @@ Studio — the whole spine proven end-to-end.
 
 | ID | Story | Est |
 |----|-------|:---:|
-| 03.0 | **Spike:** NATS JetStream vs RabbitMQ under a load-spike test *(timebox 3 d)* | — |
+| 03.0 | ~~**Spike:** NATS JetStream vs RabbitMQ under a load-spike test~~ → [ADR-0001](../adr/0001-message-broker.md): **NATS JetStream** | — |
 | 03.1 | Lift [`reference/messaging`](../../reference/messaging/README.md) onto the chosen broker | 5 |
 | 03.2 | Publish-with-outbox; **atomic** state-change ⇒ event | 5 |
 | 03.3 | Subscribe-with-idempotency; `SeenStore` with atomic `SET NX`/`INSERT … ON CONFLICT` ◆ | 3 |
 | 03.4 | Retry, backoff, DLQ + a DLQ inspection/replay tool | 3 |
 | 03.5 | Correlation/causation propagation through the async context | 3 |
 | 03.6 | In-memory broker for tests + dev | 2 |
+| 03.7 | Pipeline `OutboxRelay.drain()` — bounded in-flight publishes, preserving per-subject order *(from [ADR-0001](../adr/0001-message-broker.md); ~10× measured headroom)* | 3 |
 
 **DoD:** an outbox write and its publish are proven atomic under an induced rollback; duplicate
 delivery is provably safe.

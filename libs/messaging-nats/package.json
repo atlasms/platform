@@ -1,0 +1,22 @@
+{
+  "name": "@atlas/messaging-nats",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "NATS JetStream adapter for @atlas/messaging (ADR-0001). Separate from @atlas/messaging so the interface every service depends on keeps zero runtime dependencies — only a composition root pulls the transport in.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@atlas/messaging": "*",
+    "nats": "^2.29.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.1"
+  }
+}

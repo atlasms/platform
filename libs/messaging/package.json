@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Broker-agnostic transport: subject matching, an in-memory broker (dev/test) with retry+DLQ, the transactional-outbox relay, and idempotent-consumer wrapping. Swap the in-memory broker for NATS/RabbitMQ behind the same Broker interface.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./conformance": "./src/conformance.ts"
   },
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts",

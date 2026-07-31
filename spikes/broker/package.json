@@ -1,0 +1,24 @@
+{
+  "name": "@atlas/broker-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "EP-03.0 — time-boxed spike comparing NATS JetStream and RabbitMQ behind the @atlas/messaging Broker interface. Requires infra/docker-compose.dev.yml to be up; deliberately has NO test script so CI never runs it.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "spike": "node --import tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@atlas/messaging": "*",
+    "amqplib": "^0.10.5",
+    "nats": "^2.29.0"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.6",
+    "tsx": "^4.23.1"
+  }
+}

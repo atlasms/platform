@@ -40,23 +40,23 @@ Then read **only** the specific docs your task touches — e.g.
 
 **Phase 0 (Foundations), iteration S01.** Planning is complete; the build has just started.
 
-| Item                             | State                                                                                          |
-| -------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Design docs                      | ✅ Complete                                                                                    |
-| GitHub backlog                   | ✅ 175 issues on org project **#2**                                                            |
-| **EP-01** foundations            | ✅ Monorepo, CI (`nx affected`), CODEOWNERS. ⬜ 01.4 containers, 01.5 IaC, 01.7 offline bundle |
-| **EP-02** `@atlas/contracts`     | ✅ 8 tests — loads all 53 schemas from `docs/`. ⬜ 02.2–02.6                                   |
-| **EP-03** `@atlas/messaging`     | ⚠️ In-memory broker only (6 tests). Real broker blocked on the **EP-03.0 spike**               |
-| **EP-04** `@atlas/service-kit`   | ✅ 8 tests. ⬜ 04.2–04.9                                                                       |
-| **EP-05** `@atlas/policy`        | ✅ 13 tests. ⬜ 05.5/05.6 need the Studio shell                                                |
-| **EP-06** `@atlas/reference`     | ✅ 17 tests. ⬜ 06.6 seed loader (Node-only, cannot live in a browser-safe entry point)        |
-| **EP-07** `@atlas/data`          | ✅ 6 tests. ⬜ 07.4–07.6                                                                       |
-| **EP-08** `api-gateway`          | ✅ 13 tests. ⬜ 08.3 rate limiting, 08.5 reference aggregation                                 |
-| **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                             |
-| **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                 |
-| **EP-13** walking skeleton       | ✅ 9 tests — **the Phase 0 exit criteria, executable**                                         |
-| **EP-11** Studio shell (Angular) | ⬜ Not started — the last big Phase 0 piece, and a different stack                             |
-| **EP-12** observability          | ⬜ Not started                                                                                 |
+| Item                             | State                                                                                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Design docs                      | ✅ Complete                                                                                                                                    |
+| GitHub backlog                   | ✅ 175 issues on org project **#2**                                                                                                            |
+| **EP-01** foundations            | ✅ Monorepo, CI (`nx affected`), CODEOWNERS. ⬜ 01.4 containers, 01.5 IaC, 01.7 offline bundle                                                 |
+| **EP-02** `@atlas/contracts`     | ✅ 8 tests — loads all 53 schemas from `docs/`. ⬜ 02.2–02.6                                                                                   |
+| **EP-03** `@atlas/messaging`     | ✅ 6 tests. **Broker decided: NATS JetStream** ([ADR-0001](docs/adr/0001-message-broker.md)). ⬜ 03.1 adapter, 03.4 DLQ, 03.7 relay pipelining |
+| **EP-04** `@atlas/service-kit`   | ✅ 8 tests. ⬜ 04.2–04.9                                                                                                                       |
+| **EP-05** `@atlas/policy`        | ✅ 13 tests. ⬜ 05.5/05.6 need the Studio shell                                                                                                |
+| **EP-06** `@atlas/reference`     | ✅ 17 tests. ⬜ 06.6 seed loader (Node-only, cannot live in a browser-safe entry point)                                                        |
+| **EP-07** `@atlas/data`          | ✅ 6 tests. ⬜ 07.4–07.6                                                                                                                       |
+| **EP-08** `api-gateway`          | ✅ 13 tests. ⬜ 08.3 rate limiting, 08.5 reference aggregation                                                                                 |
+| **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                                                                             |
+| **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                                                                 |
+| **EP-13** walking skeleton       | ✅ 9 tests — **the Phase 0 exit criteria, executable**                                                                                         |
+| **EP-11** Studio shell (Angular) | ⬜ Not started — the last big Phase 0 piece, and a different stack                                                                             |
+| **EP-12** observability          | ⬜ Not started                                                                                                                                 |
 
 **116 tests across 10 projects, all green**, merged to `main` (PRs #176–#187).
 
@@ -71,9 +71,13 @@ merge** — branch protection needs a paid GitHub plan on a private repo. The ru
 one command away: [`.github/rulesets/README.md`](.github/rulesets/README.md). So **run
 `npx nx run-many -t lint typecheck test` yourself before opening a PR.**
 
-**Suggested next tasks:** `EP-03.0` (broker spike — **needs a human decision**; the skeleton is
-honest only while the broker stays in-memory) · `EP-11` (Studio shell, Angular) · `EP-12`
-(observability) · `EP-17` (MAM — first real Phase 1 service).
+**Suggested next tasks:** `EP-03.1` (the JetStream adapter — the skeleton is honest only while the
+broker stays in-memory) · `EP-11` (Studio shell, Angular) · `EP-12` (observability) · `EP-17` (MAM
+— first real Phase 1 service).
+
+> **Real servers are available for local work:** `docker compose -f infra/docker-compose.dev.yml up -d`
+> gives Postgres, NATS and RabbitMQ on non-default ports ([infra/README.md](infra/README.md)).
+> **CI has none of this** — every test must pass against `node:sqlite` and `InMemoryBroker`.
 
 > **⚠️ If you enforce authorization, call `canEnforce`, never `can`.** Lenient `can()` treats a
 > predicate it cannot check as "any", so an **incomplete context yields a WIDER grant**.
@@ -140,6 +144,8 @@ Do not "modernise" any of the below. Each was decided or discovered the hard way
 | **`docs/` is excluded from prettier**                               | Deliberate — the markdown has hand-aligned tables that prettier would reflow. Don't remove it from `.prettierignore`.                                                                                                                                                                               |
 | **A missing graph edge can be correct**                             | `messaging` genuinely does not import `contracts` (it is schema-agnostic). Don't "fix" it.                                                                                                                                                                                                          |
 | **Nx Cloud is off**                                                 | Required: the build must work air-gapped ([FR-PLat-7](docs/requirements/05-functional-requirements.md#platform)). Keep caching local.                                                                                                                                                               |
+| **Every message id must be globally unique (a ULID)**               | JetStream dedupes on `msgID` across the **whole stream**, not per subject. Reuse an id — a counter, a natural key, `'m1'` in a test — and `publish()` resolves successfully while the message is **silently discarded**. Pinned by a test in [`libs/messaging-nats`](libs/messaging-nats/).         |
+| **A JetStream durable is a shared cursor**                          | Durables are named per **(service, pattern)**. Two instances of one service sharing a durable is right (work splits). Two _different_ services sharing one means each steals half the other's events. Never name a durable after the pattern alone.                                                 |
 
 ## 7. Commands
 
@@ -181,6 +187,8 @@ so `../../../docs/...` references keep working unchanged.
 
 - Branch off `main`: `<type>/<issue-number>-<slug>`. Never commit directly to `main`.
 - **Conventional commits**, scoped to the story: `feat(EP-04.1): lift service-kit into libs/`.
+  Types are the usual set plus **`spike`** (a spike is a first-class work item here, and CI
+  enforces the list — see [`ci.yml`](.github/workflows/ci.yml)).
 - Explain **why** in the body, not just what — especially any decision or trade-off.
 - `Closes #<number>` — only if the story is _fully_ done. If partial, use `Refs #<n>` and say what
   remains. (EP-03 closed only `#66` for exactly this reason.)

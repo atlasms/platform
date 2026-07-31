@@ -1,0 +1,73 @@
+# Local development infrastructure.
+#
+# This is the DEV topology: single node, no TLS, default credentials, data in named volumes.
+# It exists so the spine can be exercised against real servers instead of in-memory doubles.
+# It is NOT the deployment topology — see docs/operations/17-operations-runbook.md.
+#
+#   docker compose -f infra/docker-compose.dev.yml up -d
+#   docker compose -f infra/docker-compose.dev.yml down -v     # -v also drops the data
+
+name: atlas-dev
+
+services:
+  # --- Postgres: the system of record for every service ----------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: atlas-postgres
+    environment:
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: atlas
+      POSTGRES_DB: atlas
+      # Deterministic collation: index order must not depend on the host locale.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      - "55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas -d atlas"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # --- NATS with JetStream: broker candidate A -------------------------------
+  nats:
+    image: nats:2.10-alpine
+    container_name: atlas-nats
+    command:
+      - "--jetstream"
+      - "--store_dir=/data"
+      - "--http_port=8222" # monitoring endpoint
+    ports:
+      - "54222:4222"
+      - "58222:8222"
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:8222/healthz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # --- RabbitMQ: broker candidate B ------------------------------------------
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: atlas-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: atlas
+      RABBITMQ_DEFAULT_PASS: atlas
+    ports:
+      - "55672:5672"
+      - "15672:15672" # management UI
+    volumes:
+      - rabbitdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+volumes:
+  pgdata:
+  natsdata:
+  rabbitdata:
