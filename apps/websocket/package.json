@@ -1,0 +1,24 @@
+{
+  "name": "@atlas/websocket",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Permission-aware fan-out of platform events to Studio clients. Public channels carry what everyone in a tenant may see; private channels are per-user. Eligibility is computed from the user's effective policy at subscribe time and RE-CHECKED on permissions.changed.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@atlas/contracts": "*",
+    "@atlas/messaging": "*",
+    "@atlas/policy": "*",
+    "@atlas/service-kit": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.1"
+  }
+}
