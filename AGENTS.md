@@ -46,7 +46,7 @@ Then read **only** the specific docs your task touches — e.g.
 | GitHub backlog                   | ✅ 175 issues on org project **#2**                                                            |
 | **EP-01** foundations            | ✅ Monorepo, CI (`nx affected`), CODEOWNERS. ⬜ 01.4 containers, 01.5 IaC, 01.7 offline bundle |
 | **EP-02** `@atlas/contracts`     | ✅ 8 tests — loads all 53 schemas from `docs/`. ⬜ 02.2–02.6                                   |
-| **EP-03** `@atlas/messaging`     | ⚠️ In-memory broker only (6 tests). Real broker blocked on the **EP-03.0 spike**               |
+| **EP-03** `@atlas/messaging`     | ✅ 6 tests. **Broker decided: NATS JetStream** ([ADR-0001](docs/adr/0001-message-broker.md)). ⬜ 03.1 adapter, 03.4 DLQ, 03.7 relay pipelining |
 | **EP-04** `@atlas/service-kit`   | ✅ 8 tests. ⬜ 04.2–04.9                                                                       |
 | **EP-05** `@atlas/policy`        | ✅ 13 tests. ⬜ 05.5/05.6 need the Studio shell                                                |
 | **EP-06** `@atlas/reference`     | ✅ 17 tests. ⬜ 06.6 seed loader (Node-only, cannot live in a browser-safe entry point)        |
@@ -71,9 +71,13 @@ merge** — branch protection needs a paid GitHub plan on a private repo. The ru
 one command away: [`.github/rulesets/README.md`](.github/rulesets/README.md). So **run
 `npx nx run-many -t lint typecheck test` yourself before opening a PR.**
 
-**Suggested next tasks:** `EP-03.0` (broker spike — **needs a human decision**; the skeleton is
-honest only while the broker stays in-memory) · `EP-11` (Studio shell, Angular) · `EP-12`
-(observability) · `EP-17` (MAM — first real Phase 1 service).
+**Suggested next tasks:** `EP-03.1` (the JetStream adapter — the skeleton is honest only while the
+broker stays in-memory) · `EP-11` (Studio shell, Angular) · `EP-12` (observability) · `EP-17` (MAM
+— first real Phase 1 service).
+
+> **Real servers are available for local work:** `docker compose -f infra/docker-compose.dev.yml up -d`
+> gives Postgres, NATS and RabbitMQ on non-default ports ([infra/README.md](infra/README.md)).
+> **CI has none of this** — every test must pass against `node:sqlite` and `InMemoryBroker`.
 
 > **⚠️ If you enforce authorization, call `canEnforce`, never `can`.** Lenient `can()` treats a
 > predicate it cannot check as "any", so an **incomplete context yields a WIDER grant**.

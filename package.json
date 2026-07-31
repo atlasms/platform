@@ -10,7 +10,8 @@
   },
   "workspaces": [
     "libs/*",
-    "apps/*"
+    "apps/*",
+    "spikes/*"
   ],
   "scripts": {
     "test": "nx run-many -t test",
