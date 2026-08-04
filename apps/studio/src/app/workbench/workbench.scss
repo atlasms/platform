@@ -1,0 +1,116 @@
+/* Regions only. Everything visual reads design tokens — never a literal colour — so a theme is a
+ * token set rather than a restyle (studio-frontend.md §5). The full token system, high-contrast,
+ * brand theming and RTL are EP-11.6. */
+
+.workbench {
+  display: grid;
+  grid-template-columns: var(--activity-bar-width) var(--side-bar-width) 1fr;
+  grid-template-rows: 1fr var(--status-bar-height);
+  grid-template-areas:
+    'activity side editor'
+    'status status status';
+  block-size: 100dvh;
+  color: var(--color-fg);
+  background: var(--color-bg);
+}
+
+.activity-bar {
+  grid-area: activity;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding-block: var(--space-2);
+  background: var(--color-bg-activity);
+  border-inline-end: 1px solid var(--color-border);
+}
+
+.activity-item {
+  display: grid;
+  place-items: center;
+  inline-size: 2.5rem;
+  block-size: 2.5rem;
+  border-radius: var(--radius-md);
+  font-size: 1.15rem;
+  color: var(--color-fg-muted);
+  text-decoration: none;
+
+  &:hover:not(.disabled) {
+    color: var(--color-fg);
+    background: var(--color-bg-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+
+  /* Panels whose services do not exist yet. Shown rather than hidden: absent is a permission
+   * statement, and these are not that. */
+  &.disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+}
+
+.side-bar {
+  grid-area: side;
+  padding: var(--space-3);
+  background: var(--color-bg-side);
+  border-inline-end: 1px solid var(--color-border);
+  overflow: auto;
+
+  h2 {
+    margin: 0 0 var(--space-2);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-fg-muted);
+  }
+}
+
+.editor-area {
+  grid-area: editor;
+  overflow: auto;
+  padding: var(--space-4);
+}
+
+.status-bar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+  font-size: 0.75rem;
+  color: var(--color-fg-on-accent);
+  background: var(--color-accent);
+}
+
+.spacer {
+  margin-inline-start: auto;
+}
+
+.sep {
+  opacity: 0.6;
+}
+
+.muted {
+  color: var(--color-fg-muted);
+  font-size: 0.8125rem;
+}
+
+.empty {
+  color: var(--color-fg-muted);
+}
+
+.sr-only {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

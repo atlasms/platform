@@ -1,0 +1,32 @@
+{
+  "name": "@atlas/studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Studio — the Angular SPA that is Atlas' only user-facing interface. A VS Code-style workbench where every panel, view and action is permission-gated by the same @atlas/policy the services enforce with.",
+  "scripts": {
+    "start": "ng serve",
+    "build": "ng build",
+    "test": "ng test",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@angular/common": "^22.1.0",
+    "@angular/compiler": "^22.1.0",
+    "@angular/core": "^22.1.0",
+    "@angular/forms": "^22.1.0",
+    "@angular/platform-browser": "^22.1.0",
+    "@angular/router": "^22.1.0",
+    "@atlas/policy": "*",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^22.1.2",
+    "@angular/cli": "^22.1.2",
+    "@angular/compiler-cli": "^22.1.0",
+    "jsdom": "^28.0.0",
+    "typescript": "~6.0.2",
+    "vitest": "^4.0.8"
+  }
+}

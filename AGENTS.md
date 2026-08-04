@@ -1,8 +1,7 @@
 # AGENTS.md — how to continue this project
 
 **Read this file first. It is the entry point.** It exists so you can pick up work without
-reading the whole repository. Everything below is current as of the last commit on
-`feat/delivery-process-and-backlog`.
+reading the whole repository. Everything below is current as of the last commit on `main`.
 
 ---
 
@@ -16,7 +15,7 @@ This repo (`atlasms/platform`) is **one Nx monorepo** holding the design docs _a
 
 - `docs/` — the design. Extensive and authoritative. **It is the source of truth, not the code.**
 - `libs/` — shared TypeScript libraries (`@atlas/*`).
-- `apps/` — one deployable per service (none built yet).
+- `apps/` — one deployable per service, plus `studio` (the Angular SPA) and `walking-skeleton`.
 - `reference/` — a **frozen, validated prototype** (84 passing tests) that is being lifted into
   `libs/` package by package. Do not develop here; lift from it.
 - `scripts/` — GitHub project/backlog automation.
@@ -40,25 +39,25 @@ Then read **only** the specific docs your task touches — e.g.
 
 **Phase 0 (Foundations), iteration S01.** Planning is complete; the build has just started.
 
-| Item                             | State                                                                                                                                          |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Design docs                      | ✅ Complete                                                                                                                                    |
-| GitHub backlog                   | ✅ 175 issues on org project **#2**                                                                                                            |
-| **EP-01** foundations            | ✅ Monorepo, CI (`nx affected`), CODEOWNERS. ⬜ 01.4 containers, 01.5 IaC, 01.7 offline bundle                                                 |
-| **EP-02** `@atlas/contracts`     | ✅ 8 tests — loads all 53 schemas from `docs/`. ⬜ 02.2–02.6                                                                                   |
-| **EP-03** `@atlas/messaging`     | ✅ 6 tests. **Broker decided: NATS JetStream** ([ADR-0001](docs/adr/0001-message-broker.md)). ⬜ 03.1 adapter, 03.4 DLQ, 03.7 relay pipelining |
-| **EP-04** `@atlas/service-kit`   | ✅ 8 tests. ⬜ 04.2–04.9                                                                                                                       |
-| **EP-05** `@atlas/policy`        | ✅ 13 tests. ⬜ 05.5/05.6 need the Studio shell                                                                                                |
-| **EP-06** `@atlas/reference`     | ✅ 17 tests. ⬜ 06.6 seed loader (Node-only, cannot live in a browser-safe entry point)                                                        |
-| **EP-07** `@atlas/data`          | ✅ 11 tests + `@atlas/data-pg` on **real Postgres** (8). ⬜ 07.4–07.6                                                                          |
-| **EP-08** `api-gateway`          | ✅ 13 tests. ⬜ 08.3 rate limiting, 08.5 reference aggregation                                                                                 |
-| **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                                                                             |
-| **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                                                                 |
-| **EP-13** walking skeleton       | ✅ 9 tests — **the Phase 0 exit criteria, executable**                                                                                         |
-| **EP-11** Studio shell (Angular) | ⬜ Not started — the last big Phase 0 piece, and a different stack                                                                             |
-| **EP-12** observability          | ⬜ Not started                                                                                                                                 |
+| Item                             | State                                                                                                                                                     |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Design docs                      | ✅ Complete                                                                                                                                               |
+| GitHub backlog                   | ✅ 175 issues on org project **#2**                                                                                                                       |
+| **EP-01** foundations            | ✅ Monorepo, CI (`nx affected`), CODEOWNERS. ⬜ 01.4 containers, 01.5 IaC, 01.7 offline bundle                                                            |
+| **EP-02** `@atlas/contracts`     | ✅ 8 tests — loads all 53 schemas from `docs/`. ⬜ 02.2–02.6                                                                                              |
+| **EP-03** `@atlas/messaging`     | ✅ 13 tests + `@atlas/messaging-nats` on **real JetStream** (11). [ADR-0001](docs/adr/0001-message-broker.md). ⬜ 03.4 DLQ tooling, 03.7 relay pipelining |
+| **EP-04** `@atlas/service-kit`   | ✅ 8 tests. ⬜ 04.2–04.9                                                                                                                                  |
+| **EP-05** `@atlas/policy`        | ✅ 13 tests, now also driving Studio rendering. ⬜ 05.5/05.6                                                                                              |
+| **EP-06** `@atlas/reference`     | ✅ 17 tests. ⬜ 06.6 seed loader (Node-only, cannot live in a browser-safe entry point)                                                                   |
+| **EP-07** `@atlas/data`          | ✅ 11 tests + `@atlas/data-pg` on **real Postgres** (8). ⬜ 07.4–07.6                                                                                     |
+| **EP-08** `api-gateway`          | ✅ 13 tests. ⬜ 08.3 rate limiting, 08.5 reference aggregation                                                                                            |
+| **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                                                                                        |
+| **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                                                                            |
+| **EP-13** walking skeleton       | ✅ 9 tests — **the Phase 0 exit criteria, executable**                                                                                                    |
+| **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton + 11.7 `can()` rendering (14 tests). ⬜ **11.3 the interactive workbench**, 11.2 auth, 11.4 ws, 11.5 clients, 11.6 i18n/RTL              |
+| **EP-12** observability          | ⬜ Not started                                                                                                                                            |
 
-**146 tests across 12 projects, all green**, merged to `main` (PRs #176–#188). A further 19 run
+**160 tests across 13 projects, all green**, merged to `main` (PRs #176–#189). A further 19 run
 only against real infrastructure (NATS, Postgres) and skip in CI.
 
 > **Start here to understand how it fits together:**
@@ -72,7 +71,7 @@ merge** — branch protection needs a paid GitHub plan on a private repo. The ru
 one command away: [`.github/rulesets/README.md`](.github/rulesets/README.md). So **run
 `npx nx run-many -t lint typecheck test` yourself before opening a PR.**
 
-**Suggested next tasks:** `EP-11` (Studio shell, Angular — the last big Phase 0 piece) · `EP-12`
+**Suggested next tasks:** `EP-11.3` (the interactive workbench — tabs, splits, drag) · `EP-12`
 (observability) · `EP-03.4` (DLQ tooling) · `EP-17` (MAM — first real Phase 1 service).
 
 > **Adapters are separate packages, held to shared conformance suites.** `@atlas/messaging` and
@@ -143,16 +142,19 @@ Violating them silently breaks the architecture:
 
 Do not "modernise" any of the below. Each was decided or discovered the hard way:
 
-| Trap                                                                | What to do                                                                                                                                                                                                                                                                                          |
-| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Imports carry explicit `.ts` extensions**                         | Correct — required by the no-build-step design. `allowImportingTsExtensions` is on. Don't strip them.                                                                                                                                                                                               |
-| **Cross-package imports must use `@atlas/*`, never relative paths** | `reference/` uses `../../contracts/src/index.ts` because it predates workspaces. **Rewrite on lift** and declare the dep in `package.json`. Nx builds its graph from specifiers; a relative import compiles fine but produces **no graph edge**, silently disabling consumer-fanout CI.             |
-| **`ajv` must be imported by full specifier**                        | Use `ajv/dist/2020.js` for **both** value and types. A bare `'ajv'` can resolve to the hoisted **ajv 6** (pulled in by eslint), whose `export =` typings are incompatible with v8's class. Runtime is fine; it fails only at type-time. See [`libs/contracts/README.md`](libs/contracts/README.md). |
-| **`docs/` is excluded from prettier**                               | Deliberate — the markdown has hand-aligned tables that prettier would reflow. Don't remove it from `.prettierignore`.                                                                                                                                                                               |
-| **A missing graph edge can be correct**                             | `messaging` genuinely does not import `contracts` (it is schema-agnostic). Don't "fix" it.                                                                                                                                                                                                          |
-| **Nx Cloud is off**                                                 | Required: the build must work air-gapped ([FR-PLat-7](docs/requirements/05-functional-requirements.md#platform)). Keep caching local.                                                                                                                                                               |
-| **Every message id must be globally unique (a ULID)**               | JetStream dedupes on `msgID` across the **whole stream**, not per subject. Reuse an id — a counter, a natural key, `'m1'` in a test — and `publish()` resolves successfully while the message is **silently discarded**. Pinned by a test in [`libs/messaging-nats`](libs/messaging-nats/).         |
-| **A JetStream durable is a shared cursor**                          | Durables are named per **(service, pattern)**. Two instances of one service sharing a durable is right (work splits). Two _different_ services sharing one means each steals half the other's events. Never name a durable after the pattern alone.                                                 |
+| Trap                                                                | What to do                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Imports carry explicit `.ts` extensions**                         | Correct — required by the no-build-step design. `allowImportingTsExtensions` is on. Don't strip them.                                                                                                                                                                                                                  |
+| **Cross-package imports must use `@atlas/*`, never relative paths** | `reference/` uses `../../contracts/src/index.ts` because it predates workspaces. **Rewrite on lift** and declare the dep in `package.json`. Nx builds its graph from specifiers; a relative import compiles fine but produces **no graph edge**, silently disabling consumer-fanout CI.                                |
+| **`ajv` must be imported by full specifier**                        | Use `ajv/dist/2020.js` for **both** value and types. A bare `'ajv'` can resolve to the hoisted **ajv 6** (pulled in by eslint), whose `export =` typings are incompatible with v8's class. Runtime is fine; it fails only at type-time. See [`libs/contracts/README.md`](libs/contracts/README.md).                    |
+| **`docs/` is excluded from prettier**                               | Deliberate — the markdown has hand-aligned tables that prettier would reflow. Don't remove it from `.prettierignore`.                                                                                                                                                                                                  |
+| **A missing graph edge can be correct**                             | `messaging` genuinely does not import `contracts` (it is schema-agnostic). Don't "fix" it.                                                                                                                                                                                                                             |
+| **Nx Cloud is off**                                                 | Required: the build must work air-gapped ([FR-PLat-7](docs/requirements/05-functional-requirements.md#platform)). Keep caching local.                                                                                                                                                                                  |
+| **Every message id must be globally unique (a ULID)**               | JetStream dedupes on `msgID` across the **whole stream**, not per subject. Reuse an id — a counter, a natural key, `'m1'` in a test — and `publish()` resolves successfully while the message is **silently discarded**. Pinned by a test in [`libs/messaging-nats`](libs/messaging-nats/).                            |
+| **A JetStream durable is a shared cursor**                          | Durables are named per **(service, pattern)**. Two instances of one service sharing a durable is right (work splits). Two _different_ services sharing one means each steals half the other's events. Never name a durable after the pattern alone.                                                                    |
+| **Studio runs its own toolchain — don't unify it**                  | `@atlas/studio` needs TypeScript **6.0** (Angular 22) while the libs are on **5.9**, uses **vitest** not `node:test` (component tests need a DOM), and has its own `tsconfig.json` rather than extending `tsconfig.base.json`. The strictness is reproduced there explicitly. See [its README](apps/studio/README.md). |
+| **Studio is the only project that emits**                           | So `allowImportingTsExtensions` alone is illegal there; it also needs `rewriteRelativeImportExtensions`. And ignore patterns must be `**/dist/**`, not `dist/**`.                                                                                                                                                      |
+| **In Studio, lenient `can()` is CORRECT**                           | The opposite of the service rule. Studio decides what to _show_; the service enforces. `canEnforce` in the UI would hide legitimate controls whenever a check runs before the resource loads. Use `canStrict()` only for destructive actions with full context.                                                        |
 
 ## 7. Commands
 

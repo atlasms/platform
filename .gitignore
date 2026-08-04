@@ -34,3 +34,6 @@ Thumbs.db
 # logs
 *.log
 npm-debug.log*
+
+# angular build cache
+.angular/
