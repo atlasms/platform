@@ -1,0 +1,49 @@
+/* Studio's TypeScript configuration.
+ *
+ * Deliberately does NOT extend ../../tsconfig.base.json. Angular needs `module: preserve`, its own
+ * decorator and i18n settings, and ships its own TypeScript — reconciling the two configs created
+ * more conflicts than it removed. The workspace's *strictness* is reproduced explicitly below, so
+ * Studio is held to the same bar as every library even though its toolchain differs.
+ */
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "ES2022",
+    "module": "preserve",
+    /* @atlas/* libraries have no build step: their `exports` field points straight at
+     * ./src/index.ts and their internal imports carry explicit .ts extensions. The bundler
+     * resolves those fine; the type-checker has to be told they are legal.
+     *
+     * `allowImportingTsExtensions` alone is rejected here because — unlike every library — this
+     * project actually emits. `rewriteRelativeImportExtensions` is the emitting counterpart: it
+     * accepts the .ts specifiers and rewrites them on the way out. */
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
+  },
+  "angularCompilerOptions": {
+    "enableI18nLegacyMessageIdFormat": false,
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true,
+    "strictTemplates": true
+  },
+  "files": [],
+  "references": [
+    {
+      "path": "./tsconfig.app.json"
+    },
+    {
+      "path": "./tsconfig.spec.json"
+    }
+  ]
+}

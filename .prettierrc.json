@@ -7,11 +7,22 @@
   "overrides": [
     {
       "files": "*.md",
-      "options": { "printWidth": 100, "proseWrap": "preserve" }
+      "options": {
+        "printWidth": 100,
+        "proseWrap": "preserve"
+      }
     },
     {
       "files": "*.{yml,yaml}",
-      "options": { "singleQuote": false }
+      "options": {
+        "singleQuote": false
+      }
+    },
+    {
+      "files": "*.html",
+      "options": {
+        "parser": "angular"
+      }
     }
   ]
 }

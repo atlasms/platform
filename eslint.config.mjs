@@ -6,7 +6,9 @@ export default tseslint.config(
   {
     // reference/ is the frozen, already-validated reference implementation (84 tests).
     // It is lifted into libs/ package by package (EP-02.1, EP-03.1, ...), and linted then.
-    ignores: ['node_modules/**', 'dist/**', '.nx/**', 'reference/**', 'coverage/**'],
+    // `**/dist/**`, not `dist/**`: Studio is the first project that emits, and its build output
+    // lands in apps/studio/dist rather than at the workspace root.
+    ignores: ['node_modules/**', '**/dist/**', '.nx/**', 'reference/**', 'coverage/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -30,7 +32,8 @@ export default tseslint.config(
   },
   {
     // Tests may be looser: fixtures and deliberate bad input are normal here.
-    files: ['**/test/**/*.ts', '**/*.test.ts'],
+    // `*.spec.ts` too: Angular's test runner uses that suffix, so Studio's tests are here as well.
+    files: ['**/test/**/*.ts', '**/*.test.ts', '**/*.spec.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
     },
