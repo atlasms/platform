@@ -4,11 +4,11 @@
 
 .workbench {
   display: grid;
-  grid-template-columns: var(--activity-bar-width) var(--side-bar-width) 1fr;
+  grid-template-columns: var(--activity-bar-width) var(--side-bar-width) 4px 1fr;
   grid-template-rows: 1fr var(--status-bar-height);
   grid-template-areas:
-    'activity side editor'
-    'status status status';
+    'activity side resizer editor'
+    'status status status status';
   block-size: 100dvh;
   color: var(--color-fg);
   background: var(--color-bg);
@@ -47,6 +47,11 @@
 
   /* Panels whose services do not exist yet. Shown rather than hidden: absent is a permission
    * statement, and these are not that. */
+  &.active {
+    color: var(--color-fg);
+    box-shadow: inset 2px 0 0 var(--color-accent);
+  }
+
   &.disabled {
     opacity: 0.35;
     cursor: not-allowed;
@@ -72,8 +77,21 @@
 
 .editor-area {
   grid-area: editor;
-  overflow: auto;
-  padding: var(--space-4);
+  overflow: hidden;
+  min-inline-size: 0;
+}
+
+.resizer {
+  grid-area: resizer;
+  cursor: col-resize;
+  background: var(--color-border);
+  touch-action: none;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--color-accent);
+    outline: none;
+  }
 }
 
 .status-bar {

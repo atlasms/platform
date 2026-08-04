@@ -39,25 +39,25 @@ Then read **only** the specific docs your task touches — e.g.
 
 **Phase 0 (Foundations), iteration S01.** Planning is complete; the build has just started.
 
-| Item                             | State                                                                                                                                                     |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Design docs                      | ✅ Complete                                                                                                                                               |
-| GitHub backlog                   | ✅ 175 issues on org project **#2**                                                                                                                       |
-| **EP-01** foundations            | ✅ Monorepo, CI (`nx affected`), CODEOWNERS. ⬜ 01.4 containers, 01.5 IaC, 01.7 offline bundle                                                            |
-| **EP-02** `@atlas/contracts`     | ✅ 8 tests — loads all 53 schemas from `docs/`. ⬜ 02.2–02.6                                                                                              |
-| **EP-03** `@atlas/messaging`     | ✅ 13 tests + `@atlas/messaging-nats` on **real JetStream** (11). [ADR-0001](docs/adr/0001-message-broker.md). ⬜ 03.4 DLQ tooling, 03.7 relay pipelining |
-| **EP-04** `@atlas/service-kit`   | ✅ 8 tests. ⬜ 04.2–04.9                                                                                                                                  |
-| **EP-05** `@atlas/policy`        | ✅ 13 tests, now also driving Studio rendering. ⬜ 05.5/05.6                                                                                              |
-| **EP-06** `@atlas/reference`     | ✅ 17 tests. ⬜ 06.6 seed loader (Node-only, cannot live in a browser-safe entry point)                                                                   |
-| **EP-07** `@atlas/data`          | ✅ 11 tests + `@atlas/data-pg` on **real Postgres** (8). ⬜ 07.4–07.6                                                                                     |
-| **EP-08** `api-gateway`          | ✅ 13 tests. ⬜ 08.3 rate limiting, 08.5 reference aggregation                                                                                            |
-| **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                                                                                        |
-| **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                                                                            |
-| **EP-13** walking skeleton       | ✅ 9 tests — **the Phase 0 exit criteria, executable**                                                                                                    |
-| **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton + 11.7 `can()` rendering (14 tests). ⬜ **11.3 the interactive workbench**, 11.2 auth, 11.4 ws, 11.5 clients, 11.6 i18n/RTL              |
-| **EP-12** observability          | ⬜ Not started                                                                                                                                            |
+| Item                             | State                                                                                                                                                          |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Design docs                      | ✅ Complete                                                                                                                                                    |
+| GitHub backlog                   | ✅ 175 issues on org project **#2**                                                                                                                            |
+| **EP-01** foundations            | ✅ Monorepo, CI (`nx affected`), CODEOWNERS. ⬜ 01.4 containers, 01.5 IaC, 01.7 offline bundle                                                                 |
+| **EP-02** `@atlas/contracts`     | ✅ 8 tests — loads all 53 schemas from `docs/`. ⬜ 02.2–02.6                                                                                                   |
+| **EP-03** `@atlas/messaging`     | ✅ 13 tests + `@atlas/messaging-nats` on **real JetStream** (11). [ADR-0001](docs/adr/0001-message-broker.md). ⬜ 03.4 DLQ tooling, 03.7 relay pipelining      |
+| **EP-04** `@atlas/service-kit`   | ✅ 8 tests. ⬜ 04.2–04.9                                                                                                                                       |
+| **EP-05** `@atlas/policy`        | ✅ 13 tests, now also driving Studio rendering. ⬜ 05.5/05.6                                                                                                   |
+| **EP-06** `@atlas/reference`     | ✅ 17 tests. ⬜ 06.6 seed loader (Node-only, cannot live in a browser-safe entry point)                                                                        |
+| **EP-07** `@atlas/data`          | ✅ 11 tests + `@atlas/data-pg` on **real Postgres** (8). ⬜ 07.4–07.6                                                                                          |
+| **EP-08** `api-gateway`          | ✅ 13 tests. ⬜ 08.3 rate limiting, 08.5 reference aggregation                                                                                                 |
+| **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                                                                                             |
+| **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                                                                                 |
+| **EP-13** walking skeleton       | ✅ 9 tests — **the Phase 0 exit criteria, executable**                                                                                                         |
+| **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.3 the workbench** (tabs/splits/drag/persistence), 11.7 `can()` rendering — 43 tests. ⬜ 11.2 auth, 11.4 ws, 11.5 clients, 11.6 i18n/RTL |
+| **EP-12** observability          | ⬜ Not started                                                                                                                                                 |
 
-**160 tests across 13 projects, all green**, merged to `main` (PRs #176–#189). A further 19 run
+**203 tests across 14 projects, all green**, merged to `main` (PRs #176–#190). A further 19 run
 only against real infrastructure (NATS, Postgres) and skip in CI.
 
 > **Start here to understand how it fits together:**
@@ -71,8 +71,8 @@ merge** — branch protection needs a paid GitHub plan on a private repo. The ru
 one command away: [`.github/rulesets/README.md`](.github/rulesets/README.md). So **run
 `npx nx run-many -t lint typecheck test` yourself before opening a PR.**
 
-**Suggested next tasks:** `EP-11.3` (the interactive workbench — tabs, splits, drag) · `EP-12`
-(observability) · `EP-03.4` (DLQ tooling) · `EP-17` (MAM — first real Phase 1 service).
+**Suggested next tasks:** `EP-12` (observability) · `EP-03.4` (DLQ tooling) · `EP-17` (MAM — the
+first real Phase 1 service, and what turns Studio placeholders into editors) · `EP-11.2` (auth flow).
 
 > **Adapters are separate packages, held to shared conformance suites.** `@atlas/messaging` and
 > `@atlas/data` keep zero (or near-zero) runtime dependencies and define the rules;
