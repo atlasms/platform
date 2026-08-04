@@ -12,13 +12,39 @@ npm test -w @atlas/studio
 ## What is built
 
 **EP-11.1** — app skeleton, permission-matched lazy routing, build pipeline.
+**EP-11.3** — the workbench: tabbed and splittable editor groups, drag between groups, a resizable
+side bar, workspace persistence.
 **EP-11.7** — `can()` integration: permission-driven rendering.
 
-**Not built:** the interactive workbench (**EP-11.3**) — tabbed and splittable editor groups,
-drag between groups, resizable/reorderable views, workspace persistence. The editor area is
-currently one router outlet. Also outstanding: the real auth flow (**EP-11.2** — a dev session is
-seeded in `app.config.ts` so the shell is exercisable), the WebSocket client (**EP-11.4**),
-generated API clients (**EP-11.5**), and the full token system with i18n/RTL (**EP-11.6**).
+**Not built:** the real auth flow (**EP-11.2** — a dev session is seeded in `app.config.ts` so the
+shell is exercisable), the WebSocket client (**EP-11.4**), generated API clients (**EP-11.5**), and
+the full token system with i18n/RTL (**EP-11.6**). Editor _contents_ are placeholders — rendering
+an actual asset or schedule needs those services (EP-17 onward).
+
+## The editor area
+
+The interesting behaviour is a state machine, so it lives in [`editor.model.ts`](src/app/workbench/editor.model.ts)
+as plain data and pure functions, with the Angular store a thin wrapper. That is what let it be
+tested exhaustively without rendering anything — 24 tests covering the cases editors usually get
+subtly wrong:
+
+- **Opening an already-open item focuses it**, wherever it lives, rather than creating a second tab.
+  Two tabs over one resource would each accumulate unsaved edits and whichever saved last would
+  silently win.
+- **Closing moves focus right, or left when the closed tab was last** — what every editor has
+  trained people to expect.
+- **An emptied group is removed** and focus falls to a survivor, whether it emptied by closing or by
+  dragging the last tab out. A stranded empty pane is the classic bug here.
+- **Pinned tabs survive "close others" and "close all"** — that is what pinning is for.
+- **Splitting a single-tab group is refused**, since it would empty the source and achieve nothing.
+
+Workspace persistence ([FR-UI-3](../../docs/requirements/05-functional-requirements.md#studio)) is
+localStorage for now; the requirement is server-side, which needs an endpoint that does not exist
+yet. It sits behind the store API, so swapping it is a change in one file. **Dirty state is
+deliberately not persisted** — unsaved edits do not survive a reload, so restoring a tab still
+marked dirty would promise changes that are gone. Restored data is validated rather than trusted:
+localStorage is user-writable and survives deploys, and booting into a crash because someone edited
+devtools is not acceptable.
 
 ## Authorization: Studio decides what to SHOW
 
