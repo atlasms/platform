@@ -226,3 +226,68 @@ test('health routes need no token and readiness reflects a critical failure', as
   assert.equal(ready.statusCode, 503, 'a critical dependency down must fail readiness');
   assert.equal(ready.json().status, 'not_ready');
 });
+
+// --- EP-12.2 golden signals ------------------------------------------------
+test('/metrics is unauthenticated and exposes golden signals in Prometheus format', async () => {
+  // A scraper is infrastructure, not a user; and metrics carry only route templates, methods and
+  // status classes — no tenant data — so there is nothing here to protect behind a token.
+  const { app, key } = await gatewayWith();
+  const token = await key.sign({ sub: 'user-42', channelId: 'ch12', permissions: [] });
+
+  await app.inject({
+    method: 'GET',
+    url: '/api/v1/assets',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  await app.inject({ method: 'GET', url: '/nope' });
+
+  const res = await app.inject({ method: 'GET', url: '/metrics' });
+
+  assert.equal(res.statusCode, 200, 'no token required');
+  assert.match(res.headers['content-type'] ?? '', /text\/plain/);
+  assert.match(res.body, /# TYPE atlas_http_requests_total counter/);
+  assert.match(res.body, /atlas_http_requests_total\{service="api-gateway".*status="2xx"\} 1/);
+  assert.match(res.body, /# TYPE atlas_http_request_duration_seconds histogram/);
+  assert.match(res.body, /atlas_http_request_duration_seconds_bucket\{.*le="\+Inf"\}/);
+});
+
+test('CARDINALITY: a per-asset URL does not mint a time series per asset', async () => {
+  // The gateway proxies /api/v1/assets/<ULID>. Recording req.url would put that id in a label and
+  // kill the metrics store on a busy channel; the route template is what gets recorded.
+  const { app, key } = await gatewayWith();
+  const token = await key.sign({ sub: 'user-42', channelId: 'ch12', permissions: [] });
+
+  for (const id of [
+    '01H2XKZQ4E5N6P7R8S9T0V1W2X',
+    '01H2XKZQ4E5N6P7R8S9T0V1W2Y',
+    '01H2XKZQ4E5N6P7R8S9T0V1W2Z',
+  ]) {
+    await app.inject({
+      method: 'GET',
+      url: `/api/v1/assets/${id}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+  }
+
+  const body = (await app.inject({ method: 'GET', url: '/metrics' })).body;
+  const series = body.split('\n').filter((l) => l.startsWith('atlas_http_requests_total{'));
+
+  assert.equal(series.length, 1, `expected one series, got:\n${series.join('\n')}`);
+  assert.match(series[0] ?? '', / 3$/, 'all three requests land on the same series');
+  assert.doesNotMatch(body, /01H2XKZQ/, 'no asset id may appear in a label');
+});
+
+test('a 5xx from upstream is counted as an error, not lost', async () => {
+  const { impl } = captureUpstream(503, { down: true });
+  const { app, key } = await gatewayWith({ fetchImpl: impl });
+  const token = await key.sign({ sub: 'user-42', channelId: 'ch12', permissions: [] });
+
+  await app.inject({
+    method: 'GET',
+    url: '/api/v1/assets',
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+  const body = (await app.inject({ method: 'GET', url: '/metrics' })).body;
+  assert.match(body, /atlas_http_requests_total\{.*status="5xx"\} 1/);
+});

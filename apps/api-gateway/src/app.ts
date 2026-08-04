@@ -6,7 +6,9 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { ulid } from '@atlas/contracts';
 import {
+  goldenSignals,
   HealthRegistry,
+  MetricRegistry,
   runWithContext,
   toProblem,
   NotFound,
@@ -49,6 +51,13 @@ export interface GatewayOptions {
   minPermVersion?: number;
   /** Injected so tests stay headless; production ships these to the log pipeline. */
   onAccessLog?: (record: AccessLogRecord) => void;
+  /**
+   * Metric registry backing `/metrics` (EP-12.2). Omit and the gateway makes its own.
+   *
+   * Passing one in lets a deployment register additional metrics on the same registry, so a
+   * single scrape covers the whole process.
+   */
+  metrics?: MetricRegistry;
   /** Injected for testability; defaults to global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -60,6 +69,8 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
   const routes = options.routes ?? defaultRoutes;
   const health = options.health ?? new HealthRegistry();
   const doFetch = options.fetchImpl ?? globalThis.fetch;
+  const metrics = options.metrics ?? new MetricRegistry();
+  const signals = goldenSignals(metrics, 'api-gateway');
 
   // --- correlation: issue or adopt, for every request including failures ------------------
   app.addHook('onRequest', (req, _reply, done) => {
@@ -88,10 +99,27 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
       latencyMs: Date.now() - req.startedAt,
       at: new Date().toISOString(),
     });
+
+    // Golden signals off the same hook as the access log, so a request can never be logged but
+    // not counted. `routerPath` is Fastify's route TEMPLATE — using req.url instead would put a
+    // ULID in a label and mint a time series per asset (EP-12.2).
+    const template = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? req.url;
+    signals.observe({
+      method: req.method,
+      route: template,
+      status: reply.statusCode,
+      duration: (Date.now() - req.startedAt) / 1000,
+    });
     done();
   });
 
   // --- health: never authenticated, the orchestrator must reach them ----------------------
+  // Unauthenticated, like the health endpoints: a scraper is infrastructure, not a user, and
+  // metrics carry no tenant data — only route templates, methods and status classes.
+  app.get('/metrics', async (_req, reply) =>
+    reply.header('content-type', metrics.contentType).send(metrics.expose()),
+  );
+
   app.get('/healthz', async () => health.liveness());
   app.get('/readyz', async (_req, reply) => {
     const r = await health.readiness();
