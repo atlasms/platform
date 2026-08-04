@@ -46,7 +46,7 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-01** foundations            | ✅ Monorepo, CI (`nx affected`), CODEOWNERS. ⬜ 01.4 containers, 01.5 IaC, 01.7 offline bundle                                                                 |
 | **EP-02** `@atlas/contracts`     | ✅ 8 tests — loads all 53 schemas from `docs/`. ⬜ 02.2–02.6                                                                                                   |
 | **EP-03** `@atlas/messaging`     | ✅ 13 tests + `@atlas/messaging-nats` on **real JetStream** (11). [ADR-0001](docs/adr/0001-message-broker.md). ⬜ 03.4 DLQ tooling, 03.7 relay pipelining      |
-| **EP-04** `@atlas/service-kit`   | ✅ 8 tests. ⬜ 04.2–04.9                                                                                                                                       |
+| **EP-04** `@atlas/service-kit`   | ✅ 34 tests — errors, config, auth, health, logging, **metrics + alerts**. ⬜ 04.7 tracing                                                                     |
 | **EP-05** `@atlas/policy`        | ✅ 13 tests, now also driving Studio rendering. ⬜ 05.5/05.6                                                                                                   |
 | **EP-06** `@atlas/reference`     | ✅ 17 tests. ⬜ 06.6 seed loader (Node-only, cannot live in a browser-safe entry point)                                                                        |
 | **EP-07** `@atlas/data`          | ✅ 11 tests + `@atlas/data-pg` on **real Postgres** (8). ⬜ 07.4–07.6                                                                                          |
@@ -55,9 +55,9 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                                                                                 |
 | **EP-13** walking skeleton       | ✅ 9 tests — **the Phase 0 exit criteria, executable**                                                                                                         |
 | **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.3 the workbench** (tabs/splits/drag/persistence), 11.7 `can()` rendering — 43 tests. ⬜ 11.2 auth, 11.4 ws, 11.5 clients, 11.6 i18n/RTL |
-| **EP-12** observability          | ⬜ Not started                                                                                                                                                 |
+| **EP-12** observability          | ✅ 12.4 alerts + metrics/golden signals (`/metrics` on the gateway). ⬜ 12.1/12.2/12.3 need a **collector-stack decision** (ADR)                               |
 
-**203 tests across 14 projects, all green**, merged to `main` (PRs #176–#190). A further 19 run
+**246 tests across 14 projects, all green**, merged to `main` (PRs #176–#190). A further 19 run
 only against real infrastructure (NATS, Postgres) and skip in CI.
 
 > **Start here to understand how it fits together:**

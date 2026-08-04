@@ -1,8 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateTestKey } from '@atlas/service-kit';
 import { compile, type EffectivePolicy } from '@atlas/policy';
-import { isUlid, type Envelope } from '@atlas/contracts';
+import {
+  AlertEvaluator,
+  generateTestKey,
+  MetricRegistry,
+  type AlertRaised,
+} from '@atlas/service-kit';
+import {
+  buildEnvelope,
+  isUlid,
+  subjectFor,
+  ulid,
+  validatePayload,
+  type Envelope,
+} from '@atlas/contracts';
 import type { ServerFrame } from '@atlas/websocket';
 import { buildSpine } from '../src/index.ts';
 
@@ -253,4 +265,128 @@ test('the asset is readable back through the gateway', async () => {
 
   assert.equal(fetched.statusCode, 200);
   assert.equal(fetched.json().title, 'Round trip');
+});
+
+// =============================================================================
+// EP-12.4 — alert routing: a tripped condition reaches a subscribed client.
+// =============================================================================
+
+test('EP-12.4: an alert crosses the spine as a validated alert.raised event', async () => {
+  const s = await spine({ 'user-1': ['asset:write', 'asset:read', 'alert:read'] });
+
+  // A watcher on the alert stream, permission-checked like any other subscriber.
+  const frames: ServerFrame[] = [];
+  s.sockets.add({
+    id: 'ops',
+    userId: 'user-1',
+    channelId: CHANNEL,
+    policy: s.policies.get('user-1')!,
+    send: (f) => frames.push(f),
+  });
+  assert.equal(s.sockets.subscribe('ops', `atlas.${CHANNEL}.alert.>`).ok, true);
+
+  // The rule watches a metric — the same number a dashboard would plot, so the alert threshold
+  // and the dashboard can never disagree about what "depth" means.
+  const registry = new MetricRegistry();
+  const dlqDepth = registry.gauge({ name: 'atlas_dlq_depth', help: 'Dead letters waiting.' });
+  dlqDepth.set({}, 0);
+
+  const published: AlertRaised[] = [];
+  const evaluator = new AlertEvaluator({
+    source: 'messaging',
+    rules: [
+      {
+        kind: 'dlq-depth',
+        severity: 'critical',
+        sample: () => dlqDepth.get(),
+        threshold: 10,
+        metricName: 'atlas_dlq_depth',
+      },
+    ],
+    // The sink is where service-kit hands off to the transport: service-kit stays free of
+    // contracts and messaging, and the composition root supplies both.
+    sink: async (alert) => {
+      published.push(alert);
+      const envelope = buildEnvelope({
+        type: 'alert.raised',
+        channelId: CHANNEL,
+        payload: alert,
+        actor: { kind: 'service', id: 'messaging' },
+      });
+      await s.broker.publish({
+        id: envelope.messageId,
+        subject: subjectFor(CHANNEL, envelope.type),
+        body: envelope,
+      });
+    },
+    newId: () => ulid(),
+  });
+
+  // Healthy: nothing fires, nothing is delivered.
+  await evaluator.evaluate();
+  assert.equal(frames.filter((f) => f.type === 'event').length, 0);
+
+  // The condition trips.
+  dlqDepth.set({}, 42);
+  await evaluator.evaluate();
+
+  const events = frames.filter((f) => f.type === 'event');
+  assert.equal(events.length, 1, 'the alert must reach the subscribed operator');
+  assert.equal(events[0]?.subject, `atlas.${CHANNEL}.alert.raised`);
+
+  // The payload is checked against the SHIPPED schema, not just against its TypeScript type —
+  // the type is our description of the contract, the schema is the contract.
+  const envelope = events[0]?.payload as Envelope;
+  const result = validatePayload('alert.raised', envelope.payload);
+  assert.equal(
+    result.valid,
+    true,
+    `alert.raised payload rejected: ${JSON.stringify(result.errors)}`,
+  );
+
+  assert.equal(published[0]?.kind, 'dlq-depth');
+  assert.deepEqual(published[0]?.metric, { name: 'atlas_dlq_depth', value: 42, threshold: 10 });
+});
+
+test('EP-12.4: a sustained breach does not re-alert on every evaluation', async () => {
+  // Edge-triggered across the real transport too, not just in the evaluator: an operator watching
+  // the socket sees one alert per episode, not one per tick.
+  //
+  // alert:read is required — without it the fan-out correctly refuses the subscription, which is
+  // how the first draft of this test 'failed'.
+  const s = await spine({ 'user-1': ['asset:read', 'alert:read'] });
+  const frames: ServerFrame[] = [];
+  s.sockets.add({
+    id: 'ops',
+    userId: 'user-1',
+    channelId: CHANNEL,
+    policy: s.policies.get('user-1')!,
+    send: (f) => frames.push(f),
+  });
+  s.sockets.subscribe('ops', `atlas.${CHANNEL}.alert.>`);
+
+  const evaluator = new AlertEvaluator({
+    source: 'messaging',
+    rules: [{ kind: 'stuck', severity: 'critical', sample: () => 99, threshold: 1 }],
+    newId: () => ulid(),
+    sink: async (alert) => {
+      const envelope = buildEnvelope({
+        type: 'alert.raised',
+        channelId: CHANNEL,
+        payload: alert,
+        actor: { kind: 'service', id: 'messaging' },
+      });
+      await s.broker.publish({
+        id: envelope.messageId,
+        subject: subjectFor(CHANNEL, envelope.type),
+        body: envelope,
+      });
+    },
+  });
+
+  await evaluator.evaluate();
+  await evaluator.evaluate();
+  await evaluator.evaluate();
+
+  assert.equal(frames.filter((f) => f.type === 'event').length, 1);
 });
