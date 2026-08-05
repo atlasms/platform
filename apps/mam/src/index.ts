@@ -18,11 +18,8 @@ export {
   type CreateAssetInput,
   type UpdateAssetInput,
 } from './asset.ts';
-export {
-  MamService,
-  type AssetStore,
-  type Caller,
-  type MamOptions,
-  type OutboxWriter,
-} from './service.ts';
+export { MamService, type Caller, type MamOptions } from './service.ts';
+export { type AssetStore, type AssetTx } from './store.ts';
+export { sqliteAssetStore, sqliteAssetsMigration } from './store-sqlite.ts';
+export { pgAssetStore, pgAssetsMigration, mamMigrations } from './store-pg.ts';
 export { buildMamApp, type MamAppOptions } from './app.ts';

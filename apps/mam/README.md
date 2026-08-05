@@ -13,6 +13,34 @@ and the events every other service reacts to
 read cache (17.7), FileRef mirror of the HSM ledger (17.8). The service is deliberately narrow and
 correct rather than broad and provisional.
 
+## Persistence is a port with two adapters
+
+The service talks to [`AssetStore`](src/store.ts), never to a driver.
+[Postgres](src/store-pg.ts) is what deploys; [`node:sqlite`](src/store-sqlite.ts) is what tests and
+single-node dev run on. Both pass the same [conformance suite](src/store-conformance.ts), because
+the two properties MAM's safety argument rests on — tenant isolation and outbox atomicity — are
+properties of the **adapter**, so asserting them against sqlite proves nothing about production.
+
+Everything is async. A synchronous driver can satisfy an async contract; the reverse is impossible,
+and the deployed store is Postgres.
+
+The interface has no `put`. Writes exist only inside `transaction()`, so a write that skips the
+unit of work — and therefore the outbox's atomicity — cannot be expressed. `listByChannel` takes the
+tenant as a parameter rather than leaving the caller to filter, because a filter applied after
+loading is one that can be forgotten, and forgetting it means one channel reading another's
+catalogue.
+
+One divergence the suite deliberately does **not** paper over: on sqlite an uncommitted write is
+visible to the same connection, on Postgres it is not visible outside the transaction's own client.
+So the service reads nothing back inside a transaction — that would pass in tests and return stale
+data in production.
+
+```bash
+npm test -w @atlas/mam                    # sqlite; the Postgres suite skips
+docker compose -f infra/docker-compose.dev.yml up -d postgres
+ATLAS_PG_URL=postgres://atlas:atlas@localhost:55432/atlas npm test -w @atlas/mam
+```
+
 ## The lifecycle is the point
 
 `created → processing → ready → approved`, with time-bounded validity. It lives in

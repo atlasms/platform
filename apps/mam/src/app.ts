@@ -88,10 +88,13 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
   const handle = async (
     req: FastifyRequest,
     reply: FastifyReply,
-    fn: () => unknown,
+    fn: () => Promise<unknown>,
   ): Promise<unknown> => {
     try {
-      return fn();
+      // AWAITED inside the try. Returning the promise would settle it after the catch is out of
+      // scope, so every rejection would escape to Fastify's default handler as a bare 500 — losing
+      // the problem document, the status, and the correlation id.
+      return await fn();
     } catch (err) {
       const problem = toProblem(err, req.correlationId);
       return reply.code(problem.status).send(problem);
@@ -103,8 +106,8 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
   );
 
   app.post('/api/v1/assets', async (req, reply) =>
-    handle(req, reply, () => {
-      const asset = options.service.create(callerOf(req), req.body as never);
+    handle(req, reply, async () => {
+      const asset = await options.service.create(callerOf(req), req.body as never);
       return reply.code(201).send(asset);
     }),
   );
