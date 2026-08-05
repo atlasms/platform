@@ -55,9 +55,10 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                                                                                    |
 | **EP-13** walking skeleton       | ✅ 11 tests + **13.4 smoke suite green against a real cluster** (7/7)                                                                                             |
 | **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.3 the workbench** (tabs/splits/drag/persistence), 11.7 `can()` rendering — 43 tests. ⬜ 11.2 auth, 11.4 ws, 11.5 clients, 11.6 i18n/RTL    |
+| **EP-17** `mam` (Phase 1)        | ✅ 43 tests — asset core, lifecycle, mandatory-metadata gate, outbox events. ⬜ 17.2–17.4, 17.7, 17.8                                                             |
 | **EP-12** observability          | ✅ 12.4 alerts + metrics/golden signals (`/metrics` on the gateway). ⬜ 12.1/12.2/12.3 need a **collector-stack decision** (ADR)                                  |
 
-**289 tests across 14 projects, all green**, merged to `main` (PRs #176–#190). A further 19 run
+**332 tests across 15 projects, all green**, merged to `main` (PRs #176–#190). A further 19 run
 only against real infrastructure (NATS, Postgres) and skip in CI.
 
 > **Start here to understand how it fits together:**
@@ -71,8 +72,9 @@ merge** — branch protection needs a paid GitHub plan on a private repo. The ru
 one command away: [`.github/rulesets/README.md`](.github/rulesets/README.md). So **run
 `npx nx run-many -t lint typecheck test` yourself before opening a PR.**
 
-**Suggested next tasks:** `EP-12` (observability) · `EP-03.4` (DLQ tooling) · `EP-17` (MAM — the
-first real Phase 1 service, and what turns Studio placeholders into editors) · `EP-11.2` (auth flow).
+**Suggested next tasks:** `EP-17.2/17.3/17.4` (extensible metadata, tags, search — MAM breadth) ·
+`EP-12.1/12.2/12.3` (observability stack — **needs an ADR**) · `EP-03.4` (DLQ tooling) ·
+`EP-11.2` (Studio auth flow, which would let Studio talk to MAM for real).
 
 > **Adapters are separate packages, held to shared conformance suites.** `@atlas/messaging` and
 > `@atlas/data` keep zero (or near-zero) runtime dependencies and define the rules;

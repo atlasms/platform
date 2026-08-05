@@ -1,0 +1,384 @@
+// MAM's domain service (EP-17.1, EP-17.5, EP-17.6).
+//
+// Every mutation does four things, in this order and in one transaction:
+//   1. scope to the caller's channel,
+//   2. authorize with canEnforce and the FULL resource context,
+//   3. write the record,
+//   4. enqueue the event on the outbox — atomically with (3).
+//
+// Steps 3 and 4 sharing a transaction is the whole reason the outbox exists: the state change and
+// the announcement commit together, or neither does.
+
+import { buildEnvelope, subjectFor, ulid, validatePayload, type Envelope } from '@atlas/contracts';
+import { withTransaction, type Db } from '@atlas/data';
+import { canEnforce, type EffectivePolicy } from '@atlas/policy';
+import { Conflict, Forbidden, NotFound, ValidationError } from '@atlas/service-kit';
+import type { OutboxRecord } from '@atlas/messaging';
+import {
+  BASE_MANDATORY_FIELDS,
+  presentFieldsOf,
+  type Asset,
+  type CreateAssetInput,
+  type UpdateAssetInput,
+} from './asset.ts';
+import {
+  canTransition,
+  eventFor,
+  type LifecycleAction,
+  type LifecycleContext,
+} from './lifecycle.ts';
+
+export interface AssetStore {
+  get(id: string): Asset | undefined;
+  put(asset: Asset): void;
+  all(): Asset[];
+}
+
+export interface OutboxWriter {
+  enqueue(record: OutboxRecord): void;
+}
+
+export interface MamOptions {
+  db: Db;
+  assets: AssetStore;
+  outbox: OutboxWriter;
+  /** Extra mandatory fields for a category, beyond the platform's base set. */
+  mandatoryFieldsFor?: (asset: Asset) => readonly string[];
+  now?: () => Date;
+}
+
+/** Who is asking, and in which tenant. Established by the gateway, never parsed from a JWT here. */
+export interface Caller {
+  userId: string;
+  channelId: string;
+  policy: EffectivePolicy;
+  correlationId?: string;
+}
+
+export class MamService {
+  private readonly options: MamOptions;
+  private readonly now: () => Date;
+
+  constructor(options: MamOptions) {
+    this.options = options;
+    this.now = options.now ?? (() => new Date());
+  }
+
+  // --- reads -----------------------------------------------------------------
+
+  /**
+   * Fetch one asset.
+   *
+   * A cross-tenant id is reported as NOT FOUND, not FORBIDDEN. "You may not see this" confirms the
+   * asset exists, which is itself a leak across a tenant boundary.
+   */
+  get(caller: Caller, id: string): Asset {
+    const asset = this.options.assets.get(id);
+    if (!asset || asset.channelId !== caller.channelId) throw new NotFound(`no asset ${id}`);
+    this.authorize(caller, 'asset:read', asset);
+    return asset;
+  }
+
+  list(caller: Caller): Asset[] {
+    this.authorize(caller, 'asset:read');
+    return this.options.assets.all().filter((a) => a.channelId === caller.channelId);
+  }
+
+  // --- writes ----------------------------------------------------------------
+
+  create(caller: Caller, input: CreateAssetInput): Asset {
+    // No resource yet, so the check asks the broad question — but still inside the caller's
+    // channel, which is the part that must never be omitted.
+    this.authorize(caller, 'asset:write');
+
+    if (!input.title?.trim()) throw new ValidationError('title is required');
+    if (!input.mediaType?.trim()) throw new ValidationError('mediaType is required');
+    if (!input.fileType?.trim()) throw new ValidationError('fileType is required');
+
+    const at = this.now().toISOString();
+    const asset: Asset = {
+      id: ulid(),
+      channelId: caller.channelId,
+      title: input.title,
+      mediaType: input.mediaType,
+      fileType: input.fileType,
+      state: 'created',
+      version: 1,
+      hasRenditions: false,
+      createdBy: caller.userId,
+      createdAt: at,
+      updatedAt: at,
+      ...defined({
+        description: input.description,
+        categoryId: input.categoryId,
+        structureId: input.structureId,
+        episodeNo: input.episodeNo,
+        durationSec: input.durationSec,
+        allowedBroadcastCount: input.allowedBroadcastCount,
+        expiresAt: input.expiresAt,
+      }),
+    };
+
+    this.commit(caller, asset, 'asset.created', {
+      assetId: asset.id,
+      core: {
+        title: asset.title,
+        fileType: asset.fileType,
+        ...defined({ description: asset.description, durationSec: asset.durationSec }),
+      },
+    });
+
+    return asset;
+  }
+
+  update(caller: Caller, id: string, patch: UpdateAssetInput): Asset {
+    const existing = this.get(caller, id);
+    this.authorize(caller, 'asset:write', existing);
+
+    // ALLOWLIST, not the caller's object. `UpdateAssetInput` omits `state`, but a type is erased
+    // at runtime and this patch arrives as JSON — spreading it would let `{"state":"approved"}`
+    // route straight around review. Same for id, channelId, version and the audit fields.
+    const safe = pickUpdatable(patch);
+
+    const changedFields = (Object.keys(safe) as (keyof UpdateAssetInput)[]).filter(
+      (key) => safe[key] !== undefined && safe[key] !== existing[key],
+    );
+    // No-op PATCHes are common from UIs that submit whole forms. Emitting `asset.updated` with an
+    // empty changedFields would both violate the contract (minItems: 1) and wake every consumer
+    // for nothing.
+    if (changedFields.length === 0) return existing;
+
+    const updated: Asset = {
+      ...existing,
+      ...defined(safe),
+      version: existing.version + 1,
+      updatedAt: this.now().toISOString(),
+    };
+
+    this.commit(caller, updated, 'asset.updated', {
+      assetId: updated.id,
+      changedFields,
+      source: 'user',
+    });
+
+    return updated;
+  }
+
+  /**
+   * Move an asset through its lifecycle.
+   *
+   * The single entry point for state change — `update()` cannot touch `state`, so review cannot be
+   * routed around by a metadata PATCH.
+   */
+  transition(
+    caller: Caller,
+    id: string,
+    action: LifecycleAction,
+    options: { expiresAt?: string; retainUntil?: string; reason?: string } = {},
+  ): Asset {
+    const existing = this.get(caller, id);
+
+    // Approving is its own permission: someone who may edit metadata is not thereby entitled to
+    // sign an asset off for air.
+    const permission =
+      action === 'approve' || action === 'reject' ? 'asset:approve' : 'asset:write';
+    this.authorize(caller, permission, existing);
+
+    // The contract makes `reason` required on asset.rejected, and it is right to. A rejection with
+    // no stated cause leaves whoever has to fix the asset with nothing to act on — and it would be
+    // caught by schema validation anyway, but as an opaque 500 instead of a clear 422.
+    if (action === 'reject' && !options.reason?.trim()) {
+      throw new ValidationError('a rejection must state a reason');
+    }
+
+    const context = this.contextFor(existing);
+    const result = canTransition(context, action);
+    if (!result.allowed) {
+      throw new Conflict(result.reason ?? `cannot ${action} this asset`);
+    }
+
+    const updated: Asset = {
+      ...existing,
+      state: result.next ?? existing.state,
+      version: existing.version + 1,
+      updatedAt: this.now().toISOString(),
+      ...defined({ expiresAt: options.expiresAt, retainUntil: options.retainUntil }),
+    };
+
+    const eventType = eventFor(action);
+    if (eventType === undefined) {
+      // An internal step with no contract event still commits, just without announcing itself.
+      withTransaction(this.options.db, () => this.options.assets.put(updated));
+      return updated;
+    }
+
+    this.commit(caller, updated, eventType, this.payloadFor(caller, eventType, updated, options));
+    return updated;
+  }
+
+  /** Attach renditions — normally driven by `transcode.completed` from MTS. */
+  attachRenditions(caller: Caller, id: string): Asset {
+    const existing = this.get(caller, id);
+    this.authorize(caller, 'asset:write', existing);
+    const updated: Asset = {
+      ...existing,
+      hasRenditions: true,
+      updatedAt: this.now().toISOString(),
+    };
+    withTransaction(this.options.db, () => this.options.assets.put(updated));
+    return updated;
+  }
+
+  /** The lifecycle's view of an asset, including the category's mandatory fields. */
+  contextFor(asset: Asset): LifecycleContext {
+    const extra = this.options.mandatoryFieldsFor?.(asset) ?? [];
+    return {
+      state: asset.state,
+      hasRenditions: asset.hasRenditions,
+      mandatoryFields: [...new Set([...BASE_MANDATORY_FIELDS, ...extra])],
+      presentFields: presentFieldsOf(asset),
+      ...defined({ expiresAt: asset.expiresAt, retainUntil: asset.retainUntil }),
+    };
+  }
+
+  // --- internals -------------------------------------------------------------
+
+  /**
+   * STRICT authorization with the full resource context.
+   *
+   * Lenient `can()` would treat a predicate it cannot evaluate as satisfied, so an incomplete
+   * context would yield a WIDER grant (authorization-model.md §5.1). Studio uses lenient to decide
+   * what to show; a service enforcing must not.
+   */
+  private authorize(caller: Caller, permission: string, asset?: Asset): void {
+    const decision = canEnforce(caller.policy, permission, {
+      channelId: caller.channelId,
+      ...defined({ categoryPath: asset?.categoryId, ownerId: asset?.createdBy }),
+    });
+    if (!decision.allowed) throw new Forbidden(decision.reason ?? `missing ${permission}`);
+  }
+
+  /** Write the record and its event in ONE transaction. */
+  private commit(
+    caller: Caller,
+    asset: Asset,
+    eventType: string,
+    payload: Record<string, unknown>,
+  ): void {
+    // Validated before it is stored, not on the way out: an invalid payload in the outbox is a
+    // poison message that fails every drain forever, and the transaction that could have rejected
+    // it has long since committed.
+    const check = validatePayload(eventType, payload);
+    if (!check.valid) {
+      throw new ValidationError(
+        `${eventType} payload does not match its schema: ${check.errors.map((e) => `${e.path} ${e.message}`).join('; ')}`,
+      );
+    }
+
+    const envelope: Envelope = buildEnvelope({
+      type: eventType,
+      channelId: asset.channelId,
+      payload,
+      actor: { kind: 'user', id: caller.userId },
+      ...defined({ correlationId: caller.correlationId }),
+    });
+
+    withTransaction(this.options.db, () => {
+      this.options.assets.put(asset);
+      this.options.outbox.enqueue({
+        id: envelope.messageId,
+        message: {
+          id: envelope.messageId,
+          subject: subjectFor(asset.channelId, eventType),
+          body: envelope,
+        },
+      });
+    });
+  }
+
+  /**
+   * Build the event payload for a lifecycle transition.
+   *
+   * Each of these contracts requires more than the asset id — an approval names its approver, a
+   * rejection states its reason, an expiry records when. That is deliberate on the contract's
+   * part: these are the events a compliance record is reconstructed from, and "asset 42 was
+   * rejected" with no author and no cause is not a record of anything.
+   */
+  private payloadFor(
+    caller: Caller,
+    eventType: string,
+    asset: Asset,
+    options: { reason?: string; retainUntil?: string },
+  ): Record<string, unknown> {
+    const at = asset.updatedAt;
+    switch (eventType) {
+      case 'asset.approved':
+        return {
+          assetId: asset.id,
+          approver: caller.userId,
+          approvedAt: at,
+          ...defined({ expiresAt: asset.expiresAt }),
+        };
+      case 'asset.rejected':
+        return {
+          assetId: asset.id,
+          reason: options.reason,
+          rejectedBy: caller.userId,
+          rejectedAt: at,
+          ...defined({ retainUntil: asset.retainUntil }),
+        };
+      case 'asset.expired':
+        // `expirySource` records where `expiresAt` came from — a per-asset override or an
+        // inherited category default (FR-TAX-7). Always 'asset' today: category-inherited expiry
+        // arrives with the taxonomy work, and claiming 'category' before then would be a lie in
+        // the audit record.
+        return { assetId: asset.id, expiredAt: at, expirySource: 'asset' };
+      default:
+        return { assetId: asset.id };
+    }
+  }
+}
+
+/**
+ * Drop undefined entries.
+ *
+ * `exactOptionalPropertyTypes` is on, so `{ a: undefined }` is not the same as `{}` — and on the
+ * wire an explicit null is noise a consumer has to handle.
+ */
+/**
+ * The only fields a metadata update may touch.
+ *
+ * Deliberately an explicit list rather than a denylist: a denylist has to be updated every time a
+ * field is added to `Asset`, and the failure mode of forgetting is that the new field becomes
+ * writable by anyone with `asset:write` — including, one day, another field that matters as much
+ * as `state`.
+ */
+const UPDATABLE_FIELDS = [
+  'title',
+  'description',
+  'categoryId',
+  'structureId',
+  'episodeNo',
+  'durationSec',
+  'allowedBroadcastCount',
+  'expiresAt',
+] as const satisfies readonly (keyof UpdateAssetInput)[];
+
+function pickUpdatable(patch: UpdateAssetInput): UpdateAssetInput {
+  const out: Record<string, unknown> = {};
+  for (const field of UPDATABLE_FIELDS) {
+    if (patch[field] !== undefined) out[field] = patch[field];
+  }
+  return out as UpdateAssetInput;
+}
+
+function defined<T extends Record<string, unknown>>(
+  source: T,
+): { [K in keyof T]?: Exclude<T[K], undefined> } {
+  // The return type strips `undefined` from the VALUES, not just the keys. `Partial<T>` would
+  // leave `string | undefined`, which under exactOptionalPropertyTypes is not assignable to an
+  // optional `string` — the very distinction this helper exists to preserve.
+  return Object.fromEntries(Object.entries(source).filter(([, value]) => value !== undefined)) as {
+    [K in keyof T]?: Exclude<T[K], undefined>;
+  };
+}

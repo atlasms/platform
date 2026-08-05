@@ -1,0 +1,151 @@
+// MAM's HTTP surface ([mam.md §4](../../../docs/architecture/services/mam.md#4-public-api)).
+//
+// Identity arrives as the internal headers the gateway establishes; this service never parses a
+// JWT. The gateway authenticates, MAM authorizes — and MAM's decision is the one that counts.
+
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import { ulid } from '@atlas/contracts';
+import type { EffectivePolicy } from '@atlas/policy';
+import {
+  goldenSignals,
+  HealthRegistry,
+  MetricRegistry,
+  runWithContext,
+  toProblem,
+  Unauthorized,
+} from '@atlas/service-kit';
+import type { LifecycleAction } from './lifecycle.ts';
+import type { MamService, Caller } from './service.ts';
+
+export interface MamAppOptions {
+  service: MamService;
+  /** Resolves the caller's compiled policy — the cached IAM snapshot in production. */
+  policyFor: (userId: string) => EffectivePolicy | undefined;
+  health?: HealthRegistry;
+  metrics?: MetricRegistry;
+}
+
+export function buildMamApp(options: MamAppOptions): FastifyInstance {
+  const app = Fastify({ logger: false });
+  const health = options.health ?? new HealthRegistry();
+  const metrics = options.metrics ?? new MetricRegistry();
+  const signals = goldenSignals(metrics, 'mam');
+
+  // Lifecycle transitions legitimately carry no body — `POST /assets/{id}/approve` with nothing to
+  // say is the normal case. Fastify's default JSON parser rejects an empty body outright, which
+  // would surface as a confusing 400 from the framework instead of the service's own answer.
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    const raw = typeof body === 'string' ? body.trim() : '';
+    if (raw === '') return done(null, {});
+    try {
+      done(null, JSON.parse(raw));
+    } catch {
+      // Malformed JSON is still the caller's error, and still a 400.
+      done(new SyntaxError('body is not valid JSON'), undefined);
+    }
+  });
+
+  app.addHook('onRequest', (req, _reply, done) => {
+    const incoming = req.headers['x-correlation-id'];
+    req.correlationId = typeof incoming === 'string' && incoming ? incoming : ulid();
+    req.startedAt = Date.now();
+    runWithContext({ correlationId: req.correlationId }, () => done());
+  });
+
+  app.addHook('onResponse', (req, reply, done) => {
+    const template = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? req.url;
+    signals.observe({
+      method: req.method,
+      route: template,
+      status: reply.statusCode,
+      duration: (Date.now() - req.startedAt) / 1000,
+    });
+    done();
+  });
+
+  // Unauthenticated, like the health endpoints: a scraper is infrastructure, not a user.
+  app.get('/metrics', async (_req, reply) =>
+    reply.header('content-type', metrics.contentType).send(metrics.expose()),
+  );
+  app.get('/healthz', async () => health.liveness());
+  app.get('/readyz', async (_req, reply) => {
+    const report = await health.readiness();
+    return reply.code(report.status === 'ready' ? 200 : 503).send(report);
+  });
+
+  /** Rebuild the caller from the gateway's headers. Missing identity is 401, never a default. */
+  const callerOf = (req: FastifyRequest): Caller => {
+    const userId = req.headers['x-atlas-user'];
+    const channelId = req.headers['x-atlas-channel'];
+    if (typeof userId !== 'string') throw new Unauthorized('no authenticated subject');
+    if (typeof channelId !== 'string') throw new Unauthorized('no channel scope');
+
+    const policy = options.policyFor(userId);
+    if (!policy) throw new Unauthorized('no policy for subject');
+    return { userId, channelId, policy, correlationId: req.correlationId };
+  };
+
+  const handle = async (
+    req: FastifyRequest,
+    reply: FastifyReply,
+    fn: () => unknown,
+  ): Promise<unknown> => {
+    try {
+      return fn();
+    } catch (err) {
+      const problem = toProblem(err, req.correlationId);
+      return reply.code(problem.status).send(problem);
+    }
+  };
+
+  app.get('/api/v1/assets', async (req, reply) =>
+    handle(req, reply, () => options.service.list(callerOf(req))),
+  );
+
+  app.post('/api/v1/assets', async (req, reply) =>
+    handle(req, reply, () => {
+      const asset = options.service.create(callerOf(req), req.body as never);
+      return reply.code(201).send(asset);
+    }),
+  );
+
+  app.get('/api/v1/assets/:id', async (req, reply) =>
+    handle(req, reply, () => options.service.get(callerOf(req), (req.params as { id: string }).id)),
+  );
+
+  app.patch('/api/v1/assets/:id', async (req, reply) =>
+    handle(req, reply, () =>
+      options.service.update(callerOf(req), (req.params as { id: string }).id, req.body as never),
+    ),
+  );
+
+  // Lifecycle transitions are their own endpoints, not a PATCH of `state`. The verb is the point:
+  // approving is a distinct permission, emits a distinct event, and is refused from a state a
+  // metadata edit would happily have overwritten.
+  const transitionRoute = (path: string, action: LifecycleAction): void => {
+    app.post(`/api/v1/assets/:id/${path}`, async (req, reply) =>
+      handle(req, reply, () =>
+        options.service.transition(
+          callerOf(req),
+          (req.params as { id: string }).id,
+          action,
+          (req.body ?? {}) as { expiresAt?: string; retainUntil?: string; reason?: string },
+        ),
+      ),
+    );
+  };
+
+  transitionRoute('process', 'startProcessing');
+  transitionRoute('ready', 'markReady');
+  transitionRoute('approve', 'approve');
+  transitionRoute('reject', 'reject');
+
+  return app;
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    correlationId: string;
+    startedAt: number;
+  }
+}
