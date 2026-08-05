@@ -1,0 +1,181 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { jsonRepo, jsonTableMigration, migrate, openDb, SqliteOutboxStore } from '@atlas/data';
+import { compile, type EffectivePolicy } from '@atlas/policy';
+import { buildMamApp, MamService, type Asset } from '../src/index.ts';
+
+const CHANNEL = 'ch12';
+
+function app(permissions = ['asset:read', 'asset:write', 'asset:approve']) {
+  const db = openDb(':memory:');
+  migrate(db, [
+    jsonTableMigration('assets'),
+    {
+      id: 'outbox',
+      up: `CREATE TABLE IF NOT EXISTS outbox (
+             id TEXT PRIMARY KEY, subject TEXT NOT NULL, body TEXT NOT NULL,
+             created_at TEXT NOT NULL DEFAULT (datetime('now')), sent_at TEXT)`,
+    },
+  ]);
+  const repo = jsonRepo<Asset>(db, 'assets');
+  const service = new MamService({
+    db,
+    assets: { get: (id) => repo.get(id), put: (a) => repo.put(a), all: () => repo.all() },
+    outbox: new SqliteOutboxStore(db),
+  });
+
+  const policies = new Map<string, EffectivePolicy>([
+    [
+      'user-1',
+      compile({
+        subjectId: 'user-1',
+        permVersion: 1,
+        rules: [{ id: 'r', permissions, scope: { channelIds: [CHANNEL] } }],
+      }),
+    ],
+  ]);
+
+  return buildMamApp({ service, policyFor: (id) => policies.get(id) });
+}
+
+/** The header set the gateway establishes. MAM never sees a JWT. */
+const identity = {
+  'x-atlas-user': 'user-1',
+  'x-atlas-channel': CHANNEL,
+  'content-type': 'application/json',
+};
+
+test('health and metrics need no identity', async () => {
+  const a = app();
+  assert.equal((await a.inject({ method: 'GET', url: '/healthz' })).statusCode, 200);
+  assert.equal((await a.inject({ method: 'GET', url: '/readyz' })).statusCode, 200);
+
+  const metrics = await a.inject({ method: 'GET', url: '/metrics' });
+  assert.equal(metrics.statusCode, 200);
+  assert.match(metrics.body, /atlas_http_requests_total/);
+});
+
+test('SECURITY: without the gateway’s identity headers, everything is 401', async () => {
+  // The service must never invent a default caller — that is how an unauthenticated request ends
+  // up executing as somebody.
+  const a = app();
+  for (const url of ['/api/v1/assets', '/api/v1/assets/whatever']) {
+    const res = await a.inject({ method: 'GET', url });
+    assert.equal(res.statusCode, 401, url);
+  }
+  const post = await a.inject({ method: 'POST', url: '/api/v1/assets', payload: { title: 'x' } });
+  assert.equal(post.statusCode, 401);
+});
+
+test('create → read → patch over HTTP', async () => {
+  const a = app();
+
+  const created = await a.inject({
+    method: 'POST',
+    url: '/api/v1/assets',
+    headers: identity,
+    payload: { title: 'Clip 42', mediaType: 'video', fileType: 'mxf' },
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  const asset = created.json();
+  assert.equal(asset.state, 'created');
+
+  const fetched = await a.inject({
+    method: 'GET',
+    url: `/api/v1/assets/${asset.id}`,
+    headers: identity,
+  });
+  assert.equal(fetched.statusCode, 200);
+
+  const patched = await a.inject({
+    method: 'PATCH',
+    url: `/api/v1/assets/${asset.id}`,
+    headers: identity,
+    payload: { title: 'Clip 42 (revised)' },
+  });
+  assert.equal(patched.statusCode, 200);
+  assert.equal(patched.json().title, 'Clip 42 (revised)');
+});
+
+test('SECURITY: a PATCH cannot set state, even though the wire accepts any JSON', async () => {
+  // The TypeScript type omits `state`, but a type is erased at runtime. This is the assertion
+  // that actually holds the line.
+  const a = app();
+  const created = await a.inject({
+    method: 'POST',
+    url: '/api/v1/assets',
+    headers: identity,
+    payload: { title: 'Clip', mediaType: 'video', fileType: 'mxf' },
+  });
+  const { id } = created.json();
+
+  const patched = await a.inject({
+    method: 'PATCH',
+    url: `/api/v1/assets/${id}`,
+    headers: identity,
+    payload: { title: 'Renamed', state: 'approved', channelId: 'ch99', version: 999 },
+  });
+
+  assert.equal(patched.statusCode, 200);
+  const after = patched.json();
+  assert.equal(after.state, 'created', 'state must not be settable over the wire');
+  assert.equal(after.channelId, CHANNEL, 'channel must not be settable over the wire');
+  assert.equal(after.version, 2, 'version is the service’s, not the caller’s');
+});
+
+test('an unknown asset is 404, and a bad transition is 409', async () => {
+  const a = app();
+  const missing = await a.inject({
+    method: 'GET',
+    url: '/api/v1/assets/01H000000000000000000000',
+    headers: identity,
+  });
+  assert.equal(missing.statusCode, 404);
+  assert.equal(missing.json().code, 'NOT_FOUND');
+
+  const created = await a.inject({
+    method: 'POST',
+    url: '/api/v1/assets',
+    headers: identity,
+    payload: { title: 'Clip', mediaType: 'video', fileType: 'mxf' },
+  });
+  const { id } = created.json();
+
+  const early = await a.inject({
+    method: 'POST',
+    url: `/api/v1/assets/${id}/approve`,
+    headers: identity,
+  });
+  assert.equal(early.statusCode, 409, 'approving a freshly created asset must conflict');
+  assert.match(early.json().message, /cannot approve/);
+});
+
+test('a rejection without a reason is 422', async () => {
+  const a = app();
+  const created = await a.inject({
+    method: 'POST',
+    url: '/api/v1/assets',
+    headers: identity,
+    payload: { title: 'Clip', mediaType: 'video', fileType: 'mxf', categoryId: 'cat-1' },
+  });
+  const { id } = created.json();
+
+  const rejected = await a.inject({
+    method: 'POST',
+    url: `/api/v1/assets/${id}/reject`,
+    headers: identity,
+    payload: {},
+  });
+  assert.equal(rejected.statusCode, 422);
+  assert.match(rejected.json().message, /must state a reason/);
+});
+
+test('every response is traceable', async () => {
+  const a = app();
+  const res = await a.inject({
+    method: 'GET',
+    url: '/api/v1/assets/nope',
+    headers: { ...identity, 'x-correlation-id': 'trace-me' },
+  });
+  assert.equal(res.json().correlationId, 'trace-me');
+});
