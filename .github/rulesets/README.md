@@ -14,19 +14,41 @@ Upgrade to GitHub Pro or make this repository public to enable this feature. (HT
 ```
 
 **Both** classic branch protection and the newer rulesets require a paid plan
-(Pro / Team / Enterprise) on **private** repositories. `atlasms/platform` is private, and should
-stay private — it is a commercial product, so "make it public" is not the workaround.
+(Pro / Team / Enterprise) on **private** repositories.
+
+GitHub's error names the two ways out, and only one of them is acceptable:
+
+- **Make the repository public** — this genuinely works, and it is the wrong trade. `docs/` is the
+  complete product architecture, which is the actual work; code is replicable, the design is not.
+  Public is also effectively irreversible: you can switch back, but anything cloned, forked or
+  archived while public is gone. (Worth knowing the exposure is only IP: the history holds no keys,
+  no `.env`, no tokens, and the credential-shaped strings in it are dev values that authenticate to
+  nothing but a local kind cluster.)
+- **One paid seat** — GitHub Team is the smallest real fix, and the one to take when a second
+  person joins. That is also when protection starts earning its price.
 
 ## What this means in the meantime
 
-CI still runs on every PR and a failure is **visible** on the PR — it just is not **blocking**.
-Nothing stops a red PR being merged except discipline. Until the plan is upgraded, the
+CI still runs on every PR and a failure is **visible** — it just is not **blocking**. Nothing stops
+a red PR being merged except discipline, so the
 [Definition of Done](../../docs/roadmap/20-delivery-process.md#7-definition-of-done) is a
-convention, not a gate.
+convention rather than a gate.
 
-This is the single highest-value thing to unblock: it is what converts the DoD from _something
-someone remembers_ into something enforced. It matters more as the team grows past one person, and
-much more once AI-assisted changes are landing frequently.
+The gap is smaller than it first looks. Branch protection mainly protects a team **from each
+other**: required review, CI green before somebody else's merge, no force-push over a colleague's
+work. With one committer the failure it actually prevents is pushing something broken — so
+[`.githooks/pre-push`](../../.githooks/pre-push) closes most of it, locally and for free:
+
+```bash
+git config core.hooksPath .githooks     # enable (already set in this working copy)
+```
+
+It runs `lint typecheck test` before any push and refuses on failure. **It is not equivalent** — a
+server-side rule cannot be skipped and this one can (`git push --no-verify`) — but a bypass is
+deliberate and visible rather than accidental.
+
+Upgrading remains the highest-value thing to unblock, and it matters much more as the team grows
+past one person, or once AI-assisted changes land frequently.
 
 ## Applying it (one command, once the org is on Team)
 

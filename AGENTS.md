@@ -69,8 +69,11 @@ forward), merged to `main` (PRs #176–#198). A further **27** run only against 
 > file is the fastest way to see how the pieces compose.
 
 **CI runs on every PR** (`nx affected`) and on `main` (everything). But ⚠️ **it does not block
-merge** — branch protection needs a paid GitHub plan on a private repo. The ruleset is written and
-one command away: [`.github/rulesets/README.md`](.github/rulesets/README.md). So **run
+merge** — branch protection needs a paid GitHub plan on a private repo, and the repo stays private
+because `docs/` is the product. The ruleset is written and one command away:
+[`.github/rulesets/README.md`](.github/rulesets/README.md). A **`pre-push` hook** stands in for it
+locally (`git config core.hooksPath .githooks`) — it runs the same checks and refuses a failing
+push. It is skippable with `--no-verify`, so **still run
 `npx nx run-many -t lint typecheck test` yourself before opening a PR.**
 
 **The dev cluster now runs the real spine:** Postgres + NATS + IAM + MAM + gateway, with
