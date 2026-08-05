@@ -1,0 +1,110 @@
+# PostgreSQL — the relational store
+# ([02-system-architecture.md](../../../docs/architecture/02-system-architecture.md)).
+#
+# In-cluster because the platform must install air-gapped on customer hardware
+# ([FR-PLat-7](../../../docs/requirements/05-functional-requirements.md#platform)) — there is no
+# managed database to point at. A customer with an existing Postgres estate should instead delete
+# this file from their overlay and repoint ATLAS_PG_URL; nothing else changes.
+#
+# A StatefulSet, not a Deployment: it needs stable storage and exactly one writer. A Deployment
+# with a PVC will happily start a second pod against the same volume during a rollout.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: atlas
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: atlas
+    spec:
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: atlas
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            # The data directory must be a SUBDIRECTORY of the mount. A volume root often carries
+            # a lost+found, and initdb refuses to initialise a non-empty directory.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          # `pg_isready -h localhost` and not the default socket path: the alpine image's socket
+          # lives in /var/run/postgresql, which is not writable under a read-only-ish securityContext
+          # in every base image. TCP is what clients use anyway, so it is the honest check.
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-h", "localhost", "-U", "atlas", "-d", "atlas"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-h", "localhost", "-U", "atlas", "-d", "atlas"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: atlas
+spec:
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

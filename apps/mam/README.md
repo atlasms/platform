@@ -41,6 +41,19 @@ docker compose -f infra/docker-compose.dev.yml up -d postgres
 ATLAS_PG_URL=postgres://atlas:atlas@localhost:55432/atlas npm test -w @atlas/mam
 ```
 
+## Where permissions come from
+
+IAM owns grants; MAM enforces them. [`PolicyClient`](src/policy-client.ts) fetches the caller's
+compiled policy from IAM and caches it briefly — one authorization round trip per request would put
+IAM on the critical path of every read.
+
+That TTL is a **revocation window**, not a performance knob: a permission removed in IAM stays live
+here until the entry expires. Every failure mode resolves to "no policy", which the HTTP layer turns
+into 401 — an unreachable IAM, a 500, a body that is not a policy. The convenient alternatives are
+both unsafe. Serving a stale entry makes a revoked permission outlive its revocation for as long as
+IAM is down; treating an unparseable response as "no rules" is a guess about authorization dressed
+up as a 403.
+
 ## The lifecycle is the point
 
 `created → processing → ready → approved`, with time-bounded validity. It lives in
@@ -76,6 +89,21 @@ confirms the asset exists, which is itself the leak.
 
 Approving is a **separate permission** from writing: someone who may edit metadata is not thereby
 entitled to sign an asset off for air.
+
+## Running in a cluster
+
+[`main.ts`](src/main.ts) is the container entrypoint: Postgres pool, migrations, policy client,
+health checks and the outbox relay, which drains to NATS on an interval.
+
+**The broker is deliberately not a readiness check.** With NATS down, writes still commit and their
+events accumulate in the outbox until it returns — that is exactly what the outbox is for. Failing
+readiness there would take the catalogue out of service to protect an announcement about it.
+
+**Migrations retry within a budget.** On a fresh install every service starts at once and Postgres
+is not up yet; exiting immediately hands the problem to Kubernetes' restart backoff, which grows to
+five minutes. Measured on the first deploy, that was **7 restarts and 16 minutes** to reach ready,
+long after the database was serving. The budget matters as much as the retry — a wrong password is
+a permanent failure, and a service that retries one forever never tells anyone it is misconfigured.
 
 ## Events
 
