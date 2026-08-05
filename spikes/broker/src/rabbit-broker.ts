@@ -23,7 +23,11 @@ export class RabbitMqBroker implements SpikeBroker {
   private ch?: ConfirmChannel;
   private readonly queues: string[] = [];
 
-  constructor(private readonly options: RabbitOptions = {}) {}
+  private readonly options: RabbitOptions;
+
+  constructor(options: RabbitOptions = {}) {
+    this.options = options;
+  }
 
   async connect(): Promise<void> {
     this.conn = await amqp.connect(this.options.url ?? 'amqp://atlas:atlas@localhost:55672');

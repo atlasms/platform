@@ -17,7 +17,11 @@ export const outboxMigration: Migration = {
 };
 
 export class SqliteOutboxStore implements OutboxStore {
-  constructor(private db: Db) {}
+  private readonly db: Db;
+
+  constructor(db: Db) {
+    this.db = db;
+  }
 
   /** Synchronous enqueue for use within a withTransaction block. */
   enqueue(rec: OutboxRecord): void {

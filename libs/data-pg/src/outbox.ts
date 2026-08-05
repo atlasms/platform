@@ -24,7 +24,11 @@ export const outboxMigration: Migration = {
 };
 
 export class PgOutboxStore implements OutboxStore {
-  constructor(private readonly pool: PgPool) {}
+  private readonly pool: PgPool;
+
+  constructor(pool: PgPool) {
+    this.pool = pool;
+  }
 
   /**
    * Enqueue INSIDE the caller's transaction.

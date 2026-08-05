@@ -9,11 +9,13 @@ export {
 export { HealthRegistry, type Check, type ReadinessReport } from './health.ts';
 export {
   verifyJwt,
+  remoteJwks,
   requirePermission,
   generateTestKey,
   type Claims,
   type VerifyOptions,
   type TestKey,
+  type JWKS,
 } from './auth.ts';
 export { createLogger, type Logger } from './logger.ts';
 export {

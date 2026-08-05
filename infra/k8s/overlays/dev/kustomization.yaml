@@ -1,0 +1,43 @@
+# Local development on kind.
+#
+#   kind create cluster --config infra/k8s/kind-cluster.yaml
+#   npm run k8s:up
+#   npm run smoke
+#
+# Everything here exists because it is WRONG for production: a NodePort instead of an ingress, one
+# gateway replica instead of two, images that must already be on the node, and a seeded account
+# whose password is committed to the repository.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: atlas
+
+resources:
+  - ../../base
+  - nodeport.yaml
+
+# kind has no registry. `kind load docker-image` puts the image on the node directly, and
+# IfNotPresent stops the kubelet trying to pull a tag that exists nowhere. In every real
+# environment this is a digest from a registry.
+images:
+  - name: atlas/iam
+    newTag: dev
+  - name: atlas/api-gateway
+    newTag: dev
+
+# ONE `patches:` key. Two would not be a merge — YAML duplicate keys silently override, so the
+# second list wins and the first is dropped without a warning from kustomize or kubectl.
+patches:
+  # A bootstrap account, so a fresh cluster is usable and the smoke suite can prove the whole
+  # token path rather than only that a wrong password is refused. Dev only — see the file.
+  - path: seed-user.yaml
+
+  # One replica: a laptop does not need two, and a single pod makes `kubectl logs` legible.
+  - target:
+      kind: Deployment
+      name: api-gateway
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1

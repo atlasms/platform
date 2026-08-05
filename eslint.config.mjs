@@ -28,6 +28,11 @@ export default tseslint.config(
       '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
       // `any` erases the shared-types force-multiplier that the whole stack decision rests on.
       '@typescript-eslint/no-explicit-any': 'error',
+      // Node's native TypeScript support is STRIP-ONLY: it erases types and refuses syntax that
+      // emits code. A constructor parameter property emits an assignment, so one of them anywhere
+      // in a service's import graph breaks `node src/main.ts` — which is how the containers run,
+      // with no transform and no build step (infra/docker/Dockerfile). Assign in the body instead.
+      '@typescript-eslint/parameter-properties': ['error', { prefer: 'class-property' }],
     },
   },
   {

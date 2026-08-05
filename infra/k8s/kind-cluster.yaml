@@ -1,0 +1,28 @@
+# A local Kubernetes cluster for development (EP-01.5).
+#
+#   kind create cluster --config infra/k8s/kind-cluster.yaml
+#   kind delete cluster --name atlas-dev
+#
+# kind runs the cluster inside Docker, so it needs nothing installed beyond Docker itself — which
+# matters for a platform that must be buildable and testable offline (A9 / FR-PLat-7).
+#
+# Single node: this exists to verify that the manifests are correct and the services actually come
+# up and talk to each other. It is NOT a model of the production topology, which is multi-node with
+# real storage classes — see docs/operations/17-operations-runbook.md.
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: atlas-dev
+
+nodes:
+  - role: control-plane
+    # NodePort straight through to the host, so the gateway is reachable at localhost:30080
+    # without an ingress controller. Ingress is a production concern and is deliberately not
+    # simulated here: pretending a dev NodePort is an ingress hides real TLS and routing work.
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+      - containerPort: 30081
+        hostPort: 30081
+        protocol: TCP

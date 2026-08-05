@@ -1,0 +1,21 @@
+# The environment-independent definition. Anything that differs between dev, staging and an
+# on-prem install belongs in an overlay, never here.
+#
+# Kustomize rather than Helm: it is built into kubectl, so the toolchain stays at one binary and
+# the manifests are readable YAML rather than templated YAML. Packaging for customer distribution
+# is a separate question and may still want a chart — see ADR-0002.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: atlas
+
+resources:
+  - namespace.yaml
+  - iam.yaml
+  - api-gateway.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: atlas

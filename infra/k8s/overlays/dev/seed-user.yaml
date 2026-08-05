@@ -1,0 +1,23 @@
+# A bootstrap account so a freshly created dev cluster is usable, and so the smoke suite can prove
+# the whole token path rather than only that a wrong password is rejected.
+#
+# DEV ONLY, and it looks like it: the credentials are in plain YAML in the repository. Real
+# environments create the first account out of band and hold it in a Secret. IAM only seeds when
+# BOTH variables are present, so nothing here leaks into an overlay that does not ask for it.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iam
+spec:
+  template:
+    spec:
+      containers:
+        - name: iam
+          env:
+            - name: ATLAS_SEED_USERNAME
+              value: dev
+            - name: ATLAS_SEED_PASSWORD
+              value: dev-password
+            - name: ATLAS_SEED_CHANNEL
+              value: ch12

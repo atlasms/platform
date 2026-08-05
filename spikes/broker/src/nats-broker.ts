@@ -32,7 +32,11 @@ export class NatsJetStreamBroker implements SpikeBroker {
   private jsm?: JetStreamManager;
   private readonly running: ConsumerMessages[] = [];
 
-  constructor(private readonly options: NatsOptions = {}) {}
+  private readonly options: NatsOptions;
+
+  constructor(options: NatsOptions = {}) {
+    this.options = options;
+  }
 
   async connect(): Promise<void> {
     this.nc = await connect({ servers: this.options.servers ?? 'localhost:54222' });

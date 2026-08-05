@@ -4,6 +4,7 @@ import {
   generateKeyPair,
   exportJWK,
   createLocalJWKSet,
+  createRemoteJWKSet,
   type JWTPayload,
 } from 'jose';
 import { Unauthorized, Forbidden } from './errors.ts';
@@ -21,7 +22,25 @@ export interface VerifyOptions {
   audience?: string;
 }
 
-type JWKS = ReturnType<typeof createLocalJWKSet>;
+/**
+ * A key resolver. Local for tests and for a key set held in config; **remote for production**,
+ * where services fetch IAM's JWKS so a key rotation propagates without redeploying anything.
+ *
+ * Both are just resolver functions to `jwtVerify`, but their types differ — a local set carries
+ * its `jwks` payload — so the union is what lets one `verifyJwt` serve both.
+ */
+export type JWKS = ReturnType<typeof createLocalJWKSet> | ReturnType<typeof createRemoteJWKSet>;
+
+/**
+ * Fetch and cache a JWKS from a URL.
+ *
+ * `jose` caches the key set and refetches only when it sees an unknown `kid`, with its own
+ * cooldown — so this is not a per-request call to IAM, and a rotated key is picked up on the
+ * first token that needs it.
+ */
+export function remoteJwks(url: URL | string): JWKS {
+  return createRemoteJWKSet(typeof url === 'string' ? new URL(url) : url);
+}
 
 /** Verify a bearer token against a JWKS; throws Unauthorized on any failure. */
 export async function verifyJwt(
