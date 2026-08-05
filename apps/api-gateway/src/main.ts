@@ -10,6 +10,7 @@ const config = loadConfig({
   issuer: { env: 'ATLAS_ISSUER', type: 'string', default: 'atlas-iam' },
   audience: { env: 'ATLAS_AUDIENCE', type: 'string', default: 'atlas' },
   iamOrigin: { env: 'ATLAS_IAM_ORIGIN', type: 'string', default: 'http://iam:3000' },
+  mamOrigin: { env: 'ATLAS_MAM_ORIGIN', type: 'string', default: 'http://mam:3000' },
   jwksPath: { env: 'ATLAS_JWKS_PATH', type: 'string', default: '/.well-known/jwks.json' },
 });
 
@@ -29,6 +30,9 @@ const routes: RoutingTable = [
   // identity as internal headers. IAM re-authorizes — the gateway authenticates, it does not
   // authorize.
   { service: 'iam', origin: config.iamOrigin, prefix: '/api/v1/users' },
+  // MAM. The gateway adds no domain endpoints of its own — it verifies the token, forwards the
+  // established identity as internal headers, and MAM re-authorizes with its own resource context.
+  { service: 'mam', origin: config.mamOrigin, prefix: '/api/v1/assets' },
 ];
 
 const health = new HealthRegistry().register(

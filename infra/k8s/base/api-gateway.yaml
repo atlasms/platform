@@ -35,6 +35,8 @@ spec:
               value: "8080"
             - name: ATLAS_IAM_ORIGIN
               value: http://iam:3000
+            - name: ATLAS_MAM_ORIGIN
+              value: http://mam:3000
             - name: ATLAS_ISSUER
               value: atlas-iam
             - name: ATLAS_AUDIENCE

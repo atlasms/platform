@@ -35,6 +35,24 @@ const json = (result) => {
   }
 };
 
+/**
+ * Log in as the dev seed account and return a bearer token, or `undefined` where no such account
+ * exists — a real environment has none by design, so those tests skip rather than fail.
+ */
+async function seedToken() {
+  const login = await get('/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      username: process.env.ATLAS_SMOKE_USER ?? 'dev',
+      password: process.env.ATLAS_SMOKE_PASSWORD ?? 'dev-password',
+    }),
+  });
+  if (login.status === 401) return undefined;
+  assert.equal(login.status, 200, `login failed: ${login.text}`);
+  return json(login).accessToken;
+}
+
 test(`smoke: ${BASE} is reachable and live`, async () => {
   const res = await get('/healthz');
   assert.equal(res.status, 200, `gateway not live: ${res.text}`);
@@ -111,6 +129,114 @@ test('smoke: a real token is minted and then VERIFIED against IAM’s remote JWK
     headers: { authorization: 'Bearer not.a.token' },
   });
   assert.equal(garbage.status, 401, 'a malformed token was accepted');
+});
+
+// =============================================================================
+// MAM — a domain service behind the gateway
+// =============================================================================
+
+test('smoke: MAM is routed, and refuses an unauthenticated caller', async () => {
+  // 401 and not 404 is the assertion: 404 would mean the gateway has no route for /api/v1/assets,
+  // which is indistinguishable from a working deployment if you only check that it isn't 200.
+  const res = await get('/api/v1/assets');
+  assert.equal(res.status, 401, `expected 401 from a routed but protected path: ${res.text}`);
+  assert.equal(json(res).code, 'UNAUTHORIZED');
+});
+
+test('smoke: the full write path — gateway → MAM → Postgres → outbox', async () => {
+  // This is the assertion that a domain service actually WORKS in the cluster: the token is
+  // verified at the gateway, identity is forwarded as internal headers, MAM fetches the caller's
+  // compiled policy from IAM, authorizes against it, and commits to a real database. Every one of
+  // those hops is a separate pod.
+  const token = await seedToken();
+  if (!token) {
+    console.log('    (no seed account in this environment — skipping the MAM path)');
+    return;
+  }
+  const auth = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers: auth,
+    body: JSON.stringify({
+      title: 'Smoke clip',
+      mediaType: 'video',
+      fileType: 'mxf',
+      categoryId: 'cat-1',
+    }),
+  });
+  assert.equal(created.status, 201, `create failed: ${created.text}`);
+
+  const asset = json(created);
+  assert.ok(asset.id, 'the created asset must have an id');
+  assert.equal(asset.state, 'created');
+  assert.ok(asset.channelId, 'the asset must be scoped to a channel');
+
+  // Read it back in a SEPARATE request. Anything less would also pass against a service that
+  // echoed the request body without persisting it.
+  const fetched = await get(`/api/v1/assets/${asset.id}`, { headers: auth });
+  assert.equal(fetched.status, 200, `read-back failed: ${fetched.text}`);
+  assert.equal(json(fetched).title, 'Smoke clip');
+
+  // The mandatory gate, enforced by the deployment and not just by a unit test: an asset with no
+  // renditions cannot be marked ready, whatever its metadata says.
+  await get(`/api/v1/assets/${asset.id}/process`, { method: 'POST', headers: auth });
+  const ready = await get(`/api/v1/assets/${asset.id}/ready`, { method: 'POST', headers: auth });
+  assert.equal(ready.status, 409, `expected the mandatory gate to refuse: ${ready.text}`);
+  assert.match(json(ready).message, /rendition/i);
+});
+
+test('smoke: SECURITY — state cannot be set over the wire in a real deployment', async () => {
+  // The type that omits `state` is erased at runtime; only the service's allowlist holds this
+  // line, and it is worth asserting where the JSON actually crosses a network.
+  const token = await seedToken();
+  if (!token) return;
+  const auth = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers: auth,
+    body: JSON.stringify({ title: 'Tamper', mediaType: 'video', fileType: 'mxf' }),
+  });
+  assert.equal(created.status, 201, created.text);
+  const { id, channelId } = json(created);
+
+  const patched = await get(`/api/v1/assets/${id}`, {
+    method: 'PATCH',
+    headers: auth,
+    body: JSON.stringify({ title: 'Renamed', state: 'approved', channelId: 'ch99', version: 999 }),
+  });
+  assert.equal(patched.status, 200, patched.text);
+
+  const after = json(patched);
+  assert.equal(after.title, 'Renamed');
+  assert.equal(after.state, 'created', 'state was settable over the wire');
+  assert.equal(after.channelId, channelId, 'channel was settable over the wire');
+  assert.equal(after.version, 2, 'version must be the service’s, not the caller’s');
+});
+
+test('smoke: an unknown asset is a problem document, not a stack trace', async () => {
+  const token = await seedToken();
+  if (!token) return;
+
+  const res = await get('/api/v1/assets/01H000000000000000000000', {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(res.status, 404);
+  assert.equal(json(res).code, 'NOT_FOUND');
+  assert.doesNotMatch(res.text, /\s+at\s+.*\(/, 'a stack trace must never reach a client');
+});
+
+test('smoke: a correlation id survives the gateway → MAM hop', async () => {
+  // One id across two pods is what makes a distributed trace readable. The service that answers is
+  // not the one the client called, so this only holds if the header is forwarded and adopted.
+  const token = await seedToken();
+  if (!token) return;
+
+  const res = await get('/api/v1/assets/01H000000000000000000000', {
+    headers: { authorization: `Bearer ${token}`, 'x-correlation-id': 'smoke-mam-trace' },
+  });
+  assert.equal(json(res).correlationId, 'smoke-mam-trace');
 });
 
 test('smoke: every response carries a correlation id', async () => {

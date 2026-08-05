@@ -13,12 +13,22 @@ const routes = [
 
 /** Records what the gateway sent upstream so the forwarded identity can be asserted. */
 function captureUpstream(status = 200, body: unknown = { ok: true }) {
-  const seen: Array<{ url: string; method: string; headers: Record<string, string> }> = [];
+  const seen: Array<{
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    body?: Buffer;
+  }> = [];
   const impl = (async (
     url: string,
-    init?: { method?: string; headers?: Record<string, string> },
+    init?: { method?: string; headers?: Record<string, string>; body?: Buffer },
   ) => {
-    seen.push({ url, method: init?.method ?? 'GET', headers: init?.headers ?? {} });
+    seen.push({
+      url,
+      method: init?.method ?? 'GET',
+      headers: init?.headers ?? {},
+      ...(init?.body !== undefined ? { body: init.body } : {}),
+    });
     return {
       status,
       ok: status < 400,
@@ -290,4 +300,63 @@ test('a 5xx from upstream is counted as an error, not lost', async () => {
 
   const body = (await app.inject({ method: 'GET', url: '/metrics' })).body;
   assert.match(body, /atlas_http_requests_total\{.*status="5xx"\} 1/);
+});
+
+// --- the gateway forwards BYTES, it does not parse them ---------------------
+
+test('DANGER: a POST with a JSON content type and an EMPTY body is proxied, not 500', async () => {
+  // Fastify's default JSON parser rejects an empty body outright. A lifecycle transition
+  // legitimately has nothing to say — `POST /assets/{id}/approve` with no body is the normal case,
+  // and it is exactly what a generated client sends. Parsing here turned that into a 500 from the
+  // GATEWAY, one millisecond in, before the request ever reached the service that owns it.
+  const { impl, seen } = captureUpstream();
+  const { app, key } = await gatewayWith({ fetchImpl: impl });
+  const token = await key.sign({ sub: 'user-42', channelId: 'ch12', permissions: [] });
+
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/v1/assets/01H2XKZQ4E5N6P7R8S9T0V1W2X/approve',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    payload: '',
+  });
+
+  assert.equal(res.statusCode, 200, `gateway refused an empty JSON body: ${res.body}`);
+  assert.equal(seen.length, 1, 'the request never reached the upstream');
+  assert.equal(seen[0]?.body, undefined, 'an empty body must not be forwarded as one');
+});
+
+test('a body is forwarded byte-for-byte, not re-serialized', async () => {
+  // Re-serializing changes key order and whitespace. Any upstream that verifies a signature or a
+  // checksum over the raw body would then reject a request the client signed correctly.
+  const { impl, seen } = captureUpstream();
+  const { app, key } = await gatewayWith({ fetchImpl: impl });
+  const token = await key.sign({ sub: 'user-42', channelId: 'ch12', permissions: [] });
+  const payload = '{"z":1,  "a":  2}';
+
+  await app.inject({
+    method: 'POST',
+    url: '/api/v1/assets',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    payload,
+  });
+
+  assert.equal(seen[0]?.body?.toString('utf8'), payload);
+});
+
+test('a non-JSON body is proxied rather than refused', async () => {
+  // The gateway carries every service's API, and not all of them are JSON — file upload is the
+  // obvious one. A gateway that can only parse JSON can only proxy JSON.
+  const { impl, seen } = captureUpstream();
+  const { app, key } = await gatewayWith({ fetchImpl: impl });
+  const token = await key.sign({ sub: 'user-42', channelId: 'ch12', permissions: [] });
+
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/v1/assets',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' },
+    payload: Buffer.from([0x00, 0x01, 0x02, 0xff]),
+  });
+
+  assert.equal(res.statusCode, 200, `gateway refused a binary body: ${res.body}`);
+  assert.deepEqual([...(seen[0]?.body ?? [])], [0x00, 0x01, 0x02, 0xff]);
 });

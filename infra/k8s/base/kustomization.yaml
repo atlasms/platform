@@ -12,7 +12,12 @@ namespace: atlas
 
 resources:
   - namespace.yaml
+  # Data plane first, so reading this file top-down matches the dependency order.
+  - postgres.yaml
+  - nats.yaml
+  # Services.
   - iam.yaml
+  - mam.yaml
   - api-gateway.yaml
 
 labels:

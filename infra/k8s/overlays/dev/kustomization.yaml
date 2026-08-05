@@ -23,8 +23,24 @@ resources:
 images:
   - name: atlas/iam
     newTag: dev
+  - name: atlas/mam
+    newTag: dev
   - name: atlas/api-gateway
     newTag: dev
+
+# The base declares no credentials at all — it names a Secret and stops there, so nothing in the
+# environment-independent layer can leak one. This generator is the dev value, and it is committed
+# BECAUSE it is worthless: a real install supplies its own Secret and deletes this block.
+secretGenerator:
+  - name: postgres-credentials
+    literals:
+      - username=atlas
+      - password=atlas
+    options:
+      # Without this the Secret gets a content hash suffix and every consumer's reference has to be
+      # rewritten by kustomize — which works, but makes `kubectl get secret` output confusing for
+      # no benefit at a password that never rotates.
+      disableNameSuffixHash: true
 
 # ONE `patches:` key. Two would not be a merge — YAML duplicate keys silently override, so the
 # second list wins and the first is dropped without a warning from kustomize or kubectl.
@@ -37,6 +53,13 @@ patches:
   - target:
       kind: Deployment
       name: api-gateway
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      kind: Deployment
+      name: mam
     patch: |-
       - op: replace
         path: /spec/replicas

@@ -19,10 +19,19 @@ import type { MamService, Caller } from './service.ts';
 
 export interface MamAppOptions {
   service: MamService;
-  /** Resolves the caller's compiled policy — the cached IAM snapshot in production. */
-  policyFor: (userId: string) => EffectivePolicy | undefined;
+  /** Resolves the caller's compiled policy — {@link PolicyClient} against IAM in production. */
+  policyFor: (userId: string) => Promise<EffectivePolicy | undefined> | EffectivePolicy | undefined;
   health?: HealthRegistry;
   metrics?: MetricRegistry;
+  /**
+   * Called for any error that becomes a 5xx.
+   *
+   * A 500 tells the caller nothing on purpose — the message is deliberately opaque so an internal
+   * failure cannot leak a query, a path or a stack. That makes it invisible to the operator too
+   * unless it is logged HERE, with the same correlation id the caller was given. Without this, an
+   * unexpected failure in a deployed service is a bare "Internal error" and nothing to search for.
+   */
+  onError?: (err: unknown, context: { correlationId: string; method: string; url: string }) => void;
 }
 
 export function buildMamApp(options: MamAppOptions): FastifyInstance {
@@ -74,13 +83,16 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
   });
 
   /** Rebuild the caller from the gateway's headers. Missing identity is 401, never a default. */
-  const callerOf = (req: FastifyRequest): Caller => {
+  const callerOf = async (req: FastifyRequest): Promise<Caller> => {
     const userId = req.headers['x-atlas-user'];
     const channelId = req.headers['x-atlas-channel'];
     if (typeof userId !== 'string') throw new Unauthorized('no authenticated subject');
     if (typeof channelId !== 'string') throw new Unauthorized('no channel scope');
 
-    const policy = options.policyFor(userId);
+    // A policy that cannot be established is 401, not an empty policy. "We could not determine
+    // your permissions" must never degrade into "you have none, carry on" — the two are
+    // indistinguishable to a caller who legitimately has none, and only one of them is safe.
+    const policy = await options.policyFor(userId);
     if (!policy) throw new Unauthorized('no policy for subject');
     return { userId, channelId, policy, correlationId: req.correlationId };
   };
@@ -97,28 +109,43 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
       return await fn();
     } catch (err) {
       const problem = toProblem(err, req.correlationId);
+      // Only 5xx. A 404 or a 409 is the service working correctly and saying no; logging those at
+      // error level trains everyone to ignore the error log.
+      if (problem.status >= 500) {
+        options.onError?.(err, {
+          correlationId: req.correlationId,
+          method: req.method,
+          url: req.url,
+        });
+      }
       return reply.code(problem.status).send(problem);
     }
   };
 
   app.get('/api/v1/assets', async (req, reply) =>
-    handle(req, reply, () => options.service.list(callerOf(req))),
+    handle(req, reply, async () => options.service.list(await callerOf(req))),
   );
 
   app.post('/api/v1/assets', async (req, reply) =>
     handle(req, reply, async () => {
-      const asset = await options.service.create(callerOf(req), req.body as never);
+      const asset = await options.service.create(await callerOf(req), req.body as never);
       return reply.code(201).send(asset);
     }),
   );
 
   app.get('/api/v1/assets/:id', async (req, reply) =>
-    handle(req, reply, () => options.service.get(callerOf(req), (req.params as { id: string }).id)),
+    handle(req, reply, async () =>
+      options.service.get(await callerOf(req), (req.params as { id: string }).id),
+    ),
   );
 
   app.patch('/api/v1/assets/:id', async (req, reply) =>
-    handle(req, reply, () =>
-      options.service.update(callerOf(req), (req.params as { id: string }).id, req.body as never),
+    handle(req, reply, async () =>
+      options.service.update(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+        req.body as never,
+      ),
     ),
   );
 
@@ -127,9 +154,9 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
   // metadata edit would happily have overwritten.
   const transitionRoute = (path: string, action: LifecycleAction): void => {
     app.post(`/api/v1/assets/:id/${path}`, async (req, reply) =>
-      handle(req, reply, () =>
+      handle(req, reply, async () =>
         options.service.transition(
-          callerOf(req),
+          await callerOf(req),
           (req.params as { id: string }).id,
           action,
           (req.body ?? {}) as { expiresAt?: string; retainUntil?: string; reason?: string },

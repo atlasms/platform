@@ -72,6 +72,19 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
   const metrics = options.metrics ?? new MetricRegistry();
   const signals = goldenSignals(metrics, 'api-gateway');
 
+  // The gateway does not parse request bodies — it forwards BYTES.
+  //
+  // Fastify's default JSON parser rejects an empty body outright, and a lifecycle transition
+  // legitimately has nothing to say: `POST /assets/{id}/approve` with `content-type: application/
+  // json` and no body is what every generated client sends. That surfaced as a 500 from the
+  // gateway before the request ever reached the owning service.
+  //
+  // Parsing was wrong for two more reasons. It re-serializes, so what the upstream receives is not
+  // byte-identical to what the client sent — fatal for a signature or a checksum. And it rejects
+  // anything that is not JSON, which is every file upload the platform will ever carry.
+  app.removeAllContentTypeParsers();
+  app.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
+
   // --- correlation: issue or adopt, for every request including failures ------------------
   app.addHook('onRequest', (req, _reply, done) => {
     const incoming = req.headers[INTERNAL_HEADERS.correlation];
@@ -186,13 +199,18 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
       if (typeof v === 'string') headers[h] = v;
     }
 
+    // A Buffer, thanks to the catch-all parser above. Forwarded verbatim; an EMPTY one is omitted
+    // rather than sent, since a zero-length body with a JSON content type is what the upstream's
+    // own parser would then have to special-case.
+    const raw = req.body as Buffer | undefined;
+    const hasBody =
+      req.method !== 'GET' && req.method !== 'HEAD' && raw !== undefined && raw.length > 0;
+
     try {
       const upstream = await doFetch(route.origin + req.url, {
         method: req.method,
         headers,
-        ...(req.method !== 'GET' && req.method !== 'HEAD' && req.body !== undefined
-          ? { body: JSON.stringify(req.body) }
-          : {}),
+        ...(hasBody ? { body: raw } : {}),
       });
 
       const body = await upstream.text();
