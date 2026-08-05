@@ -28,7 +28,8 @@
     "k8s:load": "kind load docker-image atlas/iam:dev atlas/api-gateway:dev --name atlas-dev",
     "k8s:deploy": "kubectl apply -k infra/k8s/overlays/dev",
     "k8s:up": "npm run k8s:build && npm run k8s:load && npm run k8s:deploy",
-    "smoke": "node --test infra/smoke/smoke.test.mjs"
+    "smoke": "node --test infra/smoke/smoke.test.mjs",
+    "bundle": "node scripts/build-bundle.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

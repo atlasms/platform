@@ -247,8 +247,17 @@ Every service adheres to these (enforced by `service-kit` + CI):
 
 A recurring risk ([Roadmap risks](08-roadmap.md#risks)) built in from Phase 0:
 
-- **Offline install bundle:** pinned container images + Helm charts + a local artifact/model registry,
-  buildable and installable with **no internet**; test an air-gapped install before v1.0.
+- **Offline install bundle:** pinned container images + **rendered Kubernetes manifests** + a local
+  artifact/model registry, buildable and installable with **no internet**.
+  Built by [`scripts/build-bundle.mjs`](../../scripts/build-bundle.mjs) (`npm run bundle`).
+
+  > Manifests are rendered, not charts — [ADR-0002](../adr/0002-deployment-target.md) chose
+  > Kustomize, and rendering at build time means the installing site needs `kubectl` and nothing
+  > else. Packaging as a Helm chart for customer distribution remains open, and is additive.
+
+  **Air-gapped install is tested, not assumed:** the bundle installs onto a clean cluster using the
+  node's own `ctr`, with every image reported by Kubernetes as *"already present on machine"* — no
+  pull attempted — and the [smoke suite](../../infra/smoke/smoke.test.mjs) passes 8/8 against it.
 - **No runtime internet assumption** on the core path; AI online tier is the only feature allowed to
   require egress, and it degrades to off/local ([A12b](../README.md#assumptions-register)).
 

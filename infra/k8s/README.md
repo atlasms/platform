@@ -60,6 +60,16 @@ draining Fastify is what stops every rollout dropping requests.
 
 **Containers run as non-root with a read-only root filesystem and all capabilities dropped.**
 
+## Shipping to an air-gapped site
+
+```sh
+npm run bundle -- --version 0.1.0
+```
+
+Produces a self-contained directory with image tarballs, **rendered** manifests, checksums and an
+installer that needs no network and no kustomize — see
+[the offline bundle](../../docs/operations/offline-bundle.md).
+
 ## Related
 
 - [ADR-0002](../../docs/adr/0002-deployment-target.md) — why Kubernetes, and what it costs
