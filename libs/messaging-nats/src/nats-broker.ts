@@ -62,7 +62,10 @@ export class NatsBroker implements Broker {
   private readonly open: ConsumerMessages[] = [];
   private readonly stream: string;
 
-  private constructor(private readonly options: NatsBrokerOptions) {
+  private readonly options: NatsBrokerOptions;
+
+  private constructor(options: NatsBrokerOptions) {
+    this.options = options;
     this.stream = options.stream ?? DEFAULT_STREAM;
   }
 

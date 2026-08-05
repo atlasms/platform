@@ -43,7 +43,7 @@ Then read **only** the specific docs your task touches — e.g.
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Design docs                      | ✅ Complete                                                                                                                                                    |
 | GitHub backlog                   | ✅ 175 issues on org project **#2**                                                                                                                            |
-| **EP-01** foundations            | ✅ Monorepo, CI (`nx affected`), CODEOWNERS. ⬜ 01.4 containers, 01.5 IaC, 01.7 offline bundle                                                                 |
+| **EP-01** foundations            | ✅ Monorepo, CI, CODEOWNERS, **01.4 containers + 01.5 K8s** ([ADR-0002](docs/adr/0002-deployment-target.md)). ⬜ 01.7 offline bundle                           |
 | **EP-02** `@atlas/contracts`     | ✅ 8 tests — loads all 53 schemas from `docs/`. ⬜ 02.2–02.6                                                                                                   |
 | **EP-03** `@atlas/messaging`     | ✅ 13 tests + `@atlas/messaging-nats` on **real JetStream** (11). [ADR-0001](docs/adr/0001-message-broker.md). ⬜ 03.4 DLQ tooling, 03.7 relay pipelining      |
 | **EP-04** `@atlas/service-kit`   | ✅ 34 tests — errors, config, auth, health, logging, **metrics + alerts**. ⬜ 04.7 tracing                                                                     |
@@ -53,11 +53,11 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-08** `api-gateway`          | ✅ 13 tests. ⬜ 08.3 rate limiting, 08.5 reference aggregation                                                                                                 |
 | **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                                                                                             |
 | **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                                                                                 |
-| **EP-13** walking skeleton       | ✅ 9 tests — **the Phase 0 exit criteria, executable**                                                                                                         |
+| **EP-13** walking skeleton       | ✅ 11 tests + **13.4 smoke suite green against a real cluster** (7/7)                                                                                          |
 | **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.3 the workbench** (tabs/splits/drag/persistence), 11.7 `can()` rendering — 43 tests. ⬜ 11.2 auth, 11.4 ws, 11.5 clients, 11.6 i18n/RTL |
 | **EP-12** observability          | ✅ 12.4 alerts + metrics/golden signals (`/metrics` on the gateway). ⬜ 12.1/12.2/12.3 need a **collector-stack decision** (ADR)                               |
 
-**246 tests across 14 projects, all green**, merged to `main` (PRs #176–#190). A further 19 run
+**289 tests across 14 projects, all green**, merged to `main` (PRs #176–#190). A further 19 run
 only against real infrastructure (NATS, Postgres) and skip in CI.
 
 > **Start here to understand how it fits together:**
@@ -154,6 +154,8 @@ Do not "modernise" any of the below. Each was decided or discovered the hard way
 | **A JetStream durable is a shared cursor**                          | Durables are named per **(service, pattern)**. Two instances of one service sharing a durable is right (work splits). Two _different_ services sharing one means each steals half the other's events. Never name a durable after the pattern alone.                                                                    |
 | **Studio runs its own toolchain — don't unify it**                  | `@atlas/studio` needs TypeScript **6.0** (Angular 22) while the libs are on **5.9**, uses **vitest** not `node:test` (component tests need a DOM), and has its own `tsconfig.json` rather than extending `tsconfig.base.json`. The strictness is reproduced there explicitly. See [its README](apps/studio/README.md). |
 | **Studio is the only project that emits**                           | So `allowImportingTsExtensions` alone is illegal there; it also needs `rewriteRelativeImportExtensions`. And ignore patterns must be `**/dist/**`, not `dist/**`.                                                                                                                                                      |
+| **Never use a constructor parameter property**                      | Containers run `node src/main.ts` on Node's **strip-only** TypeScript support, which refuses syntax that _emits_ code — parameter properties, enums, namespaces. One anywhere in a service's import graph breaks **every** container at startup while every test still passes. Enforced by eslint.                     |
+| **Container images copy nested `node_modules`**                     | Not just the root. `ajv@8` lives in `libs/contracts/node_modules` because eslint hoists an incompatible `ajv@6` to the root; an image with only the root tree dies on a package npm installed correctly. See [`infra/docker/Dockerfile`](infra/docker/Dockerfile).                                                     |
 | **In Studio, lenient `can()` is CORRECT**                           | The opposite of the service rule. Studio decides what to _show_; the service enforces. `canEnforce` in the UI would hide legitimate controls whenever a check runs before the resource loads. Use `canStrict()` only for destructive actions with full context.                                                        |
 
 ## 7. Commands

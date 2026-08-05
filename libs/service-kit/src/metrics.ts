@@ -58,14 +58,15 @@ abstract class Metric {
   protected readonly series = new Map<string, Series>();
   protected onDrop?: () => void;
 
-  constructor(
-    options: MetricOptions,
-    readonly type: MetricType,
-    private readonly maxSeries: number,
-  ) {
+  readonly type: MetricType;
+  private readonly maxSeries: number;
+
+  constructor(options: MetricOptions, type: MetricType, maxSeries: number) {
     this.name = options.name;
     this.help = options.help;
     this.labelNames = options.labelNames ?? [];
+    this.type = type;
+    this.maxSeries = maxSeries;
   }
 
   /** Called by the registry so refusals can be counted centrally. */
@@ -179,7 +180,10 @@ export class MetricRegistry {
   private readonly metrics = new Map<string, Metric>();
   private readonly droppedSeries: Counter;
 
-  constructor(private readonly maxSeries = DEFAULT_MAX_SERIES) {
+  private readonly maxSeries: number;
+
+  constructor(maxSeries = DEFAULT_MAX_SERIES) {
+    this.maxSeries = maxSeries;
     // Registered first and by hand: it must exist before anything can be dropped, and it must not
     // be able to drop itself.
     this.droppedSeries = new Counter(

@@ -84,7 +84,10 @@ export class AlertEvaluator {
   private readonly now: () => Date;
   private readonly newId: () => string;
 
-  constructor(private readonly options: AlertEvaluatorOptions) {
+  private readonly options: AlertEvaluatorOptions;
+
+  constructor(options: AlertEvaluatorOptions) {
+    this.options = options;
     this.now = options.now ?? (() => new Date());
     this.newId = options.newId ?? defaultId;
   }

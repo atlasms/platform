@@ -1,0 +1,21 @@
+# Reaches the gateway from the host at http://localhost:30080.
+#
+# DEV ONLY. Production terminates TLS at an ingress; a NodePort has no TLS, no host routing and no
+# rate limiting. Simulating an ingress here would hide that work rather than schedule it — kind's
+# extraPortMappings forward this port to the host.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-nodeport
+  labels:
+    app.kubernetes.io/name: api-gateway
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: api-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: 30080

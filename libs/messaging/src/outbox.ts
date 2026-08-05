@@ -33,11 +33,15 @@ export class InMemoryOutboxStore implements OutboxStore {
 }
 
 export class OutboxRelay {
-  constructor(
-    private store: OutboxStore,
-    private broker: Broker,
-    private now: () => number = Date.now,
-  ) {}
+  private readonly store: OutboxStore;
+  private readonly broker: Broker;
+  private readonly now: () => number;
+
+  constructor(store: OutboxStore, broker: Broker, now: () => number = Date.now) {
+    this.store = store;
+    this.broker = broker;
+    this.now = now;
+  }
 
   /** Publish all unsent records, marking each sent. Returns how many were relayed. */
   async drain(batch = 100): Promise<number> {

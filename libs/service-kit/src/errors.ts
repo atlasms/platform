@@ -12,13 +12,19 @@ export interface Problem {
 }
 
 export class AppError extends Error {
-  constructor(
-    public code: ErrorCode,
-    public status: number,
-    message: string,
-    public details?: unknown,
-  ) {
+  // Assigned in the body rather than declared as constructor parameter properties: those EMIT
+  // code, and Node's native TypeScript support is strip-only. Keeping every file strip-only means
+  // production runs `node src/main.ts` with no transform, no flag and no build step
+  // (infra/docker/Dockerfile). An eslint rule enforces it.
+  readonly code: ErrorCode;
+  readonly status: number;
+  readonly details?: unknown;
+
+  constructor(code: ErrorCode, status: number, message: string, details?: unknown) {
     super(message);
+    this.code = code;
+    this.status = status;
+    if (details !== undefined) this.details = details;
     this.name = new.target.name;
   }
   toProblem(correlationId?: string): Problem {

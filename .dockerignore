@@ -1,0 +1,24 @@
+# Keep the build context small and the image reproducible.
+node_modules
+**/node_modules
+**/dist
+.nx
+.angular
+.git
+coverage
+
+# Tests and specs are not shipped: the image runs the same source they exercise, but the runner,
+# fixtures and doubles have no place in production.
+**/test
+**/*.test.ts
+**/*.spec.ts
+
+# Docs are not needed at runtime — EXCEPT the schemas, which @atlas/contracts loads and validates
+# against. The Dockerfile copies that one directory explicitly.
+docs/**
+!docs/architecture/schemas/**
+
+spikes
+reference
+.github
+*.md
