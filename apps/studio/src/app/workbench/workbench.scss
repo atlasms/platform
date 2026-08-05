@@ -113,6 +113,18 @@
   opacity: 0.6;
 }
 
+// A button, not an anchor: signing out is an action, not a destination. An <a> here would be
+// keyboard-focusable but announced as a link and offer a meaningless "open in new tab".
+.link {
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  text-decoration: underline;
+}
+
 .muted {
   color: var(--color-fg-muted);
   font-size: 0.8125rem;

@@ -1,5 +1,5 @@
 import type { Routes } from '@angular/router';
-import { requirePermission } from './core/permission.guard.ts';
+import { requirePermission, requireSession } from './core/permission.guard.ts';
 
 /**
  * Panels are lazy and permission-matched.
@@ -10,6 +10,11 @@ import { requirePermission } from './core/permission.guard.ts';
  */
 export const routes: Routes = [
   {
+    // No guard: this is where an unauthenticated caller is SENT, so guarding it would loop.
+    path: 'signin',
+    loadComponent: () => import('./panels/signin.ts').then((m) => m.SignIn),
+  },
+  {
     path: 'media',
     canMatch: [requirePermission('asset:read')],
     loadComponent: () => import('./panels/media-panel.ts').then((m) => m.MediaPanel),
@@ -17,6 +22,7 @@ export const routes: Routes = [
   {
     path: '',
     pathMatch: 'full',
+    canMatch: [requireSession],
     loadComponent: () => import('./panels/welcome.ts').then((m) => m.Welcome),
   },
   {

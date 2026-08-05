@@ -12,14 +12,37 @@ npm test -w @atlas/studio
 ## What is built
 
 **EP-11.1** — app skeleton, permission-matched lazy routing, build pipeline.
+**EP-11.2** — the sign-in flow: real tokens from IAM, refresh, sign-out.
 **EP-11.3** — the workbench: tabbed and splittable editor groups, drag between groups, a resizable
 side bar, workspace persistence.
 **EP-11.7** — `can()` integration: permission-driven rendering.
 
-**Not built:** the real auth flow (**EP-11.2** — a dev session is seeded in `app.config.ts` so the
-shell is exercisable), the WebSocket client (**EP-11.4**), generated API clients (**EP-11.5**), and
-the full token system with i18n/RTL (**EP-11.6**). Editor _contents_ are placeholders — rendering
-an actual asset or schedule needs those services (EP-17 onward).
+**Not built:** the WebSocket client (**EP-11.4**), generated API clients (**EP-11.5**), and the full
+token system with i18n/RTL (**EP-11.6**). Editor _contents_ are placeholders — rendering an actual
+asset or schedule needs those services (EP-17 onward).
+
+## Signing in
+
+Studio starts **anonymous**. There is no seeded session any more, so everything downstream renders
+from the policy IAM actually returns rather than from grants we wrote for ourselves.
+
+`npm start` proxies `/auth` and `/api` to the gateway on `localhost:30080`, so the dev server talks
+to a real deployed cluster ([infra/k8s](../../infra/k8s/)) — `npm run k8s:up` first.
+
+**Tokens live in memory, and only in memory.** Not `localStorage`, not `sessionStorage`: both are
+readable by any script on the origin, so persisting the **refresh** token hands a long-lived
+credential to a single XSS. The cost is deliberate — a page reload signs you out. The fix is not a
+safer-looking storage key, it is for IAM to set an **httpOnly, SameSite=Strict cookie** so the
+browser can present the refresh token without Studio ever holding it. That needs a server change,
+and it is the follow-up [`auth.service.ts`](src/app/core/auth.service.ts) is waiting for.
+
+**Refresh is single-flight, and that is correctness rather than efficiency.** IAM rotates refresh
+tokens and treats a reused one as a breach signal — it revokes the whole token family, signing the
+user out everywhere. Two requests refreshing concurrently is the _normal_ case when a token expires
+while a screen is loading, so a refresh in progress is shared rather than started twice.
+
+The interceptor retries a 401 **exactly once**. A second 401 is a real answer — the grant was
+revoked, or the session is over — and retrying again would loop against a server that has said no.
 
 ## The editor area
 
