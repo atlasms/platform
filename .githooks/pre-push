@@ -1,0 +1,40 @@
+#!/bin/sh
+# Refuse to push a branch that does not pass CI's checks.
+#
+# This is the local stand-in for branch protection, which GitHub does not offer on a private repo
+# without a paid plan (see .github/rulesets/README.md). It is NOT equivalent: a server-side rule
+# cannot be skipped, and this can — `git push --no-verify` bypasses it entirely.
+#
+# It closes most of the gap anyway, because the gap is smaller than it looks. Branch protection
+# mainly protects a team from EACH OTHER: required review, CI green before someone else's merge, no
+# force-push over a colleague's work. With one committer, the failure it actually prevents is
+# pushing something broken — and that is exactly what this catches, earlier and faster than CI does.
+#
+# Enable:   git config core.hooksPath .githooks
+# Disable:  git config --unset core.hooksPath
+# Bypass:   git push --no-verify        (deliberate, visible, and yours to justify)
+
+set -e
+
+# Nothing to check when deleting a remote branch.
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+    exit 0
+  fi
+  # Unused, but read so the loop consumes stdin correctly.
+  : "$remote_sha"
+done
+
+echo "pre-push: running lint, typecheck and tests (git push --no-verify to skip)"
+
+# `nx affected` would be faster, but it needs a base commit to diff against and gets that wrong on
+# a fresh branch — reporting nothing affected and passing vacuously. A push is infrequent enough to
+# afford the honest answer.
+if ! npx nx run-many -t lint typecheck test; then
+  echo ""
+  echo "pre-push: REFUSED — the checks above must pass before this is pushed."
+  echo "          Fix them, or use 'git push --no-verify' if you know why you are bypassing this."
+  exit 1
+fi
+
+echo "pre-push: all checks passed."
