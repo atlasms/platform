@@ -55,10 +55,10 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                                                                                    |
 | **EP-13** walking skeleton       | ✅ 11 tests + **13.4 smoke suite green against a real cluster** (7/7)                                                                                             |
 | **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.3 the workbench** (tabs/splits/drag/persistence), 11.7 `can()` rendering — 43 tests. ⬜ 11.2 auth, 11.4 ws, 11.5 clients, 11.6 i18n/RTL    |
-| **EP-17** `mam` (Phase 1)        | ✅ 43 tests — asset core, lifecycle, mandatory-metadata gate, outbox events. ⬜ 17.2–17.4, 17.7, 17.8                                                             |
+| **EP-17** `mam` (Phase 1)        | ✅ 52 tests — asset core, lifecycle, mandatory-metadata gate, outbox events, **Postgres persistence** (8 more on a real database). ⬜ 17.2–17.4, 17.7, 17.8       |
 | **EP-12** observability          | ✅ 12.4 alerts + metrics/golden signals (`/metrics` on the gateway). ⬜ 12.1/12.2/12.3 need a **collector-stack decision** (ADR)                                  |
 
-**332 tests across 15 projects, all green**, merged to `main` (PRs #176–#190). A further 19 run
+**341 tests across 15 projects, all green**, merged to `main` (PRs #176–#196). A further 27 run
 only against real infrastructure (NATS, Postgres) and skip in CI.
 
 > **Start here to understand how it fits together:**
@@ -78,10 +78,14 @@ one command away: [`.github/rulesets/README.md`](.github/rulesets/README.md). So
 
 > **Adapters are separate packages, held to shared conformance suites.** `@atlas/messaging` and
 > `@atlas/data` keep zero (or near-zero) runtime dependencies and define the rules;
-> `@atlas/messaging-nats` and `@atlas/data-pg` implement them against real servers. Both suites
-> (`@atlas/messaging/conformance`, `@atlas/data/conformance`) run in CI against the in-memory /
-> sqlite doubles, and against real infrastructure when `ATLAS_NATS_URL` / `ATLAS_PG_URL` are set.
-> **Add a behaviour to the suite, not to one implementation.**
+> `@atlas/messaging-nats` and `@atlas/data-pg` implement them against real servers. The suites
+> (`@atlas/messaging/conformance`, `@atlas/data/conformance`, `@atlas/mam/store-conformance`) run in
+> CI against the in-memory / sqlite doubles, and against real infrastructure when `ATLAS_NATS_URL` /
+> `ATLAS_PG_URL` are set. **Add a behaviour to the suite, not to one implementation.**
+>
+> A service's persistence follows the same shape: `MamService` talks to an async `AssetStore` port
+> with a sqlite and a Postgres adapter. **A domain service must be async end to end** — a sync
+> driver can satisfy an async contract, never the reverse, and production is Postgres.
 
 > **Real servers are available for local work:** `docker compose -f infra/docker-compose.dev.yml up -d`
 > gives Postgres, NATS and RabbitMQ on non-default ports ([infra/README.md](infra/README.md)).
@@ -159,6 +163,8 @@ Do not "modernise" any of the below. Each was decided or discovered the hard way
 | **Never use a constructor parameter property**                      | Containers run `node src/main.ts` on Node's **strip-only** TypeScript support, which refuses syntax that _emits_ code — parameter properties, enums, namespaces. One anywhere in a service's import graph breaks **every** container at startup while every test still passes. Enforced by eslint.                     |
 | **Container images copy nested `node_modules`**                     | Not just the root. `ajv@8` lives in `libs/contracts/node_modules` because eslint hoists an incompatible `ajv@6` to the root; an image with only the root tree dies on a package npm installed correctly. See [`infra/docker/Dockerfile`](infra/docker/Dockerfile).                                                     |
 | **In Studio, lenient `can()` is CORRECT**                           | The opposite of the service rule. Studio decides what to _show_; the service enforces. `canEnforce` in the UI would hide legitimate controls whenever a check runs before the resource loads. Use `canStrict()` only for destructive actions with full context.                                                        |
+| **Never read back inside a transaction**                            | On `node:sqlite` an uncommitted write is visible to the same connection; on Postgres it is not visible outside the transaction's own client. A read-after-write inside the unit of work therefore **passes every test and returns stale data in production**. Read before the transaction, or through the tx client.   |
+| **`await` the handler inside its `try`**                            | `return fn()` from a `try` settles the promise after the `catch` is out of scope, so every rejection escapes to Fastify's default handler as a bare 500 — losing the problem document, the status code and the correlation id. `return await fn()`.                                                                    |
 
 ## 7. Commands
 

@@ -1,28 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { jsonRepo, jsonTableMigration, migrate, openDb, SqliteOutboxStore } from '@atlas/data';
 import { compile, type EffectivePolicy } from '@atlas/policy';
-import { buildMamApp, MamService, type Asset } from '../src/index.ts';
+import { buildMamApp, MamService, sqliteAssetStore } from '../src/index.ts';
 
 const CHANNEL = 'ch12';
 
 function app(permissions = ['asset:read', 'asset:write', 'asset:approve']) {
-  const db = openDb(':memory:');
-  migrate(db, [
-    jsonTableMigration('assets'),
-    {
-      id: 'outbox',
-      up: `CREATE TABLE IF NOT EXISTS outbox (
-             id TEXT PRIMARY KEY, subject TEXT NOT NULL, body TEXT NOT NULL,
-             created_at TEXT NOT NULL DEFAULT (datetime('now')), sent_at TEXT)`,
-    },
-  ]);
-  const repo = jsonRepo<Asset>(db, 'assets');
-  const service = new MamService({
-    db,
-    assets: { get: (id) => repo.get(id), put: (a) => repo.put(a), all: () => repo.all() },
-    outbox: new SqliteOutboxStore(db),
-  });
+  const service = new MamService({ store: sqliteAssetStore() });
 
   const policies = new Map<string, EffectivePolicy>([
     [

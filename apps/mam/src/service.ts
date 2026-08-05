@@ -10,10 +10,9 @@
 // the announcement commit together, or neither does.
 
 import { buildEnvelope, subjectFor, ulid, validatePayload, type Envelope } from '@atlas/contracts';
-import { withTransaction, type Db } from '@atlas/data';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, Forbidden, NotFound, ValidationError } from '@atlas/service-kit';
-import type { OutboxRecord } from '@atlas/messaging';
+import type { AssetStore } from './store.ts';
 import {
   BASE_MANDATORY_FIELDS,
   presentFieldsOf,
@@ -28,20 +27,8 @@ import {
   type LifecycleContext,
 } from './lifecycle.ts';
 
-export interface AssetStore {
-  get(id: string): Asset | undefined;
-  put(asset: Asset): void;
-  all(): Asset[];
-}
-
-export interface OutboxWriter {
-  enqueue(record: OutboxRecord): void;
-}
-
 export interface MamOptions {
-  db: Db;
-  assets: AssetStore;
-  outbox: OutboxWriter;
+  store: AssetStore;
   /** Extra mandatory fields for a category, beyond the platform's base set. */
   mandatoryFieldsFor?: (asset: Asset) => readonly string[];
   now?: () => Date;
@@ -72,21 +59,21 @@ export class MamService {
    * A cross-tenant id is reported as NOT FOUND, not FORBIDDEN. "You may not see this" confirms the
    * asset exists, which is itself a leak across a tenant boundary.
    */
-  get(caller: Caller, id: string): Asset {
-    const asset = this.options.assets.get(id);
+  async get(caller: Caller, id: string): Promise<Asset> {
+    const asset = await this.options.store.get(id);
     if (!asset || asset.channelId !== caller.channelId) throw new NotFound(`no asset ${id}`);
     this.authorize(caller, 'asset:read', asset);
     return asset;
   }
 
-  list(caller: Caller): Asset[] {
+  async list(caller: Caller): Promise<Asset[]> {
     this.authorize(caller, 'asset:read');
-    return this.options.assets.all().filter((a) => a.channelId === caller.channelId);
+    return this.options.store.listByChannel(caller.channelId);
   }
 
   // --- writes ----------------------------------------------------------------
 
-  create(caller: Caller, input: CreateAssetInput): Asset {
+  async create(caller: Caller, input: CreateAssetInput): Promise<Asset> {
     // No resource yet, so the check asks the broad question — but still inside the caller's
     // channel, which is the part that must never be omitted.
     this.authorize(caller, 'asset:write');
@@ -119,7 +106,7 @@ export class MamService {
       }),
     };
 
-    this.commit(caller, asset, 'asset.created', {
+    await this.commit(caller, asset, 'asset.created', {
       assetId: asset.id,
       core: {
         title: asset.title,
@@ -131,8 +118,8 @@ export class MamService {
     return asset;
   }
 
-  update(caller: Caller, id: string, patch: UpdateAssetInput): Asset {
-    const existing = this.get(caller, id);
+  async update(caller: Caller, id: string, patch: UpdateAssetInput): Promise<Asset> {
+    const existing = await this.get(caller, id);
     this.authorize(caller, 'asset:write', existing);
 
     // ALLOWLIST, not the caller's object. `UpdateAssetInput` omits `state`, but a type is erased
@@ -155,7 +142,7 @@ export class MamService {
       updatedAt: this.now().toISOString(),
     };
 
-    this.commit(caller, updated, 'asset.updated', {
+    await this.commit(caller, updated, 'asset.updated', {
       assetId: updated.id,
       changedFields,
       source: 'user',
@@ -170,13 +157,13 @@ export class MamService {
    * The single entry point for state change — `update()` cannot touch `state`, so review cannot be
    * routed around by a metadata PATCH.
    */
-  transition(
+  async transition(
     caller: Caller,
     id: string,
     action: LifecycleAction,
     options: { expiresAt?: string; retainUntil?: string; reason?: string } = {},
-  ): Asset {
-    const existing = this.get(caller, id);
+  ): Promise<Asset> {
+    const existing = await this.get(caller, id);
 
     // Approving is its own permission: someone who may edit metadata is not thereby entitled to
     // sign an asset off for air.
@@ -208,24 +195,29 @@ export class MamService {
     const eventType = eventFor(action);
     if (eventType === undefined) {
       // An internal step with no contract event still commits, just without announcing itself.
-      withTransaction(this.options.db, () => this.options.assets.put(updated));
+      await this.options.store.transaction(async (tx) => tx.put(updated));
       return updated;
     }
 
-    this.commit(caller, updated, eventType, this.payloadFor(caller, eventType, updated, options));
+    await this.commit(
+      caller,
+      updated,
+      eventType,
+      this.payloadFor(caller, eventType, updated, options),
+    );
     return updated;
   }
 
   /** Attach renditions — normally driven by `transcode.completed` from MTS. */
-  attachRenditions(caller: Caller, id: string): Asset {
-    const existing = this.get(caller, id);
+  async attachRenditions(caller: Caller, id: string): Promise<Asset> {
+    const existing = await this.get(caller, id);
     this.authorize(caller, 'asset:write', existing);
     const updated: Asset = {
       ...existing,
       hasRenditions: true,
       updatedAt: this.now().toISOString(),
     };
-    withTransaction(this.options.db, () => this.options.assets.put(updated));
+    await this.options.store.transaction(async (tx) => tx.put(updated));
     return updated;
   }
 
@@ -259,12 +251,12 @@ export class MamService {
   }
 
   /** Write the record and its event in ONE transaction. */
-  private commit(
+  private async commit(
     caller: Caller,
     asset: Asset,
     eventType: string,
     payload: Record<string, unknown>,
-  ): void {
+  ): Promise<void> {
     // Validated before it is stored, not on the way out: an invalid payload in the outbox is a
     // poison message that fails every drain forever, and the transaction that could have rejected
     // it has long since committed.
@@ -283,9 +275,12 @@ export class MamService {
       ...defined({ correlationId: caller.correlationId }),
     });
 
-    withTransaction(this.options.db, () => {
-      this.options.assets.put(asset);
-      this.options.outbox.enqueue({
+    // Nothing is read back inside this block on purpose. On sqlite an uncommitted write is visible
+    // to the same connection; on Postgres it is not visible outside the transaction's own client —
+    // so a read here would work in tests and return stale data in production.
+    await this.options.store.transaction(async (tx) => {
+      await tx.put(asset);
+      await tx.enqueue({
         id: envelope.messageId,
         message: {
           id: envelope.messageId,
@@ -340,12 +335,6 @@ export class MamService {
 }
 
 /**
- * Drop undefined entries.
- *
- * `exactOptionalPropertyTypes` is on, so `{ a: undefined }` is not the same as `{}` — and on the
- * wire an explicit null is noise a consumer has to handle.
- */
-/**
  * The only fields a metadata update may touch.
  *
  * Deliberately an explicit list rather than a denylist: a denylist has to be updated every time a
@@ -372,6 +361,12 @@ function pickUpdatable(patch: UpdateAssetInput): UpdateAssetInput {
   return out as UpdateAssetInput;
 }
 
+/**
+ * Drop undefined entries.
+ *
+ * `exactOptionalPropertyTypes` is on, so `{ a: undefined }` is not the same as `{}` — and on the
+ * wire an explicit null is noise every consumer has to handle.
+ */
 function defined<T extends Record<string, unknown>>(
   source: T,
 ): { [K in keyof T]?: Exclude<T[K], undefined> } {
