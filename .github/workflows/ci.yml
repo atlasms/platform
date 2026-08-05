@@ -71,9 +71,9 @@ jobs:
         if: github.event_name == 'push'
         run: npx nx run-many -t lint typecheck test
 
-  # Conventional commits (EP-01.6). Branch protection cannot enforce anything on this
-  # repo's current plan (.github/rulesets/README.md), so this at least makes a bad
-  # commit message visible on the PR.
+  # Conventional commits (EP-01.6). Deliberately NOT in the required-checks list: a
+  # non-conforming subject is a real problem but not a broken build, and blocking a merge on
+  # it would mean rewriting history to fix a typo. Visible on the PR is the right weight.
   commits:
     name: commit messages
     if: github.event_name == 'pull_request'
