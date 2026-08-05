@@ -54,12 +54,12 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                                                                                                |
 | **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                                                                                    |
 | **EP-13** walking skeleton       | ✅ 11 tests + **13.4 smoke suite green against a real cluster** (13/13, now including MAM)                                                                        |
-| **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.3 the workbench** (tabs/splits/drag/persistence), 11.7 `can()` rendering — 43 tests. ⬜ 11.2 auth, 11.4 ws, 11.5 clients, 11.6 i18n/RTL    |
+| **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.2 real sign-in against IAM**, 11.3 the workbench, 11.7 `can()` rendering — 57 tests. ⬜ 11.4 ws, 11.5 clients, 11.6 i18n/RTL               |
 | **EP-17** `mam` (Phase 1)        | ✅ 63 tests — asset core, lifecycle, metadata gate, outbox events, Postgres, **deployed to the cluster** (8 more on a real database). ⬜ 17.2–17.4, 17.7, 17.8    |
 | **EP-12** observability          | ✅ 12.4 alerts + metrics/golden signals (`/metrics` on the gateway). ⬜ 12.1/12.2/12.3 need a **collector-stack decision** (ADR)                                  |
 
-**272 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
-forward), merged to `main` (PRs #176–#197). A further **27** run only against real infrastructure
+**286 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
+forward), merged to `main` (PRs #176–#198). A further **27** run only against real infrastructure
 (NATS, Postgres) and skip in CI, plus **13 smoke tests** against a deployed cluster.
 
 > **Start here to understand how it fits together:**
@@ -75,9 +75,11 @@ one command away: [`.github/rulesets/README.md`](.github/rulesets/README.md). So
 
 **The dev cluster now runs the real spine:** Postgres + NATS + IAM + MAM + gateway, with
 `npm run smoke` asserting the whole path from login to an atomic write and its relayed event.
+Studio signs in against it for real — `npm run k8s:up`, then `npm start -w @atlas/studio`, which
+proxies `/auth` and `/api` to the gateway.
 
-**Suggested next tasks:** `EP-11.2` (Studio auth flow — Studio still seeds a fake session, and MAM
-is now a real thing for it to talk to) · `EP-17.2/17.3/17.4` (extensible metadata, tags, search) ·
+**Suggested next tasks:** `EP-17.2/17.3/17.4` (extensible metadata, tags, search — MAM breadth) ·
+`EP-11.5` (generated API clients, so Studio panels can show real assets) ·
 `EP-12.1/12.2/12.3` (observability stack — **needs an ADR**) · `EP-03.4` (DLQ tooling).
 
 > **Adapters are separate packages, held to shared conformance suites.** `@atlas/messaging` and
@@ -172,6 +174,8 @@ Do not "modernise" any of the below. Each was decided or discovered the hard way
 | **The gateway forwards BYTES; it must not parse a body**            | Fastify's default JSON parser rejects an EMPTY body, and `POST /assets/{id}/approve` with `content-type: application/json` and no body is the normal case — it 500'd at the gateway before ever reaching MAM. It also re-serialized (breaking any checksum) and refused every non-JSON upload. Catch-all buffer parser. |
 | **Log every 5xx where it is raised**                                | A 500 is deliberately opaque to the caller, so it is invisible to the operator too unless the service logs it with the same correlation id. An unlogged 500 in a cluster is undebuggable — you cannot even tell which pod raised it.                                                                                    |
 | **Wait for the database at startup, within a budget**               | Exiting when Postgres is not up yet hands the problem to Kubernetes' restart backoff, which grows to 5 minutes: measured, 7 restarts and 16 minutes to ready on a fresh install. Retry — but bounded, or a wrong password retries forever and never reports itself.                                                     |
+| **Refresh the token SINGLE-FLIGHT**                                 | IAM rotates refresh tokens and treats a reused one as a breach signal, revoking the whole family — every session, everywhere. Two concurrent refreshes is the NORMAL case when a token expires mid-load, so an in-flight refresh must be shared, never restarted. Same shape as MAM`s `PolicyClient`.                   |
+| **Studio never persists a token**                                   | `localStorage`/`sessionStorage` are readable by any script on the origin, so persisting the REFRESH token gives one XSS a long-lived credential. A reload signing the user out is the deliberate, safer trade; the real fix is an httpOnly cookie from IAM and it is a server change.                                   |
 
 ## 7. Commands
 

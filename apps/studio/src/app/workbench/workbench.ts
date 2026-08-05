@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { RouterLink, RouterOutlet } from '@angular/router';
+import { Router, RouterLink, RouterOutlet } from '@angular/router';
+import { AuthService } from '../core/auth.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { EditorArea } from './editor-area.ts';
@@ -75,6 +76,10 @@ const MAX_SIDE_BAR = 640;
         }
         <span class="spacer"></span>
         <span>{{ visiblePanels().length }} of {{ allPanels.length }} panels visible</span>
+        @if (session.isAuthenticated()) {
+          <span class="sep">·</span>
+          <button type="button" class="link" (click)="signOut()">Sign out</button>
+        }
       </footer>
     </div>
   `,
@@ -84,6 +89,15 @@ export class Workbench {
   protected readonly session = inject(SessionStore);
   protected readonly editors = inject(EditorStore);
   private readonly permissions = inject(PermissionService);
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
+
+  protected async signOut(): Promise<void> {
+    await this.auth.signOut();
+    // Navigate explicitly rather than relying on the guard: the guard only runs on the NEXT
+    // navigation, so without this the workbench would sit there rendering a session that is gone.
+    await this.router.navigateByUrl('/signin');
+  }
 
   protected readonly allPanels = PANELS;
   protected readonly activePanelId = signal<string | null>(null);
