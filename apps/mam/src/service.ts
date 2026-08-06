@@ -12,7 +12,15 @@
 import { buildEnvelope, subjectFor, ulid, validatePayload, type Envelope } from '@atlas/contracts';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, Forbidden, NotFound, ValidationError } from '@atlas/service-kit';
-import type { AssetStore } from './store.ts';
+import {
+  orphanedFields,
+  requiredFieldNames,
+  resolveFields,
+  validateExtended,
+  type FieldDefinition,
+  type FieldSchema,
+} from './field-schema.ts';
+import type { AssetStore, AssetTx, ExtendedValues } from './store.ts';
 import {
   BASE_MANDATORY_FIELDS,
   presentFieldsOf,
@@ -31,8 +39,24 @@ export interface MamOptions {
   store: AssetStore;
   /** Extra mandatory fields for a category, beyond the platform's base set. */
   mandatoryFieldsFor?: (asset: Asset) => readonly string[];
+  /**
+   * Terms per controlled vocabulary, for validating `type: 'vocabulary'` fields.
+   *
+   * The cached snapshot in a deployment (`@atlas/reference`). A vocabulary that is absent makes
+   * its fields unwritable rather than unchecked — see `field-schema.ts`.
+   */
+  vocabularies?: () => ReadonlyMap<string, ReadonlySet<string>>;
   now?: () => Date;
 }
+
+/**
+ * Extended field names are namespaced in the lifecycle context.
+ *
+ * An operator is free to define an extended field called `title`, and the core asset already has
+ * one. Without a prefix the mandatory-metadata gate would see a single flat `title` and let the
+ * core value satisfy a requirement on the extended field — passing a check nobody actually met.
+ */
+const EXTENDED_PREFIX = 'extended.';
 
 /** Who is asking, and in which tenant. Established by the gateway, never parsed from a JWT here. */
 export interface Caller {
@@ -178,7 +202,7 @@ export class MamService {
       throw new ValidationError('a rejection must state a reason');
     }
 
-    const context = this.contextFor(existing);
+    const context = await this.contextFor(existing);
     const result = canTransition(context, action);
     if (!result.allowed) {
       throw new Conflict(result.reason ?? `cannot ${action} this asset`);
@@ -221,14 +245,133 @@ export class MamService {
     return updated;
   }
 
-  /** The lifecycle's view of an asset, including the category's mandatory fields. */
-  contextFor(asset: Asset): LifecycleContext {
+  // --- extensible metadata (EP-17.2) -----------------------------------------
+
+  /**
+   * The extensible document, the fields that govern it, and anything orphaned.
+   *
+   * All three together because none is useful alone: values without their definitions cannot be
+   * rendered or labelled, and definitions without values cannot be filled in.
+   */
+  async extended(
+    caller: Caller,
+    id: string,
+  ): Promise<{
+    values: ExtendedValues;
+    fields: FieldDefinition[];
+    orphaned: string[];
+  }> {
+    const asset = await this.get(caller, id);
+    const [values, fields] = await Promise.all([
+      this.options.store.extended(id),
+      this.fieldsFor(asset),
+    ]);
+    const stored = values ?? {};
+    return { values: stored, fields, orphaned: orphanedFields(fields, stored) };
+  }
+
+  /**
+   * Patch the extensible document.
+   *
+   * A MERGE, not a replacement: a form that submits one section must not erase the others. An
+   * explicit `null` clears a field, which is the only way to express removal in a merge — omitting
+   * it means "leave alone".
+   */
+  async updateExtended(
+    caller: Caller,
+    id: string,
+    patch: Readonly<Record<string, unknown>>,
+  ): Promise<ExtendedValues> {
+    const asset = await this.get(caller, id);
+    this.authorize(caller, 'asset:write', asset);
+
+    const fields = await this.fieldsFor(asset);
+    const errors = validateExtended(fields, patch, {
+      ...defined({ vocabularies: this.options.vocabularies?.() }),
+    });
+    if (errors.length > 0) {
+      throw new ValidationError(errors.map((e) => `${e.field}: ${e.message}`).join('; '));
+    }
+
+    const current = (await this.options.store.extended(id)) ?? {};
+    const merged: ExtendedValues = { ...current };
+    for (const [name, value] of Object.entries(patch)) {
+      if (value === null) delete merged[name];
+      else merged[name] = value;
+    }
+
+    // Same transaction as the version bump: the document and the record it belongs to move
+    // together, so a reader can never see a version that does not match the metadata.
+    const updated: Asset = {
+      ...asset,
+      version: asset.version + 1,
+      updatedAt: this.now().toISOString(),
+    };
+    const changedFields = Object.keys(patch).map((name) => `${EXTENDED_PREFIX}${name}`);
+    if (changedFields.length === 0) return current;
+
+    await this.commitWith(
+      caller,
+      updated,
+      'asset.updated',
+      { assetId: updated.id, changedFields, source: 'user' },
+      async (tx) => tx.putExtended(id, asset.channelId, merged),
+    );
+
+    return merged;
+  }
+
+  /** Define or replace a FieldSchema. Operator-managed configuration, not asset data. */
+  async putSchema(caller: Caller, schema: FieldSchema): Promise<FieldSchema> {
+    // `taxonomy:admin`, not `asset:write`: editing a schema changes what every asset in its scope
+    // must carry, which is a governance action rather than an editorial one.
+    this.authorize(caller, 'taxonomy:admin');
+    if (schema.channelId !== caller.channelId) {
+      throw new Forbidden('a schema cannot be written into another channel');
+    }
+    await this.options.store.transaction(async (tx) => tx.putSchema(schema));
+    return schema;
+  }
+
+  async schemas(caller: Caller): Promise<FieldSchema[]> {
+    this.authorize(caller, 'asset:read');
+    return this.options.store.schemas(caller.channelId);
+  }
+
+  /** The resolved field definitions for one asset. */
+  private async fieldsFor(asset: Asset): Promise<FieldDefinition[]> {
+    const schemas = await this.options.store.schemas(asset.channelId);
+    return resolveFields(schemas, {
+      channelId: asset.channelId,
+      mediaType: asset.mediaType,
+      ...defined({ categoryPath: asset.categoryId }),
+    });
+  }
+
+  /**
+   * The lifecycle's view of an asset, including the category's mandatory fields AND any extended
+   * fields an operator marked required.
+   *
+   * This is where FR-MAM-2 meets FR-MAM-5: making a field required has to actually stop an asset
+   * advancing, or "required" is a label on a form.
+   */
+  async contextFor(asset: Asset): Promise<LifecycleContext> {
     const extra = this.options.mandatoryFieldsFor?.(asset) ?? [];
+    const [fields, values] = await Promise.all([
+      this.fieldsFor(asset),
+      this.options.store.extended(asset.id),
+    ]);
+
+    const requiredExtended = requiredFieldNames(fields).map((n) => `${EXTENDED_PREFIX}${n}`);
+    const presentExtended = Object.entries(values ?? {})
+      .filter(([, v]) => v !== undefined && v !== null && v !== '')
+      .map(([name]) => `${EXTENDED_PREFIX}${name}`);
+
     return {
       state: asset.state,
       hasRenditions: asset.hasRenditions,
-      mandatoryFields: [...new Set([...BASE_MANDATORY_FIELDS, ...extra])],
-      presentFields: presentFieldsOf(asset),
+      mandatoryFields: [...new Set([...BASE_MANDATORY_FIELDS, ...extra, ...requiredExtended])],
+      presentFields: [...presentFieldsOf(asset), ...presentExtended],
       ...defined({ expiresAt: asset.expiresAt, retainUntil: asset.retainUntil }),
     };
   }
@@ -257,6 +400,22 @@ export class MamService {
     eventType: string,
     payload: Record<string, unknown>,
   ): Promise<void> {
+    return this.commitWith(caller, asset, eventType, payload);
+  }
+
+  /**
+   * The same unit of work, with an extra write joining it.
+   *
+   * `also` runs on the SAME tx handle, which is the whole point — a caller that reached for the
+   * store instead would land in a different transaction and lose the atomicity silently.
+   */
+  private async commitWith(
+    caller: Caller,
+    asset: Asset,
+    eventType: string,
+    payload: Record<string, unknown>,
+    also?: (tx: AssetTx) => Promise<void>,
+  ): Promise<void> {
     // Validated before it is stored, not on the way out: an invalid payload in the outbox is a
     // poison message that fails every drain forever, and the transaction that could have rejected
     // it has long since committed.
@@ -280,6 +439,7 @@ export class MamService {
     // so a read here would work in tests and return stale data in production.
     await this.options.store.transaction(async (tx) => {
       await tx.put(asset);
+      await also?.(tx);
       await tx.enqueue({
         id: envelope.messageId,
         message: {
