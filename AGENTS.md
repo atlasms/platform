@@ -55,11 +55,11 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                                                                                    |
 | **EP-13** walking skeleton       | ✅ 11 tests + **13.4 smoke suite green against a real cluster** (13/13, now including MAM)                                                                        |
 | **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.2 real sign-in against IAM**, 11.3 the workbench, 11.7 `can()` rendering — 57 tests. ⬜ 11.4 ws, 11.5 clients, 11.6 i18n/RTL               |
-| **EP-17** `mam` (Phase 1)        | ✅ 63 tests — asset core, lifecycle, metadata gate, outbox events, Postgres, **deployed to the cluster** (8 more on a real database). ⬜ 17.2–17.4, 17.7, 17.8    |
+| **EP-17** `mam` (Phase 1)        | ✅ 103 tests — asset core, lifecycle, metadata gate, outbox events, Postgres, deployed, **17.2 extensible metadata**. ⬜ 17.3, 17.4, 17.7, 17.8                   |
 | **EP-12** observability          | ✅ 12.4 alerts + metrics/golden signals (`/metrics` on the gateway). ⬜ 12.1/12.2/12.3 need a **collector-stack decision** (ADR)                                  |
 
-**286 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
-forward), merged to `main` (PRs #176–#198). A further **27** run only against real infrastructure
+**326 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
+forward), merged to `main` (PRs #176–#201). A further **32** run only against real infrastructure
 (NATS, Postgres) and skip in CI, plus **13 smoke tests** against a deployed cluster.
 
 > **Start here to understand how it fits together:**
