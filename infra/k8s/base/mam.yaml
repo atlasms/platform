@@ -19,6 +19,14 @@ spec:
       labels:
         app.kubernetes.io/name: mam
         app.kubernetes.io/part-of: atlas
+      # The scrape contract, and it is deliberately on the POD rather than in a scraper's config.
+      # A service that ships announces itself; a central target list is a second place to remember
+      # it, and the one that gets forgotten — leaving the pod silently unmonitored. Any
+      # Prometheus-compatible scraper honours these, including a customer's own.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: /metrics
     spec:
       terminationGracePeriodSeconds: 30
       securityContext:

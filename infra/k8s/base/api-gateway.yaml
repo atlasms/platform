@@ -15,6 +15,12 @@ spec:
       labels:
         app.kubernetes.io/name: api-gateway
         app.kubernetes.io/part-of: atlas
+      # See mam.yaml: the pod announces its own scrape target, so a service cannot ship and be
+      # silently unmonitored. Honoured by any Prometheus-compatible scraper, ours or a customer's.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
     spec:
       terminationGracePeriodSeconds: 30
       securityContext:
