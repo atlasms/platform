@@ -149,6 +149,35 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     ),
   );
 
+  // Extensible metadata (EP-17.2). A separate resource from the asset, not a nested object on it:
+  // it is governed by its own schema, authorized on its own, and can grow without bound — so a
+  // catalogue listing should never carry it.
+  app.get('/api/v1/assets/:id/extended', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.extended(await callerOf(req), (req.params as { id: string }).id),
+    ),
+  );
+
+  app.patch('/api/v1/assets/:id/extended', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.updateExtended(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+        (req.body ?? {}) as Record<string, unknown>,
+      ),
+    ),
+  );
+
+  app.get('/api/v1/field-schemas', async (req, reply) =>
+    handle(req, reply, async () => options.service.schemas(await callerOf(req))),
+  );
+
+  app.put('/api/v1/field-schemas', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.putSchema(await callerOf(req), req.body as never),
+    ),
+  );
+
   // Lifecycle transitions are their own endpoints, not a PATCH of `state`. The verb is the point:
   // approving is a distinct permission, emits a distinct event, and is refused from a state a
   // metadata edit would happily have overwritten.

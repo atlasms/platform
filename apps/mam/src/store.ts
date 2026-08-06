@@ -9,6 +9,10 @@
 
 import type { OutboxRecord } from '@atlas/messaging';
 import type { Asset } from './asset.ts';
+import type { FieldSchema } from './field-schema.ts';
+
+/** The extensible per-asset document (EP-17.2). Shape is whatever the FieldSchema defines. */
+export type ExtendedValues = Record<string, unknown>;
 
 /**
  * Reads are plain methods; writes only exist inside a transaction.
@@ -28,6 +32,17 @@ export interface AssetStore {
    */
   listByChannel(channelId: string): Promise<Asset[]>;
 
+  /**
+   * The extensible document for an asset, or `undefined` when it has none yet.
+   *
+   * A separate read from {@link get} rather than part of the asset: it is a document that can grow
+   * without bound, and most reads — a listing, a lifecycle check on the core state — do not want it.
+   */
+  extended(assetId: string): Promise<ExtendedValues | undefined>;
+
+  /** Every FieldSchema in one channel. Small, operator-managed, and read on nearly every write. */
+  schemas(channelId: string): Promise<FieldSchema[]>;
+
   /** One unit of work. Everything written inside commits together, or none of it does. */
   transaction<T>(fn: (tx: AssetTx) => Promise<T>): Promise<T>;
 
@@ -37,6 +52,15 @@ export interface AssetStore {
 /** The write surface, reachable only from inside {@link AssetStore.transaction}. */
 export interface AssetTx {
   put(asset: Asset): Promise<void>;
+  /**
+   * Replace an asset's extensible document.
+   *
+   * Whole-document, not a merge: the merge happens in the service, where the schema is known and a
+   * cleared field can be told apart from an untouched one. A store that merged would have no way
+   * to express "remove this value".
+   */
+  putExtended(assetId: string, channelId: string, values: ExtendedValues): Promise<void>;
+  putSchema(schema: FieldSchema): Promise<void>;
   /** Enqueue a domain event on the outbox — in THIS transaction, with the row it announces. */
   enqueue(record: OutboxRecord): Promise<void>;
 }

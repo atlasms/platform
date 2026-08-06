@@ -163,6 +163,108 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  // --- the extensible document (EP-17.2) -------------------------------------
+
+  test(`${name}: an extended document round-trips, and upserts`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(a);
+        await tx.putExtended(a.id, a.channelId, { genre: 'drama', rating: 4.5, live: false });
+      });
+
+      assert.deepEqual(await store.extended(a.id), { genre: 'drama', rating: 4.5, live: false });
+
+      await store.transaction(async (tx) => tx.putExtended(a.id, a.channelId, { genre: 'news' }));
+      assert.deepEqual(
+        await store.extended(a.id),
+        { genre: 'news' },
+        'putExtended replaces the document; it must not merge',
+      );
+    });
+  });
+
+  test(`${name}: an asset with no extended document reads as undefined`, async () => {
+    // Distinct from an empty one. "Never filled in" and "filled in then cleared" are different
+    // facts, and only one of them means the operator has looked at it.
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await store.transaction(async (tx) => tx.put(a));
+      assert.equal(await store.extended(a.id), undefined);
+    });
+  });
+
+  test(`${name}: extended values keep their JSON types`, async () => {
+    // A number that comes back as a string passes every `if (value)` check and fails every
+    // comparison. Both stores serialize to a document column, so this is worth pinning.
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      const values = { n: 42, f: 1.5, b: true, s: 'x', nested: { deep: [1, 'two'] } };
+      await store.transaction(async (tx) => {
+        await tx.put(a);
+        await tx.putExtended(a.id, a.channelId, values);
+      });
+      assert.deepEqual(await store.extended(a.id), values);
+    });
+  });
+
+  test(`${name}: field schemas are per channel, and categoryPath stays ABSENT when unset`, async () => {
+    // `categoryPath: null` is not the same value as absent, and absent is what "applies
+    // channel-wide" means — a null would make the schema match nothing at all.
+    await withFixture(async ({ store }) => {
+      await store.transaction(async (tx) => {
+        await tx.putSchema({
+          id: 'wide',
+          channelId: 'ch12',
+          mediaType: 'video',
+          fields: [{ name: 'genre', label: 'Genre', type: 'string' }],
+        });
+        await tx.putSchema({
+          id: 'narrow',
+          channelId: 'ch12',
+          mediaType: 'video',
+          categoryPath: '/sports/',
+          fields: [{ name: 'competition', label: 'Competition', type: 'string' }],
+        });
+        await tx.putSchema({
+          id: 'other-tenant',
+          channelId: 'ch99',
+          mediaType: 'video',
+          fields: [{ name: 'secret', label: 'Secret', type: 'string' }],
+        });
+      });
+
+      const mine = await store.schemas('ch12');
+      assert.deepEqual(
+        mine.map((s) => s.id),
+        ['narrow', 'wide'],
+      );
+      const wide = mine.find((s) => s.id === 'wide');
+      assert.equal('categoryPath' in (wide ?? {}), false, 'must be absent, not null');
+      assert.equal(mine.find((s) => s.id === 'narrow')?.categoryPath, '/sports/');
+      assert.deepEqual(wide?.fields, [{ name: 'genre', label: 'Genre', type: 'string' }]);
+    });
+  });
+
+  test(`${name}: DANGER — a rollback drops the extended document too`, async () => {
+    await withFixture(async ({ store, unsentCount }) => {
+      const a = asset();
+      await store.transaction(async (tx) => tx.put(a));
+
+      await assert.rejects(
+        store.transaction(async (tx) => {
+          await tx.putExtended(a.id, a.channelId, { genre: 'drama' });
+          await tx.enqueue(event(a.id));
+          throw new Error('boom');
+        }),
+        /boom/,
+      );
+
+      assert.equal(await store.extended(a.id), undefined, 'the document must not have committed');
+      assert.equal(await unsentCount(), 0, 'the event must not have committed');
+    });
+  });
+
   test(`${name}: a failed transaction leaves the store usable`, async () => {
     // A driver that forgets to ROLLBACK leaves the connection in a failed transaction, and every
     // later query dies with "current transaction is aborted". The first symptom is the SECOND

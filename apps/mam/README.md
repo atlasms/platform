@@ -6,12 +6,47 @@ and the events every other service reacts to
 
 ## What is built
 
-**EP-17.1** asset core + lifecycle states · **EP-17.5** the mandatory-metadata gate ·
-**EP-17.6** lifecycle events through the outbox.
+**EP-17.1** asset core + lifecycle states · **EP-17.2** extensible metadata (AssetExtended +
+FieldSchema) · **EP-17.5** the mandatory-metadata gate · **EP-17.6** lifecycle events through the
+outbox.
 
-**Not built:** `AssetExtended` document store and FieldSchema (17.2), tags (17.3), search (17.4),
-read cache (17.7), FileRef mirror of the HSM ledger (17.8). The service is deliberately narrow and
-correct rather than broad and provisional.
+**Not built:** tags (17.3), search (17.4), read cache (17.7), FileRef mirror of the HSM ledger
+(17.8). The service is deliberately narrow and correct rather than broad and provisional.
+
+## Extensible metadata
+
+The core `Asset` holds what **every** asset has. Anything that depends on what _kind_ of thing it
+is — a match's competition, a documentary's rights window — is defined by operators as a
+[FieldSchema](src/field-schema.ts) and stored per asset as a document.
+
+Field **types** are a closed set and that is deliberate: the validator and the form renderer each
+switch on them, so they are Tier 0 — adding one is a pull request, not an operator edit
+([configuration-and-reference-data.md §2.1](../../docs/architecture/configuration-and-reference-data.md)).
+Everything else about a field is operator-managed. A `vocabulary` field names a controlled list
+rather than enumerating its terms, because enumerating them would make every admin edit a contract
+change and a redeploy.
+
+Schemas **merge**, keyed by `mediaType` and optionally narrowed by a category **prefix**, with the
+more specific one winning a name collision — so a branch can tighten an inherited field without
+restating everything above it. Prefix matching is segment-safe: `/sports/foot` does not match
+`/sports/football/`, the same hazard the policy evaluator has.
+
+**Required extended fields block `markReady`.** This is where FR-MAM-2 meets FR-MAM-5 — without it,
+"required" is a label on a form and an asset reaches air missing metadata someone declared
+mandatory. Extended names are namespaced (`extended.title`) in the gate, because an operator may
+legitimately define a field called `title` and the core one must not be allowed to satisfy it.
+
+Three failure modes are handled the way that is safe rather than the way that is convenient:
+
+- **An unknown field is refused, not stored.** A typo that silently becomes data is a value nothing
+  renders, nothing searches, and nobody discovers until they ask where their input went.
+- **A vocabulary whose terms are not loaded makes its fields unwritable.** Accepting a term nobody
+  could check defeats the point of the list being controlled, and the value would sit in the
+  document looking validated.
+- **Removing a field orphans its data rather than destroying it.** An operator dropping a field is
+  usually reorganising, and there is no undo. Validation is therefore _partial_ — only what is being
+  written is checked — because validating the whole stored document would make an asset unsavable
+  the moment a field it still holds a value for disappears.
 
 ## Persistence is a port with two adapters
 

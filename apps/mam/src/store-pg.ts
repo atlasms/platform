@@ -7,6 +7,7 @@
 import type { Migration } from '@atlas/data';
 import { outboxMigration, PgOutboxStore, withTransaction, type PgPool } from '@atlas/data-pg';
 import type { Asset } from './asset.ts';
+import type { FieldSchema } from './field-schema.ts';
 import type { AssetStore, AssetTx } from './store.ts';
 
 /**
@@ -28,8 +29,33 @@ export const pgAssetsMigration: Migration = {
        CREATE INDEX IF NOT EXISTS assets_channel_idx ON assets (channel_id, state);`,
 };
 
+/**
+ * The extensible document (EP-17.2), and the operator-defined schemas that govern it.
+ *
+ * `asset_extended` is its own table rather than a column on `assets`: it can grow without bound,
+ * and most reads — a catalogue listing, a lifecycle check — do not want it.
+ */
+export const pgExtendedMigration: Migration = {
+  id: 'mam_asset_extended',
+  up: `CREATE TABLE IF NOT EXISTS asset_extended (
+         asset_id   text PRIMARY KEY,
+         channel_id text NOT NULL,
+         data       jsonb NOT NULL,
+         updated_at timestamptz NOT NULL DEFAULT now()
+       );
+       CREATE TABLE IF NOT EXISTS field_schemas (
+         id            text PRIMARY KEY,
+         channel_id    text NOT NULL,
+         media_type    text NOT NULL,
+         category_path text,
+         fields        jsonb NOT NULL
+       );
+       CREATE INDEX IF NOT EXISTS field_schemas_channel_idx
+         ON field_schemas (channel_id, media_type);`,
+};
+
 /** Everything MAM's database needs, in order. Applied at startup under an advisory lock. */
-export const mamMigrations: Migration[] = [outboxMigration, pgAssetsMigration];
+export const mamMigrations: Migration[] = [outboxMigration, pgAssetsMigration, pgExtendedMigration];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
   const outbox = new PgOutboxStore(pool);
@@ -50,6 +76,37 @@ export function pgAssetStore(pool: PgPool): AssetStore {
       return rows.map((r) => r.data);
     },
 
+    async extended(assetId) {
+      const { rows } = await pool.query<{ data: Record<string, unknown> }>(
+        'SELECT data FROM asset_extended WHERE asset_id = $1',
+        [assetId],
+      );
+      return rows[0]?.data;
+    },
+
+    async schemas(channelId) {
+      const { rows } = await pool.query<{
+        id: string;
+        channel_id: string;
+        media_type: string;
+        category_path: string | null;
+        fields: FieldSchema['fields'];
+      }>(
+        `SELECT id, channel_id, media_type, category_path, fields
+           FROM field_schemas WHERE channel_id = $1 ORDER BY id`,
+        [channelId],
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        channelId: r.channel_id,
+        mediaType: r.media_type,
+        // Omit rather than set null: `categoryPath: null` is not the same value as absent, and
+        // absent is what "applies channel-wide" means.
+        ...(r.category_path !== null ? { categoryPath: r.category_path } : {}),
+        fields: r.fields,
+      }));
+    },
+
     async transaction(fn) {
       return withTransaction(pool, async (client) => {
         // The tx handle is built per transaction and closes over THIS client. That is the point:
@@ -65,6 +122,33 @@ export function pgAssetStore(pool: PgPool): AssetStore {
                                               data       = excluded.data,
                                               updated_at = now()`,
               [asset.id, asset.channelId, asset.state, JSON.stringify(asset)],
+            );
+          },
+          async putExtended(assetId, channelId, values) {
+            await client.query(
+              `INSERT INTO asset_extended (asset_id, channel_id, data, updated_at)
+               VALUES ($1, $2, $3, now())
+               ON CONFLICT (asset_id) DO UPDATE SET channel_id = excluded.channel_id,
+                                                    data       = excluded.data,
+                                                    updated_at = now()`,
+              [assetId, channelId, JSON.stringify(values)],
+            );
+          },
+          async putSchema(schema) {
+            await client.query(
+              `INSERT INTO field_schemas (id, channel_id, media_type, category_path, fields)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (id) DO UPDATE SET channel_id    = excluded.channel_id,
+                                              media_type    = excluded.media_type,
+                                              category_path = excluded.category_path,
+                                              fields        = excluded.fields`,
+              [
+                schema.id,
+                schema.channelId,
+                schema.mediaType,
+                schema.categoryPath ?? null,
+                JSON.stringify(schema.fields),
+              ],
             );
           },
           async enqueue(record) {
