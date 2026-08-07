@@ -39,6 +39,12 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: typescript
         update-types: [version-update:semver-major]
+      # `@types/node` tracks the RUNTIME, not `latest`. We run Node 24, so the types are pinned ^24;
+      # a major bump would type APIs the runtime does not have. This was offered twice (#214, #220)
+      # and refused twice — the rule is cheaper than rediscovering the reasoning each month. Move
+      # it deliberately, when the runtime moves.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
       # `amqplib` exists only in spikes/broker, as the RabbitMQ side of the comparison that
       # ADR-0001 REJECTED. A spike is a record of an experiment: changing what it was measured
       # against makes the numbers in that ADR unreproducible, for a client nothing ships. Security
