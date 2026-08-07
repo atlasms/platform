@@ -52,13 +52,13 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-07** `@atlas/data`          | ✅ 11 tests + `@atlas/data-pg` on **real Postgres** (8). ⬜ 07.4–07.6                                                                                                                                                                           |
 | **EP-08** `api-gateway`          | ✅ 20 tests, routes MAM, proxies bodies byte-transparently. ⬜ 08.3 rate limiting, 08.5 reference aggregation                                                                                                                                   |
 | **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                                                                                                                                                                              |
-| **EP-10** `iam`                  | ✅ 37 tests, incl. `/metrics` + auth signals (#205). ⬜ 10.4 CRUD, 10.6 event emission, #240 no lockout policy                                                                                                                                  |
+| **EP-10** `iam`                  | ✅ 55 tests, incl. `/metrics` + auth signals (#205) and failed-attempt lockout (#240). ⬜ 10.4 CRUD, 10.6 event emission                                                                                                                        |
 | **EP-13** walking skeleton       | ✅ 11 tests + **13.4 smoke suite green against a real cluster** (13/13, now including MAM)                                                                                                                                                      |
 | **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.2 real sign-in against IAM**, 11.3 the workbench, 11.7 `can()` rendering — 57 tests. ⬜ 11.4 ws, 11.5 clients, 11.6 i18n/RTL                                                                                             |
 | **EP-17** `mam` (Phase 1)        | ✅ 238 tests — asset core, lifecycle, metadata gate, outbox events, Postgres, deployed, **17.2 extensible metadata**, **17.3 free-form tags**, **17.4 search**, field-group scoping (#225). ⬜ 17.7, 17.8 (need services that do not exist yet) |
 | **EP-12** observability          | ✅ 12.4 alerts + golden signals on **every deployed service** (#205 closed the IAM gap); **[ADR-0003](docs/adr/0003-observability-stack.md) decided** (Prometheus/Loki/Grafana/Alloy, optional overlay). ⬜ 12.1–12.3 implementation            |
 
-**388 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
+**406 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
 forward), merged to `main`. A further **54 need real infrastructure** — 34 in `mam`, 12 in
 `messaging-nats`, 8 in `data-pg` — and **CI now runs those too**, against a Postgres service and a
 JetStream container the workflow provides. They still skip on a laptop without Docker, but a
@@ -94,7 +94,7 @@ proxies `/auth` and `/api` to the gateway.
 **Suggested next tasks:** `EP-12.1/12.2/12.3` (build the stack [ADR-0003](docs/adr/0003-observability-stack.md)
 decided — every service now emits the signals it consumes) ·
 `EP-11.5` (generated API clients, so Studio panels can show real assets) · `EP-03.4` (DLQ tooling) ·
-[#240](https://github.com/atlasms/platform/issues/240) (IAM has no lockout policy).
+`EP-08.3` (gateway rate limiting — the per-SOURCE half of #240, which deliberately stayed out of IAM).
 
 > **Adapters are separate packages, held to shared conformance suites.** `@atlas/messaging` and
 > `@atlas/data` keep zero (or near-zero) runtime dependencies and define the rules;
@@ -199,6 +199,8 @@ Do not "modernise" any of the below. Each was decided or discovered the hard way
 | **Wait for the database at startup, within a budget**               | Exiting when Postgres is not up yet hands the problem to Kubernetes' restart backoff, which grows to 5 minutes: measured, 7 restarts and 16 minutes to ready on a fresh install. Retry — but bounded, or a wrong password retries forever and never reports itself.                                                                                                                                                                                                                                |
 | **Refresh the token SINGLE-FLIGHT**                                 | IAM rotates refresh tokens and treats a reused one as a breach signal, revoking the whole family — every session, everywhere. Two concurrent refreshes is the NORMAL case when a token expires mid-load, so an in-flight refresh must be shared, never restarted. Same shape as MAM`s `PolicyClient`.                                                                                                                                                                                              |
 | **Studio never persists a token**                                   | `localStorage`/`sessionStorage` are readable by any script on the origin, so persisting the REFRESH token gives one XSS a long-lived credential. A reload signing the user out is the deliberate, safer trade; the real fix is an httpOnly cookie from IAM and it is a server change.                                                                                                                                                                                                              |
+| **Every login path does ONE argon2 verification**                   | Returning early for a refused account — locked, disabled, SSO-only — costs microseconds while a wrong password costs ~100ms, so the timing says "this account exists" even though the response is identical. Lockout (#240) made it worse: an attacker can CAUSE the lock and read the timing to confirm a username. Verify first, branch after. Pinned by a test that fails if the order is restored.                                                                                             |
+| **No identity is ever a metric label**                              | `/metrics` is unauthenticated, so a `username` label publishes the account list to anyone who can reach the port — and a login spray writes its guesses into a document it can read back. It is the same bug as the cardinality one: a series per guess. Who failed is an AUDIT question; how many failed is the metrics question, and its label set is closed (#205).                                                                                                                             |
 
 ## 7. Commands
 

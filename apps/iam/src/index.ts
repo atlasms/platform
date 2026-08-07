@@ -1,5 +1,14 @@
 export { IamService, type IamOptions, type TokenPair, type LoginContext } from './service.ts';
 export {
+  clearFailures,
+  clearLock,
+  lockExpired,
+  nextFailure,
+  DEFAULT_LOCKOUT,
+  type FailureState,
+  type LockoutPolicy,
+} from './lockout.ts';
+export {
   authSignals,
   type AuthSignals,
   type Grant,

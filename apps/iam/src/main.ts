@@ -4,7 +4,7 @@
 // the same source the tests run against. One fewer build artefact to keep honest.
 
 import { createLogger, HealthRegistry, loadConfig } from '@atlas/service-kit';
-import { buildIamApp, IamService, KeyRing, seedStarterRoles } from './index.ts';
+import { buildIamApp, DEFAULT_LOCKOUT, IamService, KeyRing, seedStarterRoles } from './index.ts';
 
 const config = loadConfig({
   port: { env: 'PORT', type: 'number', default: 3000 },
@@ -12,6 +12,24 @@ const config = loadConfig({
   issuer: { env: 'ATLAS_ISSUER', type: 'string', default: 'atlas-iam' },
   audience: { env: 'ATLAS_AUDIENCE', type: 'string', default: 'atlas' },
   accessTokenTtl: { env: 'ATLAS_ACCESS_TOKEN_TTL', type: 'string', default: '15m' },
+  // iam.md §11 calls these out as configuration, and a site with an unusual threat model will want
+  // them. The defaults come from DEFAULT_LOCKOUT rather than being restated, so there is one place
+  // that decides what "ten in fifteen minutes" means.
+  lockoutThreshold: {
+    env: 'ATLAS_LOCKOUT_THRESHOLD',
+    type: 'number',
+    default: DEFAULT_LOCKOUT.threshold,
+  },
+  lockoutWindowMs: {
+    env: 'ATLAS_LOCKOUT_WINDOW_MS',
+    type: 'number',
+    default: DEFAULT_LOCKOUT.windowMs,
+  },
+  lockoutDurationMs: {
+    env: 'ATLAS_LOCKOUT_DURATION_MS',
+    type: 'number',
+    default: DEFAULT_LOCKOUT.durationMs,
+  },
 });
 
 const log = createLogger('iam');
@@ -27,6 +45,11 @@ const service = new IamService({
   issuer: config.issuer,
   audience: config.audience,
   accessTokenTtl: config.accessTokenTtl,
+  lockout: {
+    threshold: config.lockoutThreshold,
+    windowMs: config.lockoutWindowMs,
+    durationMs: config.lockoutDurationMs,
+  },
 });
 
 // Optional bootstrap account, and deliberately opt-in: it only happens when BOTH variables are
