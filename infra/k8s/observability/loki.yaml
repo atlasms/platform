@@ -1,0 +1,158 @@
+# Loki — the log store (EP-12.1).
+#
+# Deliberately NOT OpenSearch. Operational logs are high-volume and disposable; the audit trail is
+# low-volume, permanent and tamper-evident, and it belongs to the Logging & Analytics service
+# ([logging-analytics.md](../../../docs/architecture/services/logging-analytics.md)). One engine for
+# both would force audit-grade cost and retention onto debug output — and, worse, would put the
+# tamper-evident record in the same place as the thing an intruder most wants to edit.
+#
+# Promoted from spikes/observability/k8s with the spike-only storage fixed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+data:
+  loki.yaml: |
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+      log_level: warn
+
+    common:
+      instance_addr: 127.0.0.1
+      path_prefix: /loki
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+
+    schema_config:
+      configs:
+        - from: 2024-01-01
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+
+    limits_config:
+      # An operator's debugging window, matching Prometheus. Long-term retention is the audit
+      # service's job and has entirely different guarantees.
+      retention_period: 168h
+      # Reject rather than silently truncate: a log line that arrives half-written is worse than
+      # one that is refused loudly, because it still looks like evidence.
+      max_line_size: 256kb
+      reject_old_samples: true
+      reject_old_samples_max_age: 24h
+
+    # Retention is NOT enforced by `retention_period` alone — that is only the limit. The compactor
+    # is what actually deletes, and without `retention_enabled` the setting is a number Loki
+    # reports and never acts on, so the disk fills while the config claims a 7-day window.
+    compactor:
+      working_directory: /loki/compactor
+      retention_enabled: true
+      delete_request_store: filesystem
+
+    analytics:
+      # Air-gapped by requirement (FR-PLat-7). Phoning home fails on every install and logs an
+      # error every few minutes for the lifetime of the deployment.
+      reporting_enabled: false
+---
+# 7 days of logs must survive a restart, so a PVC rather than the spike's emptyDir. Larger than
+# Prometheus' because log lines are not a fixed-cardinality time series: volume scales with traffic
+# and with how chatty the services are, and the compactor needs headroom to rewrite indexes.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: loki-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki
+  labels:
+    app.kubernetes.io/name: loki
+spec:
+  replicas: 1
+  # Recreate, for the same reason as Prometheus: a ReadWriteOnce PVC deadlocks a rolling update.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: loki
+      # Loki reports its own ingestion and retention. A log store that quietly stops accepting
+      # writes looks identical to a platform that has gone quiet, so it is scraped like anything
+      # else — the collector pipeline needs to be observable by something other than itself.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3100"
+        prometheus.io/path: /metrics
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: loki
+          image: grafana/loki:3.3.2
+          args: ["-config.file=/etc/loki/loki.yaml"]
+          ports:
+            - name: http
+              containerPort: 3100
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki
+            - name: data
+              mountPath: /loki
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: loki-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: loki-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  labels:
+    app.kubernetes.io/name: loki
+spec:
+  selector:
+    app.kubernetes.io/name: loki
+  ports:
+    - name: http
+      port: 3100
+      targetPort: http

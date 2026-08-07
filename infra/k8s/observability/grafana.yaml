@@ -18,6 +18,12 @@ data:
         url: http://prometheus:9090
         isDefault: true
 
+      - name: Loki
+        type: loki
+        uid: atlas-loki
+        access: proxy
+        url: http://loki:3100
+
   dashboards.yaml: |
     apiVersion: 1
     providers:
@@ -119,6 +125,73 @@ data:
               "legendFormat": "{{metric}}"
             }
           ]
+        }
+      ]
+    }
+
+  # Logs (EP-12.1). The panel that earns the whole log pipeline is the last one: paste a
+  # correlation id, get every line from every service for that one request.
+  logs.json: |
+    {
+      "title": "Atlas — logs",
+      "uid": "atlas-logs",
+      "tags": ["atlas"],
+      "time": { "from": "now-1h", "to": "now" },
+      "refresh": "30s",
+      "templating": {
+        "list": [
+          {
+            "name": "correlationId",
+            "type": "textbox",
+            "label": "Correlation id",
+            "query": "",
+            "current": { "text": "", "value": "" }
+          }
+        ]
+      },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Log volume by level",
+          "description": "`level` is a Loki LABEL because it has five values. correlationId is not, because it has one per request — see the alloy config.",
+          "datasource": { "type": "loki", "uid": "atlas-loki" },
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum by (level) (rate({namespace=\"atlas\"}[5m]))",
+              "legendFormat": "{{level}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Log volume by service",
+          "description": "A service that goes SILENT is the alarming shape here, not a busy one. Silence means either the service or the collector stopped, and the two look identical from this panel — check Alloy's own metrics.",
+          "datasource": { "type": "loki", "uid": "atlas-loki" },
+          "gridPos": { "h": 7, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum by (service) (rate({namespace=\"atlas\"}[5m]))",
+              "legendFormat": "{{service}}"
+            }
+          ]
+        },
+        {
+          "type": "logs",
+          "title": "Errors and warnings, all services",
+          "datasource": { "type": "loki", "uid": "atlas-loki" },
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 7 },
+          "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" },
+          "targets": [{ "expr": "{namespace=\"atlas\", level=~\"error|warn\"}" }]
+        },
+        {
+          "type": "logs",
+          "title": "Everything logged for one request — paste a correlation id above",
+          "description": "The reason the gateway issues a correlation id and every service carries it through `runWithContext`: without it, following a request across services means reading four pods' logs by hand and matching timestamps. NOTE what currently contributes: only the GATEWAY logs an access line per request. Other services log lifecycle and errors, and those lines carry the id — so this fills in when something goes wrong, which is when it is read, and is thin on a healthy request. Per-service access logging is a separate story.",
+          "datasource": { "type": "loki", "uid": "atlas-loki" },
+          "gridPos": { "h": 12, "w": 24, "x": 0, "y": 16 },
+          "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Ascending" },
+          "targets": [{ "expr": "{namespace=\"atlas\"} |= \"$correlationId\"" }]
         }
       ]
     }
