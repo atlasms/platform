@@ -12,5 +12,5 @@
     "feelin": "^7.0.1",
     "jose": "^6.2.4"
   },
-  "devDependencies": { "tsx": "^4.23.1" }
+  "devDependencies": { "tsx": "^4.23.5" }
 }
