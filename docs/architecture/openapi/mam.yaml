@@ -108,10 +108,18 @@ paths:
       operationId: simpleSearch
       tags: [search]
       summary: Simple free-text search (scope asset:read)
+      description: >-
+        AND semantics - an asset must match EVERY term. The LAST term is matched as a prefix unless
+        `q` ends in a separator, which is what makes search-as-you-type work: `foot` finds
+        `football`, `foot ` does not. Every hit is authorized individually, so a caller whose read
+        grant is scoped to a category subtree may receive fewer than `limit` results even when more
+        matches exist.
       parameters:
         - { name: q, in: query, required: true, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
         '200': { description: Results, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Asset' } } } } }
+        '422': { description: '`q` missing or blank - an empty search box must not dump the channel' }
     post:
       operationId: advancedSearch
       tags: [search]
@@ -130,6 +138,21 @@ paths:
                 personIds: { type: array, items: { $ref: '#/components/schemas/Ulid' } }
       responses:
         '200': { description: Results, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Asset' } } } } }
+  /search/reindex:
+    post:
+      operationId: reindexSearch
+      tags: [search]
+      # The index commits with the row it describes, so it cannot DRIFT. It can still go stale in a
+      # different sense: changing the tokenizer changes what the same text indexes to, and every
+      # asset written before that change still carries the old terms. Hence a rebuild path, which
+      # is also what makes the read model rebuildable per mam.md 6.2.
+      summary: Rebuild the channel's search index from the assets (scope taxonomy:admin)
+      responses:
+        '200':
+          description: Rebuilt
+          content:
+            application/json:
+              schema: { type: object, required: [indexed], properties: { indexed: { type: integer } } }
   /field-schemas:
     get: { operationId: listFieldSchemas, tags: [admin], summary: List custom field schemas, responses: { '200': { description: Schemas } } }
     post: { operationId: createFieldSchema, tags: [admin], summary: Define type/category custom fields (scope metadata:admin), responses: { '201': { description: Created } } }

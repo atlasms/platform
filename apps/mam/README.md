@@ -7,11 +7,11 @@ and the events every other service reacts to
 ## What is built
 
 **EP-17.1** asset core + lifecycle states · **EP-17.2** extensible metadata (AssetExtended +
-FieldSchema) · **EP-17.3** free-form tags · **EP-17.5** the mandatory-metadata gate · **EP-17.6**
-lifecycle events through the outbox.
+FieldSchema) · **EP-17.3** free-form tags · **EP-17.4** simple search · **EP-17.5** the
+mandatory-metadata gate · **EP-17.6** lifecycle events through the outbox.
 
-**Not built:** search (17.4), read cache (17.7), FileRef mirror of the HSM ledger (17.8). The
-service is deliberately narrow and correct rather than broad and provisional.
+**Not built:** read cache (17.7), FileRef mirror of the HSM ledger (17.8), and the _faceted_ half
+of search. The service is deliberately narrow and correct rather than broad and provisional.
 
 ## Extensible metadata
 
@@ -95,6 +95,57 @@ Reading the cloud is `taxonomy:read`, not the `taxonomy:admin` the service catal
 `GET /tags`. That table describes the _management_ surface; gating the read behind admin would make
 autocomplete an administrator-only feature and defeat free-form tagging for every editor it exists
 for.
+
+## Simple search
+
+The target architecture puts faceted search on OpenSearch, fed by the outbox as a rebuildable read
+model ([mam.md §6.2](../../docs/architecture/services/mam.md)). That is Beta work. What MVP needs is
+that an editor can type a word and find their asset, so the index is a **term table in the same
+database**, written in the same transaction as the row it describes.
+
+Two consequences, both stated because they are why this is the right MVP _and_ why it will not be
+the answer forever:
+
+- **It cannot drift.** A separate store has to be reconciled — the outbox exists precisely because
+  dual writes desynchronise. An index that commits with its row has no such window at all, which is
+  strictly stronger than the projection it stands in for.
+- **It does not stem, and it does not rank the way a search engine does.** `running` will not find
+  `run`. Relevance is how many of the query's terms an asset matched, and nothing more.
+
+Tokenizing happens in [`search.ts`](src/search.ts), in pure domain code, never in SQL — the same
+reasoning as tags, and it shares the [same folding](src/text.ts) so that a tag stored under one
+definition and a query tokenized under another can never disagree. Word characters are `\p{L}`,
+`\p{N}` and `\p{M}` rather than `\w`, which is ASCII-only and would reduce every Persian or Arabic
+title to a single empty token.
+
+Keeping the tokenizer out of the database also sidesteps a specific trap. **Postgres ships no
+`persian` text-search configuration** — arabic yes, persian no, checked against the Postgres 17 this
+project runs — so `to_tsvector` on Persian content silently falls back to no stemming while _looking_
+language-aware. An explicit token index treats Persian and English alike: worse than a real Persian
+analyser, much better than one that pretends. (OpenSearch does have a Lucene `persian` analyser,
+which is a genuine argument for the eventual move rather than a restatement of the plan.)
+
+**The last term is a prefix, the rest are exact.** Someone typing `foot` means "football"; someone
+who typed `foot ` finished the word. That difference is the whole of search-as-you-type, and the
+trailing separator is what carries it. Matching is **AND** — OR semantics would return the whole
+library for any two-word query.
+
+The two adapters reach the index by different routes and are held to one behaviour by the
+conformance suite: sqlite uses a `>= p AND < bound` range, Postgres uses `LIKE 'p%'` against a
+`text_pattern_ops` index. Both are index scans; a plain `LIKE` on Postgres would fall back to a
+sequential scan in any database whose collation is not C, on exactly the query editors type most.
+
+**Every hit is authorized individually.** A read grant scoped to a category subtree makes "may this
+user see it" a per-asset question, and answering it once for the channel would turn the index into a
+way to enumerate titles the caller cannot open. The channel-wide pre-check is deliberately the
+_lenient_ `can()` and is only an early-out: asking strictly there would refuse a Journalist scoped
+to `/news/` outright, because a grant naming a category cannot satisfy a check that names none.
+Enforcement is the strict per-asset check that follows.
+
+The index cannot drift, but it can go **stale** in a different sense — changing the tokenizer changes
+what the same text indexes to. So `POST /search/reindex` rebuilds a channel from the assets
+themselves, which is the rebuildable read model the design asks for. It is `taxonomy:admin`, because
+on a large channel it is expensive.
 
 ## Persistence is a port with two adapters
 

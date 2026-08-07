@@ -18,7 +18,7 @@ export {
   type CreateAssetInput,
   type UpdateAssetInput,
 } from './asset.ts';
-export { MamService, type Caller, type MamOptions } from './service.ts';
+export { MamService, type Caller, type MamOptions, type SearchSources } from './service.ts';
 export {
   FIELD_TYPES,
   orphanedFields,
@@ -32,6 +32,18 @@ export {
   type SchemaSubject,
   type ValidationOptions,
 } from './field-schema.ts';
+export {
+  MAX_QUERY_TERMS,
+  MAX_TERMS_PER_ASSET,
+  MIN_TERM_LENGTH,
+  indexTerms,
+  parseQuery,
+  prefixUpperBound,
+  tokenize,
+  type ParsedQuery,
+  type SearchHit,
+} from './search.ts';
+export { CONTROL, INVISIBLE, ZWNJ, cleanText, foldText } from './text.ts';
 export {
   MAX_TAGS_PER_ASSET,
   MAX_TAG_LENGTH,
@@ -48,12 +60,14 @@ export {
   sqliteAssetsMigration,
   sqliteExtendedMigration,
   sqliteTagsMigration,
+  sqliteSearchMigration,
 } from './store-sqlite.ts';
 export {
   pgAssetStore,
   pgAssetsMigration,
   pgExtendedMigration,
   pgTagsMigration,
+  pgSearchMigration,
   mamMigrations,
 } from './store-pg.ts';
 export { PolicyClient, type PolicyClientOptions } from './policy-client.ts';
