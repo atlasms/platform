@@ -43,10 +43,27 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
     const correlationId = typeof incoming === 'string' && incoming ? incoming : ulid();
     req.correlationId = correlationId;
     req.startedAt = Date.now();
+    req.inFlight = true;
+    signals.enter();
     runWithContext({ correlationId }, () => done());
   });
 
+  // Saturation is decremented from BOTH exits. A client that closes the connection mid-request
+  // fires onRequestAbort and NOT onResponse, so counting only responses makes the gauge climb
+  // forever — showing a service permanently saturated after any flaky network. The flag makes the
+  // pair idempotent so a request can never be counted out twice either.
+  const leave = (req: { inFlight?: boolean }): void => {
+    if (req.inFlight !== true) return;
+    req.inFlight = false;
+    signals.exit();
+  };
+  app.addHook('onRequestAbort', (req, done) => {
+    leave(req);
+    done();
+  });
+
   app.addHook('onResponse', (req, reply, done) => {
+    leave(req);
     // The route TEMPLATE. `req.url` would work for IAM's fixed paths today, but the moment a
     // `/users/:id` route lands it would mint a series per user — the cardinality bug arriving
     // through a route addition nobody connected to metrics.
@@ -155,5 +172,6 @@ declare module 'fastify' {
   interface FastifyRequest {
     correlationId: string;
     startedAt: number;
+    inFlight?: boolean;
   }
 }

@@ -1,0 +1,25 @@
+# The optional observability overlay (EP-12.2, ADR-0003).
+#
+#   kubectl create secret generic grafana-admin -n atlas-observability \
+#     --from-literal=username=admin --from-literal=password="$(openssl rand -base64 24)"
+#   kubectl apply -k infra/k8s/observability
+#
+# REFERENCED BY NOTHING IN infra/k8s/base, and that is the decision rather than an oversight.
+# ADR-0003 chose "standard protocols are the product, the bundled stack is one consumer of them" —
+# so this must be deletable without touching Atlas, and a site with its own monitoring must be able
+# to skip it entirely and point their scraper at the same annotated pods.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: atlas-observability
+
+resources:
+  - namespace.yaml
+  - prometheus.yaml
+  - grafana.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: atlas-observability
