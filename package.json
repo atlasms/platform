@@ -34,7 +34,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^24.13.3",
+    "@types/node": "^26.1.2",
     "eslint": "^10.8.0",
     "nx": "^23.1.0",
     "prettier": "^3.4.0",
