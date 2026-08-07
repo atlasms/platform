@@ -1,4 +1,12 @@
 export { IamService, type IamOptions, type TokenPair, type LoginContext } from './service.ts';
+export {
+  authSignals,
+  type AuthSignals,
+  type Grant,
+  type LoginOutcome,
+  type RefreshOutcome,
+  type RevocationReason,
+} from './auth-signals.ts';
 export { buildIamApp, type IamAppOptions } from './app.ts';
 export {
   KeyRing,

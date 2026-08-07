@@ -253,9 +253,9 @@ delivery is provably safe.
 > same air-gapped constraint (A9), so it wants an ADR rather than a default.
 >
 > The **instrumentation** those systems consume does not depend on the answer and is built:
-> Prometheus-format metrics with a cardinality guard, the four golden signals, `/metrics` on the
-> gateway, and the alert evaluator. Emitting Prometheus text is the de-facto scrape format and
-> does not commit the platform to Prometheus as the store.
+> Prometheus-format metrics with a cardinality guard, the four golden signals, `/metrics` on every
+> deployed service, and the alert evaluator. Emitting Prometheus text is the de-facto scrape format
+> and does not commit the platform to Prometheus as the store.
 
 ## EP-13 — Walking skeleton ⚑
 

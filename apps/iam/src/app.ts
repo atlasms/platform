@@ -2,7 +2,13 @@
 // Spec: docs/architecture/services/iam.md · contract: docs/architecture/openapi/iam.yaml
 
 import Fastify, { type FastifyInstance } from 'fastify';
-import { HealthRegistry, Unauthorized, runWithContext, toProblem } from '@atlas/service-kit';
+import {
+  goldenSignals,
+  HealthRegistry,
+  Unauthorized,
+  runWithContext,
+  toProblem,
+} from '@atlas/service-kit';
 import { ulid } from '@atlas/contracts';
 import type { IamService } from './service.ts';
 import type { KeyRing } from './tokens.ts';
@@ -27,12 +33,40 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
   const { service, keyRing } = options;
   const health = options.health ?? new HealthRegistry();
 
+  // The service's registry, not one of the app's own: IamService records the auth counters (#205)
+  // and this route has to expose the SAME registry or half the signals would be unscrapeable.
+  const metrics = service.metrics;
+  const signals = goldenSignals(metrics, 'iam');
+
   app.addHook('onRequest', (req, _reply, done) => {
     const incoming = req.headers['x-correlation-id'];
     const correlationId = typeof incoming === 'string' && incoming ? incoming : ulid();
     req.correlationId = correlationId;
+    req.startedAt = Date.now();
     runWithContext({ correlationId }, () => done());
   });
+
+  app.addHook('onResponse', (req, reply, done) => {
+    // The route TEMPLATE. `req.url` would work for IAM's fixed paths today, but the moment a
+    // `/users/:id` route lands it would mint a series per user — the cardinality bug arriving
+    // through a route addition nobody connected to metrics.
+    const template = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? req.url;
+    signals.observe({
+      method: req.method,
+      route: template,
+      status: reply.statusCode,
+      duration: (Date.now() - req.startedAt) / 1000,
+    });
+    done();
+  });
+
+  // Unauthenticated, like the health endpoints: a scraper is infrastructure, not a user.
+  //
+  // Safe to publish because of what is NOT in here — auth-signals.ts keeps every label a closed
+  // set, so this endpoint carries counts and route templates and no identity of any kind.
+  app.get('/metrics', async (_req, reply) =>
+    reply.header('content-type', metrics.contentType).send(metrics.expose()),
+  );
 
   app.get('/healthz', async () => health.liveness());
   app.get('/readyz', async (_req, reply) => {
@@ -120,5 +154,6 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
 declare module 'fastify' {
   interface FastifyRequest {
     correlationId: string;
+    startedAt: number;
   }
 }
