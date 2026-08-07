@@ -14,6 +14,8 @@ import {
   toProblem,
   Unauthorized,
   ValidationError,
+  type Span,
+  type Tracer,
 } from '@atlas/service-kit';
 import type { LifecycleAction } from './lifecycle.ts';
 import type { MamService, Caller } from './service.ts';
@@ -24,6 +26,12 @@ export interface MamAppOptions {
   policyFor: (userId: string) => Promise<EffectivePolicy | undefined> | EffectivePolicy | undefined;
   health?: HealthRegistry;
   metrics?: MetricRegistry;
+  /**
+   * Tracer (EP-04.7). Omit and no spans are produced. MAM **adopts** the inbound `traceparent` —
+   * its caller is the gateway, which is trusted, and re-deciding sampling here would leave holes
+   * in the middle of traces.
+   */
+  tracer?: Tracer;
   /**
    * Called for any error that becomes a 5xx.
    *
@@ -61,7 +69,24 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     req.startedAt = Date.now();
     req.inFlight = true;
     signals.enter();
-    runWithContext({ correlationId: req.correlationId }, () => done());
+    runWithContext({ correlationId: req.correlationId }, () => {
+      if (!options.tracer) return done();
+      // The route TEMPLATE, never the raw path — a span named `GET /assets/01H2XK…` is one
+      // distinct operation per asset in every trace UI.
+      const route = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? req.url;
+      options.tracer.server(
+        `${req.method} ${route}`,
+        req.headers,
+        {
+          adoptRemote: true,
+          attributes: { 'http.request.method': req.method, 'http.route': route },
+        },
+        (span) => {
+          req.span = span;
+          done();
+        },
+      );
+    });
   });
 
   // Saturation is decremented from BOTH exits: a client that closes the connection mid-request
@@ -79,6 +104,12 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
 
   app.addHook('onResponse', (req, reply, done) => {
     leave(req);
+    if (req.span) {
+      req.span.setAttribute('http.response.status_code', reply.statusCode);
+      // 5xx only: a 403 from the authorization layer is the system working as designed.
+      if (reply.statusCode >= 500) req.span.setError(`HTTP ${reply.statusCode}`);
+      req.span.end();
+    }
     const template = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? req.url;
     signals.observe({
       method: req.method,
@@ -291,5 +322,6 @@ declare module 'fastify' {
     correlationId: string;
     startedAt: number;
     inFlight?: boolean;
+    span?: Span;
   }
 }

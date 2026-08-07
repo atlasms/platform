@@ -244,7 +244,7 @@ delivery is provably safe.
 |----|-------|:---:|
 | 12.1 | Log aggregation + retention for all services *(structured JSON logs + correlation exist; the **collector stack is undecided** — see below)* | 3 |
 | 12.2 | Metrics store + per-service golden-signal dashboards *(instrumentation + `/metrics` done; **store and dashboards** need the stack decision)* | 3 |
-| 12.3 | Distributed tracing collector *(**blocked on the same decision**; span plumbing is EP-04.7)* | 3 |
+| 12.3 | Distributed tracing collector *(span plumbing landed with **EP-04.7**; Alloy already speaks OTLP, so this is a receiver + a backend)* | 3 |
 | 12.4 | ~~Alert routing skeleton (`alert.raised` → channel)~~ | 2 |
 
 > **Blocked on an infrastructure decision.** 12.1 and 12.3 name a *collector* — Loki/Tempo, an

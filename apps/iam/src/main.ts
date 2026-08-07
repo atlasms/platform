@@ -3,7 +3,7 @@
 // Run with plain `node`, no bundler and no tsx: Node 24 strips types natively, so the image ships
 // the same source the tests run against. One fewer build artefact to keep honest.
 
-import { createLogger, HealthRegistry, loadConfig } from '@atlas/service-kit';
+import { createTracer, createLogger, HealthRegistry, loadConfig } from '@atlas/service-kit';
 import { buildIamApp, DEFAULT_LOCKOUT, IamService, KeyRing, seedStarterRoles } from './index.ts';
 
 const config = loadConfig({
@@ -30,9 +30,20 @@ const config = loadConfig({
     type: 'number',
     default: DEFAULT_LOCKOUT.durationMs,
   },
+  // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
+  // still propagates, so a site without a collector pays only the cost of an id and its traces are
+  // already joined up the day one appears.
+  otlpEndpoint: { env: 'ATLAS_OTLP_ENDPOINT', type: 'string', default: '' },
+  traceSampleRatio: { env: 'ATLAS_TRACE_SAMPLE_RATIO', type: 'number', default: 1 },
 });
 
 const log = createLogger('iam');
+
+const tracer = createTracer({
+  service: 'iam',
+  ...(config.otlpEndpoint !== '' ? { endpoint: config.otlpEndpoint } : {}),
+  sampleRatio: config.traceSampleRatio,
+});
 
 // Generated per process for now. Production must load the ring from a secret so every replica
 // signs with the SAME key — until that lands, a multi-replica IAM would reject its own tokens,
@@ -85,7 +96,7 @@ if (seedUser && seedPassword) {
   });
 }
 
-const app = buildIamApp({ service, keyRing, health });
+const app = buildIamApp({ service, keyRing, health, tracer });
 
 await app.listen({ port: config.port, host: config.host });
 log.info('iam listening', { port: config.port, host: config.host });
@@ -95,6 +106,10 @@ log.info('iam listening', { port: config.port, host: config.host });
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     log.info(`${signal} received, draining`);
-    void app.close().then(() => process.exit(0));
+    // Flush AFTER Fastify closes, so spans for in-flight requests make the final batch.
+    void app
+      .close()
+      .then(() => tracer.shutdown())
+      .then(() => process.exit(0));
   });
 }

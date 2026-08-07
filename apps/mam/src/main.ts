@@ -7,7 +7,7 @@ import { migrate, openPool } from '@atlas/data-pg';
 import { OutboxRelay } from '@atlas/messaging';
 import { NatsBroker } from '@atlas/messaging-nats';
 import { PgOutboxStore } from '@atlas/data-pg';
-import { createLogger, HealthRegistry, loadConfig } from '@atlas/service-kit';
+import { createTracer, createLogger, HealthRegistry, loadConfig } from '@atlas/service-kit';
 import { buildMamApp, mamMigrations, MamService, pgAssetStore } from './index.ts';
 import { PolicyClient } from './policy-client.ts';
 
@@ -19,9 +19,20 @@ const config = loadConfig({
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
   policyTtlMs: { env: 'ATLAS_POLICY_TTL_MS', type: 'number', default: 30_000 },
   relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 1_000 },
+  // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
+  // still propagates, so a site without a collector pays only the cost of an id and its traces are
+  // already joined up the day one appears.
+  otlpEndpoint: { env: 'ATLAS_OTLP_ENDPOINT', type: 'string', default: '' },
+  traceSampleRatio: { env: 'ATLAS_TRACE_SAMPLE_RATIO', type: 'number', default: 1 },
 });
 
 const log = createLogger('mam');
+
+const tracer = createTracer({
+  service: 'mam',
+  ...(config.otlpEndpoint !== '' ? { endpoint: config.otlpEndpoint } : {}),
+  sampleRatio: config.traceSampleRatio,
+});
 
 const pool = openPool({ connectionString: config.databaseUrl });
 
@@ -82,6 +93,7 @@ const app = buildMamApp({
   service,
   policyFor: (userId) => policies.policyFor(userId),
   health,
+  tracer,
   onError: (err, ctx) =>
     log.error('unhandled error', {
       ...ctx,
@@ -143,6 +155,9 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     if (relayTimer) clearTimeout(relayTimer);
     void app
       .close()
+      // Flushed after Fastify closes so spans for in-flight requests make the final batch, and
+      // before the pool and broker so a slow collector cannot hold those connections open.
+      .then(() => tracer.shutdown())
       .then(() => broker?.close())
       .then(() => pool.end())
       .then(() => process.exit(0))

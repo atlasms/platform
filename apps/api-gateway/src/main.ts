@@ -1,6 +1,12 @@
 // The gateway's container entrypoint (EP-01.4).
 
-import { createLogger, HealthRegistry, loadConfig, remoteJwks } from '@atlas/service-kit';
+import {
+  createTracer,
+  createLogger,
+  HealthRegistry,
+  loadConfig,
+  remoteJwks,
+} from '@atlas/service-kit';
 import { buildGateway } from './index.ts';
 import type { RoutingTable } from './routing.ts';
 
@@ -21,9 +27,20 @@ const config = loadConfig({
   // Off unless a proxy that OVERWRITES x-forwarded-for is in front. With the gateway exposed
   // directly, honouring the header lets a client choose its own rate-limit key — see rate-limit.ts.
   trustProxy: { env: 'ATLAS_TRUST_PROXY', type: 'boolean', default: false },
+  // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
+  // still propagates, so a site without a collector pays only the cost of an id and its traces are
+  // already joined up the day one appears.
+  otlpEndpoint: { env: 'ATLAS_OTLP_ENDPOINT', type: 'string', default: '' },
+  traceSampleRatio: { env: 'ATLAS_TRACE_SAMPLE_RATIO', type: 'number', default: 1 },
 });
 
 const log = createLogger('api-gateway');
+
+const tracer = createTracer({
+  service: 'api-gateway',
+  ...(config.otlpEndpoint !== '' ? { endpoint: config.otlpEndpoint } : {}),
+  sampleRatio: config.traceSampleRatio,
+});
 
 /**
  * Verification keys come from IAM's JWKS endpoint, fetched and cached by `jose` — the gateway
@@ -62,6 +79,7 @@ const app = buildGateway({
   principalRateLimit: { limit: config.principalRateLimit, windowMs: config.rateLimitWindowMs },
   bodyLimit: config.bodyLimit,
   trustProxy: config.trustProxy,
+  tracer,
   onAccessLog: (record) => log.info('access', { ...record }),
 });
 
@@ -83,6 +101,11 @@ log.info('api-gateway listening', { port: config.port, host: config.host });
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     log.info(`${signal} received, draining`);
-    void app.close().then(() => process.exit(0));
+    // Flush AFTER Fastify closes, so spans for the requests that were still in flight are in the
+    // batch. Those are the ones most worth keeping — they may be why the pod is being restarted.
+    void app
+      .close()
+      .then(() => tracer.shutdown())
+      .then(() => process.exit(0));
   });
 }
