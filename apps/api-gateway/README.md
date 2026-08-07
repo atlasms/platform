@@ -32,25 +32,77 @@ with the full resource context via `canEnforce` from
 outlive its access token ([FR-IAM-8](../../docs/requirements/05-functional-requirements.md#iam)).
 It is updated from `permissions.changed`.
 
+## Rate limiting (EP-08.3)
+
+Two token buckets, both configurable ([§11](../../docs/architecture/services/api-gateway.md)):
+
+| Scope         | Default   | Keyed on                          |
+| ------------- | --------- | --------------------------------- |
+| **address**   | 600 / min | source address, checked pre-auth  |
+| **principal** | 300 / min | verified `sub`, checked post-auth |
+
+Refusals are `429 RATE_LIMITED` with `Retry-After`, and counted as
+`atlas_gateway_rate_limited_total{scope}`.
+
+**This is not the anti-brute-force mechanism.** Atlas installs in broadcast facilities, where
+everyone arrives from one public address — a source limit tight enough to stop password guessing
+would lock out the gallery at shift change. Source address here means _a building_, not _a person_.
+Guessing is bounded by IAM's per-account lockout
+([#240](https://github.com/atlasms/platform/issues/240)), which can afford to be strict because it
+is keyed on the thing under attack. `/auth` therefore carries **no** tighter default, though a
+deployment whose clients have distinct addresses can set one per route.
+
+The address limit is checked **before** the token is verified. After would leave an unlimited supply
+of garbage-token requests — each costing a signature verification — never reaching a limit.
+
+`x-forwarded-for` is **ignored** unless `ATLAS_TRUST_PROXY=true`. With the gateway exposed directly
+(NodePort, no ingress in `infra/k8s/base`) that header is attacker-controlled, and honouring it lets
+a client pick its own rate-limit key and rotate it per request.
+
+### The limits are per replica
+
+`infra/k8s/base/api-gateway.yaml` runs **2 replicas**, so the deployment tolerates **2×** what is
+configured. This README previously deferred the whole story for that reason — _"wants a shared store
+to be correct across replicas"_ — which was the wrong call twice over:
+
+- A cluster-wide counter needs Redis or equivalent. That is **new infrastructure and an ADR**, not a
+  config change, and waiting for it left the gateway with **no limit at all**. Bounded at 2× beats
+  unbounded, and an operator who wants a precise ceiling halves the setting.
+- The **request-size** half never needed shared state, and deferring it alongside left a live bug:
+  an oversized body returned **500** rather than 413 (see below).
+
+The startup log states the per-replica caveat, so an operator who sets 600 and measures 1200 finds
+the explanation without reading source.
+
+## Request-size limits
+
+`ATLAS_BODY_LIMIT_BYTES` (default 1 MiB) → `413 PAYLOAD_TOO_LARGE`.
+
+Fastify enforced its own 1 MiB default all along, but raised `FST_ERR_CTP_BODY_TOO_LARGE`, which
+`toProblem` did not recognise and mapped to `INTERNAL`/**500** — telling the caller the server had
+failed, and putting a 5xx on the error-rate dashboard for what is squarely a client error.
+
 ## Failure shapes
 
 - **Unrouted path** → `404 NOT_FOUND`, as a problem+JSON body.
 - **Unreachable upstream** → `502` naming the service, not a mystery 500.
-- **Every response** — including 401/404 — carries a correlation id and produces an access-log
+- **Over the rate limit** → `429 RATE_LIMITED` with `Retry-After` (never `0`).
+- **Body over the cap** → `413 PAYLOAD_TOO_LARGE`.
+- **Every response** — including 401/404/429 — carries a correlation id and produces an access-log
   record. An unroutable request is still traceable.
 
 ## Tests
 
 ```bash
-npx nx test @atlas/api-gateway   # 13 tests
+npx nx test @atlas/api-gateway   # 36 tests
 ```
 
 Headless throughout via `app.inject()`: no ports, no sockets, no flakiness. `fetch` is injected so
-the forwarded identity can be asserted directly.
+the forwarded identity can be asserted directly, and the limiter takes an injected clock so refill
+behaviour is asserted without sleeping.
 
 ## Not implemented yet
 
-- **EP-08.3** rate limiting / request-size limits — wants a shared store to be correct across
-  replicas, so it belongs with the data plane rather than in-memory here.
 - **EP-08.5** aggregated `GET /reference` — needs services to aggregate from.
 - **BFF views** (`/api/v1/bff/{view}`) — needs MAM/HSM/MTS to exist.
+- **Cluster-wide** rate limiting — see the per-replica note above; wants a shared counter and an ADR.

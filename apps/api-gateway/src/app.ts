@@ -9,14 +9,22 @@ import {
   goldenSignals,
   HealthRegistry,
   MetricRegistry,
+  PayloadTooLarge,
   runWithContext,
   toProblem,
   NotFound,
+  TooManyRequests,
   Unauthorized,
   verifyJwt,
   type Claims,
 } from '@atlas/service-kit';
 import { matchRoute, defaultRoutes, type RoutingTable } from './routing.ts';
+import {
+  clientAddress,
+  RateLimiter,
+  type RateLimitDecision,
+  type RateLimitPolicy,
+} from './rate-limit.ts';
 
 /** Header names the gateway establishes and downstream services trust. */
 export const INTERNAL_HEADERS = {
@@ -58,19 +66,96 @@ export interface GatewayOptions {
    * single scrape covers the whole process.
    */
   metrics?: MetricRegistry;
+  /**
+   * Requests per window from one SOURCE ADDRESS (EP-08.3). Generous by design — see rate-limit.ts:
+   * a broadcast facility shares one public address, so this bounds a building, not a person.
+   */
+  rateLimit?: RateLimitPolicy;
+  /**
+   * Requests per window from one authenticated SUBJECT — the "per-principal quota" of §10. This
+   * one really is per person, so it can be tighter than the address limit.
+   */
+  principalRateLimit?: RateLimitPolicy;
+  /**
+   * Honour `x-forwarded-for` when choosing the rate-limit key. **Off by default, deliberately** —
+   * see {@link clientAddress}. Turn it on only when a proxy that OVERWRITES the header is in front.
+   */
+  trustProxy?: boolean;
+  /** Largest request body accepted, in bytes (§10 "request/body size caps"). */
+  bodyLimit?: number;
   /** Injected for testability; defaults to global fetch. */
   fetchImpl?: typeof fetch;
 }
 
 const BEARER = /^Bearer (.+)$/i;
 
+/**
+ * 600 per minute per source address, 300 per subject.
+ *
+ * The address figure is sized for a FACILITY behind one NAT — a gallery of editors during a busy
+ * hour — not for one browser, because that is what a source address means in this product. It stops
+ * a runaway client or a crude flood; it is not tuned to stop credential guessing, which #240 does
+ * where the key is the account rather than the building.
+ */
+const DEFAULT_ADDRESS_LIMIT: RateLimitPolicy = { limit: 600, windowMs: 60_000 };
+const DEFAULT_PRINCIPAL_LIMIT: RateLimitPolicy = { limit: 300, windowMs: 60_000 };
+
+/** Fastify's own default, restated so the value is visible rather than inherited silently. */
+const DEFAULT_BODY_LIMIT = 1024 * 1024;
+
 export function buildGateway(options: GatewayOptions): FastifyInstance {
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, bodyLimit: options.bodyLimit ?? DEFAULT_BODY_LIMIT });
   const routes = options.routes ?? defaultRoutes;
   const health = options.health ?? new HealthRegistry();
   const doFetch = options.fetchImpl ?? globalThis.fetch;
   const metrics = options.metrics ?? new MetricRegistry();
   const signals = goldenSignals(metrics, 'api-gateway');
+
+  // §12 names "rate-limit rejections" as a gateway signal. `scope` says WHICH limit fired, because
+  // "one user is greedy" and "one address is flooding" call for different responses.
+  const rejections = metrics.counter({
+    name: 'atlas_gateway_rate_limited_total',
+    help: 'Requests refused with 429, by which limit rejected them.',
+    labelNames: ['scope'],
+  });
+
+  // Counted, not ignored: fail-open means the limiter stops limiting new keys under pressure, and
+  // that must be visible or the protection can be absent while every dashboard looks healthy.
+  const untracked = metrics.counter({
+    name: 'atlas_gateway_rate_limit_untracked_total',
+    help: 'Requests allowed because the limiter was at its key cap and failed open.',
+    labelNames: ['scope'],
+  });
+
+  const addressLimiter = new RateLimiter(options.rateLimit ?? DEFAULT_ADDRESS_LIMIT);
+  const principalLimiter = new RateLimiter(options.principalRateLimit ?? DEFAULT_PRINCIPAL_LIMIT);
+  // One limiter per route that overrides the default, built once rather than per request.
+  const routeLimiters = new Map<string, RateLimiter>(
+    routes
+      .filter((r) => r.rateLimit !== undefined)
+      .map((r) => [r.prefix, new RateLimiter(r.rateLimit as RateLimitPolicy)]),
+  );
+
+  /** Apply one decision to the reply. Returns true when the request was refused. */
+  const refuse = (
+    decision: RateLimitDecision,
+    scope: 'address' | 'principal',
+    req: FastifyRequest,
+    reply: FastifyReply,
+  ): boolean => {
+    if (decision.untracked === true) untracked.inc({ scope });
+    if (decision.allowed) return false;
+
+    rejections.inc({ scope });
+    const problem = toProblem(
+      new TooManyRequests(`rate limit exceeded (${scope})`),
+      req.correlationId,
+    );
+    // Seconds, and at least 1: `Retry-After: 0` is an invitation to spin.
+    void reply.header('retry-after', String(Math.max(1, Math.ceil(decision.retryAfterMs / 1000))));
+    void reply.code(problem.status).send(problem);
+    return true;
+  };
 
   // The gateway does not parse request bodies — it forwards BYTES.
   //
@@ -151,6 +236,16 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
       return reply.code(problem.status).send(problem);
     }
 
+    // ADDRESS limit first, BEFORE authentication. After would mean an unlimited supply of requests
+    // carrying a garbage token — each one costing a signature verification — never reaches a limit,
+    // which is the cheapest denial of service available against a JWT gateway.
+    const limiter = routeLimiters.get(route.prefix) ?? addressLimiter;
+    if (
+      refuse(limiter.check(clientAddress(req, options.trustProxy === true)), 'address', req, reply)
+    ) {
+      return reply;
+    }
+
     const headers: Record<string, string> = {
       [INTERNAL_HEADERS.correlation]: req.correlationId,
     };
@@ -182,6 +277,13 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
       }
 
       req.claims = claims;
+
+      // PRINCIPAL quota (§10). Only now is there a principal to key on, and only a verified one —
+      // keying on an unverified `sub` would let a client pick its own quota bucket.
+      if (claims.sub !== undefined) {
+        if (refuse(principalLimiter.check(claims.sub), 'principal', req, reply)) return reply;
+      }
+
       if (claims.sub !== undefined) headers[INTERNAL_HEADERS.user] = claims.sub;
       if (claims.channelId !== undefined) headers[INTERNAL_HEADERS.channel] = claims.channelId;
       if (claims.permissions !== undefined) {
@@ -230,7 +332,15 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
   });
 
   app.setErrorHandler((err, req: FastifyRequest, reply: FastifyReply) => {
-    const problem = toProblem(err, req.correlationId);
+    // Fastify enforces the body cap itself and raises FST_ERR_CTP_BODY_TOO_LARGE with a 413, but
+    // `toProblem` only knows the Atlas taxonomy and maps anything else to INTERNAL/500. So an
+    // oversized upload told the caller the SERVER had failed, and put a 5xx on the error-rate
+    // dashboard for what is squarely a client error. Translated at the one place that sees it.
+    const mapped =
+      (err as { code?: string }).code === 'FST_ERR_CTP_BODY_TOO_LARGE'
+        ? new PayloadTooLarge()
+        : err;
+    const problem = toProblem(mapped, req.correlationId);
     void reply.code(problem.status).send(problem);
   });
 

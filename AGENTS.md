@@ -50,7 +50,7 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-05** `@atlas/policy`        | ✅ 13 tests, now also driving Studio rendering. ⬜ 05.5/05.6                                                                                                                                                                                    |
 | **EP-06** `@atlas/reference`     | ✅ 17 tests. ⬜ 06.6 seed loader (Node-only, cannot live in a browser-safe entry point)                                                                                                                                                         |
 | **EP-07** `@atlas/data`          | ✅ 11 tests + `@atlas/data-pg` on **real Postgres** (8). ⬜ 07.4–07.6                                                                                                                                                                           |
-| **EP-08** `api-gateway`          | ✅ 20 tests, routes MAM, proxies bodies byte-transparently. ⬜ 08.3 rate limiting, 08.5 reference aggregation                                                                                                                                   |
+| **EP-08** `api-gateway`          | ✅ 36 tests, routes MAM, proxies bodies byte-transparently, **08.3 rate limiting + size caps** (per replica — see README). ⬜ 08.5 reference aggregation                                                                                        |
 | **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                                                                                                                                                                              |
 | **EP-10** `iam`                  | ✅ 55 tests, incl. `/metrics` + auth signals (#205) and failed-attempt lockout (#240). ⬜ 10.4 CRUD, 10.6 event emission                                                                                                                        |
 | **EP-13** walking skeleton       | ✅ 11 tests + **13.4 smoke suite green against a real cluster** (13/13, now including MAM)                                                                                                                                                      |
@@ -58,7 +58,7 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-17** `mam` (Phase 1)        | ✅ 238 tests — asset core, lifecycle, metadata gate, outbox events, Postgres, deployed, **17.2 extensible metadata**, **17.3 free-form tags**, **17.4 search**, field-group scoping (#225). ⬜ 17.7, 17.8 (need services that do not exist yet) |
 | **EP-12** observability          | ✅ 12.4 alerts + golden signals on **every deployed service** (#205 closed the IAM gap); **[ADR-0003](docs/adr/0003-observability-stack.md) decided** (Prometheus/Loki/Grafana/Alloy, optional overlay). ⬜ 12.1–12.3 implementation            |
 
-**406 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
+**422 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
 forward), merged to `main`. A further **54 need real infrastructure** — 34 in `mam`, 12 in
 `messaging-nats`, 8 in `data-pg` — and **CI now runs those too**, against a Postgres service and a
 JetStream container the workflow provides. They still skip on a laptop without Docker, but a
@@ -94,7 +94,7 @@ proxies `/auth` and `/api` to the gateway.
 **Suggested next tasks:** `EP-12.1/12.2/12.3` (build the stack [ADR-0003](docs/adr/0003-observability-stack.md)
 decided — every service now emits the signals it consumes) ·
 `EP-11.5` (generated API clients, so Studio panels can show real assets) · `EP-03.4` (DLQ tooling) ·
-`EP-08.3` (gateway rate limiting — the per-SOURCE half of #240, which deliberately stayed out of IAM).
+`EP-08.5` (aggregated `GET /reference`).
 
 > **Adapters are separate packages, held to shared conformance suites.** `@atlas/messaging` and
 > `@atlas/data` keep zero (or near-zero) runtime dependencies and define the rules;
