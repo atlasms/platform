@@ -41,6 +41,39 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    # Real Postgres, because the conformance suites are the platform's argument that an adapter
+    # behaves — and running them only against the sqlite/in-memory doubles asserts the doubles.
+    # AGENTS.md puts it plainly: tenant isolation and outbox atomicity are properties of the
+    # ADAPTER. Until this, `ATLAS_PG_URL` was set only on a developer's machine, so whether the
+    # Postgres adapter had ever been exercised depended on whether whoever wrote it had Docker
+    # running that day. It is a service container rather than a step: it starts in parallel with
+    # checkout, so the whole guarantee costs the job roughly nothing.
+    #
+    # Pinned to the same images as infra/docker-compose.dev.yml, so CI tests what dev tests.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+          POSTGRES_DB: atlas
+          # Deterministic collation: index order must not depend on the runner's locale.
+          POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atlas -d atlas"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      # Read by apps/mam/test/store-pg.test.ts and libs/data-pg/test/pg.test.ts. Both FAIL rather
+      # than skip when CI is set and these are missing, so deleting the infrastructure below can
+      # never quietly return the build to doubles-only.
+      ATLAS_PG_URL: postgres://atlas:atlas@localhost:5432/atlas
+      ATLAS_NATS_URL: nats://localhost:4222
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -48,6 +81,24 @@ jobs:
           # Full history: `nx affected` diffs against the merge base, and a shallow
           # clone makes that comparison silently wrong rather than failing loudly.
           fetch-depth: 0
+
+      # NATS needs `--jetstream`, and a `services:` block cannot set a container's command — only
+      # its image, env, ports and `docker create` options. So the broker ADR-0001 actually chose
+      # starts here instead. The asymmetry with Postgres is the limitation, not a preference.
+      - name: Start JetStream
+        run: |
+          docker run -d --name atlas-ci-nats \
+            -p 4222:4222 -p 8222:8222 \
+            nats:2.10-alpine --jetstream --http_port=8222
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:8222/healthz >/dev/null; then
+              echo "JetStream ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::JetStream did not become ready in 30s"
+          docker logs atlas-ci-nats
+          exit 1
 
       - name: Setup Node
         uses: actions/setup-node@v7

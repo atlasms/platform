@@ -1,6 +1,7 @@
 // The SAME conformance suite, against a REAL Postgres.
 //
-// CI has no database, so this skips unless ATLAS_PG_URL is set:
+// CI runs this — the workflow declares a Postgres service and sets ATLAS_PG_URL. Locally it skips
+// unless you point it at one:
 //
 //   docker compose -f infra/docker-compose.dev.yml up -d
 //   ATLAS_PG_URL=postgres://atlas:atlas@localhost:55432/atlas npm test -w @atlas/mam
@@ -14,6 +15,15 @@ import { mamMigrations, pgAssetStore } from '../src/index.ts';
 const URL = process.env['ATLAS_PG_URL'];
 
 if (!URL) {
+  // Convenient locally, REFUSED in CI. A skip is the right default on a laptop without Docker; in
+  // CI it would mean the Postgres adapter silently stopped being tested the moment somebody
+  // removed the service block — and the check would stay green while the guarantee evaporated.
+  if (process.env['CI']) {
+    throw new Error(
+      'ATLAS_PG_URL is unset in CI: the Postgres conformance suite would skip, leaving the ' +
+        'deployed adapter unexercised. Restore the postgres service in .github/workflows/ci.yml.',
+    );
+  }
   test(
     'Postgres AssetStore',
     { skip: 'set ATLAS_PG_URL to run against a real database' },

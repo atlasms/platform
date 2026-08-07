@@ -42,13 +42,20 @@ as a real cost of the choice. Inspection and replay are **EP-03.4**.
 ## Tests
 
 The shared conformance suite (`@atlas/messaging/conformance`) — the same one `InMemoryBroker`
-passes — plus JetStream-specific behaviour. **CI has no broker, so they skip unless
-`ATLAS_NATS_URL` is set:**
+passes — plus JetStream-specific behaviour. **CI runs them against a real JetStream server.**
+Locally they skip unless `ATLAS_NATS_URL` is set:
 
 ```sh
 docker compose -f infra/docker-compose.dev.yml up -d
 ATLAS_NATS_URL=nats://localhost:54222 npm test -w @atlas/messaging-nats
 ```
 
-Skipping is the honest default. Starting a container from a test would make every developer and
-every CI job pay for infrastructure the in-memory broker already covers behaviourally.
+This README used to argue that skipping in CI was the honest default, because the in-memory broker
+"already covers the behaviour". It does not. Stream-wide dedupe, and two instances of one service
+sharing a cursor while a second service gets its own copy, are properties of **JetStream** — the
+double only proves we implemented our own double consistently, which is exactly what a conformance
+suite exists to distrust. The real objection was cost, and a container declared by the workflow
+costs a developer nothing and the job about five seconds.
+
+So a skip is still right on a laptop without Docker, and refused in CI: a missing `ATLAS_NATS_URL`
+throws rather than skipping, because a silent skip there is indistinguishable from a passing suite.

@@ -1,13 +1,18 @@
 // Runs the shared broker conformance suite against a REAL JetStream server.
 //
-// CI has no broker, so this file skips unless ATLAS_NATS_URL is set:
+// CI runs this — the workflow starts a JetStream container and sets ATLAS_NATS_URL. Locally it
+// skips unless you point it at one:
 //
 //   docker compose -f infra/docker-compose.dev.yml up -d
 //   ATLAS_NATS_URL=nats://localhost:54222 npm test -w @atlas/messaging-nats
 //
-// Skipping is the honest default. The alternative — starting a container from a test — would make
-// every developer and every CI job pay for infrastructure that the in-memory broker already
-// covers behaviourally.
+// This file used to argue that skipping in CI was the honest default, because "the in-memory
+// broker already covers the behaviour". That reasoning does not survive the principle the
+// conformance suites exist for: the double is what the suite DISTRUSTS. Dedupe being stream-wide,
+// two instances of one service sharing a cursor while a second service gets its own copy — those
+// are properties of JetStream, and the in-memory broker asserts only that we implemented our own
+// double consistently. The objection it raised was really about cost, and a container declared by
+// the workflow costs a developer nothing and the job about five seconds.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,6 +39,14 @@ test('durable names are scoped to the service, not just the pattern', () => {
 // --- conformance against a real server ---------------------------------------
 
 if (!URL) {
+  // Convenient locally, REFUSED in CI. A skip on a laptop without Docker is right; a skip in CI
+  // means the deployed broker adapter stopped being tested and nothing said so.
+  if (process.env['CI']) {
+    throw new Error(
+      'ATLAS_NATS_URL is unset in CI: the JetStream conformance suite would skip, leaving the ' +
+        'deployed broker unexercised. Restore the JetStream step in .github/workflows/ci.yml.',
+    );
+  }
   test('NATS conformance', { skip: 'set ATLAS_NATS_URL to run against a real broker' }, () => {});
 } else {
   let n = 0;
