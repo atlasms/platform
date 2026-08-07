@@ -1,0 +1,61 @@
+# Dependabot was running on GitHub's defaults, which is why it opened a PR for `reference/` — the
+# FROZEN prototype that nothing installs — while the root workspace carried the same advisory
+# unpatched (GHSA-7p8r-x3mc-p8w7, fast-uri). A default that watches the wrong tree is worse than
+# none: it produces PRs that look like the vulnerability is being handled.
+
+version: 2
+
+updates:
+  # The real product. npm workspaces means ONE lock file covers libs/, apps/ and spikes/, so this
+  # single entry is the whole platform.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      # The commit-message CI job enforces Conventional Commits on every commit in a PR, and
+      # Dependabot's default subject would fail it.
+      prefix: chore
+      include: scope
+    groups:
+      # One PR per ecosystem-ish cluster rather than per package. A dozen separate PRs against a
+      # protected branch means a dozen CI runs and a dozen merges, and the security ones get lost
+      # among the routine bumps.
+      angular:
+        patterns: ["@angular/*", "@angular-devkit/*"]
+      typescript-eslint:
+        patterns: ["eslint", "@eslint/*", "typescript-eslint", "@typescript-eslint/*"]
+      types:
+        patterns: ["@types/*"]
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # Studio's toolchain is pinned as a set — Angular, its CLI and its TypeScript move together,
+      # and a lone major from Dependabot cannot be merged without the rest. Majors are done
+      # deliberately, as one change (see apps/studio/README.md).
+      - dependency-name: "@angular/*"
+        update-types: [version-update:semver-major]
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+
+  # `reference/` is the frozen prototype: not an npm workspace, never installed by the root, never
+  # built, never shipped. Watched anyway because its lock file is IN the repository and a scanner
+  # cannot tell that nothing loads it — but monthly, because none of it is reachable.
+  - package-ecosystem: npm
+    directory: /reference
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: chore
+      include: scope
+
+  # The pinned action versions in .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci

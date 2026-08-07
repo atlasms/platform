@@ -32,18 +32,29 @@ COPY libs/reference/package.json ./libs/reference/
 COPY libs/service-kit/package.json ./libs/service-kit/
 COPY apps/api-gateway/package.json ./apps/api-gateway/
 COPY apps/iam/package.json ./apps/iam/
+COPY apps/mam/package.json ./apps/mam/
 COPY apps/websocket/package.json ./apps/websocket/
 COPY apps/walking-skeleton/package.json ./apps/walking-skeleton/
 
+# ⚠️ THIS LIST IS A MANUAL MIRROR OF THE WORKSPACE LAYOUT. Add a service to `apps/` and it must be
+# added here too, or `npm ci` never learns about that workspace and its dependencies are simply not
+# installed. That failure is quiet: mam was missing from this list for two releases and its image
+# still ran, because every dependency it declares happened to be installed by another service. The
+# first dependency unique to a new service is what turns it into a startup crash.
+#
 # Studio and the spikes are deliberately absent. `workspaces` are globs, so a directory that is not
 # in the build context simply does not match — which is how Angular's dependency tree stays out of
-# a server image.
+# a server image, and with it the whole dev toolchain (`npm ci --omit=dev` does the rest).
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 # Source goes into THIS stage so the runtime can copy /app whole. Copying only the root
-# node_modules would silently drop nested ones — ajv@8 lives in libs/contracts/node_modules,
-# because eslint hoists an incompatible ajv@6 to the root — and the service would die at startup
-# on a missing package that npm had in fact installed correctly.
+# node_modules would silently drop NESTED ones, and the service would die at startup on a package
+# npm had in fact installed correctly — just one level down.
+#
+# The canonical example used to be ajv: eslint hoisted an incompatible ajv@6 to the root, pushing
+# the ajv@8 that @atlas/contracts needs into libs/contracts/node_modules. A dependency update has
+# since flipped that — ajv@8 is at the root now and the ajv@6 copies are nested under eslint. The
+# example changed; the rule did not. Hoisting is npm's choice and it moves, so copy the whole tree.
 COPY libs ./libs
 COPY apps/${SERVICE} ./apps/${SERVICE}
 # Schemas are loaded and compiled at runtime by @atlas/contracts: executable input, not docs.
