@@ -33,6 +33,14 @@ export {
   type ValidationOptions,
 } from './field-schema.ts';
 export {
+  ASSET_FIELD_GROUPS,
+  CORE_FIELD_GROUPS,
+  DEFAULT_EXTENDED_GROUP,
+  groupsForCoreFields,
+  groupsForExtended,
+  type AssetFieldGroup,
+} from './field-groups.ts';
+export {
   MAX_QUERY_TERMS,
   MAX_TERMS_PER_ASSET,
   MIN_TERM_LENGTH,

@@ -220,11 +220,16 @@ test('SECURITY: tagging is authorized on the TAXONOMY field group', async () => 
   );
 
   // The refusal has to come from the GROUP and nothing else, so the same caller must still be able
-  // to make an `asset:write` that names no group. Without this the test would keep passing if the
+  // to make a write in a group they DO hold. Without this the test would keep passing if the
   // channel scope, the permission or the policy compile broke instead.
+  //
+  // This used to assert a group-less core write, which worked only because `update` named no group
+  // — #225 fixed that, so the control had to become a write the Librarian genuinely holds. `rights`
+  // is theirs; `taxonomy` is not, and that is the whole distinction under test.
   assert.equal(
-    (await librarian.update(asLibrarian, asset.id, { title: 'Renamed' })).title,
-    'Renamed',
+    (await librarian.update(asLibrarian, asset.id, { expiresAt: '2027-01-01T00:00:00.000Z' }))
+      .expiresAt,
+    '2027-01-01T00:00:00.000Z',
   );
 
   // …and reading the catalogue and the tag cloud is still theirs.
