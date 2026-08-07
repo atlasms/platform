@@ -269,12 +269,22 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         .all(...(params as never[])) as { asset_id: string; score: number }[];
       return rows.map((r) => ({ assetId: r.asset_id, score: Number(r.score) }));
     },
-    async listByChannel(channelId) {
+    async listByChannel(channelId, options = {}) {
       // Ordered by id, which is a ULID and therefore chronological — a stable order without a
-      // second column, and the one a catalogue listing wants anyway.
-      const rows = db
-        .prepare('SELECT data FROM assets WHERE channel_id = ? ORDER BY id')
-        .all(channelId) as { data: string }[];
+      // second column, and the one a catalogue listing wants anyway. It is also what makes the
+      // keyset cursor work: `id > after` is meaningless without a total order on the same column.
+      const where = ['channel_id = ?'];
+      const params: unknown[] = [channelId];
+      if (options.after !== undefined) {
+        where.push('id > ?');
+        params.push(options.after);
+      }
+      let sql = `SELECT data FROM assets WHERE ${where.join(' AND ')} ORDER BY id`;
+      if (options.limit !== undefined) {
+        sql += ' LIMIT ?';
+        params.push(options.limit);
+      }
+      const rows = db.prepare(sql).all(...(params as never[])) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as Asset);
     },
     async transaction(fn) {

@@ -25,9 +25,27 @@ paths:
     get:
       operationId: listAssets
       tags: [assets]
-      summary: List/browse assets (scope asset:read, dept-scoped)
+      summary: List/browse assets (scope asset:read, category-scoped)
+      description: >-
+        KEYSET pagination, not offset: `cursor` is the last id already seen. Ids are ULIDs, so an
+        asset created while a user is paging would shift every row under `OFFSET` and the reader
+        would silently see one twice or miss one. Every asset is authorized INDIVIDUALLY, so a page
+        may come back shorter than `limit` while `nextCursor` is still present - that is normal,
+        not the end of the channel. Absent `nextCursor` is the end.
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, required: false, schema: { type: string }, description: The last id from the previous page. }
       responses:
-        '200': { description: Assets, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Asset' } } } } }
+        '200':
+          description: One page of assets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Asset' } }
+                  nextCursor: { type: string, description: Absent when the channel is exhausted. }
     post:
       operationId: createAsset
       tags: [assets]

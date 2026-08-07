@@ -17,6 +17,23 @@ import type { Tag, TagCandidate } from './tag.ts';
 export type ExtendedValues = Record<string, unknown>;
 
 /**
+ * One page of a channel listing.
+ *
+ * **Keyset, not offset.** `after` is the last id already seen, and the next page starts strictly
+ * beyond it. `OFFSET n` would be simpler and wrong: ids are ULIDs, so an asset created while a user
+ * is paging shifts every subsequent row and the reader silently sees one twice or misses one
+ * entirely. A keyset cursor is stable under concurrent inserts and is an index range rather than a
+ * scan-and-discard, which is the difference that matters at NFR-CAP-1's five million assets.
+ *
+ * Omitting `limit` returns the whole channel. That form exists for internal walks — a reindex — and
+ * must never serve a request.
+ */
+export interface ListOptions {
+  limit?: number;
+  after?: string;
+}
+
+/**
  * Reads are plain methods; writes only exist inside a transaction.
  *
  * That asymmetry is deliberate — there is no `put` on this interface, so a write that skips the
@@ -32,7 +49,7 @@ export interface AssetStore {
    * loading is a filter that can be forgotten — and forgetting it here means one channel reading
    * another's catalogue. It also keeps the scan proportional to the tenant instead of the table.
    */
-  listByChannel(channelId: string): Promise<Asset[]>;
+  listByChannel(channelId: string, options?: ListOptions): Promise<Asset[]>;
 
   /**
    * The extensible document for an asset, or `undefined` when it has none yet.

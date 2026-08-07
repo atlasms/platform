@@ -147,6 +147,30 @@ what the same text indexes to. So `POST /search/reindex` rebuilds a channel from
 themselves, which is the rebuildable read model the design asks for. It is `taxonomy:admin`, because
 on a large channel it is expensive.
 
+## Listing: paginated, and filtered per asset
+
+`list()` used to ask the strict evaluator once with **no category** and then return the channel
+**unfiltered**. That is wrong in both directions at once, and each half hid the other: a grant
+scoped to `categoryPaths` cannot satisfy a check naming no category, so a category-scoped reader was
+refused outright — and therefore nobody ever reached the unfiltered return that would have shown
+them everything.
+
+Both are fixed the way [`search`](#simple-search) already does it: a **lenient** `can()` once as an
+early-out, then the **strict** evaluator per asset with the full resource context, which is the only
+place "may you read _this_" can honestly be answered.
+
+Pagination is **keyset, not offset**. Ids are ULIDs, so an asset created while someone is paging
+shifts every subsequent row under `OFFSET` and the reader silently sees one twice or misses one;
+`WHERE id > cursor` is stable under concurrent inserts and is an index range rather than
+scan-and-discard. The response is `{ items, nextCursor }` — a bare array has nowhere to put a cursor,
+and a header is the version clients forget to read.
+
+The subtle part is **where the cursor advances**. It moves per asset _considered_, not per asset
+_returned_. Advancing only on a match would re-scan filtered rows forever and loop the client;
+advancing to the end of the store's page would skip every row the loop never reached. And because
+filtering happens after the read, a page can come back **short with a cursor still present** — that
+is normal, not the end of the channel.
+
 ## Persistence is a port with two adapters
 
 The service talks to [`AssetStore`](src/store.ts), never to a driver.

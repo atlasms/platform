@@ -123,8 +123,21 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     }
   };
 
+  // Paginated, and the response is an object rather than a bare array — `{ items, nextCursor }`.
+  // A bare array has nowhere to put the cursor, and the alternative (a header) is the version
+  // every client forgets to read, which turns "there is more" into "there is nothing".
   app.get('/api/v1/assets', async (req, reply) =>
-    handle(req, reply, async () => options.service.list(await callerOf(req))),
+    handle(req, reply, async () => {
+      const { limit, cursor } = req.query as { limit?: string; cursor?: string };
+      const parsed = limit === undefined ? undefined : Number(limit);
+      if (parsed !== undefined && !Number.isInteger(parsed)) {
+        throw new ValidationError('limit must be an integer');
+      }
+      return options.service.list(await callerOf(req), {
+        ...(parsed === undefined ? {} : { limit: parsed }),
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+    }),
   );
 
   app.post('/api/v1/assets', async (req, reply) =>
