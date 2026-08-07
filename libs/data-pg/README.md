@@ -46,8 +46,8 @@ in an arbitrary order, and the relay publishes in list order.
 ## Tests
 
 The shared outbox conformance suite (`@atlas/data/conformance`) — the same one the sqlite store
-passes — plus Postgres-specific migration behaviour. **CI has no database, so they skip unless
-`ATLAS_PG_URL` is set:**
+passes — plus Postgres-specific migration behaviour. **CI runs them against a real Postgres
+service.** Locally they skip unless `ATLAS_PG_URL` is set:
 
 ```sh
 docker compose -f infra/docker-compose.dev.yml up -d
@@ -56,3 +56,7 @@ ATLAS_PG_URL=postgres://atlas:atlas@localhost:55432/atlas npm test -w @atlas/dat
 
 Each test runs in its own schema, so they are parallel-safe and cleanup is a single
 `DROP SCHEMA … CASCADE`.
+
+A skip is the right default on a laptop without Docker. In CI it is refused: a missing
+`ATLAS_PG_URL` throws rather than skipping, because a silent skip there would mean the deployed
+adapter quietly stopped being tested while the check stayed green.

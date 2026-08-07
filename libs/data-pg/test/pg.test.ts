@@ -1,6 +1,7 @@
 // Runs the shared outbox conformance suite against a REAL Postgres.
 //
-// CI has no database, so this skips unless ATLAS_PG_URL is set:
+// CI runs this — the workflow declares a Postgres service and sets ATLAS_PG_URL. Locally it skips
+// unless you point it at one:
 //
 //   docker compose -f infra/docker-compose.dev.yml up -d
 //   ATLAS_PG_URL=postgres://atlas:atlas@localhost:55432/atlas npm test -w @atlas/data-pg
@@ -20,6 +21,14 @@ import {
 const URL = process.env['ATLAS_PG_URL'];
 
 if (!URL) {
+  // Convenient locally, REFUSED in CI — see apps/mam/test/store-pg.test.ts for the reasoning. A
+  // silent skip in CI is indistinguishable from a passing suite.
+  if (process.env['CI']) {
+    throw new Error(
+      'ATLAS_PG_URL is unset in CI: the Postgres outbox conformance would skip, leaving the ' +
+        'deployed adapter unexercised. Restore the postgres service in .github/workflows/ci.yml.',
+    );
+  }
   test(
     'Postgres conformance',
     { skip: 'set ATLAS_PG_URL to run against a real database' },

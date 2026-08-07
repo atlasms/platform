@@ -55,12 +55,16 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-10** `iam`                  | ✅ 20 tests. ⬜ 10.4 CRUD, 10.6 event emission                                                                                                                                                        |
 | **EP-13** walking skeleton       | ✅ 11 tests + **13.4 smoke suite green against a real cluster** (13/13, now including MAM)                                                                                                            |
 | **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.2 real sign-in against IAM**, 11.3 the workbench, 11.7 `can()` rendering — 57 tests. ⬜ 11.4 ws, 11.5 clients, 11.6 i18n/RTL                                                   |
-| **EP-17** `mam` (Phase 1)        | ✅ 103 tests — asset core, lifecycle, metadata gate, outbox events, Postgres, deployed, **17.2 extensible metadata**. ⬜ 17.3, 17.4, 17.7, 17.8                                                       |
+| **EP-17** `mam` (Phase 1)        | ✅ 139 tests — asset core, lifecycle, metadata gate, outbox events, Postgres, deployed, **17.2 extensible metadata**, **17.3 free-form tags**. ⬜ 17.4, 17.7, 17.8                                    |
 | **EP-12** observability          | ✅ 12.4 alerts + golden signals; **[ADR-0003](docs/adr/0003-observability-stack.md) decided** (Prometheus/Loki/Grafana/Alloy, optional overlay). ⬜ 12.1–12.3 implementation, #205 IAM has no metrics |
 
-**326 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
-forward), merged to `main` (PRs #176–#201). A further **32** run only against real infrastructure
-(NATS, Postgres) and skip in CI, plus **13 smoke tests** against a deployed cluster.
+**362 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
+forward), merged to `main`. A further **39 need real infrastructure** — 21 in `mam`, 10 in
+`messaging-nats`, 8 in `data-pg` — and **CI now runs those too**, against a Postgres service and a
+JetStream container the workflow provides. They still skip on a laptop without Docker, but a
+missing `ATLAS_PG_URL` / `ATLAS_NATS_URL` **in CI is a hard failure**, so the infrastructure cannot
+be removed without the build saying so. Plus **13 smoke tests** against a deployed cluster (not in
+CI — there is no cluster there, #126).
 
 > **Start here to understand how it fits together:**
 > [`apps/walking-skeleton`](apps/walking-skeleton/) wires the whole spine in one process and proves
@@ -95,8 +99,8 @@ proxies `/auth` and `/api` to the gateway.
 > `@atlas/data` keep zero (or near-zero) runtime dependencies and define the rules;
 > `@atlas/messaging-nats` and `@atlas/data-pg` implement them against real servers. The suites
 > (`@atlas/messaging/conformance`, `@atlas/data/conformance`, `@atlas/mam/store-conformance`) run in
-> CI against the in-memory / sqlite doubles, and against real infrastructure when `ATLAS_NATS_URL` /
-> `ATLAS_PG_URL` are set. **Add a behaviour to the suite, not to one implementation.**
+> CI against **both** — the in-memory / sqlite doubles _and_ real Postgres and JetStream, which the
+> workflow provides. **Add a behaviour to the suite, not to one implementation.**
 >
 > A service's persistence follows the same shape: `MamService` talks to an async `AssetStore` port
 > with a sqlite and a Postgres adapter. **A domain service must be async end to end** — a sync
@@ -104,7 +108,13 @@ proxies `/auth` and `/api` to the gateway.
 
 > **Real servers are available for local work:** `docker compose -f infra/docker-compose.dev.yml up -d`
 > gives Postgres, NATS and RabbitMQ on non-default ports ([infra/README.md](infra/README.md)).
-> **CI has none of this** — every test must pass against `node:sqlite` and `InMemoryBroker`.
+> **CI runs Postgres and JetStream too**, on the default ports, via the workflow — so an adapter
+> change is verified against the real server on every PR, not only when whoever wrote it happened
+> to have Docker running. Locally those suites still _skip_ without `ATLAS_PG_URL` /
+> `ATLAS_NATS_URL`; in CI a missing one is a hard failure, because a silent skip there is
+> indistinguishable from a passing suite. **Every test must still pass against `node:sqlite` and
+> `InMemoryBroker`** — the doubles are the fast path, not a lesser one. RabbitMQ is not in CI: it
+> exists only for the spike behind ADR-0001, which rejected it.
 
 > **⚠️ If you enforce authorization, call `canEnforce`, never `can`.** Lenient `can()` treats a
 > predicate it cannot check as "any", so an **incomplete context yields a WIDER grant**.
