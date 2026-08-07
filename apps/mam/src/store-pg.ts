@@ -9,6 +9,21 @@ import { outboxMigration, PgOutboxStore, withTransaction, type PgPool } from '@a
 import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { AssetStore, AssetTx } from './store.ts';
+import type { Tag } from './tag.ts';
+
+interface TagRow {
+  id: string;
+  channel_id: string;
+  label: string;
+  normalized: string;
+}
+
+const toTag = (r: TagRow): Tag => ({
+  id: r.id,
+  channelId: r.channel_id,
+  label: r.label,
+  normalized: r.normalized,
+});
 
 /**
  * `channel_id` and `state` are real columns; everything else is the document.
@@ -54,8 +69,41 @@ export const pgExtendedMigration: Migration = {
          ON field_schemas (channel_id, media_type);`,
 };
 
+/**
+ * Free-form tags and the asset join (EP-17.3).
+ *
+ * `(channel_id, normalized)` is UNIQUE and load-bearing: it is what makes "the same tag" a database
+ * fact rather than a convention two adapters each implement. Without it, concurrent taggers mint
+ * duplicate rows for one keyword and the tag cloud slowly fills with near-identical entries.
+ *
+ * `asset_tags` is indexed on `(tag_id, asset_id)` as well as its primary key — the reverse
+ * direction, "which assets carry this tag", is what FR-TAX-6 asks for and what EP-17.4's query will
+ * run. The index belongs with the table, not with the reader that arrives later.
+ */
+export const pgTagsMigration: Migration = {
+  id: 'mam_tags',
+  up: `CREATE TABLE IF NOT EXISTS tags (
+         id         text PRIMARY KEY,
+         channel_id text NOT NULL,
+         label      text NOT NULL,
+         normalized text NOT NULL
+       );
+       CREATE UNIQUE INDEX IF NOT EXISTS tags_identity_idx ON tags (channel_id, normalized);
+       CREATE TABLE IF NOT EXISTS asset_tags (
+         asset_id text NOT NULL,
+         tag_id   text NOT NULL,
+         PRIMARY KEY (asset_id, tag_id)
+       );
+       CREATE INDEX IF NOT EXISTS asset_tags_tag_idx ON asset_tags (tag_id, asset_id);`,
+};
+
 /** Everything MAM's database needs, in order. Applied at startup under an advisory lock. */
-export const mamMigrations: Migration[] = [outboxMigration, pgAssetsMigration, pgExtendedMigration];
+export const mamMigrations: Migration[] = [
+  outboxMigration,
+  pgAssetsMigration,
+  pgExtendedMigration,
+  pgTagsMigration,
+];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
   const outbox = new PgOutboxStore(pool);
@@ -107,6 +155,24 @@ export function pgAssetStore(pool: PgPool): AssetStore {
       }));
     },
 
+    async tagsOf(assetId) {
+      const { rows } = await pool.query<TagRow>(
+        `SELECT t.id, t.channel_id, t.label, t.normalized
+           FROM asset_tags a JOIN tags t ON t.id = a.tag_id
+          WHERE a.asset_id = $1 ORDER BY t.normalized`,
+        [assetId],
+      );
+      return rows.map(toTag);
+    },
+
+    async listTags(channelId) {
+      const { rows } = await pool.query<TagRow>(
+        'SELECT id, channel_id, label, normalized FROM tags WHERE channel_id = $1 ORDER BY normalized',
+        [channelId],
+      );
+      return rows.map(toTag);
+    },
+
     async transaction(fn) {
       return withTransaction(pool, async (client) => {
         // The tx handle is built per transaction and closes over THIS client. That is the point:
@@ -150,6 +216,37 @@ export function pgAssetStore(pool: PgPool): AssetStore {
                 JSON.stringify(schema.fields),
               ],
             );
+          },
+          async setTags(assetId, channelId, candidates) {
+            const resolved: Tag[] = [];
+            for (const c of candidates) {
+              // `DO UPDATE`, not `DO NOTHING`, and that is the whole trick: `DO NOTHING` returns
+              // ZERO rows on conflict, so RETURNING would hand back nothing for every tag that
+              // already existed. Writing the column back to itself makes the conflicting row an
+              // updated row, which RETURNING then yields — and keeps the FIRST spelling, so a later
+              // `football` does not silently rewrite everyone's `Football`.
+              const { rows } = await client.query<{ id: string; label: string }>(
+                `INSERT INTO tags (id, channel_id, label, normalized) VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (channel_id, normalized) DO UPDATE SET label = tags.label
+                 RETURNING id, label`,
+                [c.id, channelId, c.label, c.normalized],
+              );
+              const row = rows[0];
+              if (!row) throw new Error(`tag upsert returned no row for "${c.normalized}"`);
+              resolved.push({ id: row.id, channelId, label: row.label, normalized: c.normalized });
+            }
+
+            // Replace, not merge. Delete-then-insert rather than a diff: the set is tiny, and a
+            // diff is more code to get subtly wrong for no measurable gain.
+            await client.query('DELETE FROM asset_tags WHERE asset_id = $1', [assetId]);
+            for (const tag of resolved) {
+              await client.query('INSERT INTO asset_tags (asset_id, tag_id) VALUES ($1, $2)', [
+                assetId,
+                tag.id,
+              ]);
+            }
+
+            return resolved;
           },
           async enqueue(record) {
             await outbox.enqueue(client, record);

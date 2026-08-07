@@ -15,6 +15,7 @@ import {
 import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { AssetStore, AssetTx } from './store.ts';
+import type { Tag } from './tag.ts';
 
 export const sqliteAssetsMigration: Migration = {
   id: 'mam_assets',
@@ -45,9 +46,31 @@ export const sqliteExtendedMigration: Migration = {
          ON field_schemas (channel_id, media_type);`,
 };
 
+export const sqliteTagsMigration: Migration = {
+  id: 'mam_tags',
+  up: `CREATE TABLE IF NOT EXISTS tags (
+         id         TEXT PRIMARY KEY,
+         channel_id TEXT NOT NULL,
+         label      TEXT NOT NULL,
+         normalized TEXT NOT NULL
+       );
+       CREATE UNIQUE INDEX IF NOT EXISTS tags_identity_idx ON tags (channel_id, normalized);
+       CREATE TABLE IF NOT EXISTS asset_tags (
+         asset_id TEXT NOT NULL,
+         tag_id   TEXT NOT NULL,
+         PRIMARY KEY (asset_id, tag_id)
+       );
+       CREATE INDEX IF NOT EXISTS asset_tags_tag_idx ON asset_tags (tag_id, asset_id);`,
+};
+
 export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
   const db = openDb(path);
-  migrate(db, [outboxMigration, sqliteAssetsMigration, sqliteExtendedMigration]);
+  migrate(db, [
+    outboxMigration,
+    sqliteAssetsMigration,
+    sqliteExtendedMigration,
+    sqliteTagsMigration,
+  ]);
   const outbox = new SqliteOutboxStore(db);
 
   const read = (row: { data: string } | undefined): Asset | undefined =>
@@ -85,10 +108,47 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         JSON.stringify(schema.fields),
       );
     },
+    async setTags(assetId, channelId, candidates) {
+      const resolved = candidates.map((c) => {
+        // `DO UPDATE`, not `DO NOTHING`, and that is the whole trick: `DO NOTHING` returns ZERO
+        // rows on conflict, so RETURNING would hand back nothing for every tag that already
+        // existed. Writing the column back to itself makes the conflicting row an updated row,
+        // which RETURNING then yields — and keeps the FIRST spelling, so a later `football` does
+        // not silently rewrite everyone's `Football`.
+        const row = db
+          .prepare(
+            `INSERT INTO tags (id, channel_id, label, normalized) VALUES (?, ?, ?, ?)
+             ON CONFLICT (channel_id, normalized) DO UPDATE SET label = tags.label
+             RETURNING id, label`,
+          )
+          .get(c.id, channelId, c.label, c.normalized) as { id: string; label: string };
+        return { id: row.id, channelId, label: row.label, normalized: c.normalized };
+      });
+
+      // Replace, not merge. Delete-then-insert rather than a diff: the set is tiny, and a diff is
+      // more code to get subtly wrong for no measurable gain.
+      db.prepare('DELETE FROM asset_tags WHERE asset_id = ?').run(assetId);
+      const link = db.prepare('INSERT INTO asset_tags (asset_id, tag_id) VALUES (?, ?)');
+      for (const tag of resolved) link.run(assetId, tag.id);
+
+      return resolved;
+    },
     async enqueue(record) {
       outbox.enqueue(record);
     },
   };
+
+  const toTag = (r: {
+    id: string;
+    channel_id: string;
+    label: string;
+    normalized: string;
+  }): Tag => ({
+    id: r.id,
+    channelId: r.channel_id,
+    label: r.label,
+    normalized: r.normalized,
+  });
 
   return {
     db,
@@ -122,6 +182,24 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         ...(r.category_path !== null ? { categoryPath: r.category_path } : {}),
         fields: JSON.parse(r.fields) as FieldSchema['fields'],
       }));
+    },
+    async tagsOf(assetId) {
+      const rows = db
+        .prepare(
+          `SELECT t.id, t.channel_id, t.label, t.normalized
+             FROM asset_tags a JOIN tags t ON t.id = a.tag_id
+            WHERE a.asset_id = ? ORDER BY t.normalized`,
+        )
+        .all(assetId) as { id: string; channel_id: string; label: string; normalized: string }[];
+      return rows.map(toTag);
+    },
+    async listTags(channelId) {
+      const rows = db
+        .prepare(
+          'SELECT id, channel_id, label, normalized FROM tags WHERE channel_id = ? ORDER BY normalized',
+        )
+        .all(channelId) as { id: string; channel_id: string; label: string; normalized: string }[];
+      return rows.map(toTag);
     },
     async listByChannel(channelId) {
       // Ordered by id, which is a ULID and therefore chronological — a stable order without a

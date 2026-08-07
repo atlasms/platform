@@ -21,6 +21,7 @@ import {
   type FieldSchema,
 } from './field-schema.ts';
 import type { AssetStore, AssetTx, ExtendedValues } from './store.ts';
+import { parseTagLabels, sameTags, type Tag } from './tag.ts';
 import {
   BASE_MANDATORY_FIELDS,
   presentFieldsOf,
@@ -57,6 +58,17 @@ export interface MamOptions {
  * core value satisfy a requirement on the extended field — passing a check nobody actually met.
  */
 const EXTENDED_PREFIX = 'extended.';
+
+/**
+ * The field group a tag write belongs to.
+ *
+ * The starter roles scope `asset:write` by field group — an Editor gets `core`, `taxonomy`, `cast`
+ * and `shotlist`; a Librarian gets `files` and `rights`
+ * ([authorization-model.md §9](../../../docs/architecture/authorization-model.md)). Asking without
+ * a group means *any* group satisfies the check, so naming it here is a genuine narrowing: a
+ * Librarian's file-and-rights grant no longer reaches an asset's keywords.
+ */
+const TAXONOMY_GROUP = 'taxonomy';
 
 /** Who is asking, and in which tenant. Established by the gateway, never parsed from a JWT here. */
 export interface Caller {
@@ -338,6 +350,88 @@ export class MamService {
     return this.options.store.schemas(caller.channelId);
   }
 
+  // --- free-form tags (EP-17.3) ----------------------------------------------
+
+  /** The tags on one asset. Scoped and authorized by {@link get}. */
+  async tags(caller: Caller, id: string): Promise<Tag[]> {
+    const asset = await this.get(caller, id);
+    return this.options.store.tagsOf(asset.id);
+  }
+
+  /**
+   * Every tag in the caller's channel — the cloud, and what an autocomplete offers.
+   *
+   * `taxonomy:read`, not the `taxonomy:admin` the service catalogue lists against `GET /tags`. That
+   * table describes the *management* surface; gating the read behind admin would make tag
+   * autocomplete an administrator-only feature, which defeats free-form tagging for every editor
+   * the feature exists for. Administering the vocabulary — renaming, merging, deleting — is still
+   * `taxonomy:admin` and still unbuilt.
+   */
+  async listTags(caller: Caller): Promise<Tag[]> {
+    this.authorize(caller, 'taxonomy:read');
+    return this.options.store.listTags(caller.channelId);
+  }
+
+  /**
+   * Replace an asset's tags.
+   *
+   * Whole-set: a tag input hands back the final list, and there is no partial form of "these are
+   * the keywords". Labels the channel has not seen are minted on the spot — that is what makes a
+   * tag free-form — and each minting is announced as `taxonomy.updated` so Search and Studio learn
+   * about a new term without polling for one.
+   */
+  async setTags(caller: Caller, id: string, labels: readonly unknown[]): Promise<Tag[]> {
+    const asset = await this.get(caller, id);
+    this.authorize(caller, 'asset:write', asset, TAXONOMY_GROUP);
+
+    const parsed = parseTagLabels(labels);
+    if (parsed.errors.length > 0) throw new ValidationError(parsed.errors.join('; '));
+
+    const current = await this.options.store.tagsOf(id);
+    // Re-submitting the same set — which a form that PUTs on every keystroke does constantly — must
+    // not bump the version or wake every consumer. Compared on the normalized form, so `FOOTBALL`
+    // over an existing `football` is correctly nothing.
+    if (sameTags(current, parsed.labels)) return current;
+
+    // Candidate ids are minted HERE rather than in the adapter, so ULID generation stays a domain
+    // concern and both stores behave identically. A candidate is used only if its label is new;
+    // that is also how a newly minted tag is recognised below, without a second query.
+    const candidates = parsed.labels.map((l) => ({ id: ulid(), ...l }));
+    const fresh = new Set(candidates.map((c) => c.id));
+
+    const updated: Asset = {
+      ...asset,
+      version: asset.version + 1,
+      updatedAt: this.now().toISOString(),
+    };
+
+    let resolved: Tag[] = [];
+    await this.commitWith(
+      caller,
+      updated,
+      'asset.updated',
+      // `['tags']`, not a field-level list of what was added and removed. The contract's
+      // `changedFields` names FIELDS, and the delta belongs in the audit event EP-19.2 defines.
+      { assetId: updated.id, changedFields: ['tags'], source: 'user' },
+      async (tx) => {
+        resolved = await tx.setTags(id, asset.channelId, candidates);
+        for (const tag of resolved) {
+          if (!fresh.has(tag.id)) continue; // reused an existing tag — nothing new to announce
+          await tx.enqueue(
+            this.eventRecord(caller, asset.channelId, 'taxonomy.updated', {
+              kind: 'tag',
+              action: 'created',
+              id: tag.id,
+              label: tag.label,
+            }),
+          );
+        }
+      },
+    );
+
+    return resolved;
+  }
+
   /** The resolved field definitions for one asset. */
   private async fieldsFor(asset: Asset): Promise<FieldDefinition[]> {
     const schemas = await this.options.store.schemas(asset.channelId);
@@ -384,11 +478,16 @@ export class MamService {
    * Lenient `can()` would treat a predicate it cannot evaluate as satisfied, so an incomplete
    * context would yield a WIDER grant (authorization-model.md §5.1). Studio uses lenient to decide
    * what to show; a service enforcing must not.
+   *
+   * `fieldGroup` follows the same rule in the other direction: **omitting it widens the check**,
+   * because a rule that declares field groups matches anyway when none was asked for. So it is
+   * passed wherever the write belongs to a known group. Core and file writes do not name theirs
+   * yet, so field-group scoping is only partly enforced — a gap, not a decision.
    */
-  private authorize(caller: Caller, permission: string, asset?: Asset): void {
+  private authorize(caller: Caller, permission: string, asset?: Asset, fieldGroup?: string): void {
     const decision = canEnforce(caller.policy, permission, {
       channelId: caller.channelId,
-      ...defined({ categoryPath: asset?.categoryId, ownerId: asset?.createdBy }),
+      ...defined({ categoryPath: asset?.categoryId, ownerId: asset?.createdBy, fieldGroup }),
     });
     if (!decision.allowed) throw new Forbidden(decision.reason ?? `missing ${permission}`);
   }
@@ -416,9 +515,35 @@ export class MamService {
     payload: Record<string, unknown>,
     also?: (tx: AssetTx) => Promise<void>,
   ): Promise<void> {
-    // Validated before it is stored, not on the way out: an invalid payload in the outbox is a
-    // poison message that fails every drain forever, and the transaction that could have rejected
-    // it has long since committed.
+    const record = this.eventRecord(caller, asset.channelId, eventType, payload);
+
+    // Nothing is read back inside this block on purpose. On sqlite an uncommitted write is visible
+    // to the same connection; on Postgres it is not visible outside the transaction's own client —
+    // so a read here would work in tests and return stale data in production.
+    await this.options.store.transaction(async (tx) => {
+      await tx.put(asset);
+      await also?.(tx);
+      await tx.enqueue(record);
+    });
+  }
+
+  /**
+   * Validate a payload and wrap it in an addressed envelope, ready for the outbox.
+   *
+   * Validated before it is stored, not on the way out: an invalid payload in the outbox is a poison
+   * message that fails every drain forever, and the transaction that could have rejected it has
+   * long since committed.
+   *
+   * Separate from {@link commitWith} because one unit of work can carry more than one event — a tag
+   * write announces the asset change AND every vocabulary term it minted, and all of them have to
+   * commit with the rows they describe.
+   */
+  private eventRecord(
+    caller: Caller,
+    channelId: string,
+    eventType: string,
+    payload: Record<string, unknown>,
+  ): { id: string; message: { id: string; subject: string; body: Envelope } } {
     const check = validatePayload(eventType, payload);
     if (!check.valid) {
       throw new ValidationError(
@@ -428,27 +553,20 @@ export class MamService {
 
     const envelope: Envelope = buildEnvelope({
       type: eventType,
-      channelId: asset.channelId,
+      channelId,
       payload,
       actor: { kind: 'user', id: caller.userId },
       ...defined({ correlationId: caller.correlationId }),
     });
 
-    // Nothing is read back inside this block on purpose. On sqlite an uncommitted write is visible
-    // to the same connection; on Postgres it is not visible outside the transaction's own client —
-    // so a read here would work in tests and return stale data in production.
-    await this.options.store.transaction(async (tx) => {
-      await tx.put(asset);
-      await also?.(tx);
-      await tx.enqueue({
+    return {
+      id: envelope.messageId,
+      message: {
         id: envelope.messageId,
-        message: {
-          id: envelope.messageId,
-          subject: subjectFor(asset.channelId, eventType),
-          body: envelope,
-        },
-      });
-    });
+        subject: subjectFor(channelId, eventType),
+        body: envelope,
+      },
+    };
   }
 
   /**

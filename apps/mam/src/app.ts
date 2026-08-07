@@ -13,6 +13,7 @@ import {
   runWithContext,
   toProblem,
   Unauthorized,
+  ValidationError,
 } from '@atlas/service-kit';
 import type { LifecycleAction } from './lifecycle.ts';
 import type { MamService, Caller } from './service.ts';
@@ -166,6 +167,33 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
         (req.body ?? {}) as Record<string, unknown>,
       ),
     ),
+  );
+
+  // Free-form tags (EP-17.3). PUT, not PATCH: the body is the asset's complete tag set, which is
+  // what a tag input hands back — there is no partial form of "these are the keywords".
+  app.get('/api/v1/assets/:id/tags', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.tags(await callerOf(req), (req.params as { id: string }).id),
+    ),
+  );
+
+  app.put('/api/v1/assets/:id/tags', async (req, reply) =>
+    handle(req, reply, async () => {
+      const body = (req.body ?? {}) as { tags?: unknown };
+      // An absent `tags` is rejected rather than read as "remove them all". A client that forgot
+      // the field, or sent `{}` from an empty form, must not silently strip an asset's keywords.
+      if (!Array.isArray(body.tags)) throw new ValidationError('body must carry a `tags` array');
+      return options.service.setTags(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+        body.tags,
+      );
+    }),
+  );
+
+  /** The channel's tag cloud — what an autocomplete offers. Not the admin surface. */
+  app.get('/api/v1/tags', async (req, reply) =>
+    handle(req, reply, async () => options.service.listTags(await callerOf(req))),
   );
 
   app.get('/api/v1/field-schemas', async (req, reply) =>
