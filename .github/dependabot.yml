@@ -74,6 +74,21 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+    groups:
+      # One PR for the whole frozen tree. Watching five directories means five PRs for the same
+      # one-line bump otherwise — which is exactly what happened the first month this config was
+      # correct, and is worse noise than the gap it fixed.
+      reference:
+        patterns: ["*"]
+    ignore:
+      # `@types/node` in the root tracks the RUNTIME. Here it tracks something else: what the
+      # prototype was VALIDATED against. `reference/` is frozen and its 84 tests are the record of
+      # that validation, so moving its types is not modernisation, it is invalidating the record
+      # for a tree nothing installs. Security advisories still come through.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
 
   # The pinned action versions in .github/workflows.
   - package-ecosystem: github-actions

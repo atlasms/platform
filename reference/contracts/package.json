@@ -7,5 +7,5 @@
   "exports": { ".": "./src/index.ts" },
   "scripts": { "test": "node --import tsx --test test/contracts.test.ts" },
   "dependencies": { "ajv": "^8.20.0", "ajv-formats": "^3.0.1" },
-  "devDependencies": { "tsx": "^4.23.1" }
+  "devDependencies": { "tsx": "^4.23.11" }
 }

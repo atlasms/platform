@@ -7,5 +7,5 @@
   "exports": { ".": "./src/index.ts" },
   "scripts": { "test": "node --import tsx --test test/service-kit.test.ts" },
   "dependencies": { "jose": "^6.2.4" },
-  "devDependencies": { "tsx": "^4.23.1" }
+  "devDependencies": { "tsx": "^4.23.11" }
 }
