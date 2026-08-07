@@ -112,6 +112,74 @@ if (!URL) {
     await broker.close();
   });
 
+  test('a stream whose config has drifted is converged, not a failure to boot', async () => {
+    // The path `upsertStream` exists for, and one the conformance suite does NOT reach: adding a
+    // stream with an IDENTICAL config is idempotent and returns no error, so only a real drift
+    // exercises the recovery. Worth pinning because the detection changed with the @nats-io
+    // migration (#207) — a message-text match became an API error-code match, and if that code is
+    // ever wrong the symptom is every service failing to start against an existing deployment.
+    const stream = `DRIFT${uniq()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')}`;
+    // A subject prefix of its OWN, not `atlas.` — JetStream refuses to create a stream whose
+    // subjects overlap an existing one's, and the default ATLAS stream already claims `atlas.>`.
+    const root = `drift${uniq()}`;
+
+    const first = await NatsBroker.connect({
+      servers: URL,
+      service: `d${uniq()}`,
+      stream,
+      subjects: [`${root}.a.>`],
+    });
+    await first.close();
+
+    // Same stream, wider subject list — a config change, which is what a deployment upgrade looks
+    // like. This must connect rather than throw.
+    const second = await NatsBroker.connect({
+      servers: URL,
+      service: `d${uniq()}`,
+      stream,
+      subjects: [`${root}.a.>`, `${root}.b.>`],
+    });
+
+    const got: string[] = [];
+    second.subscribe(`${root}.b.>`, (m) => {
+      got.push(m.subject);
+    });
+    await sleep(500);
+    await second.publish({ id: `drift-${uniq()}`, subject: `${root}.b.created`, body: {} });
+    await sleep(1_500);
+
+    assert.deepEqual(
+      got,
+      [`${root}.b.created`],
+      'the widened subject list took effect — the stream was updated, not left at its old config',
+    );
+    await second.close();
+  });
+
+  test('a connect that fails during stream setup does not leak the connection', async () => {
+    // Found by hitting it: JetStream refuses a stream whose subjects overlap an existing one's, so
+    // this connect fails AFTER the socket is open. Without the cleanup, nothing holds a reference
+    // to that socket and Node keeps the process alive for it — a clear startup error becomes a
+    // hang, which is far harder to diagnose in a container than a crash.
+    await assert.rejects(
+      NatsBroker.connect({
+        servers: URL,
+        service: `overlap${uniq()}`,
+        stream: `OVERLAP${uniq()
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, '')}`,
+        subjects: ['atlas.>'], // already claimed by the default ATLAS stream
+      }),
+      'the overlap must surface as a rejection, not a stall',
+    );
+
+    // The proof that the socket was closed is this file exiting at all: node:test cannot end the
+    // process while a NATS connection is open, so a leak here would time the whole run out rather
+    // than fail this assertion. Recording the intent so the test is not mistaken for redundant.
+  });
+
   test('two instances of ONE service share the work; a second service gets its own copy', async () => {
     // The reason durables are named per (service, pattern). Same service = competing consumers,
     // each event handled once. Different service = independent cursor, its own copy.

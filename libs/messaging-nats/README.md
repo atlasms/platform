@@ -14,7 +14,8 @@ const broker = await NatsBroker.connect({
 ## Why this is a separate package
 
 `@atlas/messaging` has **zero runtime dependencies** and every service depends on it. Putting the
-`nats` client there would push a transport into every consumer, including browser-adjacent ones.
+`@nats-io/*` client there would push a transport into every consumer, including browser-adjacent
+ones.
 Only a composition root pulls this package in.
 
 ## Three things that will bite you
