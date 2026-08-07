@@ -3,8 +3,9 @@
 // EP-10.8 — the login-event audit trail.
 
 import { ulid } from '@atlas/contracts';
-import { Unauthorized } from '@atlas/service-kit';
+import { MetricRegistry, Unauthorized } from '@atlas/service-kit';
 import { compile, type EffectivePolicy, type Rule, type Role } from '@atlas/policy';
+import { authSignals, type AuthSignals, type LoginOutcome } from './auth-signals.ts';
 import { hashPassword, needsRehash, verifyPassword } from './passwords.ts';
 import { hashRefreshToken, mintRefreshToken, signAccessToken, type KeyRing } from './tokens.ts';
 import {
@@ -23,6 +24,12 @@ export interface IamOptions {
   audience?: string;
   accessTokenTtl?: string;
   refreshTokenTtlMs?: number;
+  /**
+   * Registry backing `/metrics`. Omit and the service makes its own, which `buildIamApp` then
+   * exposes — so metrics cannot be forgotten by leaving a wiring step out. There is exactly ONE
+   * place to inject a registry into IAM, and it is here.
+   */
+  metrics?: MetricRegistry;
   /** Injected so tests are deterministic. */
   now?: () => number;
 }
@@ -43,12 +50,17 @@ const DAY = 24 * 60 * 60 * 1000;
 
 export class IamService {
   readonly store: IamStore;
+  /** Exposed so `buildIamApp` can serve it — see {@link IamOptions.metrics}. */
+  readonly metrics: MetricRegistry;
+  #signals: AuthSignals;
   #ring: KeyRing;
   #opts: Required<Pick<IamOptions, 'accessTokenTtl' | 'refreshTokenTtlMs'>> & IamOptions;
   #now: () => number;
 
   constructor(options: IamOptions) {
     this.store = options.store ?? createStore();
+    this.metrics = options.metrics ?? new MetricRegistry();
+    this.#signals = authSignals(this.metrics);
     this.#ring = options.keyRing;
     this.#now = options.now ?? Date.now;
     this.#opts = {
@@ -100,7 +112,16 @@ export class IamService {
    * endpoint becomes an account-enumeration oracle.
    */
   async login(username: string, password: string, ctx: LoginContext = {}): Promise<TokenPair> {
-    const fail = (reason: string, user?: User, result: LoginEvent['result'] = 'failure'): never => {
+    // The outcome is passed in at each call site rather than parsed back out of `reason`: `reason`
+    // is prose for a human reading the audit trail, `outcome` is a closed label set (#205). Deriving
+    // one from the other would make an edit to the wording silently fork a time series.
+    const fail = (
+      outcome: LoginOutcome,
+      reason: string,
+      user?: User,
+      result: LoginEvent['result'] = 'failure',
+    ): never => {
+      this.#signals.login(outcome);
       this.#audit({ username, result, reason, ctx, ...(user ? { userId: user.id } : {}) });
       throw new Unauthorized('invalid username or password');
     };
@@ -109,17 +130,26 @@ export class IamService {
     if (!user) {
       // Still do the work: returning fast for an unknown user is a timing oracle.
       await verifyPassword(password, DUMMY_HASH);
-      return fail('unknown username');
+      return fail('unknown_user', 'unknown username');
     }
 
     if (user.state !== 'active') {
-      return fail(`account is ${user.state}`, user, user.state === 'locked' ? 'locked' : 'failure');
+      // `user.state` is the outcome, narrowed to the non-active states — which is exactly what
+      // LoginOutcome accepts, so a new UserState cannot reach here unlabelled.
+      return fail(
+        user.state,
+        `account is ${user.state}`,
+        user,
+        user.state === 'locked' ? 'locked' : 'failure',
+      );
     }
 
     const cred = this.store.credentials.get(user.id);
-    if (!cred) return fail('no password credential (SSO-only user)', user);
+    if (!cred) return fail('no_credential', 'no password credential (SSO-only user)', user);
 
-    if (!(await verifyPassword(password, cred.hash))) return fail('bad password', user);
+    if (!(await verifyPassword(password, cred.hash))) {
+      return fail('bad_password', 'bad password', user);
+    }
 
     // Opportunistic upgrade: the only moment the plaintext is available.
     if (needsRehash(cred.hash)) {
@@ -130,6 +160,7 @@ export class IamService {
     const now = new Date(this.#now()).toISOString();
     user.lastLogin = now;
     if (ctx.ip !== undefined) user.lastIp = ctx.ip;
+    this.#signals.login('success');
     this.#audit({ username, userId: user.id, result: 'success', ctx });
 
     return this.#issue(user, ulid());
@@ -146,25 +177,41 @@ export class IamService {
     const hash = hashRefreshToken(refreshToken);
     const record = [...this.store.refreshTokens.values()].find((r) => r.tokenHash === hash);
 
-    if (!record) throw new Unauthorized('invalid refresh token');
+    if (!record) {
+      this.#signals.refresh('unknown_token');
+      throw new Unauthorized('invalid refresh token');
+    }
 
     if (record.revokedAt !== undefined) {
       // Breach signal: revoke the whole family, not just this token.
       const at = new Date(this.#now()).toISOString();
+      let sessions = 0;
       for (const sibling of familyOf(this.store, record.familyId)) {
-        sibling.revokedAt ??= at;
+        // Counted rather than `??=` so the metric reports tokens this event actually killed. A
+        // second replay of the same token revokes nothing and must not look like a second breach.
+        if (sibling.revokedAt === undefined) {
+          sibling.revokedAt = at;
+          sessions += 1;
+        }
       }
+      this.#signals.refresh('reuse_detected');
+      this.#signals.revoked('reuse', sessions);
       throw new Unauthorized('refresh token reuse detected; session family revoked');
     }
 
     if (Date.parse(record.expiresAt) <= this.#now()) {
+      this.#signals.refresh('expired');
       throw new Unauthorized('refresh token expired');
     }
 
     const user = this.store.users.get(record.userId);
-    if (!user || user.state !== 'active') throw new Unauthorized('account is not active');
+    if (!user || user.state !== 'active') {
+      this.#signals.refresh('inactive_account');
+      throw new Unauthorized('account is not active');
+    }
 
     record.revokedAt = new Date(this.#now()).toISOString();
+    this.#signals.refresh('success');
     return this.#issue(user, record.familyId, record.id);
   }
 
@@ -179,7 +226,15 @@ export class IamService {
       ? [...this.store.refreshTokens.values()].filter((r) => r.userId === record.userId)
       : familyOf(this.store, record.familyId);
 
-    for (const r of targets) r.revokedAt ??= at;
+    let sessions = 0;
+    for (const r of targets) {
+      if (r.revokedAt === undefined) {
+        r.revokedAt = at;
+        sessions += 1;
+      }
+    }
+    // Logging out twice is idempotent, so the second call revokes nothing and records nothing.
+    this.#signals.revoked('logout', sessions);
   }
 
   // --- authorization -------------------------------------------------------
@@ -212,7 +267,16 @@ export class IamService {
         ...(g.roles ? { roles: g.roles } : {}),
       }));
 
-    return compile({ subjectId: userId, permVersion: user.permVersion, rules, roles, groups });
+    const started = performance.now();
+    const policy = compile({
+      subjectId: userId,
+      permVersion: user.permVersion,
+      rules,
+      roles,
+      groups,
+    });
+    this.#signals.policyCompiled((performance.now() - started) / 1000);
+    return policy;
   }
 
   /**
@@ -253,6 +317,11 @@ export class IamService {
       expiresAt: new Date(this.#now() + this.#opts.refreshTokenTtlMs).toISOString(),
       ...(rotatedFrom !== undefined ? { rotatedFrom } : {}),
     });
+
+    // Both grants land here, and `rotatedFrom` is what distinguishes them — a rotation always
+    // names the token it replaced. Recorded after the store write, so the count is of pairs that
+    // actually exist rather than of attempts.
+    this.#signals.issued(rotatedFrom === undefined ? 'password' : 'refresh');
 
     return {
       accessToken,

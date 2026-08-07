@@ -99,6 +99,18 @@ token issuance, JWKS latency and lockouts are precisely the signals worth alarmi
 outage locks every user out of the platform. **EP-12.2's "per-service golden signals" is not
 deliverable until this lands.**
 
+> **Resolved** ([#205](https://github.com/atlasms/platform/issues/205)). IAM serves `/metrics`,
+> registers `goldenSignals(…, 'iam')`, and adds `atlas_iam_login_attempts_total`,
+> `atlas_iam_refresh_attempts_total`, `atlas_iam_tokens_issued_total`,
+> `atlas_iam_sessions_revoked_total` and `atlas_iam_policy_compile_duration_seconds`. JWKS latency
+> needed no bespoke metric — the golden-signal histogram covers it under its route template.
+>
+> One signal named above is still absent, and deliberately: **there are no account lockouts to
+> count, because nothing locks an account.** The `locked` state exists and refuses logins, but no
+> policy ever sets it. `atlas_iam_login_attempts_total{outcome="locked"}` counts attempts *against*
+> an already-locked account, which is what is observable today. The lockout policy itself is
+> IAM work, not observability work.
+
 ## Decision
 
 **Ship Prometheus + Loki + Grafana + Alloy as an OPTIONAL overlay**, and treat **standard protocols
