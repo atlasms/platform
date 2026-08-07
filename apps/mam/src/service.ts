@@ -86,6 +86,39 @@ const MAX_SEARCH_LIMIT = 200;
  */
 const SEARCH_OVERFETCH = 4;
 
+/** Listing page size, and the same over-fetch reasoning as search. */
+const DEFAULT_PAGE_LIMIT = 50;
+const MAX_PAGE_LIMIT = 200;
+const PAGE_OVERFETCH = 4;
+
+/**
+ * How many store round trips one listing request may make while trying to fill its page.
+ *
+ * Without a bound, a caller whose read grant matches almost nothing walks the whole channel to
+ * discover that — turning a listing into a denial of service against its own database. With it,
+ * they get a short page and a cursor, which is the honest answer: "nothing here, continue from
+ * this point".
+ */
+const MAX_PAGE_SCANS = 5;
+
+/** Where to resume. `cursor` is the last id the caller has already been shown a decision for. */
+export interface ListPage {
+  limit?: number;
+  cursor?: string;
+}
+
+/**
+ * A page of results.
+ *
+ * `nextCursor` absent means the channel is exhausted. Present with a SHORT `items` is normal, not a
+ * bug: the permission filter runs after the read, so a page can legitimately come back thin while
+ * more matches lie beyond it.
+ */
+export interface Page<T> {
+  items: T[];
+  nextCursor?: string;
+}
+
 /** The text an asset is findable by, gathered from every part of it that carries words. */
 export interface SearchSources {
   tagLabels: readonly string[];
@@ -146,9 +179,59 @@ export class MamService {
     return asset;
   }
 
-  async list(caller: Caller): Promise<Asset[]> {
-    this.authorize(caller, 'asset:read');
-    return this.options.store.listByChannel(caller.channelId);
+  /**
+   * One page of the caller's channel, filtered to what they may actually read.
+   *
+   * This used to ask `canEnforce('asset:read')` once with no category and then return the channel
+   * unfiltered — wrong in **both** directions at once, which is why neither half had surfaced. A
+   * read grant scoped to `categoryPaths` cannot satisfy a check that names no category, so a
+   * category-scoped reader was refused outright; and anyone who *did* pass saw every asset in the
+   * channel, including the ones their scope excluded. Each bug hid the other.
+   *
+   * So: lenient once as an early-out (see {@link search} for why strict is wrong there), then the
+   * strict evaluator per asset with the full resource context — which is the only place the
+   * question "may you read THIS" can honestly be answered.
+   */
+  async list(caller: Caller, options: ListPage = {}): Promise<Page<Asset>> {
+    if (!can(caller.policy, 'asset:read', { channelId: caller.channelId }).allowed) {
+      throw new Forbidden('no rule grants "asset:read"');
+    }
+
+    const limit = Math.min(Math.max(options.limit ?? DEFAULT_PAGE_LIMIT, 1), MAX_PAGE_LIMIT);
+    const items: Asset[] = [];
+    let cursor = options.cursor;
+    let more = true;
+    let scans = 0;
+
+    // Filtering happens after the read, so a page from the store is a superset of the page the
+    // caller gets. Looping fills the page instead of returning a short one — but bounded, because
+    // a caller who may read almost nothing would otherwise walk the entire channel in one request
+    // and turn a listing into a denial of service against its own database.
+    while (items.length < limit && more && scans < MAX_PAGE_SCANS) {
+      scans++;
+      const fetch = limit * PAGE_OVERFETCH;
+      const page = await this.options.store.listByChannel(caller.channelId, {
+        limit: fetch,
+        ...defined({ after: cursor }),
+      });
+      // A short page from the store means the channel is exhausted; a full one means there is more.
+      more = page.length === fetch;
+
+      for (const asset of page) {
+        if (items.length >= limit) {
+          // Stopped mid-page: everything after this point is undecided, so there IS more.
+          more = true;
+          break;
+        }
+        // The cursor advances per asset CONSIDERED, not per asset returned. Advancing it to the
+        // end of the store's page would skip every row this loop never reached; advancing it only
+        // on a match would re-scan the filtered ones forever.
+        cursor = asset.id;
+        if (this.mayRead(caller, asset)) items.push(asset);
+      }
+    }
+
+    return { items, ...defined({ nextCursor: more && cursor !== undefined ? cursor : undefined }) };
   }
 
   // --- writes ----------------------------------------------------------------
@@ -561,12 +644,21 @@ export class MamService {
    */
   async reindex(caller: Caller, options: { batch?: number } = {}): Promise<{ indexed: number }> {
     this.authorize(caller, 'taxonomy:admin');
-    const assets = await this.options.store.listByChannel(caller.channelId);
     const batch = Math.max(options.batch ?? 100, 1);
 
     let indexed = 0;
-    for (let i = 0; i < assets.length; i += batch) {
-      const slice = assets.slice(i, i + batch);
+    let cursor: string | undefined;
+
+    // Walked a batch at a time rather than loaded whole. Reading five million assets into memory to
+    // rebuild their index is a rebuild that only works on a small channel — the exact scale at
+    // which nobody needs it.
+    for (;;) {
+      const slice = await this.options.store.listByChannel(caller.channelId, {
+        limit: batch,
+        ...defined({ after: cursor }),
+      });
+      if (slice.length === 0) break;
+
       // Sources are read OUTSIDE the transaction. Reading through the store from inside would take
       // a second pooled connection while holding the first, which is how a rebuild deadlocks a
       // service under load rather than merely slowing it down.
@@ -578,7 +670,10 @@ export class MamService {
           await tx.indexTerms(asset.id, asset.channelId, termsFor(asset, sources));
         }
       });
+
       indexed += slice.length;
+      cursor = slice[slice.length - 1]?.id;
+      if (slice.length < batch) break;
     }
     return { indexed };
   }
