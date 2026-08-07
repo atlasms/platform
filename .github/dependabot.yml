@@ -53,10 +53,21 @@ updates:
       - dependency-name: "@types/amqplib"
 
   # `reference/` is the frozen prototype: not an npm workspace, never installed by the root, never
-  # built, never shipped. Watched anyway because its lock file is IN the repository and a scanner
+  # built, never shipped. Watched anyway because its lock files are IN the repository and a scanner
   # cannot tell that nothing loads it — but monthly, because none of it is reachable.
+  #
+  # `directories`, not `directory`. Unlike the root, reference/ is NOT one workspace: it carries
+  # FIVE independent lock files, and a single `/reference` entry watches exactly one of them. That
+  # gap was not theoretical — reference/contracts and reference/bms-workflow sat on a high-severity
+  # fast-uri advisory (GHSA-7p8r-x3mc-p8w7) while the top-level tree reported itself clean, which is
+  # the same failure this file was created to fix, one level down.
   - package-ecosystem: npm
-    directory: /reference
+    directories:
+      - /reference
+      - /reference/bms-workflow
+      - /reference/contracts
+      - /reference/messaging
+      - /reference/service-kit
     schedule:
       interval: monthly
     open-pull-requests-limit: 2
