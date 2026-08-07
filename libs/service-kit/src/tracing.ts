@@ -89,6 +89,22 @@ export interface TracerOptions {
   now?: () => number;
 }
 
+/**
+ * Endpoints that exist for the infrastructure rather than for a user, and must not be traced.
+ *
+ * Found by looking at a real trace store: liveness and readiness fire every few seconds per pod and
+ * the scraper every fifteen, so within minutes **every** trace in Tempo was a probe. That is not
+ * merely noise — it crowds real requests out of search results and spends the whole retention
+ * window on the least interesting traffic in the platform.
+ *
+ * They stay in the METRICS, where a probe is one increment on an existing series and costs nothing.
+ * The difference is that a trace has a per-request cost, and probes are almost all the requests.
+ */
+export const UNTRACED_ROUTES: ReadonlySet<string> = new Set(['/healthz', '/readyz', '/metrics']);
+
+/** Should this route template produce a span at all? */
+export const isTraceable = (route: string): boolean => !UNTRACED_ROUTES.has(route);
+
 const DEFAULT_FLUSH_MS = 5_000;
 const DEFAULT_MAX_QUEUE = 2_048;
 const MS_TO_NANOS = 1_000_000n;

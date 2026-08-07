@@ -23,6 +23,34 @@ data:
         uid: atlas-loki
         access: proxy
         url: http://loki:3100
+        jsonData:
+          # THE payoff of having all three signals (EP-12.3). Every Atlas log line is structured
+          # JSON carrying `traceId` once a span exists, so Grafana can turn "this error line" into
+          # "the whole request that produced it" in one click — across every service it touched.
+          # Without this the three stores are three separate search boxes.
+          derivedFields:
+            - name: TraceID
+              matcherType: regex
+              matcherRegex: '"traceId":"([a-f0-9]{32})"'
+              url: "$${__value.raw}"
+              datasourceUid: atlas-tempo
+
+      - name: Tempo
+        type: tempo
+        uid: atlas-tempo
+        access: proxy
+        url: http://tempo:3200
+        jsonData:
+          # And the reverse trip: from a span, back to the log lines of that same request. Matched
+          # on traceId rather than on time-plus-service, which would pull in every OTHER request
+          # running concurrently — exactly the noise a trace exists to cut through.
+          tracesToLogsV2:
+            datasourceUid: atlas-loki
+            spanStartTimeShift: -5m
+            spanEndTimeShift: 5m
+            filterByTraceID: true
+            customQuery: true
+            query: '{namespace="atlas"} |= "$${__span.traceId}"'
 
   dashboards.yaml: |
     apiVersion: 1

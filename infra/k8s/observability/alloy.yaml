@@ -1,9 +1,12 @@
 # Grafana Alloy — the collector (EP-12.1).
 #
-# The pick that earns its place twice: it ships logs today AND speaks OTLP, so distributed tracing
-# (EP-12.3) becomes configuration rather than a fifth component in the offline bundle. That second
-# half is not wired here — EP-04.7 has not emitted a span yet, and a receiver with nothing to
-# receive is theatre.
+# The pick that earns its place twice: it ships logs AND receives OTLP, so tracing (EP-12.3) is
+# configuration here rather than a separate collector in the bundle. Both halves are wired now that
+# EP-04.7 emits spans.
+#
+# Services send to Alloy rather than straight to Tempo, so there is ONE place to add sampling,
+# redaction or a second destination later. It also means a service needs to know exactly one
+# telemetry address.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -99,6 +102,40 @@ data:
         url = "http://loki:3100/loki/api/v1/push"
       }
     }
+
+    // --- traces (EP-12.3) ----------------------------------------------------------------------
+    //
+    // HTTP only. service-kit's exporter is OTLP/HTTP JSON (ADR-0004), and opening a gRPC port that
+    // nothing in the platform speaks would be one more reachable surface for no benefit.
+    otelcol.receiver.otlp "default" {
+      http {
+        endpoint = "0.0.0.0:4318"
+      }
+      output {
+        traces = [otelcol.processor.batch.default.input]
+      }
+    }
+
+    // Batching here as well as in the exporter, because they solve different problems: service-kit
+    // batches to avoid a request per span, this one batches ACROSS services so Tempo sees a steady
+    // trickle rather than a burst every time a pod's flush timer fires.
+    otelcol.processor.batch "default" {
+      output {
+        traces = [otelcol.exporter.otlp.tempo.input]
+      }
+    }
+
+    otelcol.exporter.otlp "tempo" {
+      client {
+        endpoint = "tempo:4317"
+        // Plaintext inside the cluster. NOT a shortcut being papered over: NFR-SEC-1 puts internal
+        // transport encryption at the MESH (mTLS), not in each application, so terminating TLS here
+        // would duplicate it and give two places to get certificates wrong.
+        tls {
+          insecure = true
+        }
+      }
+    }
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -137,6 +174,8 @@ spec:
           ports:
             - name: http
               containerPort: 12345
+            - name: otlp-http
+              containerPort: 4318
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -167,3 +206,20 @@ spec:
         # the kubelet still holds.
         - name: tmp
           emptyDir: {}
+---
+# A DaemonSet has no address to send to, so the OTLP receiver needs a Service. Traffic lands on
+# whichever Alloy pod the Service picks, which is fine — a span carries its own trace id, so it does
+# not matter which collector instance forwards it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: alloy
+  labels:
+    app.kubernetes.io/name: alloy
+spec:
+  selector:
+    app.kubernetes.io/name: alloy
+  ports:
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http

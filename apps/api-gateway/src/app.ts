@@ -7,6 +7,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { ulid } from '@atlas/contracts';
 import {
   goldenSignals,
+  isTraceable,
   HealthRegistry,
   MetricRegistry,
   PayloadTooLarge,
@@ -192,11 +193,13 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
     // Everything downstream of here — auth, proxy, error mapping — runs inside the context,
     // so a log line from any of them carries the same id without being passed one.
     runWithContext({ correlationId }, () => {
-      if (!options.tracer) return done();
-      // The route TEMPLATE as the span name, never the raw path: a span named
-      // `GET /api/v1/assets/01H2XK…` is one distinct operation per asset in every trace UI, which
-      // is the cardinality trap that ruins metrics wearing a different hat.
       const route = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? req.url;
+      // Probes and the scraper are not traced — see UNTRACED_ROUTES. Checked before the tracer so
+      // an untraced request costs nothing at all, not even an id.
+      if (!options.tracer || !isTraceable(route)) return done();
+      // The span name is the route TEMPLATE, never the raw path: `GET /api/v1/assets/01H2XK…`
+      // would be one distinct operation per asset in every trace UI — the cardinality trap that
+      // ruins metrics, wearing a different hat.
       options.tracer.server(
         `${req.method} ${route}`,
         req.headers,

@@ -1,0 +1,146 @@
+# Tempo — the trace store (EP-12.3).
+#
+# ADR-0003 named Alloy as the trace "consumer", which was accurate about the COLLECTOR and left the
+# store unnamed — Alloy receives and forwards, it does not keep anything. So a greenfield site would
+# have had spans arriving at a collector and going nowhere.
+#
+# That is the same hole ADR-0003 rejected option D over: "ship nothing, integrate only" was refused
+# because it "leaves a greenfield site with nothing at all". Applying that reasoning to traces means
+# a store belongs in the box, and the cost is modest — 53 MiB in the bundle (`docker save` tar, the
+# same method ADR-0003 used), against Grafana's 139, Prometheus' 111 and Alloy's 111. The optional
+# stack goes 392 MiB to 445 MiB, and none of it is in the DEFAULT bundle.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+data:
+  tempo.yaml: |
+    server:
+      http_listen_port: 3200
+      log_level: warn
+
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            # gRPC only. Alloy is the single ingress for traces, it speaks gRPC, and every port
+            # opened here is one more thing that can be reached by something that should not be.
+            grpc:
+              endpoint: 0.0.0.0:4317
+
+    ingester:
+      # Flush sooner than the default. A trace that is still in memory is a trace the operator
+      # cannot query, and the whole reason to look at one is that something just happened.
+      max_block_duration: 5m
+
+    compactor:
+      compaction:
+        # 7 days, matching Prometheus and Loki. Traces are the highest-volume, lowest-value-per-byte
+        # signal of the three, but an operator correlating a metric spike with a log line and a
+        # trace needs all three windows to line up — a shorter one here would silently break that
+        # at exactly the age where an investigation starts.
+        block_retention: 168h
+
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/blocks
+        wal:
+          path: /var/tempo/wal
+
+    usage_report:
+      # Air-gapped (FR-PLat-7). Phoning home fails on every install, forever.
+      reporting_enabled: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tempo-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  labels:
+    app.kubernetes.io/name: tempo
+spec:
+  replicas: 1
+  # Recreate, like the other stores: a ReadWriteOnce PVC deadlocks a rolling update.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tempo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tempo
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3200"
+        prometheus.io/path: /metrics
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.7.0
+          args: ["-config.file=/etc/tempo/tempo.yaml"]
+          ports:
+            - name: http
+              containerPort: 3200
+            - name: otlp-grpc
+              containerPort: 4317
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo
+            - name: data
+              mountPath: /var/tempo
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: tempo-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: tempo-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  labels:
+    app.kubernetes.io/name: tempo
+spec:
+  selector:
+    app.kubernetes.io/name: tempo
+  ports:
+    - name: http
+      port: 3200
+      targetPort: http
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc

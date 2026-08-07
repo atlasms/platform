@@ -125,7 +125,7 @@ as the product**.
 |---|---|---|
 | **Metrics** | `/metrics`, Prometheus text, on every pod, annotated for discovery | Prometheus |
 | **Logs** | structured JSON on **stdout** | Alloy → Loki |
-| **Traces** | OTLP to a configurable endpoint (EP-04.7) | Alloy |
+| **Traces** | OTLP to a configurable endpoint (EP-04.7) | Alloy → Tempo (see note) |
 | **Alerts** | `AlertEvaluator` events | — |
 
 The overlay lives in its own namespace and its own kustomization, referenced by nothing in
@@ -161,6 +161,17 @@ on a broadcast node buys no media throughput.
 essentially a chart renderer. If the bundle ever has to shrink, that is the first thing to question:
 its dashboards are portable JSON, so a customer's existing Grafana can import them and ours can be
 dropped.
+
+> **Note added by EP-12.3 — Tempo, a fifth component.** The Traces row above named Alloy, which was
+> right about the **collector** and left the **store** unnamed: Alloy receives and forwards, it keeps
+> nothing. A greenfield site would have had spans arriving somewhere and going nowhere — the same
+> hole this ADR rejected **option D** over.
+>
+> `grafana/tempo:2.7.0` measured **53 MiB** by the `docker save` method used above, against
+> Grafana's 139, Prometheus' 111 and Alloy's 111. The stack total moves **392 → 445 MiB** (+13.5%),
+> and none of it is in the default bundle. Applying this ADR's own reasoning rather than reversing
+> it, so the decision stands and this records what completing it cost. Had the number been
+> Grafana-sized, it would have wanted its own ADR instead.
 
 ## Revisit when
 
