@@ -14,9 +14,12 @@ import {
   toProblem,
   NotFound,
   TooManyRequests,
+  TRACEPARENT_HEADER,
   Unauthorized,
   verifyJwt,
   type Claims,
+  type Span,
+  type Tracer,
 } from '@atlas/service-kit';
 import { matchRoute, defaultRoutes, type RoutingTable } from './routing.ts';
 import {
@@ -83,6 +86,14 @@ export interface GatewayOptions {
   trustProxy?: boolean;
   /** Largest request body accepted, in bytes (§10 "request/body size caps"). */
   bodyLimit?: number;
+  /**
+   * Tracer (EP-04.7). Omit and no spans are produced at all — tracing is opt-in per deployment.
+   *
+   * The gateway **starts** the trace rather than adopting an inbound one
+   * ([api-gateway.md §12](../../../docs/architecture/services/api-gateway.md)), which is also what
+   * stops a public client pinning every request to one trace id or forcing the sampled flag.
+   */
+  tracer?: Tracer;
   /** Injected for testability; defaults to global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -180,7 +191,25 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
     signals.enter();
     // Everything downstream of here — auth, proxy, error mapping — runs inside the context,
     // so a log line from any of them carries the same id without being passed one.
-    runWithContext({ correlationId }, () => done());
+    runWithContext({ correlationId }, () => {
+      if (!options.tracer) return done();
+      // The route TEMPLATE as the span name, never the raw path: a span named
+      // `GET /api/v1/assets/01H2XK…` is one distinct operation per asset in every trace UI, which
+      // is the cardinality trap that ruins metrics wearing a different hat.
+      const route = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? req.url;
+      options.tracer.server(
+        `${req.method} ${route}`,
+        req.headers,
+        {
+          adoptRemote: false,
+          attributes: { 'http.request.method': req.method, 'http.route': route },
+        },
+        (span) => {
+          req.span = span;
+          done();
+        },
+      );
+    });
   });
 
   // Saturation is decremented from BOTH exits: a client that closes the connection mid-request
@@ -205,6 +234,13 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
   // --- access log: emitted for EVERY response, including 4xx/5xx --------------------------
   app.addHook('onResponse', (req, reply, done) => {
     leave(req);
+    if (req.span) {
+      req.span.setAttribute('http.response.status_code', reply.statusCode);
+      // 5xx only. A 404 or a 401 is the system working — marking those as span errors would paint
+      // every trace red and make a real failure indistinguishable from a typo in a URL.
+      if (reply.statusCode >= 500) req.span.setError(`HTTP ${reply.statusCode}`);
+      req.span.end();
+    }
     options.onAccessLog?.({
       requestId: req.correlationId,
       method: req.method,
@@ -263,8 +299,17 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
       return reply;
     }
 
+    // Now that routing has decided, the span can say what this request actually is. Named after
+    // the matched PREFIX and the owning service — bounded by the routing table, which is exactly
+    // the property a span name needs, and readable as "which service did this go to".
+    req.span?.setName(`${req.method} ${route.prefix} → ${route.service}`);
+    req.span?.setAttribute('atlas.upstream', route.service);
+
     const headers: Record<string, string> = {
       [INTERNAL_HEADERS.correlation]: req.correlationId,
+      // The hop that makes this a DISTRIBUTED trace rather than a per-service one. Carries this
+      // span's id, so the upstream becomes our child rather than a sibling.
+      ...(req.span ? { [TRACEPARENT_HEADER]: req.span.traceparent() } : {}),
     };
 
     if (!route.public) {
@@ -369,6 +414,7 @@ declare module 'fastify' {
     correlationId: string;
     startedAt: number;
     inFlight?: boolean;
+    span?: Span;
     claims?: Claims;
   }
 }

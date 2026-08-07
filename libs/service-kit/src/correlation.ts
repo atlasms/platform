@@ -5,6 +5,14 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export interface RequestContext {
   correlationId: string;
   actor?: { kind: 'service' | 'user'; id: string };
+  /**
+   * Trace context (EP-04.7), carried HERE rather than in a second AsyncLocalStorage so a log line
+   * and a span can never disagree about which request they belong to. Absent until a tracer starts
+   * a span, so a service with tracing switched off is unchanged.
+   */
+  traceId?: string;
+  spanId?: string;
+  sampled?: boolean;
 }
 
 const als = new AsyncLocalStorage<RequestContext>();

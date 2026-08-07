@@ -8,6 +8,8 @@ import {
   Unauthorized,
   runWithContext,
   toProblem,
+  type Span,
+  type Tracer,
 } from '@atlas/service-kit';
 import { ulid } from '@atlas/contracts';
 import type { IamService } from './service.ts';
@@ -17,6 +19,12 @@ export interface IamAppOptions {
   service: IamService;
   keyRing: KeyRing;
   health?: HealthRegistry;
+  /**
+   * Tracer (EP-04.7). Omit and no spans are produced. Unlike the gateway, IAM **adopts** the
+   * inbound `traceparent`: the caller is the gateway, which is trusted, and re-deciding sampling
+   * here would leave holes in the middle of traces.
+   */
+  tracer?: Tracer;
 }
 
 interface Credentials {
@@ -45,7 +53,23 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
     req.startedAt = Date.now();
     req.inFlight = true;
     signals.enter();
-    runWithContext({ correlationId }, () => done());
+    runWithContext({ correlationId }, () => {
+      if (!options.tracer) return done();
+      // The route TEMPLATE, never the raw path — the same cardinality rule the metrics follow.
+      const route = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? req.url;
+      options.tracer.server(
+        `${req.method} ${route}`,
+        req.headers,
+        {
+          adoptRemote: true,
+          attributes: { 'http.request.method': req.method, 'http.route': route },
+        },
+        (span) => {
+          req.span = span;
+          done();
+        },
+      );
+    });
   });
 
   // Saturation is decremented from BOTH exits. A client that closes the connection mid-request
@@ -64,6 +88,13 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
 
   app.addHook('onResponse', (req, reply, done) => {
     leave(req);
+    if (req.span) {
+      req.span.setAttribute('http.response.status_code', reply.statusCode);
+      // 5xx only: a 401 from an auth service is the system working, and marking it an error would
+      // paint every failed login red in the trace UI.
+      if (reply.statusCode >= 500) req.span.setError(`HTTP ${reply.statusCode}`);
+      req.span.end();
+    }
     // The route TEMPLATE. `req.url` would work for IAM's fixed paths today, but the moment a
     // `/users/:id` route lands it would mint a series per user — the cardinality bug arriving
     // through a route addition nobody connected to metrics.
@@ -173,5 +204,6 @@ declare module 'fastify' {
     correlationId: string;
     startedAt: number;
     inFlight?: boolean;
+    span?: Span;
   }
 }

@@ -37,6 +37,23 @@ export {
   type RequestSample,
 } from './golden-signals.ts';
 export {
+  formatTraceparent,
+  newSpanId,
+  newTraceId,
+  parseTraceparent,
+  TRACEPARENT_HEADER,
+  type TraceContext,
+} from './trace-context.ts';
+export {
+  createTracer,
+  SpanKind,
+  type AttributeValue,
+  type Span,
+  type SpanKindValue,
+  type Tracer,
+  type TracerOptions,
+} from './tracing.ts';
+export {
   AlertEvaluator,
   type AlertRaised,
   type AlertRule,
