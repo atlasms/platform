@@ -1,0 +1,169 @@
+# Grafana Alloy — the collector (EP-12.1).
+#
+# The pick that earns its place twice: it ships logs today AND speaks OTLP, so distributed tracing
+# (EP-12.3) becomes configuration rather than a fifth component in the offline bundle. That second
+# half is not wired here — EP-04.7 has not emitted a span yet, and a receiver with nothing to
+# receive is theatre.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: atlas-alloy
+rules:
+  - apiGroups: [""]
+    resources: [pods, namespaces, nodes]
+    verbs: [get, list, watch]
+  # Reading logs through the API is what lets this run WITHOUT mounting the host filesystem.
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: atlas-alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: atlas-alloy
+subjects:
+  - kind: ServiceAccount
+    name: alloy
+    namespace: atlas-observability
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+data:
+  config.alloy: |
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    discovery.relabel "atlas" {
+      targets = discovery.kubernetes.pods.targets
+
+      // Only Atlas' own namespaces. Collecting kube-system as well would multiply the log volume
+      // for output an Atlas operator cannot act on anyway.
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        regex         = "atlas|atlas-observability"
+        action        = "keep"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+        target_label  = "service"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+    }
+
+    // Reads container stdout through the Kubernetes API rather than /var/log/pods on the host.
+    // No hostPath mount, no privileged container — a log shipper with the host filesystem mounted
+    // is a large amount of trust to grant something whose job is to read text.
+    loki.source.kubernetes "pods" {
+      targets    = discovery.relabel.atlas.output
+      forward_to = [loki.process.atlas.receiver]
+    }
+
+    loki.process "atlas" {
+      forward_to = [loki.write.default.receiver]
+
+      // Every Atlas service logs structured JSON to stdout, so `level` is a real field rather than
+      // something to regex out of a message. That is the whole reason `createLogger` exists.
+      stage.json {
+        expressions = { level = "level", correlationId = "correlationId" }
+      }
+      stage.labels {
+        values = { level = "level" }
+      }
+      // correlationId is deliberately NOT a label. It is unbounded — one value per request — and a
+      // Loki label set is a stream: promoting it would mint a stream per request and shred the
+      // index, which is the exact same cardinality trap as putting a user id in a metric label.
+      // It stays in the line, where `|= "01K..."` finds it across every service in one query.
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://loki:3100/loki/api/v1/push"
+      }
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy
+  labels:
+    app.kubernetes.io/name: alloy
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alloy
+      # Scraped, because the collector is the component whose failure is hardest to notice: when a
+      # log shipper stops, the symptom is SILENCE, which looks exactly like a quiet platform. Its
+      # own metrics (dropped entries, send failures, queue depth) are the only way to tell.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "12345"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: alloy
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 473
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.5.1
+          args:
+            - run
+            - /etc/alloy/config.alloy
+            - --storage.path=/tmp/alloy
+            - --server.http.listen-addr=0.0.0.0:12345
+          ports:
+            - name: http
+              containerPort: 12345
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+            - name: tmp
+              mountPath: /tmp/alloy
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: alloy-config
+        # Alloy's write-ahead buffer. emptyDir rather than a PVC on purpose: a DaemonSet gets one
+        # pod per node, and a ReadWriteOnce volume cannot follow that. What is lost on a restart is
+        # at most the few seconds in flight — the source of truth is the container's stdout, which
+        # the kubelet still holds.
+        - name: tmp
+          emptyDir: {}

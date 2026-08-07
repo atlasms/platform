@@ -16,7 +16,11 @@ namespace: atlas-observability
 
 resources:
   - namespace.yaml
+  # Stores first, then the things that feed and read them — the file order matches the dependency
+  # order, as in infra/k8s/base.
   - prometheus.yaml
+  - loki.yaml
+  - alloy.yaml
   - grafana.yaml
 
 labels:
