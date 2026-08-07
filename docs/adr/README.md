@@ -19,3 +19,5 @@ disagree with data.
 | ADR | Decision | Status |
 |---|---|---|
 | [0001](0001-message-broker.md) | NATS JetStream as the message broker | Accepted |
+| [0002](0002-deployment-target.md) | Kubernetes + Kustomize as the deployment target | Accepted |
+| [0003](0003-observability-stack.md) | Prometheus + Loki + Grafana + Alloy, as an optional overlay | Accepted |

@@ -18,6 +18,12 @@ spec:
       labels:
         app.kubernetes.io/name: iam
         app.kubernetes.io/part-of: atlas
+      # See mam.yaml: the pod announces its own scrape target, so a service cannot ship and be
+      # silently unmonitored. Honoured by any Prometheus-compatible scraper, ours or a customer's.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: /metrics
     spec:
       # Kubernetes stops routing to a terminating pod and sends SIGTERM at the same moment, so a
       # request already in flight can still arrive. main.ts drains Fastify; this is the budget.

@@ -1,0 +1,26 @@
+# The observability stack, as an OPTIONAL overlay.
+#
+# Its own namespace and its own kustomization, referenced by nothing in `infra/k8s/base`. Deleting
+# it must leave Atlas fully monitorable by somebody else's tooling — that is the claim the spike
+# verifies, and keeping it structurally separate is what makes the claim testable rather than
+# aspirational.
+#
+#   kubectl apply -k spikes/observability/k8s
+#   kubectl delete -k spikes/observability/k8s
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: atlas-observability
+
+resources:
+  - namespace.yaml
+  - prometheus.yaml
+  - loki.yaml
+  - alloy.yaml
+  - grafana.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: atlas-observability

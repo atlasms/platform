@@ -1,0 +1,124 @@
+# Loki — the log store.
+#
+# Deliberately NOT OpenSearch. Operational logs are high-volume and disposable; the audit trail is
+# low-volume, permanent and tamper-evident, and it belongs to the Logging & Analytics service
+# ([logging-analytics.md](../../../docs/architecture/services/logging-analytics.md)). Using one
+# engine for both would force audit-grade cost and retention onto debug output.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+data:
+  loki.yaml: |
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+      log_level: warn
+
+    common:
+      instance_addr: 127.0.0.1
+      path_prefix: /loki
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+
+    schema_config:
+      configs:
+        - from: 2024-01-01
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+
+    limits_config:
+      # An operator's debugging window, matching Prometheus. Long-term retention is the audit
+      # service's job and has entirely different guarantees.
+      retention_period: 168h
+      # Reject rather than silently truncate: a log line that arrives half-written is worse than
+      # one that is refused loudly, because it looks like evidence.
+      max_line_size: 256kb
+      reject_old_samples: true
+      reject_old_samples_max_age: 24h
+
+    compactor:
+      working_directory: /loki/compactor
+      retention_enabled: true
+      delete_request_store: filesystem
+
+    analytics:
+      # Air-gapped by requirement (FR-PLat-7). Phoning home would fail on every install and log an
+      # error every few minutes for the lifetime of the deployment.
+      reporting_enabled: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki
+  labels:
+    app.kubernetes.io/name: loki
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: loki
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: loki
+          image: grafana/loki:3.3.2
+          args: ["-config.file=/etc/loki/loki.yaml"]
+          ports:
+            - name: http
+              containerPort: 3100
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki
+            - name: data
+              mountPath: /loki
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: loki-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  labels:
+    app.kubernetes.io/name: loki
+spec:
+  selector:
+    app.kubernetes.io/name: loki
+  ports:
+    - name: http
+      port: 3100
+      targetPort: http
