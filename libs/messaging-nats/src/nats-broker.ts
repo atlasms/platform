@@ -4,18 +4,24 @@
 // cannot tell which transport it got. Held to the shared conformance suite
 // (`@atlas/messaging/conformance`), the same one the in-memory broker passes.
 
+// The `nats` package was deprecated upstream in favour of the split @nats-io/* packages (#207).
+// It is not a rename: JetStream is reached through free functions now — `jetstream(nc)` and
+// `jetstreamManager(nc)` rather than methods on the connection — and the pieces live in three
+// packages. The Broker interface above this file did not move, which is the point of having it.
 import {
   AckPolicy,
-  connect,
   DeliverPolicy,
-  headers as headersFactory,
+  jetstream,
+  jetstreamManager,
+  JetStreamApiError,
   RetentionPolicy,
   type ConsumerMessages,
   type JetStreamClient,
   type JetStreamManager,
   type JsMsg,
-  type NatsConnection,
-} from 'nats';
+} from '@nats-io/jetstream';
+import { headers as headersFactory, nanos, type NatsConnection } from '@nats-io/nats-core';
+import { connect } from '@nats-io/transport-node';
 import type { Broker, Handler, Message, SubscribeOptions, Subscription } from '@atlas/messaging';
 
 export interface NatsBrokerOptions {
@@ -53,7 +59,13 @@ const DLQ_STREAM = 'ATLAS_DLQ';
 /** JetStream publishes this when a consumer exhausts max_deliver — see deadLetterCount(). */
 const MAX_DELIVERIES_ADVISORY = '$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.>';
 
-const MS_TO_NS = 1_000_000;
+/**
+ * JetStream's API error code for "stream name already in use".
+ *
+ * Spelled out because `JetStreamApiCodes` names only six codes and this is not among them. It is
+ * still better than matching on the message text, which is server-version-dependent prose.
+ */
+const STREAM_NAME_IN_USE = 10058;
 
 export class NatsBroker implements Broker {
   private nc?: NatsConnection;
@@ -72,7 +84,16 @@ export class NatsBroker implements Broker {
   /** Connect and ensure the streams exist. Safe to call against an already-provisioned server. */
   static async connect(options: NatsBrokerOptions): Promise<NatsBroker> {
     const broker = new NatsBroker(options);
-    await broker.init();
+    try {
+      await broker.init();
+    } catch (err) {
+      // The TCP connection is established BEFORE the streams are provisioned, so a failure in
+      // stream setup — an overlapping subject, a config that will not converge — would otherwise
+      // leave an open socket nobody holds a reference to. Node keeps the process alive for it,
+      // which turns a clear startup error into a hang.
+      await broker.close().catch(() => undefined);
+      throw err;
+    }
     return broker;
   }
 
@@ -81,14 +102,15 @@ export class NatsBroker implements Broker {
       servers: this.options.servers,
       name: this.options.clientName ?? `atlas-${this.options.service}`,
     });
-    this.jsm = await this.nc.jetstreamManager();
-    this.js = this.nc.jetstream();
+    // Free functions, not connection methods — the v3 split moved JetStream out of the transport.
+    this.jsm = await jetstreamManager(this.nc);
+    this.js = jetstream(this.nc);
 
     await upsertStream(this.jsm, {
       name: this.stream,
       subjects: this.options.subjects ?? DEFAULT_SUBJECTS,
       retention: RetentionPolicy.Limits,
-      duplicate_window: (this.options.dedupeWindowMs ?? 120_000) * MS_TO_NS,
+      duplicate_window: nanos(this.options.dedupeWindowMs ?? 120_000),
     });
 
     // ADR-0001 recorded this as a real gap: JetStream has no dead-letter queue. It caps
@@ -130,7 +152,7 @@ export class NatsBroker implements Broker {
         ack_policy: AckPolicy.Explicit,
         deliver_policy: DeliverPolicy.All,
         max_deliver: maxAttempts,
-        ack_wait: (this.options.ackWaitMs ?? 30_000) * MS_TO_NS,
+        ack_wait: nanos(this.options.ackWaitMs ?? 30_000),
       });
 
       const consumer = await js.consumers.get(this.stream, durable);
@@ -168,7 +190,13 @@ export class NatsBroker implements Broker {
     } catch {
       // Backoff between attempts. On the final failure NAK anyway: that is what drives the
       // delivery count past max_deliver and produces the advisory the DLQ stream captures.
-      const attempt = m.info.redeliveryCount;
+      //
+      // `deliveryCount` was `redeliveryCount` before the @nats-io split (#207) — a rename carrying
+      // the same meaning (deliveries so far, 1 on the first). It is the one field in this migration
+      // where an off-by-one would be silent: the backoff would merely look wrong, but the
+      // `>= maxAttempts` comparison decides whether a message reaches the DLQ at all. The
+      // conformance suite's dead-letter case is what pins it against a real server.
+      const attempt = m.info.deliveryCount;
       m.nak(attempt >= maxAttempts ? 0 : Math.min(2 ** attempt * 100, 30_000));
     }
   }
@@ -211,9 +239,12 @@ async function upsertStream(
   try {
     await jsm.streams.add(config);
   } catch (err) {
-    // Already exists with a different config — converge it rather than failing to boot.
-    if (String(err).includes('already in use') || String(err).includes('exists')) {
-      await jsm.streams.update(config.name ?? '', config).catch(() => undefined);
+    // Already exists with a different config — converge it rather than failing to boot. Matched on
+    // the API error CODE now that v3 exposes one; the previous string match against the message
+    // text would quietly stop working on a server that reworded it, and the failure mode is a
+    // service that cannot boot.
+    if (err instanceof JetStreamApiError && err.code === STREAM_NAME_IN_USE) {
+      await jsm.streams.update(config.name, config).catch(() => undefined);
       return;
     }
     throw err;

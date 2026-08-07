@@ -6,15 +6,17 @@
 
 import {
   AckPolicy,
-  connect,
   DeliverPolicy,
+  jetstream,
+  jetstreamManager,
   RetentionPolicy,
   type Consumer,
   type ConsumerMessages,
   type JetStreamClient,
   type JetStreamManager,
-  type NatsConnection,
-} from 'nats';
+} from '@nats-io/jetstream';
+import type { NatsConnection } from '@nats-io/nats-core';
+import { connect } from '@nats-io/transport-node';
 import type { Handler, Message, SubscribeOptions, Subscription } from '@atlas/messaging';
 import type { SpikeBroker } from './types.ts';
 
@@ -40,8 +42,8 @@ export class NatsJetStreamBroker implements SpikeBroker {
 
   async connect(): Promise<void> {
     this.nc = await connect({ servers: this.options.servers ?? 'localhost:54222' });
-    this.jsm = await this.nc.jetstreamManager();
-    this.js = this.nc.jetstream();
+    this.jsm = await jetstreamManager(this.nc);
+    this.js = jetstream(this.nc);
 
     await this.jsm.streams.add({
       name: STREAM,

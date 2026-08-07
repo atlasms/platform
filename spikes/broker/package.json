@@ -14,8 +14,10 @@
   },
   "dependencies": {
     "@atlas/messaging": "*",
-    "amqplib": "^0.10.5",
-    "nats": "^2.29.0"
+    "@nats-io/jetstream": "^3.4.0",
+    "@nats-io/nats-core": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0",
+    "amqplib": "^0.10.5"
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.6",
