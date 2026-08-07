@@ -86,10 +86,8 @@ form, so `FOOTBALL` over an existing `football` is correctly nothing.
 not a reference count; deleting a term the moment its last asset drops it would erase an operator's
 vocabulary as a side effect of an edit, and would race with anyone typing it at that instant.
 
-Tagging is authorized as `asset:write` on the **`taxonomy`** field group. That is the first place
-MAM asks for a field group at all, and it is a genuine narrowing: asking without one means any group
-satisfies the check, so before this a Librarian's files-and-rights grant reached an asset's
-keywords. Core and file writes still do not name theirs — a gap, not a decision.
+Tagging is authorized as `asset:write` on the **`taxonomy`** field group — see
+[below](#field-groups-are-asked-for-everywhere) for why naming the group matters.
 
 Reading the cloud is `taxonomy:read`, not the `taxonomy:admin` the service catalogue lists against
 `GET /tags`. That table describes the _management_ surface; gating the read behind admin would make
@@ -146,6 +144,45 @@ The index cannot drift, but it can go **stale** in a different sense — changin
 what the same text indexes to. So `POST /search/reindex` rebuilds a channel from the assets
 themselves, which is the rebuildable read model the design asks for. It is `taxonomy:admin`, because
 on a large channel it is expensive.
+
+## Field groups are asked for everywhere
+
+A write grant may be narrowed to **field groups**, so "may edit metadata but not rights" is
+expressible ([authorization-model.md §3.1](../../docs/architecture/authorization-model.md)). The
+starter roles depend on it: an Editor holds `core`, `taxonomy`, `cast`, `shotlist`; a Librarian holds
+`files` and `rights`.
+
+It only means anything if the service **asks**, and the trap is that omitting the group does not
+fail closed — it fails **open**. A rule declaring `fieldGroups` matches a check that names none,
+because there is nothing to fail the predicate against. So until #225, every unasked write was a
+grant quietly widened to every group, and the Editor/Librarian split was decorative everywhere
+except tags.
+
+[`field-groups.ts`](src/field-groups.ts) transcribes the mapping from §3.1 — it is not invented
+here. `title`/`description`/`episodeNo`/`durationSec` are `core`; `categoryId`/`structureId` are
+**`taxonomy`**, because reclassifying an asset is a different act from retitling it;
+`allowedBroadcastCount`/`expiresAt` are **`rights`**, because expiry decides when media stops being
+usable on air.
+
+The group is derived from **what a write actually touches**, not fixed per endpoint:
+
+- A patch spanning several groups needs **all** of them — holding one is not holding the other, and
+  the cheap half must not carry the expensive one.
+- The check runs on what **changed**, after the no-op filter, so a form resubmitting an untouched
+  `expiresAt` does not demand a rights grant to change a title.
+- Creating an asset _with_ an expiry is a rights write; creating one without is not.
+- An **extended** field declares its own group via an optional `fieldGroup` on the
+  [FieldDefinition](src/field-schema.ts), defaulting to `core`. That default is deliberate: anything
+  narrower would lock operators out of fields they had already defined the moment this shipped.
+  Operators **tighten** by annotating, rather than having to annotate to keep working — and an
+  operator can then define a rights field without thereby handing every editor rights.
+
+A rule with **no** `fieldGroups` still grants all of them, so existing single-rule deployments are
+unaffected. This narrows what a _scoped_ grant reaches, not what an unscoped one does.
+
+Lifecycle transitions stay group-less on purpose: state is not a field, it moves through explicit
+verbs with their own permissions (`asset:approve` is not `asset:write`), and §3.1 lists groups for
+fields.
 
 ## Listing: paginated, and filtered per asset
 

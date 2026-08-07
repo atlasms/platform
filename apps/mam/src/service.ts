@@ -21,6 +21,7 @@ import {
   type FieldSchema,
 } from './field-schema.ts';
 import type { AssetStore, AssetTx, ExtendedValues } from './store.ts';
+import { groupsForCoreFields, groupsForExtended, type AssetFieldGroup } from './field-groups.ts';
 import { indexTerms, parseQuery } from './search.ts';
 import { parseTagLabels, sameTags, type Tag } from './tag.ts';
 import {
@@ -238,8 +239,10 @@ export class MamService {
 
   async create(caller: Caller, input: CreateAssetInput): Promise<Asset> {
     // No resource yet, so the check asks the broad question — but still inside the caller's
-    // channel, which is the part that must never be omitted.
-    this.authorize(caller, 'asset:write');
+    // channel, which is the part that must never be omitted, and narrowed to the field groups the
+    // input actually touches. Creating an asset WITH an expiry is a rights write; creating one
+    // without is not, and an Editor should not need a Librarian's grant for the ordinary case.
+    this.authorizeGroups(caller, 'asset:write', undefined, groupsForCoreFields(Object.keys(input)));
 
     if (!input.title?.trim()) throw new ValidationError('title is required');
     if (!input.mediaType?.trim()) throw new ValidationError('mediaType is required');
@@ -290,7 +293,6 @@ export class MamService {
 
   async update(caller: Caller, id: string, patch: UpdateAssetInput): Promise<Asset> {
     const existing = await this.get(caller, id);
-    this.authorize(caller, 'asset:write', existing);
 
     // ALLOWLIST, not the caller's object. `UpdateAssetInput` omits `state`, but a type is erased
     // at runtime and this patch arrives as JSON — spreading it would let `{"state":"approved"}`
@@ -304,6 +306,11 @@ export class MamService {
     // empty changedFields would both violate the contract (minItems: 1) and wake every consumer
     // for nothing.
     if (changedFields.length === 0) return existing;
+
+    // Authorized on the groups the CHANGED fields belong to, after the no-op check — so a form
+    // resubmitting an untouched `expiresAt` does not demand a rights grant to change a title.
+    // A patch spanning several groups needs all of them; holding one is not holding the others.
+    this.authorizeGroups(caller, 'asset:write', existing, groupsForCoreFields(changedFields));
 
     const updated: Asset = {
       ...existing,
@@ -386,7 +393,9 @@ export class MamService {
   /** Attach renditions — normally driven by `transcode.completed` from MTS. */
   async attachRenditions(caller: Caller, id: string): Promise<Asset> {
     const existing = await this.get(caller, id);
-    this.authorize(caller, 'asset:write', existing);
+    // `files` — renditions are the file set, which §3.1 puts in the Librarian's half, not the
+    // Editor's. Normally driven by MTS rather than by a person, but the grant is what it is.
+    this.authorize(caller, 'asset:write', existing, 'files');
     const updated: Asset = {
       ...existing,
       hasRenditions: true,
@@ -434,7 +443,6 @@ export class MamService {
     patch: Readonly<Record<string, unknown>>,
   ): Promise<ExtendedValues> {
     const asset = await this.get(caller, id);
-    this.authorize(caller, 'asset:write', asset);
 
     const fields = await this.fieldsFor(asset);
     const errors = validateExtended(fields, patch, {
@@ -443,6 +451,17 @@ export class MamService {
     if (errors.length > 0) {
       throw new ValidationError(errors.map((e) => `${e.field}: ${e.message}`).join('; '));
     }
+
+    // Authorized AFTER validation, on the groups the patched fields declare. Order matters here:
+    // an unknown field is already refused above, so the group lookup below only ever sees fields
+    // that exist — otherwise a caller could probe which field names are defined by watching a 403
+    // turn into a 422.
+    this.authorizeGroups(
+      caller,
+      'asset:write',
+      asset,
+      groupsForExtended(fields, Object.keys(patch)),
+    );
 
     const current = (await this.options.store.extended(id)) ?? {};
     const merged: ExtendedValues = { ...current };
@@ -753,6 +772,31 @@ export class MamService {
       ...defined({ categoryPath: asset?.categoryId, ownerId: asset?.createdBy, fieldGroup }),
     });
     if (!decision.allowed) throw new Forbidden(decision.reason ?? `missing ${permission}`);
+  }
+
+  /**
+   * Authorize a write that spans SEVERAL field groups.
+   *
+   * Every group, not any: a patch touching `title` and `expiresAt` is a core write and a rights
+   * write, and holding one is not holding the other. Checking them together — say by asking once
+   * with whichever group happened to be first — would let a grant on the cheap half carry the
+   * expensive one.
+   *
+   * An empty set falls back to the group-less check. That is not a loophole: it means the write
+   * touches nothing this module has classified, and the broad question is the honest one to ask
+   * rather than inventing a group to satisfy.
+   */
+  private authorizeGroups(
+    caller: Caller,
+    permission: string,
+    asset: Asset | undefined,
+    groups: readonly AssetFieldGroup[],
+  ): void {
+    if (groups.length === 0) {
+      this.authorize(caller, permission, asset);
+      return;
+    }
+    for (const group of groups) this.authorize(caller, permission, asset, group);
   }
 
   /** Write the record and its event in ONE transaction. */

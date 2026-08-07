@@ -49,6 +49,16 @@ export interface FieldDefinition {
    * The field names the vocabulary; the terms are validated against a runtime snapshot.
    */
   vocabulary?: string;
+  /**
+   * Which field group this extended field belongs to, for authorization (#225).
+   *
+   * Optional, defaulting to `core`. A schema that names nothing keeps behaving exactly as it did,
+   * which is what makes this shippable against deployments that already have schemas — operators
+   * TIGHTEN by annotating, rather than having to annotate to keep working. Naming `rights` here
+   * puts an operator-defined field behind the same grant as the core expiry, which is the point:
+   * an operator can define a rights field without also having to give every editor rights.
+   */
+  fieldGroup?: string;
   maxLength?: number;
   helpText?: string;
 }
