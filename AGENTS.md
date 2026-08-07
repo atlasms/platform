@@ -56,9 +56,9 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-13** walking skeleton       | ✅ 11 tests + **13.4 smoke suite green against a real cluster** (13/13, now including MAM)                                                                                                                                                                                                                                              |
 | **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.2 real sign-in against IAM**, 11.3 the workbench, 11.7 `can()` rendering — 57 tests. ⬜ 11.4 ws, 11.5 clients, 11.6 i18n/RTL                                                                                                                                                                                     |
 | **EP-17** `mam` (Phase 1)        | ✅ 238 tests — asset core, lifecycle, metadata gate, outbox events, Postgres, deployed, **17.2 extensible metadata**, **17.3 free-form tags**, **17.4 search**, field-group scoping (#225). ⬜ 17.7, 17.8 (need services that do not exist yet)                                                                                         |
-| **EP-12** observability          | ✅ 12.4 alerts + golden signals everywhere; **12.1 logs + 12.2 metrics** — Prometheus/Loki/Alloy/Grafana in [`infra/k8s/observability`](infra/k8s/observability/), optional per [ADR-0003](docs/adr/0003-observability-stack.md). ⬜ 12.3 tracing collector (spans now flow — needs a receiver + backend), #245 per-service access logs |
+| **EP-12** observability          | ✅ 12.4 alerts + golden signals everywhere; **12.1 logs + 12.2 metrics** — Prometheus/Loki/Alloy/Grafana in [`infra/k8s/observability`](infra/k8s/observability/), optional per [ADR-0003](docs/adr/0003-observability-stack.md). **12.3 tracing** (Alloy OTLP → Tempo, logs↔traces linked in Grafana). ⬜ #245 per-service access logs |
 
-**446 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
+**447 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
 forward), merged to `main`. A further **54 need real infrastructure** — 34 in `mam`, 12 in
 `messaging-nats`, 8 in `data-pg` — and **CI now runs those too**, against a Postgres service and a
 JetStream container the workflow provides. They still skip on a laptop without Docker, but a
@@ -91,8 +91,8 @@ committing a customer name, an internal hostname or a real credential in a novel
 Studio signs in against it for real — `npm run k8s:up`, then `npm start -w @atlas/studio`, which
 proxies `/auth` and `/api` to the gateway.
 
-**Suggested next tasks:** `EP-12.3` (tracing collector — spans now flow, and Alloy already speaks
-OTLP, so this is a receiver plus a backend) ·
+**Suggested next tasks:** `EP-13.3` (one end-to-end trace gateway → service → **broker** → consumer;
+the HTTP hops are done, the internal `fetch` and broker hops are not) ·
 `EP-11.5` (generated API clients, so Studio panels can show real assets) · `EP-03.4` (DLQ tooling) ·
 `EP-08.5` (aggregated `GET /reference`).
 

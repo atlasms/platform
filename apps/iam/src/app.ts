@@ -4,6 +4,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import {
   goldenSignals,
+  isTraceable,
   HealthRegistry,
   Unauthorized,
   runWithContext,
@@ -54,9 +55,12 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
     req.inFlight = true;
     signals.enter();
     runWithContext({ correlationId }, () => {
-      if (!options.tracer) return done();
-      // The route TEMPLATE, never the raw path — the same cardinality rule the metrics follow.
       const route = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? req.url;
+      // Probes and the scraper are not traced — see UNTRACED_ROUTES. Checked before the tracer so
+      // an untraced request costs nothing at all, not even an id.
+      if (!options.tracer || !isTraceable(route)) return done();
+      // The span name is the route TEMPLATE, never the raw path — the same cardinality rule the
+      // metrics follow.
       options.tracer.server(
         `${req.method} ${route}`,
         req.headers,

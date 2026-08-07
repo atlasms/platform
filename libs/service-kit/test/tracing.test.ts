@@ -10,6 +10,7 @@ import {
   createTracer,
   currentContext,
   formatTraceparent,
+  isTraceable,
   newSpanId,
   newTraceId,
   parseTraceparent,
@@ -365,6 +366,19 @@ test('a collector that is down loses spans rather than retrying forever', async 
 
   assert.equal(t.pending, 0, 'not re-queued');
   assert.equal(t.dropped, 1, 'and the loss is counted');
+});
+
+test('DANGER: probes and the scraper are not traceable', async () => {
+  // Found by looking at a real Tempo instance: liveness fires every few seconds per pod and the
+  // scraper every fifteen, so within minutes EVERY trace in the store was a probe — twenty out of
+  // twenty in the search results. That is not just noise. It crowds real requests out of search and
+  // spends the entire 7-day retention window on the least interesting traffic in the platform.
+  for (const route of ['/healthz', '/readyz', '/metrics']) {
+    assert.equal(isTraceable(route), false, `${route} must not be traced`);
+  }
+  for (const route of ['/auth/login', '/api/v1/assets', '/api/v1/assets/:id', '/*']) {
+    assert.equal(isTraceable(route), true, `${route} must be traced`);
+  }
 });
 
 test('shutdown flushes what is queued', async () => {

@@ -20,6 +20,7 @@ resources:
   # order, as in infra/k8s/base.
   - prometheus.yaml
   - loki.yaml
+  - tempo.yaml
   - alloy.yaml
   - grafana.yaml
 

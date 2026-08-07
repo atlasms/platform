@@ -46,7 +46,9 @@ export {
 } from './trace-context.ts';
 export {
   createTracer,
+  isTraceable,
   SpanKind,
+  UNTRACED_ROUTES,
   type AttributeValue,
   type Span,
   type SpanKindValue,

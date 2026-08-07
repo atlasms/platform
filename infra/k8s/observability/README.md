@@ -1,7 +1,7 @@
-# The observability overlay (EP-12.1 / 12.2)
+# The observability overlay (EP-12.1 / 12.2 / 12.3)
 
-Prometheus + Loki + Alloy + Grafana, provisioned with dashboards. **Optional**, in its own namespace,
-referenced by nothing in [`infra/k8s/base`](../base/).
+Prometheus + Loki + Tempo + Alloy + Grafana, provisioned with dashboards. **Optional**, in its own
+namespace, referenced by nothing in [`infra/k8s/base`](../base/).
 
 Decided by [ADR-0003](../../../docs/adr/0003-observability-stack.md), which chose **standard
 protocols as the product and the bundled stack as one consumer of them**. That is why this directory
@@ -85,6 +85,57 @@ healthy request. Per-service access logging is
 Loki and Alloy are themselves **scraped**. The collector is the component whose failure is hardest to
 notice: when a log shipper stops, the symptom is silence, and silence looks exactly like a quiet
 platform.
+
+## Traces (EP-12.3)
+
+Services send **OTLP/HTTP** to Alloy, which batches and forwards to **Tempo** over gRPC. One
+telemetry address per service, and one place to add sampling or redaction later.
+
+Enable it by pointing the services at the collector — deliberately **not** set in
+`infra/k8s/base`, because base must not depend on an optional overlay, and an endpoint that resolves
+to nothing means a failed export every flush interval:
+
+```bash
+kubectl set env -n atlas deploy/api-gateway deploy/iam deploy/mam \
+  ATLAS_OTLP_ENDPOINT=http://alloy.atlas-observability:4318
+```
+
+### Why Tempo is here at all
+
+ADR-0003 named Alloy as the trace "consumer". That was right about the **collector** and left the
+**store** unnamed — Alloy receives and forwards, it keeps nothing, so a greenfield site would have
+had spans arriving somewhere and going nowhere.
+
+That is the same hole ADR-0003 rejected option D over ("ship nothing, integrate only" — _"leaves a
+greenfield site with nothing at all"_). Measured with that ADR's own method, `docker save` tar:
+**53 MiB**, against Grafana's 139, Prometheus' 111 and Alloy's 111. The optional stack goes 392 →
+445 MiB, and none of it is in the default bundle.
+
+### Probes are not traced
+
+`/healthz`, `/readyz` and `/metrics` produce no spans. Liveness fires every few seconds per pod and
+the scraper every fifteen, so **twenty of twenty** traces in Tempo were probes within minutes of
+switching this on. They crowd real requests out of search and spend the whole retention window on
+the least interesting traffic in the platform. They stay in the **metrics**, where a probe is one
+increment on an existing series and costs nothing.
+
+### The three signals are linked
+
+- A **log line** carries `traceId`, and Grafana's derived field turns it into a link — "this error"
+  becomes "the whole request that produced it", across every service it touched.
+- A **span** links back to the log lines of that same request, matched on trace id rather than on
+  time-plus-service, which would drag in every other request running concurrently.
+
+Tempo displays trace ids as hex **numbers**, so one in sixteen appears a character short with its
+leading zero trimmed. Cosmetic: logs carry the full 32-character id and lookup by that id resolves.
+
+### What is not traced yet
+
+Service-to-service **fetches** — MAM's policy fetch from IAM, the gateway's JWKS fetch — start their
+own traces rather than continuing the caller's, because they are plain `fetch` calls with no
+`traceparent` injected. So does anything crossing the **broker**. Both are
+[EP-13.3](../../../docs/roadmap/21-epic-breakdown.md) — "one end-to-end trace spanning gateway →
+service → broker → consumer" — which is exactly the remaining work.
 
 ## Discovery is annotation-driven
 

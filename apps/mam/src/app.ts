@@ -8,6 +8,7 @@ import { ulid } from '@atlas/contracts';
 import type { EffectivePolicy } from '@atlas/policy';
 import {
   goldenSignals,
+  isTraceable,
   HealthRegistry,
   MetricRegistry,
   runWithContext,
@@ -70,10 +71,12 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     req.inFlight = true;
     signals.enter();
     runWithContext({ correlationId: req.correlationId }, () => {
-      if (!options.tracer) return done();
-      // The route TEMPLATE, never the raw path — a span named `GET /assets/01H2XK…` is one
-      // distinct operation per asset in every trace UI.
       const route = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? req.url;
+      // Probes and the scraper are not traced — see UNTRACED_ROUTES. Checked before the tracer so
+      // an untraced request costs nothing at all, not even an id.
+      if (!options.tracer || !isTraceable(route)) return done();
+      // The span name is the route TEMPLATE, never the raw path — `GET /assets/01H2XK…` would be
+      // one distinct operation per asset in every trace UI.
       options.tracer.server(
         `${req.method} ${route}`,
         req.headers,
