@@ -6,6 +6,6 @@
   "description": "The per-service template: typed config loading, an error taxonomy (-> HTTP problem+JSON), correlation-id context, health/readiness, a structured logger, and JWT/JWKS verification. Every service imports this.",
   "exports": { ".": "./src/index.ts" },
   "scripts": { "test": "node --import tsx --test test/service-kit.test.ts" },
-  "dependencies": { "jose": "^6.2.4" },
+  "dependencies": { "jose": "^6.2.8" },
   "devDependencies": { "tsx": "^4.23.11" }
 }
