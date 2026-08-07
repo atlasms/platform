@@ -242,11 +242,13 @@ export class MetricRegistry {
 
       if (metric instanceof Histogram) {
         for (const series of entries) {
-          let cumulative = 0;
           for (const [i, bound] of metric.buckets.entries()) {
-            cumulative = series.buckets?.[i] ?? 0;
+            // Already cumulative when stored: `observe()` increments EVERY bucket whose bound the
+            // value satisfies, so this reads a running total rather than building one. The name
+            // used to say `cumulative` and be assigned by replacement, which read like a bug.
+            const count = series.buckets?.[i] ?? 0;
             lines.push(
-              `${metric.name}_bucket${renderLabels({ ...series.labels, le: formatNumber(bound) })} ${cumulative}`,
+              `${metric.name}_bucket${renderLabels({ ...series.labels, le: formatNumber(bound) })} ${count}`,
             );
           }
           lines.push(

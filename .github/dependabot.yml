@@ -39,6 +39,12 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: typescript
         update-types: [version-update:semver-major]
+      # `amqplib` exists only in spikes/broker, as the RabbitMQ side of the comparison that
+      # ADR-0001 REJECTED. A spike is a record of an experiment: changing what it was measured
+      # against makes the numbers in that ADR unreproducible, for a client nothing ships. Security
+      # advisories still come through — only routine version bumps are ignored.
+      - dependency-name: amqplib
+      - dependency-name: "@types/amqplib"
 
   # `reference/` is the frozen prototype: not an npm workspace, never installed by the root, never
   # built, never shipped. Watched anyway because its lock file is IN the repository and a scanner

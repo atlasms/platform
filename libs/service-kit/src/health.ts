@@ -24,10 +24,13 @@ export class HealthRegistry {
   async readiness(): Promise<ReadinessReport> {
     const results = await Promise.all(
       this.checks.map(async (c) => {
-        let ok = false;
+        // Declared without an initialiser: both branches assign it, so a default would be dead
+        // code that also hides a future path which forgets to set it.
+        let ok: boolean;
         try {
           ok = await c.check();
         } catch {
+          // A check that THROWS is a failing check, not a crashing readiness endpoint.
           ok = false;
         }
         return { name: c.name, ok, critical: c.critical };

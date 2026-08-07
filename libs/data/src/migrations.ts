@@ -26,7 +26,9 @@ export function migrate(db: Db, migrations: Migration[]): { applied: string[] } 
       applied.push(m.id);
     } catch (e) {
       db.exec('ROLLBACK');
-      throw new Error(`migration "${m.id}" failed: ${(e as Error).message}`);
+      // `cause` keeps the driver's error rather than flattening it to a string — the same reason
+      // the Postgres runner does it, so a failed migration is debuggable on either store.
+      throw new Error(`migration "${m.id}" failed: ${(e as Error).message}`, { cause: e });
     }
   }
   return { applied };
