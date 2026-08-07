@@ -84,7 +84,9 @@ export async function migrate(
         applied.push(m.id);
       } catch (e) {
         await client.query('ROLLBACK').catch(() => undefined);
-        throw new Error(`migration "${m.id}" failed: ${(e as Error).message}`);
+        // `cause` keeps the driver's error — its SQLSTATE, the failing position, the stack. The
+        // message alone says a migration failed; the cause says which constraint, on which column.
+        throw new Error(`migration "${m.id}" failed: ${(e as Error).message}`, { cause: e });
       }
     }
     return { applied };
