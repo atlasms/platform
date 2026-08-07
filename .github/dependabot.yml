@@ -53,14 +53,27 @@ updates:
       - dependency-name: "@types/amqplib"
 
   # `reference/` is the frozen prototype: not an npm workspace, never installed by the root, never
-  # built, never shipped. Watched anyway because its lock files are IN the repository and a scanner
-  # cannot tell that nothing loads it — but monthly, because none of it is reachable.
+  # built, never shipped, never run by CI. It is registered here for ONE reason — so a security
+  # advisory against it produces an automated fix PR.
   #
-  # `directories`, not `directory`. Unlike the root, reference/ is NOT one workspace: it carries
-  # FIVE independent lock files, and a single `/reference` entry watches exactly one of them. That
-  # gap was not theoretical — reference/contracts and reference/bms-workflow sat on a high-severity
-  # fast-uri advisory (GHSA-7p8r-x3mc-p8w7) while the top-level tree reported itself clean, which is
-  # the same failure this file was created to fix, one level down.
+  # SECURITY ONLY: `open-pull-requests-limit: 0` disables version updates for these directories.
+  # Dependabot *security* updates are a separate mechanism and are unaffected by the limit, so a
+  # vulnerability still opens a PR while a routine minor bump does not.
+  #
+  # The reasoning is what this tree IS. Its value is being the validated record of a prototype being
+  # lifted into libs/ package by package — so keeping its dependencies current is not modernisation,
+  # it is quietly making the record no longer describe what was validated. Bumps were taken by hand
+  # (#234, #235) and verified by running its tests; that is the right cadence for a frozen tree, not
+  # a PR every month forever for code nothing installs.
+  #
+  # Note what this does NOT turn off: Dependabot ALERTS come from the dependency graph, which scans
+  # every lock file in the repository regardless of this config. That is how the fast-uri advisory
+  # (GHSA-7p8r-x3mc-p8w7) surfaced against reference/contracts and reference/bms-workflow while the
+  # top-level tree reported itself clean. Visibility was never the gap; the automated fix was.
+  #
+  # `directories`, not `directory`, and that distinction is load-bearing: reference/ is NOT one
+  # workspace. It carries FIVE independent lock files, and a single `/reference` entry watches
+  # exactly one of them — which is how two subtrees sat on a high-severity advisory unnoticed.
   - package-ecosystem: npm
     directories:
       - /reference
@@ -70,25 +83,10 @@ updates:
       - /reference/service-kit
     schedule:
       interval: monthly
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 0
     commit-message:
       prefix: chore
       include: scope
-    groups:
-      # One PR for the whole frozen tree. Watching five directories means five PRs for the same
-      # one-line bump otherwise — which is exactly what happened the first month this config was
-      # correct, and is worse noise than the gap it fixed.
-      reference:
-        patterns: ["*"]
-    ignore:
-      # `@types/node` in the root tracks the RUNTIME. Here it tracks something else: what the
-      # prototype was VALIDATED against. `reference/` is frozen and its 84 tests are the record of
-      # that validation, so moving its types is not modernisation, it is invalidating the record
-      # for a tree nothing installs. Security advisories still come through.
-      - dependency-name: "@types/node"
-        update-types: [version-update:semver-major]
-      - dependency-name: typescript
-        update-types: [version-update:semver-major]
 
   # The pinned action versions in .github/workflows.
   - package-ecosystem: github-actions
