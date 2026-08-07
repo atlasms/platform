@@ -10,6 +10,7 @@
 import type { OutboxRecord } from '@atlas/messaging';
 import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
+import type { Tag, TagCandidate } from './tag.ts';
 
 /** The extensible per-asset document (EP-17.2). Shape is whatever the FieldSchema defines. */
 export type ExtendedValues = Record<string, unknown>;
@@ -43,6 +44,18 @@ export interface AssetStore {
   /** Every FieldSchema in one channel. Small, operator-managed, and read on nearly every write. */
   schemas(channelId: string): Promise<FieldSchema[]>;
 
+  /** The tags on one asset, ordered by normalized label (EP-17.3). */
+  tagsOf(assetId: string): Promise<Tag[]>;
+
+  /**
+   * Every tag minted in one channel — the tag cloud, and what an autocomplete offers.
+   *
+   * Channel-scoped for the same reason {@link listByChannel} is: a suggestion list built from the
+   * whole table would leak one tenant's vocabulary into another's editor, which is a slower and
+   * more embarrassing version of leaking their catalogue.
+   */
+  listTags(channelId: string): Promise<Tag[]>;
+
   /** One unit of work. Everything written inside commits together, or none of it does. */
   transaction<T>(fn: (tx: AssetTx) => Promise<T>): Promise<T>;
 
@@ -61,6 +74,19 @@ export interface AssetTx {
    */
   putExtended(assetId: string, channelId: string, values: ExtendedValues): Promise<void>;
   putSchema(schema: FieldSchema): Promise<void>;
+  /**
+   * Replace an asset's tag set, minting any label the channel has not seen (EP-17.3).
+   *
+   * Whole-set, like {@link putExtended} — a tag input hands back the final list, and add/remove
+   * pairs would need a client to have read the current set first without anything guaranteeing it
+   * still holds.
+   *
+   * Returns the **resolved** tags: a candidate whose label already exists comes back with the id it
+   * already had, not the one offered. Mint-or-reuse has to happen here, inside the transaction,
+   * because two editors tagging different assets `football` at the same moment is the ordinary case
+   * — a read-then-insert in the service would race and the unique index would reject the loser.
+   */
+  setTags(assetId: string, channelId: string, tags: readonly TagCandidate[]): Promise<Tag[]>;
   /** Enqueue a domain event on the outbox — in THIS transaction, with the row it announces. */
   enqueue(record: OutboxRecord): Promise<void>;
 }

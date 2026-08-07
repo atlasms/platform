@@ -32,12 +32,29 @@ export {
   type SchemaSubject,
   type ValidationOptions,
 } from './field-schema.ts';
+export {
+  MAX_TAGS_PER_ASSET,
+  MAX_TAG_LENGTH,
+  normalizeTag,
+  parseTagLabels,
+  sameTags,
+  type ParsedTags,
+  type Tag,
+  type TagCandidate,
+} from './tag.ts';
 export { type AssetStore, type AssetTx, type ExtendedValues } from './store.ts';
 export {
   sqliteAssetStore,
   sqliteAssetsMigration,
   sqliteExtendedMigration,
+  sqliteTagsMigration,
 } from './store-sqlite.ts';
-export { pgAssetStore, pgAssetsMigration, pgExtendedMigration, mamMigrations } from './store-pg.ts';
+export {
+  pgAssetStore,
+  pgAssetsMigration,
+  pgExtendedMigration,
+  pgTagsMigration,
+  mamMigrations,
+} from './store-pg.ts';
 export { PolicyClient, type PolicyClientOptions } from './policy-client.ts';
 export { buildMamApp, type MamAppOptions } from './app.ts';

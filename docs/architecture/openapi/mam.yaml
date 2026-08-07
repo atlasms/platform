@@ -133,8 +133,38 @@ paths:
   /field-schemas:
     get: { operationId: listFieldSchemas, tags: [admin], summary: List custom field schemas, responses: { '200': { description: Schemas } } }
     post: { operationId: createFieldSchema, tags: [admin], summary: Define type/category custom fields (scope metadata:admin), responses: { '201': { description: Created } } }
+  /assets/{id}/tags:
+    parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
+    get:
+      operationId: listAssetTags
+      tags: [taxonomy]
+      summary: The asset's free-form tags (FR-TAX-1)
+      responses:
+        '200': { description: Tags, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Tag' } } } } }
+    put:
+      operationId: setAssetTags
+      tags: [taxonomy]
+      # PUT, not PATCH - the body is the COMPLETE set, which is what a tag input hands back. An
+      # absent `tags` is a 422 rather than "remove them all", so a client bug cannot silently strip
+      # an asset's keywords. Scope asset:write on the `taxonomy` field group.
+      summary: Replace the asset's tag set; unknown labels are minted (scope asset:write / taxonomy)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tags]
+              properties:
+                tags: { type: array, items: { type: string, maxLength: 64 }, maxItems: 50 }
+      responses:
+        '200': { description: The resolved tag set, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Tag' } } } } }
+        '422': { description: A blank, over-long or non-string tag - nothing is written }
   /tags:
-    get: { operationId: listTags, tags: [taxonomy], summary: List tags, responses: { '200': { description: Tags } } }
+    # The READ is taxonomy:read, not taxonomy:admin: gating it behind admin would make tag
+    # autocomplete an administrator-only feature and defeat free-form tagging for every editor it
+    # exists for. Administering the vocabulary - rename, merge, delete - stays taxonomy:admin.
+    get: { operationId: listTags, tags: [taxonomy], summary: The channel's tag cloud (scope taxonomy:read), responses: { '200': { description: Tags, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Tag' } } } } } } }
     post: { operationId: createTag, tags: [taxonomy], summary: Create a tag (scope taxonomy:admin), responses: { '201': { description: Created } } }
   /categories:
     get: { operationId: listCategories, tags: [taxonomy], summary: List categories (hierarchical), responses: { '200': { description: Categories } } }
@@ -267,6 +297,17 @@ components:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   schemas:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    Tag:
+      type: object
+      required: [id, channelId, label, normalized]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        label: { type: string, description: As FIRST typed. What Studio displays. }
+        # Identity within the channel: NFC, invisible formatting stripped, whitespace collapsed,
+        # lowercased. Two labels sharing this are ONE tag. Exposed so a client can dedupe an
+        # autocomplete the same way the server does, rather than guessing at the rule.
+        normalized: { type: string }
     Asset:
       type: object
       required: [title]

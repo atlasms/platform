@@ -265,6 +265,161 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  // --- free-form tags (EP-17.3) ----------------------------------------------
+
+  test(`${name}: tags round-trip, ordered by normalized label`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(a);
+        await tx.setTags(a.id, a.channelId, [
+          { id: 'T1', label: 'Zebra', normalized: 'zebra' },
+          { id: 'T2', label: 'Apple', normalized: 'apple' },
+        ]);
+      });
+
+      const tags = await store.tagsOf(a.id);
+      assert.deepEqual(
+        tags.map((t) => t.label),
+        ['Apple', 'Zebra'],
+        'a store that returns insertion order makes the set order-dependent',
+      );
+      assert.deepEqual(
+        tags.map((t) => t.channelId),
+        ['ch12', 'ch12'],
+      );
+    });
+  });
+
+  test(`${name}: a candidate whose label exists REUSES the existing id`, async () => {
+    // The point of the whole mint-or-reuse dance. If a second asset minted its own row for
+    // `football`, one keyword would be two tags, the unique index would eventually reject one of
+    // them, and a facet count would be wrong long before anybody noticed.
+    await withFixture(async ({ store }) => {
+      const first = asset();
+      const second = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(first);
+        await tx.put(second);
+        await tx.setTags(first.id, 'ch12', [
+          { id: 'T1', label: 'Football', normalized: 'football' },
+        ]);
+      });
+
+      const resolved = await store.transaction(async (tx) =>
+        // A DIFFERENT candidate id for the same normalized label.
+        tx.setTags(second.id, 'ch12', [
+          { id: 'T-OTHER', label: 'football', normalized: 'football' },
+        ]),
+      );
+
+      assert.equal(resolved[0]?.id, 'T1', 'must return the id the tag already had');
+      assert.equal(
+        resolved[0]?.label,
+        'Football',
+        'the FIRST spelling wins — a later one must not rewrite the display label',
+      );
+      assert.equal((await store.listTags('ch12')).length, 1, 'must not have minted a second row');
+    });
+  });
+
+  test(`${name}: setTags REPLACES the set, it does not merge`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(a);
+        await tx.setTags(a.id, a.channelId, [
+          { id: 'T1', label: 'one', normalized: 'one' },
+          { id: 'T2', label: 'two', normalized: 'two' },
+        ]);
+      });
+
+      await store.transaction(async (tx) =>
+        tx.setTags(a.id, a.channelId, [{ id: 'T3', label: 'three', normalized: 'three' }]),
+      );
+      assert.deepEqual(
+        (await store.tagsOf(a.id)).map((t) => t.label),
+        ['three'],
+      );
+
+      // Clearing is expressible, and is not the same as never having tagged.
+      await store.transaction(async (tx) => tx.setTags(a.id, a.channelId, []));
+      assert.deepEqual(await store.tagsOf(a.id), []);
+    });
+  });
+
+  test(`${name}: untagging leaves the tag in the channel's vocabulary`, async () => {
+    // Deliberate. The tag cloud is the channel's keyword list, not a reference count — deleting a
+    // term the moment its last asset drops it would erase an operator's vocabulary as a side effect
+    // of an edit, and would race with anyone typing it at that instant.
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(a);
+        await tx.setTags(a.id, a.channelId, [{ id: 'T1', label: 'rare', normalized: 'rare' }]);
+      });
+      await store.transaction(async (tx) => tx.setTags(a.id, a.channelId, []));
+
+      assert.deepEqual(
+        (await store.listTags('ch12')).map((t) => t.label),
+        ['rare'],
+      );
+    });
+  });
+
+  test(`${name}: listTags is a tenant boundary`, async () => {
+    // One channel's keywords must not surface in another's autocomplete, and the same label in two
+    // channels is two independent tags.
+    await withFixture(async ({ store }) => {
+      const mine = asset({ channelId: 'ch12' });
+      const theirs = asset({ channelId: 'ch99' });
+      await store.transaction(async (tx) => {
+        await tx.put(mine);
+        await tx.put(theirs);
+        await tx.setTags(mine.id, 'ch12', [{ id: 'T1', label: 'shared', normalized: 'shared' }]);
+        await tx.setTags(theirs.id, 'ch99', [{ id: 'T2', label: 'shared', normalized: 'shared' }]);
+      });
+
+      assert.deepEqual(
+        (await store.listTags('ch12')).map((t) => t.id),
+        ['T1'],
+      );
+      assert.deepEqual(
+        (await store.listTags('ch99')).map((t) => t.id),
+        ['T2'],
+      );
+      assert.equal((await store.listTags('ch404')).length, 0);
+    });
+  });
+
+  test(`${name}: DANGER — a rollback drops the tags too`, async () => {
+    await withFixture(async ({ store, unsentCount }) => {
+      const a = asset();
+      await store.transaction(async (tx) => tx.put(a));
+
+      await assert.rejects(
+        store.transaction(async (tx) => {
+          await tx.setTags(a.id, a.channelId, [{ id: 'T1', label: 'x', normalized: 'x' }]);
+          await tx.enqueue(event(a.id));
+          throw new Error('boom');
+        }),
+        /boom/,
+      );
+
+      assert.deepEqual(await store.tagsOf(a.id), [], 'the join must not have committed');
+      assert.deepEqual(await store.listTags('ch12'), [], 'the minted tag must not have committed');
+      assert.equal(await unsentCount(), 0, 'the event must not have committed');
+    });
+  });
+
+  test(`${name}: an untagged asset reads as an empty list`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await store.transaction(async (tx) => tx.put(a));
+      assert.deepEqual(await store.tagsOf(a.id), []);
+    });
+  });
+
   test(`${name}: a failed transaction leaves the store usable`, async () => {
     // A driver that forgets to ROLLBACK leaves the connection in a failed transaction, and every
     // later query dies with "current transaction is aborted". The first symptom is the SECOND

@@ -7,11 +7,11 @@ and the events every other service reacts to
 ## What is built
 
 **EP-17.1** asset core + lifecycle states · **EP-17.2** extensible metadata (AssetExtended +
-FieldSchema) · **EP-17.5** the mandatory-metadata gate · **EP-17.6** lifecycle events through the
-outbox.
+FieldSchema) · **EP-17.3** free-form tags · **EP-17.5** the mandatory-metadata gate · **EP-17.6**
+lifecycle events through the outbox.
 
-**Not built:** tags (17.3), search (17.4), read cache (17.7), FileRef mirror of the HSM ledger
-(17.8). The service is deliberately narrow and correct rather than broad and provisional.
+**Not built:** search (17.4), read cache (17.7), FileRef mirror of the HSM ledger (17.8). The
+service is deliberately narrow and correct rather than broad and provisional.
 
 ## Extensible metadata
 
@@ -47,6 +47,54 @@ Three failure modes are handled the way that is safe rather than the way that is
   usually reorganising, and there is no undo. Validation is therefore _partial_ — only what is being
   written is checked — because validating the whole stored document would make an asset unsavable
   the moment a field it still holds a value for disappears.
+
+## Free-form tags
+
+Tags are the one classification axis with no controlled vocabulary behind it: an editor types a
+keyword and it exists ([FR-TAX-1](../../docs/requirements/05-functional-requirements.md#classification)).
+That is the point of them, and it is also the entire difficulty — the only thing between "ad-hoc
+labelling" and an unusable cloud of near-duplicates is how a typed string is folded into an
+identity. [`tag.ts`](src/tag.ts) is where that happens, and it is pure: no adapter normalizes
+anything, so the two stores cannot disagree about what "the same tag" means.
+
+A tag has a **label** (as first typed, and what Studio displays) and a **normalized** form (what
+decides sameness within a channel). Folding is NFC → strip invisible formatting → collapse
+whitespace → lowercase, and each step earns its place:
+
+- **NFC**, because `é` composed and `e` + combining acute are one word to a human and two strings to
+  a database, arriving from different keyboards and different paste sources.
+- **Invisible characters are stripped** — ZWSP, the bidi marks, isolates and BOM. They survive
+  copy-paste out of an RTL document, are impossible to see in an input box, and would otherwise make
+  two identical-looking tags into two rows.
+- **U+200C ZWNJ and U+200D ZWJ are deliberately kept.** ZWNJ is a letter-joining control in Persian,
+  where `می‌رود` and `میرود` are different words; ZWJ holds an emoji sequence together. Folding
+  either away would merge genuinely distinct terms, which is worse than the duplicate it avoids.
+- **`toLowerCase()`, not `toLocaleLowerCase()`** — the locale-sensitive form maps Turkish `I` to `ı`,
+  so a channel's tag identity would depend on the locale of whichever pod served the request.
+
+**The first spelling wins.** `(channelId, normalized)` is a unique index, and the upsert writes the
+existing label back to itself on conflict, so a later `football` does not rewrite everyone's
+`Football`. Mint-or-reuse happens inside the transaction, because two editors tagging different
+assets `football` at the same moment is the ordinary case and a read-then-insert would race.
+
+**Re-submitting the same set does nothing** — no version bump, no `asset.updated`. A tag input that
+PUTs on every change submits the unchanged set constantly, and bumping the version each time would
+fabricate a change history and wake every consumer for nothing. Comparison is on the normalized
+form, so `FOOTBALL` over an existing `football` is correctly nothing.
+
+**Untagging leaves the term in the channel's vocabulary.** The cloud is the channel's keyword list,
+not a reference count; deleting a term the moment its last asset drops it would erase an operator's
+vocabulary as a side effect of an edit, and would race with anyone typing it at that instant.
+
+Tagging is authorized as `asset:write` on the **`taxonomy`** field group. That is the first place
+MAM asks for a field group at all, and it is a genuine narrowing: asking without one means any group
+satisfies the check, so before this a Librarian's files-and-rights grant reached an asset's
+keywords. Core and file writes still do not name theirs — a gap, not a decision.
+
+Reading the cloud is `taxonomy:read`, not the `taxonomy:admin` the service catalogue lists against
+`GET /tags`. That table describes the _management_ surface; gating the read behind admin would make
+autocomplete an administrator-only feature and defeat free-form tagging for every editor it exists
+for.
 
 ## Persistence is a port with two adapters
 
