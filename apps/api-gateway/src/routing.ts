@@ -4,6 +4,8 @@
 // Spec: docs/architecture/services/api-gateway.md §4 — the gateway exposes every service's public
 // API under one host and adds no domain endpoints of its own.
 
+import type { RateLimitPolicy } from './rate-limit.ts';
+
 export interface RouteTarget {
   /** Service name, used in logs and metrics. */
   service: string;
@@ -13,6 +15,15 @@ export interface RouteTarget {
   prefix: string;
   /** When true the route is reachable without an access token (login, JWKS). */
   public?: boolean;
+  /**
+   * Per-route source-address policy, overriding the gateway default (api-gateway.md §11).
+   *
+   * Left unset on `/auth` ON PURPOSE. Tightening the login route is the obvious move and the wrong
+   * one here: a facility shares one public address, so a limit strict enough to matter against
+   * password guessing locks out the building at shift change. IAM's per-account lockout (#240) is
+   * the mechanism for that. An operator whose clients have distinct addresses can set it.
+   */
+  rateLimit?: RateLimitPolicy;
 }
 
 export type RoutingTable = RouteTarget[];

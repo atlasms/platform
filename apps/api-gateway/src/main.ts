@@ -12,6 +12,15 @@ const config = loadConfig({
   iamOrigin: { env: 'ATLAS_IAM_ORIGIN', type: 'string', default: 'http://iam:3000' },
   mamOrigin: { env: 'ATLAS_MAM_ORIGIN', type: 'string', default: 'http://mam:3000' },
   jwksPath: { env: 'ATLAS_JWKS_PATH', type: 'string', default: '/.well-known/jwks.json' },
+  // EP-08.3. api-gateway.md §11 makes these per-deployment configuration; the defaults live in
+  // app.ts and are sized for a facility behind one NAT rather than for one browser.
+  rateLimit: { env: 'ATLAS_RATE_LIMIT', type: 'number', default: 600 },
+  rateLimitWindowMs: { env: 'ATLAS_RATE_LIMIT_WINDOW_MS', type: 'number', default: 60_000 },
+  principalRateLimit: { env: 'ATLAS_PRINCIPAL_RATE_LIMIT', type: 'number', default: 300 },
+  bodyLimit: { env: 'ATLAS_BODY_LIMIT_BYTES', type: 'number', default: 1024 * 1024 },
+  // Off unless a proxy that OVERWRITES x-forwarded-for is in front. With the gateway exposed
+  // directly, honouring the header lets a client choose its own rate-limit key — see rate-limit.ts.
+  trustProxy: { env: 'ATLAS_TRUST_PROXY', type: 'boolean', default: false },
 });
 
 const log = createLogger('api-gateway');
@@ -49,7 +58,23 @@ const app = buildGateway({
   issuer: config.issuer,
   audience: config.audience,
   health,
+  rateLimit: { limit: config.rateLimit, windowMs: config.rateLimitWindowMs },
+  principalRateLimit: { limit: config.principalRateLimit, windowMs: config.rateLimitWindowMs },
+  bodyLimit: config.bodyLimit,
+  trustProxy: config.trustProxy,
   onAccessLog: (record) => log.info('access', { ...record }),
+});
+
+// The limits are PER REPLICA, and infra/k8s/base/api-gateway.yaml runs two — so the deployment
+// tolerates 2× what is configured here. Stated at startup rather than buried in a README, because
+// an operator who sets 600 and observes 1200 should find the explanation without reading source.
+// A cluster-wide limit needs a shared counter (Redis or equivalent), which is new infrastructure
+// and an ADR, not a config change.
+log.info('rate limits are per replica', {
+  addressLimit: config.rateLimit,
+  principalLimit: config.principalRateLimit,
+  windowMs: config.rateLimitWindowMs,
+  trustProxy: config.trustProxy,
 });
 
 await app.listen({ port: config.port, host: config.host });
