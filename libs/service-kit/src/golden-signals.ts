@@ -18,6 +18,18 @@ export interface GoldenSignals {
   readonly inFlight: Gauge;
   /** Record one finished request. */
   observe(sample: RequestSample): void;
+  /**
+   * A request started; pair with {@link exit}.
+   *
+   * Exists because {@link track} turned out to be the wrong shape for a Fastify service: the apps
+   * record from hooks rather than by wrapping a handler, so they all used `observe` — and the
+   * in-flight gauge was therefore never touched by anything. Saturation, one of the four signals
+   * this file is named for, was missing from every service and its dashboard panel was permanently
+   * empty. An empty panel reads as "no load", which is the most reassuring possible way to be wrong.
+   */
+  enter(): void;
+  /** A request finished, by any route including an aborted connection. */
+  exit(): void;
   /** Wrap a handler: counts in-flight, records duration, classifies the outcome. */
   track<T>(request: { method: string; route: string }, fn: () => Promise<T>): Promise<T>;
 }
@@ -69,6 +81,8 @@ export function goldenSignals(registry: MetricRegistry, service: string): Golden
     duration,
     inFlight,
     observe,
+    enter: () => inFlight.inc({ service }),
+    exit: () => inFlight.dec({ service }),
     async track<T>(request: { method: string; route: string }, fn: () => Promise<T>): Promise<T> {
       inFlight.inc({ service });
       const started = performance.now();

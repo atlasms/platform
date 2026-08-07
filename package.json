@@ -29,6 +29,7 @@
     "k8s:load": "kind load docker-image atlas/iam:dev atlas/mam:dev atlas/api-gateway:dev --name atlas-dev",
     "k8s:deploy": "kubectl apply -k infra/k8s/overlays/dev",
     "k8s:up": "npm run k8s:build && npm run k8s:load && npm run k8s:deploy",
+    "k8s:observability": "kubectl apply -k infra/k8s/observability",
     "smoke": "node --test infra/smoke/smoke.test.mjs",
     "bundle": "node scripts/build-bundle.mjs"
   },

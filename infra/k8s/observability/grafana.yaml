@@ -1,0 +1,337 @@
+# Grafana — the operator's window (EP-12.2).
+#
+# Datasources and dashboards are PROVISIONED from ConfigMaps, not clicked in. A dashboard that only
+# exists in someone's browser is lost on the first reinstall and cannot be shipped in an offline
+# bundle — which is the whole delivery model here (A9 / FR-PLat-7).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: atlas-prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: atlas
+        folder: Atlas
+        type: file
+        disableDeletion: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+data:
+  # ONE dashboard covering every service through a `service` label, with a template variable to
+  # narrow it — not one file per service. A per-service file is a thing somebody must remember to
+  # add when a service ships, and the service that gets forgotten is invisible rather than broken.
+  # The variable gives the "per-service" view EP-12.2 asks for without that failure mode.
+  golden-signals.json: |
+    {
+      "title": "Atlas — golden signals",
+      "uid": "atlas-golden-signals",
+      "tags": ["atlas"],
+      "time": { "from": "now-1h", "to": "now" },
+      "refresh": "30s",
+      "templating": {
+        "list": [
+          {
+            "name": "service",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "atlas-prometheus" },
+            "query": "label_values(atlas_http_requests_total, service)",
+            "includeAll": true,
+            "multi": true,
+            "current": { "text": "All", "value": "$__all" },
+            "refresh": 2
+          }
+        ]
+      },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Request rate",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum by (service) (rate(atlas_http_requests_total{service=~\"$service\"}[5m]))",
+              "legendFormat": "{{service}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Error rate (5xx share)",
+          "description": "A share, not a count: 50 errors an hour means something different at 100 rps than at 1 rps.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "fieldConfig": { "defaults": { "unit": "percentunit" } },
+          "targets": [
+            {
+              "expr": "sum by (service) (rate(atlas_http_requests_total{service=~\"$service\",status=\"5xx\"}[5m])) / sum by (service) (rate(atlas_http_requests_total{service=~\"$service\"}[5m]))",
+              "legendFormat": "{{service}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Latency p95",
+          "description": "NFR-PERF-1 puts Studio read latency at p95 < 300ms, p99 < 800ms.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "fieldConfig": { "defaults": { "unit": "s" } },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (service, le) (rate(atlas_http_request_duration_seconds_bucket{service=~\"$service\"}[5m])))",
+              "legendFormat": "{{service}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Saturation — requests in flight",
+          "description": "A healthy idle service reads 1, not 0: the scrape counts itself while rendering this. Sustained growth is the signal — the absolute floor is noise.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum by (service) (atlas_http_requests_in_flight{service=~\"$service\"})",
+              "legendFormat": "{{service}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Dropped metric series (cardinality cap)",
+          "description": "Non-zero means a label is unbounded and series are being discarded — every panel above is lying by omission until it is fixed.",
+          "gridPos": { "h": 6, "w": 24, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum by (metric) (atlas_metrics_series_dropped_total)",
+              "legendFormat": "{{metric}}"
+            }
+          ]
+        }
+      ]
+    }
+
+  # The auth picture, which is the one worth waking someone for. Every metric here exists because
+  # of #205 and #240; before those, IAM was not scraped at all and this dashboard was empty.
+  auth-signals.json: |
+    {
+      "title": "Atlas — authentication",
+      "uid": "atlas-auth-signals",
+      "tags": ["atlas", "security"],
+      "time": { "from": "now-6h", "to": "now" },
+      "refresh": "30s",
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Login attempts by outcome",
+          "description": "Split matters: a spike of unknown_user is username enumeration, a spike of bad_password against known accounts is credential stuffing. Different responses.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum by (outcome) (rate(atlas_iam_login_attempts_total[5m]))",
+              "legendFormat": "{{outcome}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Account lockouts",
+          "description": "The EVENT, not attempts against an already-locked account. Sustained non-zero is an attack in progress, not a forgetful user.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            { "expr": "increase(atlas_iam_lockouts_total[15m])", "legendFormat": "lockouts / 15m" }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Refresh-token reuse detected",
+          "description": "A BREACH signal, and the reason this dashboard exists. Reuse means a replayed or stolen token; each detection revokes an entire login family. Any non-zero value deserves investigation.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "increase(atlas_iam_refresh_attempts_total{outcome=\"reuse_detected\"}[15m])",
+              "legendFormat": "reuse / 15m"
+            },
+            {
+              "expr": "increase(atlas_iam_sessions_revoked_total{reason=\"reuse\"}[15m])",
+              "legendFormat": "sessions killed / 15m"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Token issuance",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum by (grant) (rate(atlas_iam_tokens_issued_total[5m]))",
+              "legendFormat": "{{grant}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "JWKS fetches and latency",
+          "description": "Every service verifies tokens against this document, so it is on the critical path of every authenticated request — but consumers CACHE it, so a healthy system fetches it rarely and this panel is mostly empty. Gaps are normal; a sustained fetch rate means someone's cache is not working, and rising latency blocks every verification behind it. The window is deliberately wide (1h) because a 5m rate over an endpoint hit once an hour is always zero.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum(rate(atlas_http_request_duration_seconds_count{service=\"iam\",route=\"/.well-known/jwks.json\"}[1h])) * 3600",
+              "legendFormat": "fetches / hour"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(atlas_http_request_duration_seconds_bucket{service=\"iam\",route=\"/.well-known/jwks.json\"}[1h])))",
+              "legendFormat": "p95 seconds"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Gateway rate-limit rejections",
+          "description": "scope=\"address\" is one source flooding; scope=\"principal\" is one user. untracked means the limiter hit its key cap and FAILED OPEN — it is not limiting new keys.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum by (scope) (rate(atlas_gateway_rate_limited_total[5m]))",
+              "legendFormat": "rejected — {{scope}}"
+            },
+            {
+              "expr": "sum by (scope) (rate(atlas_gateway_rate_limit_untracked_total[5m]))",
+              "legendFormat": "UNTRACKED — {{scope}}"
+            }
+          ]
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  labels:
+    app.kubernetes.io/name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grafana
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.5.0
+          env:
+            # The spike ran anonymous-admin. That was right for measuring footprint and wrong to
+            # ship: an unauthenticated dashboard publishes operational detail about a broadcaster's
+            # estate — traffic shape, error rates, when the newsroom is busy, when it is empty.
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "false"
+            # No default credentials, anywhere. The Secret is NOT generated by the kustomization on
+            # purpose: a committed default password is one an installer forgets to change, and this
+            # overlay is meant for customer sites. Without the Secret the pod fails to start, which
+            # is the correct failure — visible, and closed. See README.md.
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: username
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: password
+            # Air-gapped (A9): news feeds, update checks and plugin lookups all reach the internet
+            # and all fail slowly on an offline install, which looks like Grafana being broken.
+            - name: GF_ANALYTICS_REPORTING_ENABLED
+              value: "false"
+            - name: GF_ANALYTICS_CHECK_FOR_UPDATES
+              value: "false"
+            - name: GF_NEWS_NEWS_FEED_ENABLED
+              value: "false"
+          ports:
+            - name: http
+              containerPort: 3000
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: provisioning-datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: provisioning-dashboards
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+            # Grafana's own sqlite. emptyDir deliberately: datasources and dashboards are
+            # provisioned from ConfigMaps above, so what is lost on a restart is user preferences
+            # and ad-hoc annotations — not the thing an operator came here to read.
+            - name: state
+              mountPath: /var/lib/grafana
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+      volumes:
+        - name: provisioning-datasources
+          configMap:
+            name: grafana-provisioning
+            items:
+              - key: datasources.yaml
+                path: datasources.yaml
+        - name: provisioning-dashboards
+          configMap:
+            name: grafana-provisioning
+            items:
+              - key: dashboards.yaml
+                path: dashboards.yaml
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+        - name: state
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  labels:
+    app.kubernetes.io/name: grafana
+spec:
+  # ClusterIP, reached with `kubectl port-forward` — see README.md.
+  #
+  # Not a NodePort: kind only forwards 30080/30081 to the host, so a NodePort here would need the
+  # cluster recreated to be reachable, and on a real install it would put an operator console on
+  # every node's address with nothing but a password in front of it. An ingress with TLS is the
+  # production answer and is not simulated here, for the same reason the dev overlay does not.
+  selector:
+    app.kubernetes.io/name: grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

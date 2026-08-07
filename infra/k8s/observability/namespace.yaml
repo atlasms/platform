@@ -1,0 +1,13 @@
+# Its own namespace, and that is the load-bearing part of ADR-0003 rather than tidiness.
+#
+# The decision was "standard protocols are the product, the bundled stack is one consumer of them".
+# A separate namespace referenced by nothing in `infra/k8s/base` is what makes that testable: delete
+# it and Atlas keeps serving `/metrics`, keeps logging JSON to stdout, keeps answering `/readyz`.
+# A site that already runs monitoring points its own scraper at the same endpoints and never applies
+# this directory at all.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: atlas-observability
+  labels:
+    app.kubernetes.io/part-of: atlas

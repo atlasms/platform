@@ -240,6 +240,27 @@ test('track() counts in-flight and returns to zero — including when the handle
   assert.equal(signals.inFlight.get({ service: 'mam' }), 0, 'released after a throw too');
 });
 
+test('enter()/exit() move the same gauge track() does', () => {
+  // The services record from Fastify hooks rather than by wrapping a handler, so they all used
+  // observe() — and NOTHING ever touched the in-flight gauge. Saturation, one of the four signals
+  // this file is named for, was absent from every service and its dashboard panel was permanently
+  // empty. An empty panel reads as "no load", which is the most reassuring way to be wrong.
+  const registry = new MetricRegistry();
+  const signals = goldenSignals(registry, 'iam');
+
+  signals.enter();
+  signals.enter();
+  assert.equal(signals.inFlight.get({ service: 'iam' }), 2, 'concurrent requests both count');
+
+  signals.exit();
+  signals.exit();
+  assert.equal(signals.inFlight.get({ service: 'iam' }), 0, 'and both are released');
+
+  // A series must EXIST at zero rather than be absent: `expose()` skips a metric with no series,
+  // so an idle service that had never used the gauge would publish no saturation line at all.
+  assert.match(registry.expose(), /atlas_http_requests_in_flight\{service="iam"\} 0/);
+});
+
 test('an unhandled throw is recorded as 5xx, not as success', () => {
   const registry = new MetricRegistry();
   const signals = goldenSignals(registry, 'mam');

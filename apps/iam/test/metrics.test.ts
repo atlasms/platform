@@ -56,15 +56,18 @@ test('/metrics answers unauthenticated, in the Prometheus text format', async ()
   assert.match(res.body, /^# TYPE /m);
 });
 
-test('a just-started process scrapes empty rather than failing', async () => {
-  // A series exists once something has happened, so the first scrape of a cold process has nothing
-  // to say. That must be an empty 200 — a 500 or a 404 here would show up as a DOWN target and
-  // page somebody about a service that is perfectly healthy and merely idle.
+test('a just-started process scrapes cleanly rather than failing', async () => {
+  // A cold process has almost nothing to say. That must still be a 200 — a 500 or a 404 here shows
+  // up as a DOWN target and pages somebody about a service that is perfectly healthy and idle.
   const { app } = await iam();
   const res = await app.inject({ method: 'GET', url: '/metrics' });
 
   assert.equal(res.statusCode, 200);
-  assert.equal(res.body, '');
+  // Not empty, and the one line present is the scrape COUNTING ITSELF: the request is in flight
+  // while the body is being rendered. Standard for an in-flight gauge and worth knowing before
+  // reading the saturation panel — an idle service reads 1, not 0.
+  assert.equal(sample(res.body, 'atlas_http_requests_in_flight', { service: 'iam' }), 1);
+  assert.ok(!res.body.includes('atlas_http_requests_total'), 'nothing has completed yet');
 });
 
 test('golden signals are recorded under service="iam"', async () => {
@@ -98,6 +101,21 @@ test('JWKS latency is observable, under its route template', async () => {
   assert.ok(
     body.includes('atlas_http_request_duration_seconds_bucket'),
     'buckets are exposed, so a quantile is computable at query time',
+  );
+});
+
+test('saturation is recorded and returns to zero', async () => {
+  // The panel that was permanently empty: nothing in any service touched the in-flight gauge, so
+  // the saturation signal read "no load" forever. The failure mode of the fix is the opposite —
+  // a gauge that only ever climbs — so what is asserted is that it comes back DOWN.
+  const { app } = await iam();
+  for (let i = 0; i < 3; i += 1) await app.inject({ method: 'GET', url: '/healthz' });
+
+  const body = await scrape(app);
+  assert.equal(
+    sample(body, 'atlas_http_requests_in_flight', { service: 'iam' }),
+    1,
+    'exactly the scrape itself — the three finished requests were all counted back out',
   );
 });
 

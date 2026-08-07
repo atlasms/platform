@@ -59,10 +59,26 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     const incoming = req.headers['x-correlation-id'];
     req.correlationId = typeof incoming === 'string' && incoming ? incoming : ulid();
     req.startedAt = Date.now();
+    req.inFlight = true;
+    signals.enter();
     runWithContext({ correlationId: req.correlationId }, () => done());
   });
 
+  // Saturation is decremented from BOTH exits: a client that closes the connection mid-request
+  // fires onRequestAbort and NOT onResponse, so counting only responses makes the gauge climb
+  // forever. The flag keeps the pair idempotent.
+  const leave = (req: { inFlight?: boolean }): void => {
+    if (req.inFlight !== true) return;
+    req.inFlight = false;
+    signals.exit();
+  };
+  app.addHook('onRequestAbort', (req, done) => {
+    leave(req);
+    done();
+  });
+
   app.addHook('onResponse', (req, reply, done) => {
+    leave(req);
     const template = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? req.url;
     signals.observe({
       method: req.method,
@@ -274,5 +290,6 @@ declare module 'fastify' {
   interface FastifyRequest {
     correlationId: string;
     startedAt: number;
+    inFlight?: boolean;
   }
 }

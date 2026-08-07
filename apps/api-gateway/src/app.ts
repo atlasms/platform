@@ -176,9 +176,25 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
     const correlationId = typeof incoming === 'string' && incoming ? incoming : ulid();
     req.correlationId = correlationId;
     req.startedAt = Date.now();
+    req.inFlight = true;
+    signals.enter();
     // Everything downstream of here — auth, proxy, error mapping — runs inside the context,
     // so a log line from any of them carries the same id without being passed one.
     runWithContext({ correlationId }, () => done());
+  });
+
+  // Saturation is decremented from BOTH exits: a client that closes the connection mid-request
+  // fires onRequestAbort and NOT onResponse, so counting only responses makes the gauge climb
+  // forever. It matters most here — the gateway holds a request open for the whole upstream call,
+  // so in-flight IS the queue depth an operator watches. The flag keeps the pair idempotent.
+  const leave = (req: { inFlight?: boolean }): void => {
+    if (req.inFlight !== true) return;
+    req.inFlight = false;
+    signals.exit();
+  };
+  app.addHook('onRequestAbort', (req, done) => {
+    leave(req);
+    done();
   });
 
   app.addHook('onSend', (req, reply, payload, done) => {
@@ -188,6 +204,7 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
 
   // --- access log: emitted for EVERY response, including 4xx/5xx --------------------------
   app.addHook('onResponse', (req, reply, done) => {
+    leave(req);
     options.onAccessLog?.({
       requestId: req.correlationId,
       method: req.method,
@@ -351,6 +368,7 @@ declare module 'fastify' {
   interface FastifyRequest {
     correlationId: string;
     startedAt: number;
+    inFlight?: boolean;
     claims?: Claims;
   }
 }
