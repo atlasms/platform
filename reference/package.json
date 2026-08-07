@@ -10,7 +10,7 @@
     "bpmn-moddle": "^10.0.0",
     "fastify": "^5.2.0",
     "feelin": "^7.0.1",
-    "jose": "^6.2.4"
+    "jose": "^6.2.8"
   },
   "devDependencies": { "tsx": "^4.23.1" }
 }
