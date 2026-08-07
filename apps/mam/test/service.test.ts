@@ -94,8 +94,8 @@ test('list returns only the caller’s channel', async () => {
   await service.create(caller(), NEW_ASSET);
   await service.create(caller(), { ...NEW_ASSET, title: 'Second' });
 
-  assert.equal((await service.list(caller())).length, 2);
-  assert.equal((await service.list(caller({ channelId: 'ch99' }))).length, 0);
+  assert.equal((await service.list(caller())).items.length, 2);
+  assert.equal((await service.list(caller({ channelId: 'ch99' }))).items.length, 0);
 });
 
 test('update bumps the version and records only fields that actually changed', async () => {

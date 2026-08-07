@@ -156,11 +156,17 @@ export function pgAssetStore(pool: PgPool): AssetStore {
       return rows[0]?.data;
     },
 
-    async listByChannel(channelId) {
-      const { rows } = await pool.query<{ data: Asset }>(
-        'SELECT data FROM assets WHERE channel_id = $1 ORDER BY id',
-        [channelId],
-      );
+    async listByChannel(channelId, options = {}) {
+      // Ordered by id (a ULID, so chronological). That total order is what makes the keyset cursor
+      // work at all: `id > after` means nothing without it.
+      const params: unknown[] = [channelId];
+      const p = (v: unknown): string => `$${params.push(v)}`;
+      let sql = 'SELECT data FROM assets WHERE channel_id = $1';
+      if (options.after !== undefined) sql += ` AND id > ${p(options.after)}`;
+      sql += ' ORDER BY id';
+      if (options.limit !== undefined) sql += ` LIMIT ${p(options.limit)}`;
+
+      const { rows } = await pool.query<{ data: Asset }>(sql, params);
       return rows.map((r) => r.data);
     },
 

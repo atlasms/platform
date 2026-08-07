@@ -589,6 +589,90 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  // --- keyset pagination (#233) ----------------------------------------------
+
+  test(`${name}: listByChannel pages by KEYSET, and the pages tile exactly`, async () => {
+    // Every asset exactly once, in order, across page boundaries. An off-by-one in the cursor
+    // comparison (`>=` instead of `>`) duplicates a row per page, which a reader sees as the
+    // catalogue repeating itself rather than as an error.
+    await withFixture(async ({ store }) => {
+      const ids: string[] = [];
+      await store.transaction(async (tx) => {
+        for (let i = 0; i < 7; i++) {
+          const a = asset();
+          ids.push(a.id);
+          await tx.put(a);
+        }
+      });
+      ids.sort();
+
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      for (;;) {
+        const page = await store.listByChannel('ch12', {
+          limit: 3,
+          ...(cursor === undefined ? {} : { after: cursor }),
+        });
+        if (page.length === 0) break;
+        seen.push(...page.map((a) => a.id));
+        cursor = page[page.length - 1]?.id;
+        if (page.length < 3) break;
+      }
+
+      assert.deepEqual(seen, ids, 'must tile the channel exactly: no gaps, no repeats');
+    });
+  });
+
+  test(`${name}: a cursor is EXCLUSIVE`, async () => {
+    await withFixture(async ({ store }) => {
+      const first = asset();
+      const second = asset();
+      const [lo, hi] = [first.id, second.id].sort() as [string, string];
+      await store.transaction(async (tx) => {
+        await tx.put(first);
+        await tx.put(second);
+      });
+
+      const after = await store.listByChannel('ch12', { after: lo });
+      assert.deepEqual(
+        after.map((a) => a.id),
+        [hi],
+        'the cursor row itself must not come back — that is how a page repeats its last item',
+      );
+      assert.deepEqual(await store.listByChannel('ch12', { after: hi }), []);
+    });
+  });
+
+  test(`${name}: pagination stays inside the tenant boundary`, async () => {
+    // A cursor from another channel must not become a way to walk into it.
+    await withFixture(async ({ store }) => {
+      const mine = asset({ channelId: 'ch12' });
+      const theirs = asset({ channelId: 'ch99' });
+      await store.transaction(async (tx) => {
+        await tx.put(mine);
+        await tx.put(theirs);
+      });
+
+      const page = await store.listByChannel('ch12', { limit: 10 });
+      assert.deepEqual(
+        page.map((a) => a.id),
+        [mine.id],
+      );
+    });
+  });
+
+  test(`${name}: an omitted limit returns the whole channel`, async () => {
+    // The unbounded form is what internal walks use. It has to keep working, and it has to be the
+    // caller's explicit choice rather than a default a request path can fall into.
+    await withFixture(async ({ store }) => {
+      await store.transaction(async (tx) => {
+        for (let i = 0; i < 4; i++) await tx.put(asset());
+      });
+      assert.equal((await store.listByChannel('ch12')).length, 4);
+      assert.equal((await store.listByChannel('ch12', { limit: 2 })).length, 2);
+    });
+  });
+
   test(`${name}: a failed transaction leaves the store usable`, async () => {
     // A driver that forgets to ROLLBACK leaves the connection in a failed transaction, and every
     // later query dies with "current transaction is aborted". The first symptom is the SECOND
