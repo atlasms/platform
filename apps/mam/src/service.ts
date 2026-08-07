@@ -10,7 +10,7 @@
 // the announcement commit together, or neither does.
 
 import { buildEnvelope, subjectFor, ulid, validatePayload, type Envelope } from '@atlas/contracts';
-import { canEnforce, type EffectivePolicy } from '@atlas/policy';
+import { can, canEnforce, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, Forbidden, NotFound, ValidationError } from '@atlas/service-kit';
 import {
   orphanedFields,
@@ -21,6 +21,7 @@ import {
   type FieldSchema,
 } from './field-schema.ts';
 import type { AssetStore, AssetTx, ExtendedValues } from './store.ts';
+import { indexTerms, parseQuery } from './search.ts';
 import { parseTagLabels, sameTags, type Tag } from './tag.ts';
 import {
   BASE_MANDATORY_FIELDS,
@@ -69,6 +70,49 @@ const EXTENDED_PREFIX = 'extended.';
  * Librarian's file-and-rights grant no longer reaches an asset's keywords.
  */
 const TAXONOMY_GROUP = 'taxonomy';
+
+/** Page size when a caller does not ask. Large enough to be useful, small enough to render. */
+const DEFAULT_SEARCH_LIMIT = 50;
+const MAX_SEARCH_LIMIT = 200;
+
+/**
+ * How many candidates to pull per requested result.
+ *
+ * Search authorizes each hit individually, so the store's rows are a superset of what the caller
+ * may see. Four is a guess, and an honest one: a caller whose grant covers most of the channel
+ * never notices, and one whose grant covers a narrow slice may get a short page even though more
+ * matches exist. Fixing that properly means pushing the policy predicate into the query, which is
+ * the point at which the search engine has to understand the authorization model.
+ */
+const SEARCH_OVERFETCH = 4;
+
+/** The text an asset is findable by, gathered from every part of it that carries words. */
+export interface SearchSources {
+  tagLabels: readonly string[];
+  extended: ExtendedValues;
+}
+
+/**
+ * Flatten an asset into search terms.
+ *
+ * Only string-ish extended values are indexed. A number, a boolean or a date renders as a token
+ * nobody searches for — `true`, `4.5` — while filling the index with noise; those belong in the
+ * structured filters that arrive with faceted search, not in free text.
+ */
+function termsFor(asset: Asset, sources: SearchSources): string[] {
+  const extendedText = Object.values(sources.extended).filter(
+    (v): v is string => typeof v === 'string',
+  );
+  return indexTerms([
+    asset.title,
+    asset.description,
+    // The MEDIA TYPE and structure are words an editor genuinely searches by ("video", "drama").
+    // Ids are not: a ULID is not a term, and `categoryId` is one until categories exist.
+    asset.mediaType,
+    ...sources.tagLabels,
+    ...extendedText,
+  ]);
+}
 
 /** Who is asking, and in which tenant. Established by the gateway, never parsed from a JWT here. */
 export interface Caller {
@@ -142,14 +186,21 @@ export class MamService {
       }),
     };
 
-    await this.commit(caller, asset, 'asset.created', {
-      assetId: asset.id,
-      core: {
-        title: asset.title,
-        fileType: asset.fileType,
-        ...defined({ description: asset.description, durationSec: asset.durationSec }),
+    await this.commit(
+      caller,
+      asset,
+      'asset.created',
+      {
+        assetId: asset.id,
+        core: {
+          title: asset.title,
+          fileType: asset.fileType,
+          ...defined({ description: asset.description, durationSec: asset.durationSec }),
+        },
       },
-    });
+      // A new asset has neither tags nor a document yet, so the sources are known without a read.
+      { tagLabels: [], extended: {} },
+    );
 
     return asset;
   }
@@ -178,11 +229,16 @@ export class MamService {
       updatedAt: this.now().toISOString(),
     };
 
-    await this.commit(caller, updated, 'asset.updated', {
-      assetId: updated.id,
-      changedFields,
-      source: 'user',
-    });
+    await this.commit(
+      caller,
+      updated,
+      'asset.updated',
+      { assetId: updated.id, changedFields, source: 'user' },
+      // `title` and `description` are indexed, so this path must reindex. Tags and the extended
+      // document are untouched here, and are read rather than assumed empty — assuming would
+      // silently strip every tag term from the index on an ordinary rename.
+      await this.sourcesFor(existing),
+    );
 
     return updated;
   }
@@ -328,6 +384,9 @@ export class MamService {
       'asset.updated',
       { assetId: updated.id, changedFields, source: 'user' },
       async (tx) => tx.putExtended(id, asset.channelId, merged),
+      // The MERGED document, not the stored one — a value written by this very call has to be
+      // findable the moment it commits, and `sourcesFor` would read the version it replaces.
+      { tagLabels: (await this.options.store.tagsOf(id)).map((t) => t.label), extended: merged },
     );
 
     return merged;
@@ -427,9 +486,118 @@ export class MamService {
           );
         }
       },
+      // The labels being WRITTEN, not the ones stored — `parsed.labels` is what this transaction
+      // is about to make true, and reading the store here would index the set being replaced.
+      // A tag added and immediately searched for is the obvious case, and the one that would fail.
+      {
+        tagLabels: parsed.labels.map((l) => l.label),
+        extended: (await this.options.store.extended(id)) ?? {},
+      },
     );
 
     return resolved;
+  }
+
+  // --- simple search (EP-17.4) -----------------------------------------------
+
+  /**
+   * Find assets in the caller's channel by free text.
+   *
+   * Every hit is authorized INDIVIDUALLY. A read grant scoped to a category subtree makes "may this
+   * user see it" a per-asset question, and a search that answered it once for the channel would
+   * turn the index into a way to enumerate assets the caller cannot open — the classifieds version
+   * of a permissions bug, where the titles leak even though the records do not.
+   */
+  async search(caller: Caller, q: string, options: { limit?: number } = {}): Promise<Asset[]> {
+    // LENIENT here, and deliberately — this is an early-out, not the enforcement point.
+    //
+    // There is no meaningful channel-wide "may you search?" question: the answer is per asset, and
+    // it is answered per asset by `mayRead` below with the strict evaluator and the full context.
+    // Asking strictly *here* would be actively wrong, because a read grant scoped to a category
+    // subtree cannot satisfy a check that names no category — so a Journalist scoped to `/news/`
+    // would be refused outright rather than shown their own news assets. Strict-widens-on-omission
+    // cuts both ways (authorization-model.md §5.1); this is the direction that denies too much.
+    if (!can(caller.policy, 'asset:read', { channelId: caller.channelId }).allowed) {
+      throw new Forbidden('no rule grants "asset:read"');
+    }
+
+    const parsed = parseQuery(q ?? '');
+    if (parsed.exact.length === 0 && parsed.prefix === undefined) return [];
+
+    const limit = Math.min(Math.max(options.limit ?? DEFAULT_SEARCH_LIMIT, 1), MAX_SEARCH_LIMIT);
+    // Over-fetch, because the permission filter below removes rows the store cannot know about.
+    // Bounded rather than unlimited: a caller who may read almost nothing would otherwise walk the
+    // whole index one page at a time to find that out.
+    const hits = await this.options.store.search(
+      caller.channelId,
+      parsed,
+      limit * SEARCH_OVERFETCH,
+    );
+
+    const assets: Asset[] = [];
+    for (const hit of hits) {
+      if (assets.length >= limit) break;
+      const asset = await this.options.store.get(hit.assetId);
+      // Belt and braces on the channel: the store filters by it, and a hit that somehow escaped
+      // that filter must not be rescued by a permissive policy.
+      if (!asset || asset.channelId !== caller.channelId) continue;
+      if (!this.mayRead(caller, asset)) continue;
+      assets.push(asset);
+    }
+    return assets;
+  }
+
+  /**
+   * Rebuild a channel's search index from the assets themselves.
+   *
+   * The index cannot drift — it commits with the row it describes — but it CAN become stale in a
+   * different sense: changing the tokenizer changes what the same text indexes to, and every asset
+   * written before that change is still carrying the old terms. So the read model has to be
+   * rebuildable, exactly as [mam.md §6.2](../../../docs/architecture/services/mam.md) requires.
+   *
+   * `taxonomy:admin`: reindexing is an operator action, and on a large channel an expensive one.
+   * It reads each asset's tags and document individually — fine for the MVP's scale, and the first
+   * thing to revisit when this moves to a real search engine.
+   */
+  async reindex(caller: Caller, options: { batch?: number } = {}): Promise<{ indexed: number }> {
+    this.authorize(caller, 'taxonomy:admin');
+    const assets = await this.options.store.listByChannel(caller.channelId);
+    const batch = Math.max(options.batch ?? 100, 1);
+
+    let indexed = 0;
+    for (let i = 0; i < assets.length; i += batch) {
+      const slice = assets.slice(i, i + batch);
+      // Sources are read OUTSIDE the transaction. Reading through the store from inside would take
+      // a second pooled connection while holding the first, which is how a rebuild deadlocks a
+      // service under load rather than merely slowing it down.
+      const prepared = await Promise.all(
+        slice.map(async (asset) => ({ asset, sources: await this.sourcesFor(asset) })),
+      );
+      await this.options.store.transaction(async (tx) => {
+        for (const { asset, sources } of prepared) {
+          await tx.indexTerms(asset.id, asset.channelId, termsFor(asset, sources));
+        }
+      });
+      indexed += slice.length;
+    }
+    return { indexed };
+  }
+
+  /** An asset's current searchable sources, for the paths that are not changing them. */
+  private async sourcesFor(asset: Asset): Promise<SearchSources> {
+    const [tags, extended] = await Promise.all([
+      this.options.store.tagsOf(asset.id),
+      this.options.store.extended(asset.id),
+    ]);
+    return { tagLabels: tags.map((t) => t.label), extended: extended ?? {} };
+  }
+
+  /** Lenient-free read check for one asset. Same strict evaluator, no exception thrown. */
+  private mayRead(caller: Caller, asset: Asset): boolean {
+    return canEnforce(caller.policy, 'asset:read', {
+      channelId: caller.channelId,
+      ...defined({ categoryPath: asset.categoryId, ownerId: asset.createdBy }),
+    }).allowed;
   }
 
   /** The resolved field definitions for one asset. */
@@ -498,8 +666,9 @@ export class MamService {
     asset: Asset,
     eventType: string,
     payload: Record<string, unknown>,
+    search?: SearchSources,
   ): Promise<void> {
-    return this.commitWith(caller, asset, eventType, payload);
+    return this.commitWith(caller, asset, eventType, payload, undefined, search);
   }
 
   /**
@@ -514,8 +683,14 @@ export class MamService {
     eventType: string,
     payload: Record<string, unknown>,
     also?: (tx: AssetTx) => Promise<void>,
+    search?: SearchSources,
   ): Promise<void> {
     const record = this.eventRecord(caller, asset.channelId, eventType, payload);
+    // Computed BEFORE the transaction opens, from what is about to be written rather than from
+    // what is stored — the whole point is that a tag or a document being changed by this very call
+    // has to be findable the moment it commits. Paths that change no searchable text pass nothing,
+    // and skip the write rather than rewriting identical rows.
+    const terms = search ? termsFor(asset, search) : undefined;
 
     // Nothing is read back inside this block on purpose. On sqlite an uncommitted write is visible
     // to the same connection; on Postgres it is not visible outside the transaction's own client —
@@ -523,6 +698,7 @@ export class MamService {
     await this.options.store.transaction(async (tx) => {
       await tx.put(asset);
       await also?.(tx);
+      if (terms) await tx.indexTerms(asset.id, asset.channelId, terms);
       await tx.enqueue(record);
     });
   }

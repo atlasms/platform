@@ -10,6 +10,7 @@
 import type { OutboxRecord } from '@atlas/messaging';
 import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
+import type { ParsedQuery, SearchHit } from './search.ts';
 import type { Tag, TagCandidate } from './tag.ts';
 
 /** The extensible per-asset document (EP-17.2). Shape is whatever the FieldSchema defines. */
@@ -56,6 +57,19 @@ export interface AssetStore {
    */
   listTags(channelId: string): Promise<Tag[]>;
 
+  /**
+   * Assets in one channel matching every term of `query` (EP-17.4).
+   *
+   * **AND semantics**: an asset must carry every exact term, and — when the query ends mid-word —
+   * at least one term with that prefix. OR would return the whole library for any two-word query,
+   * which is not what typing two words means.
+   *
+   * Returns ids and scores, not assets. The caller still has to authorize each hit: a read grant
+   * scoped to a category subtree makes "may this user see it" a per-asset question, and answering
+   * it in SQL would put the policy evaluator in the database.
+   */
+  search(channelId: string, query: ParsedQuery, limit: number): Promise<SearchHit[]>;
+
   /** One unit of work. Everything written inside commits together, or none of it does. */
   transaction<T>(fn: (tx: AssetTx) => Promise<T>): Promise<T>;
 
@@ -87,6 +101,15 @@ export interface AssetTx {
    * — a read-then-insert in the service would race and the unique index would reject the loser.
    */
   setTags(assetId: string, channelId: string, tags: readonly TagCandidate[]): Promise<Tag[]>;
+  /**
+   * Replace an asset's search terms (EP-17.4).
+   *
+   * In the transaction with the row it describes, which is what makes the index unable to drift.
+   * The doc's design feeds a SEPARATE store (OpenSearch) through the outbox because dual writes
+   * desynchronise; an index living in this database has no such window, so committing together is
+   * strictly stronger than the projection it stands in for.
+   */
+  indexTerms(assetId: string, channelId: string, terms: readonly string[]): Promise<void>;
   /** Enqueue a domain event on the outbox — in THIS transaction, with the row it announces. */
   enqueue(record: OutboxRecord): Promise<void>;
 }

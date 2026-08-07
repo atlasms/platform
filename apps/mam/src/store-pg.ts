@@ -18,6 +18,18 @@ interface TagRow {
   normalized: string;
 }
 
+/**
+ * Neutralise LIKE's own wildcards in a user-supplied prefix.
+ *
+ * A query of `50%` must look for terms starting with "50%", not "terms starting with 50 followed by
+ * anything" — and `_` is a single-character wildcard that is even easier to type by accident. The
+ * tokenizer strips punctuation, so neither can reach here today; escaping anyway costs one line
+ * and removes the dependency of one module's correctness on another module's character class.
+ */
+function escapeLikePrefix(prefix: string): string {
+  return prefix.replace(/([\\%_])/g, '\\$1');
+}
+
 const toTag = (r: TagRow): Tag => ({
   id: r.id,
   channelId: r.channel_id,
@@ -97,12 +109,40 @@ export const pgTagsMigration: Migration = {
        CREATE INDEX IF NOT EXISTS asset_tags_tag_idx ON asset_tags (tag_id, asset_id);`,
 };
 
+/**
+ * The simple-search term index (EP-17.4).
+ *
+ * `(asset_id, term)` as PRIMARY KEY is load-bearing, not tidiness: the query counts matches per
+ * asset to decide whether every term was found, and a duplicated row would let one term satisfy
+ * that count twice.
+ *
+ * TWO indexes on `(channel_id, term)` deliberately. The first serves equality; the second carries
+ * `text_pattern_ops`, which is what lets a prefix `LIKE 'foo%'` use a btree in a database whose
+ * collation is not C. Without it Postgres falls back to a sequential scan on exactly the query an
+ * editor types most — the half-finished word — and the failure shows up as latency at library
+ * scale rather than as a wrong answer.
+ */
+export const pgSearchMigration: Migration = {
+  id: 'mam_search',
+  up: `CREATE TABLE IF NOT EXISTS asset_search (
+         asset_id   text NOT NULL,
+         channel_id text NOT NULL,
+         term       text NOT NULL,
+         PRIMARY KEY (asset_id, term)
+       );
+       CREATE INDEX IF NOT EXISTS asset_search_term_idx
+         ON asset_search (channel_id, term, asset_id);
+       CREATE INDEX IF NOT EXISTS asset_search_prefix_idx
+         ON asset_search (channel_id, term text_pattern_ops);`,
+};
+
 /** Everything MAM's database needs, in order. Applied at startup under an advisory lock. */
 export const mamMigrations: Migration[] = [
   outboxMigration,
   pgAssetsMigration,
   pgExtendedMigration,
   pgTagsMigration,
+  pgSearchMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
@@ -171,6 +211,45 @@ export function pgAssetStore(pool: PgPool): AssetStore {
         [channelId],
       );
       return rows.map(toTag);
+    },
+
+    async search(channelId, query, limit) {
+      const params: unknown[] = [channelId];
+      const p = (v: unknown): string => `$${params.push(v)}`;
+
+      const clauses: string[] = [];
+      const having: string[] = [];
+
+      if (query.exact.length > 0) {
+        const list = query.exact.map((t) => p(t)).join(', ');
+        clauses.push(`term IN (${list})`);
+        // Same placeholders reused — the values are already bound, so this costs no extra params.
+        having.push(`count(*) FILTER (WHERE term IN (${list})) >= ${p(query.exact.length)}`);
+      }
+      if (query.prefix !== undefined) {
+        // `LIKE prefix || '%'` rather than the sqlite adapter's range, because the
+        // `text_pattern_ops` index above is built precisely for this and the planner recognises
+        // the pattern. Same semantics, different route to the index — which is exactly the kind of
+        // divergence the conformance suite exists to hold to one behaviour.
+        const like = p(escapeLikePrefix(query.prefix) + '%');
+        clauses.push(`term LIKE ${like}`);
+        having.push(`count(*) FILTER (WHERE term LIKE ${like}) >= 1`);
+      }
+      if (clauses.length === 0) return [];
+
+      const { rows } = await pool.query<{ asset_id: string; score: string }>(
+        `SELECT asset_id, count(*) AS score
+           FROM asset_search
+          WHERE channel_id = $1 AND (${clauses.join(' OR ')})
+          GROUP BY asset_id
+         HAVING ${having.join(' AND ')}
+          ORDER BY score DESC, asset_id DESC
+          LIMIT ${p(limit)}`,
+        params,
+      );
+      // `count(*)` comes back as a STRING from pg — bigint does not fit a JS number, so the driver
+      // refuses to guess. Scoring on a string sorts "10" before "9".
+      return rows.map((r) => ({ assetId: r.asset_id, score: Number(r.score) }));
     },
 
     async transaction(fn) {
@@ -247,6 +326,18 @@ export function pgAssetStore(pool: PgPool): AssetStore {
             }
 
             return resolved;
+          },
+          async indexTerms(assetId, channelId, terms) {
+            await client.query('DELETE FROM asset_search WHERE asset_id = $1', [assetId]);
+            if (terms.length === 0) return;
+            // One statement with an unnested array rather than a loop: an asset can carry a few
+            // hundred terms, and that many round trips inside a transaction holds the connection
+            // far longer than the write deserves.
+            await client.query(
+              `INSERT INTO asset_search (asset_id, channel_id, term)
+               SELECT $1, $2, unnest($3::text[])`,
+              [assetId, channelId, terms],
+            );
           },
           async enqueue(record) {
             await outbox.enqueue(client, record);

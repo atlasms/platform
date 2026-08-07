@@ -15,6 +15,7 @@ import {
 import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { AssetStore, AssetTx } from './store.ts';
+import { prefixUpperBound } from './search.ts';
 import type { Tag } from './tag.ts';
 
 export const sqliteAssetsMigration: Migration = {
@@ -63,6 +64,18 @@ export const sqliteTagsMigration: Migration = {
        CREATE INDEX IF NOT EXISTS asset_tags_tag_idx ON asset_tags (tag_id, asset_id);`,
 };
 
+export const sqliteSearchMigration: Migration = {
+  id: 'mam_search',
+  up: `CREATE TABLE IF NOT EXISTS asset_search (
+         asset_id   TEXT NOT NULL,
+         channel_id TEXT NOT NULL,
+         term       TEXT NOT NULL,
+         PRIMARY KEY (asset_id, term)
+       );
+       CREATE INDEX IF NOT EXISTS asset_search_term_idx
+         ON asset_search (channel_id, term, asset_id);`,
+};
+
 export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
   const db = openDb(path);
   migrate(db, [
@@ -70,6 +83,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     sqliteAssetsMigration,
     sqliteExtendedMigration,
     sqliteTagsMigration,
+    sqliteSearchMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
 
@@ -132,6 +146,13 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
       for (const tag of resolved) link.run(assetId, tag.id);
 
       return resolved;
+    },
+    async indexTerms(assetId, channelId, terms) {
+      db.prepare('DELETE FROM asset_search WHERE asset_id = ?').run(assetId);
+      const add = db.prepare(
+        'INSERT INTO asset_search (asset_id, channel_id, term) VALUES (?, ?, ?)',
+      );
+      for (const term of terms) add.run(assetId, channelId, term);
     },
     async enqueue(record) {
       outbox.enqueue(record);
@@ -200,6 +221,53 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         )
         .all(channelId) as { id: string; channel_id: string; label: string; normalized: string }[];
       return rows.map(toTag);
+    },
+    async search(channelId, query, limit) {
+      const clauses: string[] = [];
+      const params: unknown[] = [channelId];
+
+      if (query.exact.length > 0) {
+        clauses.push(`term IN (${query.exact.map(() => '?').join(', ')})`);
+        params.push(...query.exact);
+      }
+      if (query.prefix !== undefined) {
+        // A RANGE, not `LIKE 'p%'`. SQLite only uses an index for LIKE when case-sensitivity is
+        // enabled globally, which is a pragma this store has no business setting for the whole
+        // connection. `>= p AND < bound` is an index scan unconditionally.
+        clauses.push('(term >= ? AND term < ?)');
+        params.push(query.prefix, prefixUpperBound(query.prefix));
+      }
+      if (clauses.length === 0) return [];
+
+      // AND semantics, and the arithmetic is only sound because `(asset_id, term)` is the PRIMARY
+      // KEY: each term appears at most once per asset, so summing the matches of the exact set
+      // counts DISTINCT terms without a DISTINCT. A duplicate row would silently satisfy the
+      // HAVING with one term matched twice.
+      const having: string[] = [];
+      if (query.exact.length > 0) {
+        having.push(
+          `SUM(CASE WHEN term IN (${query.exact.map(() => '?').join(', ')}) THEN 1 ELSE 0 END) >= ?`,
+        );
+        params.push(...query.exact, query.exact.length);
+      }
+      if (query.prefix !== undefined) {
+        having.push('SUM(CASE WHEN term >= ? AND term < ? THEN 1 ELSE 0 END) >= 1');
+        params.push(query.prefix, prefixUpperBound(query.prefix));
+      }
+
+      params.push(limit);
+      const rows = db
+        .prepare(
+          `SELECT asset_id, COUNT(*) AS score
+             FROM asset_search
+            WHERE channel_id = ? AND (${clauses.join(' OR ')})
+            GROUP BY asset_id
+           HAVING ${having.join(' AND ')}
+            ORDER BY score DESC, asset_id DESC
+            LIMIT ?`,
+        )
+        .all(...(params as never[])) as { asset_id: string; score: number }[];
+      return rows.map((r) => ({ assetId: r.asset_id, score: Number(r.score) }));
     },
     async listByChannel(channelId) {
       // Ordered by id, which is a ULID and therefore chronological — a stable order without a

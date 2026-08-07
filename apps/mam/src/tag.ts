@@ -11,6 +11,8 @@
 // no adapter normalizes anything — otherwise sqlite and Postgres could disagree about what "the
 // same tag" means, which is precisely the class of bug the conformance suite exists to catch.
 
+import { CONTROL, cleanText, foldText } from './text.ts';
+
 /** A minted tag. Free-form, but still per-channel — one tenant's keywords are not another's. */
 export interface Tag {
   id: string;
@@ -47,52 +49,15 @@ export const MAX_TAG_LENGTH = 64;
 export const MAX_TAGS_PER_ASSET = 50;
 
 /**
- * Invisible formatting characters that must not create a distinct tag.
- *
- * ZWSP, the Arabic letter mark, the LTR/RTL marks, the bidi embeddings/overrides/isolates and BOM
- * are formatting, not content: two tags differing only by one of these are indistinguishable on
- * screen and distinct in the database — exactly the duplicate normalization exists to prevent — and
- * they arrive constantly from copy-paste out of RTL documents.
- *
- * Two deliberate absences:
- * - **U+200C ZWNJ** is a letter-joining control in Persian; `می‌رود` and `میرود` are different
- *   words. Stripping it would silently merge distinct terms, which is worse than the duplicate.
- * - **U+200D ZWJ** joins emoji sequences, so removing it would shatter `👨‍👩‍👧` into three tags.
- */
-const INVISIBLE = /[\u200B\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/gu;
-
-/**
- * Control characters that are not whitespace.
- *
- * Tab and newline are *collapsed* rather than refused — pasting a wrapped phrase is a reasonable
- * thing to do. The rest render as nothing, or as a replacement glyph, or corrupt a CSV export, and
- * no keyword legitimately contains one.
- *
- * The `no-control-regex` disable below is the point of the rule inverted: it exists to catch
- * control characters that arrive in a pattern by accident, and here they are the subject.
- */
-// eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
-
-/**
- * Strip formatting, collapse whitespace, compose.
- *
- * NFC because `é` composed and `e` + combining acute are the same word to a human and different
- * strings to a database, and the two arrive from different keyboards and different paste sources.
- */
-function cleanLabel(value: string): string {
-  return value.normalize('NFC').replace(INVISIBLE, '').replace(/\s+/gu, ' ').trim();
-}
-
-/**
  * Fold a typed label into its identity within a channel.
  *
- * `toLowerCase()`, not `toLocaleLowerCase()` — the locale-sensitive form maps Turkish `I` to `ı`,
- * so the same tag would fold differently depending on the *server's* locale. A channel's tag
- * identity must not depend on where the process happens to be running.
+ * Delegates to {@link foldText}, which is shared with search (EP-17.4) — and that sharing is
+ * load-bearing rather than tidy. If tagging folded `Football` one way and the search index folded
+ * the query another, an asset would carry a tag nobody could find it by, and both halves would look
+ * correct in isolation.
  */
 export function normalizeTag(label: string): string {
-  return cleanLabel(label).toLowerCase();
+  return foldText(label);
 }
 
 export interface ParsedTags {
@@ -125,7 +90,7 @@ export function parseTagLabels(raw: readonly unknown[]): ParsedTags {
       continue;
     }
 
-    const label = cleanLabel(value);
+    const label = cleanText(value);
     if (label === '') {
       errors.push('a tag must not be blank');
       continue;

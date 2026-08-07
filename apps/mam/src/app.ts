@@ -196,6 +196,33 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     handle(req, reply, async () => options.service.listTags(await callerOf(req))),
   );
 
+  // Simple search (EP-17.4). A GET with the query in the URL, because a search result is a
+  // shareable, bookmarkable, cacheable thing — the faceted POST /search the catalogue describes
+  // arrives with the structured filters that actually need a body.
+  app.get('/api/v1/search', async (req, reply) =>
+    handle(req, reply, async () => {
+      const { q, limit } = req.query as { q?: string; limit?: string };
+      // An absent `q` is a 422, not "everything". A search box that submits empty must not become
+      // an unpaginated dump of the channel.
+      if (typeof q !== 'string' || q.trim() === '') {
+        throw new ValidationError('q is required');
+      }
+      const parsed = limit === undefined ? undefined : Number(limit);
+      if (parsed !== undefined && !Number.isInteger(parsed)) {
+        throw new ValidationError('limit must be an integer');
+      }
+      return options.service.search(
+        await callerOf(req),
+        q,
+        parsed === undefined ? {} : { limit: parsed },
+      );
+    }),
+  );
+
+  app.post('/api/v1/search/reindex', async (req, reply) =>
+    handle(req, reply, async () => options.service.reindex(await callerOf(req))),
+  );
+
   app.get('/api/v1/field-schemas', async (req, reply) =>
     handle(req, reply, async () => options.service.schemas(await callerOf(req))),
   );

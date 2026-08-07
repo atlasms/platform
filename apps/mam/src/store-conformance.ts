@@ -420,6 +420,175 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  // --- the search index (EP-17.4) --------------------------------------------
+
+  test(`${name}: search matches every term, not any of them`, async () => {
+    // OR semantics would return the whole library for any two-word query, which is not what typing
+    // two words means. This is the single behaviour most likely to differ between two hand-written
+    // SQL statements — the sqlite adapter counts a range, Postgres counts a FILTER — so it is
+    // asserted rather than assumed.
+    await withFixture(async ({ store }) => {
+      const both = asset();
+      const one = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(both);
+        await tx.put(one);
+        await tx.indexTerms(both.id, 'ch12', ['match', 'highlights']);
+        await tx.indexTerms(one.id, 'ch12', ['match']);
+      });
+
+      const hits = await store.search('ch12', { exact: ['match', 'highlights'] }, 10);
+      assert.deepEqual(
+        hits.map((h) => h.assetId),
+        [both.id],
+        'an asset carrying only one of the two terms must not match',
+      );
+      assert.equal((await store.search('ch12', { exact: ['match'] }, 10)).length, 2);
+    });
+  });
+
+  test(`${name}: the last term matches as a PREFIX`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(a);
+        await tx.indexTerms(a.id, 'ch12', ['football']);
+      });
+
+      assert.equal((await store.search('ch12', { exact: [], prefix: 'foot' }, 10)).length, 1);
+      assert.equal((await store.search('ch12', { exact: [], prefix: 'football' }, 10)).length, 1);
+      assert.equal((await store.search('ch12', { exact: [], prefix: 'foots' }, 10)).length, 0);
+      // A completed word is NOT a prefix: `foot` as an exact term must not find `football`.
+      assert.equal((await store.search('ch12', { exact: ['foot'] }, 10)).length, 0);
+    });
+  });
+
+  test(`${name}: a prefix range does not run off the end of the alphabet`, async () => {
+    // The bound is the last code point incremented. A term that sorts immediately after the prefix
+    // range is the case a naive `prefix + high-sentinel` gets wrong.
+    await withFixture(async ({ store }) => {
+      const inside = asset();
+      const outside = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(inside);
+        await tx.put(outside);
+        await tx.indexTerms(inside.id, 'ch12', ['abz']);
+        await tx.indexTerms(outside.id, 'ch12', ['ac']);
+      });
+
+      const hits = await store.search('ch12', { exact: [], prefix: 'ab' }, 10);
+      assert.deepEqual(
+        hits.map((h) => h.assetId),
+        [inside.id],
+      );
+    });
+  });
+
+  test(`${name}: score counts matched terms, and ordering is deterministic`, async () => {
+    await withFixture(async ({ store }) => {
+      const strong = asset();
+      const weak = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(strong);
+        await tx.put(weak);
+        await tx.indexTerms(strong.id, 'ch12', ['cup', 'final', 'goal']);
+        await tx.indexTerms(weak.id, 'ch12', ['cup']);
+      });
+
+      const hits = await store.search('ch12', { exact: ['cup'] }, 10);
+      // Both match one term, so the tiebreak is what is being pinned: newest id first, and the
+      // same order every time. An unordered result makes a paginated UI duplicate and drop rows.
+      assert.equal(hits.length, 2);
+      assert.deepEqual(
+        hits.map((h) => h.score),
+        [1, 1],
+      );
+      assert.deepEqual(
+        hits.map((h) => h.assetId),
+        [strong.id, weak.id].sort().reverse(),
+      );
+    });
+  });
+
+  test(`${name}: search is a tenant boundary`, async () => {
+    await withFixture(async ({ store }) => {
+      const mine = asset({ channelId: 'ch12' });
+      const theirs = asset({ channelId: 'ch99' });
+      await store.transaction(async (tx) => {
+        await tx.put(mine);
+        await tx.put(theirs);
+        await tx.indexTerms(mine.id, 'ch12', ['secret']);
+        await tx.indexTerms(theirs.id, 'ch99', ['secret']);
+      });
+
+      assert.deepEqual(
+        (await store.search('ch12', { exact: ['secret'] }, 10)).map((h) => h.assetId),
+        [mine.id],
+      );
+      assert.equal((await store.search('ch404', { exact: ['secret'] }, 10)).length, 0);
+    });
+  });
+
+  test(`${name}: indexTerms REPLACES, so a renamed asset stops matching its old title`, async () => {
+    // The failure this guards against is the quiet one: an asset that keeps answering to a word
+    // nobody can see on it any more.
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(a);
+        await tx.indexTerms(a.id, 'ch12', ['original']);
+      });
+      await store.transaction(async (tx) => tx.indexTerms(a.id, 'ch12', ['renamed']));
+
+      assert.equal((await store.search('ch12', { exact: ['original'] }, 10)).length, 0);
+      assert.equal((await store.search('ch12', { exact: ['renamed'] }, 10)).length, 1);
+
+      await store.transaction(async (tx) => tx.indexTerms(a.id, 'ch12', []));
+      assert.equal((await store.search('ch12', { exact: ['renamed'] }, 10)).length, 0);
+    });
+  });
+
+  test(`${name}: an empty query matches nothing rather than everything`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(a);
+        await tx.indexTerms(a.id, 'ch12', ['anything']);
+      });
+      assert.deepEqual(await store.search('ch12', { exact: [] }, 10), []);
+    });
+  });
+
+  test(`${name}: search honours its limit`, async () => {
+    await withFixture(async ({ store }) => {
+      await store.transaction(async (tx) => {
+        for (let i = 0; i < 5; i++) {
+          const a = asset();
+          await tx.put(a);
+          await tx.indexTerms(a.id, 'ch12', ['common']);
+        }
+      });
+      assert.equal((await store.search('ch12', { exact: ['common'] }, 3)).length, 3);
+    });
+  });
+
+  test(`${name}: DANGER — a rollback drops the index entries too`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await store.transaction(async (tx) => tx.put(a));
+
+      await assert.rejects(
+        store.transaction(async (tx) => {
+          await tx.indexTerms(a.id, 'ch12', ['ghost']);
+          throw new Error('boom');
+        }),
+        /boom/,
+      );
+
+      assert.equal((await store.search('ch12', { exact: ['ghost'] }, 10)).length, 0);
+    });
+  });
+
   test(`${name}: a failed transaction leaves the store usable`, async () => {
     // A driver that forgets to ROLLBACK leaves the connection in a failed transaction, and every
     // later query dies with "current transaction is aborted". The first symptom is the SECOND
