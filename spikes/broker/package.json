@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@atlas/messaging": "*",
-    "amqplib": "^0.10.5",
+    "amqplib": "^2.0.1",
     "nats": "^2.29.0"
   },
   "devDependencies": {
