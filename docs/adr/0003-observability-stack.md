@@ -105,11 +105,16 @@ deliverable until this lands.**
 > `atlas_iam_sessions_revoked_total` and `atlas_iam_policy_compile_duration_seconds`. JWKS latency
 > needed no bespoke metric — the golden-signal histogram covers it under its route template.
 >
-> One signal named above is still absent, and deliberately: **there are no account lockouts to
-> count, because nothing locks an account.** The `locked` state exists and refuses logins, but no
-> policy ever sets it. `atlas_iam_login_attempts_total{outcome="locked"}` counts attempts *against*
-> an already-locked account, which is what is observable today. The lockout policy itself is
-> IAM work, not observability work.
+> One signal named above was absent at the time, and deliberately: **there were no account lockouts
+> to count, because nothing locked an account.** The `locked` state existed and refused logins, but
+> no policy ever set it, so a `lockouts_total` would have been structurally always zero — a flat
+> line reading as "no brute force is succeeding" when it meant "no lockout policy exists".
+> `atlas_iam_login_attempts_total{outcome="locked"}` counts attempts *against* an already-locked
+> account, which was what was observable.
+>
+> The policy landed separately in [#240](https://github.com/atlasms/platform/issues/240), and
+> `atlas_iam_lockouts_total` now counts the lock EVENT — the one to alert on, since attempts against
+> a locked account measure an attacker's persistence rather than a new incident.
 
 ## Decision
 

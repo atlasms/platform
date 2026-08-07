@@ -18,6 +18,15 @@ export interface User {
   lastLogin?: string;
   lastIp?: string;
   createdAt: string;
+  /** Consecutive failed logins in the current run — see lockout.ts (#240). */
+  failedAttempts?: number;
+  /** When the current run of failures began; a run older than the window is stale. */
+  firstFailedAt?: string;
+  /**
+   * When an AUTOMATIC lock lifts. Absent on an administrative lock, which never expires — that
+   * distinction is what stops the clock from undoing an operator's decision.
+   */
+  lockedUntil?: string;
 }
 
 export interface Credential {

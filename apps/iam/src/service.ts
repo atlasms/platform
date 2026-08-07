@@ -6,6 +6,14 @@ import { ulid } from '@atlas/contracts';
 import { MetricRegistry, Unauthorized } from '@atlas/service-kit';
 import { compile, type EffectivePolicy, type Rule, type Role } from '@atlas/policy';
 import { authSignals, type AuthSignals, type LoginOutcome } from './auth-signals.ts';
+import {
+  clearFailures,
+  clearLock,
+  DEFAULT_LOCKOUT,
+  lockExpired,
+  nextFailure,
+  type LockoutPolicy,
+} from './lockout.ts';
 import { hashPassword, needsRehash, verifyPassword } from './passwords.ts';
 import { hashRefreshToken, mintRefreshToken, signAccessToken, type KeyRing } from './tokens.ts';
 import {
@@ -30,6 +38,8 @@ export interface IamOptions {
    * place to inject a registry into IAM, and it is here.
    */
   metrics?: MetricRegistry;
+  /** Failed-attempt lockout thresholds (#240). Defaults to {@link DEFAULT_LOCKOUT}. */
+  lockout?: Partial<LockoutPolicy>;
   /** Injected so tests are deterministic. */
   now?: () => number;
 }
@@ -53,6 +63,7 @@ export class IamService {
   /** Exposed so `buildIamApp` can serve it — see {@link IamOptions.metrics}. */
   readonly metrics: MetricRegistry;
   #signals: AuthSignals;
+  #lockout: LockoutPolicy;
   #ring: KeyRing;
   #opts: Required<Pick<IamOptions, 'accessTokenTtl' | 'refreshTokenTtlMs'>> & IamOptions;
   #now: () => number;
@@ -61,6 +72,7 @@ export class IamService {
     this.store = options.store ?? createStore();
     this.metrics = options.metrics ?? new MetricRegistry();
     this.#signals = authSignals(this.metrics);
+    this.#lockout = { ...DEFAULT_LOCKOUT, ...options.lockout };
     this.#ring = options.keyRing;
     this.#now = options.now ?? Date.now;
     this.#opts = {
@@ -127,11 +139,22 @@ export class IamService {
     };
 
     const user = findByUsername(this.store, username);
-    if (!user) {
-      // Still do the work: returning fast for an unknown user is a timing oracle.
-      await verifyPassword(password, DUMMY_HASH);
-      return fail('unknown_user', 'unknown username');
-    }
+    const cred = user ? this.store.credentials.get(user.id) : undefined;
+
+    // ONE argon2 verification on every path, before any branch — including the ones that will
+    // refuse for a reason that has nothing to do with the password.
+    //
+    // The unknown-user case already did this. The others did not, and they returned in microseconds
+    // while a wrong password cost ~100ms, so timing alone said "this account exists and is not
+    // active". Lockout turns that from a leak into a tool: an attacker could DELIBERATELY lock an
+    // account and then read the timing to confirm the username is real. Same work, every path.
+    const passwordOk = await verifyPassword(password, cred?.hash ?? DUMMY_HASH);
+
+    if (!user) return fail('unknown_user', 'unknown username');
+
+    // An automatic lock lifts itself. Checked BEFORE the state test, so the very next attempt after
+    // the window is an ordinary login rather than needing an operator (#240).
+    if (lockExpired(user, this.#now())) clearLock(user);
 
     if (user.state !== 'active') {
       // `user.state` is the outcome, narrowed to the non-active states — which is exactly what
@@ -144,10 +167,10 @@ export class IamService {
       );
     }
 
-    const cred = this.store.credentials.get(user.id);
     if (!cred) return fail('no_credential', 'no password credential (SSO-only user)', user);
 
-    if (!(await verifyPassword(password, cred.hash))) {
+    if (!passwordOk) {
+      this.#recordFailure(user);
       return fail('bad_password', 'bad password', user);
     }
 
@@ -160,6 +183,9 @@ export class IamService {
     const now = new Date(this.#now()).toISOString();
     user.lastLogin = now;
     if (ctx.ip !== undefined) user.lastIp = ctx.ip;
+    // A correct password ends the run, however long it had grown. Nine failures then a success
+    // must not leave the account one mistake from a lock a week later.
+    clearFailures(user);
     this.#signals.login('success');
     this.#audit({ username, userId: user.id, result: 'success', ctx });
 
@@ -213,6 +239,19 @@ export class IamService {
     record.revokedAt = new Date(this.#now()).toISOString();
     this.#signals.refresh('success');
     return this.#issue(user, record.familyId, record.id);
+  }
+
+  /**
+   * Lift a lock, automatic or administrative, and start the user clean (#240).
+   *
+   * The escape hatch the time bound is not: an operator must be able to give someone their account
+   * back now, and must be able to clear a lock they set themselves for cause.
+   */
+  unlock(userId: string): User {
+    const user = this.store.users.get(userId);
+    if (!user) throw new Unauthorized('unknown user');
+    clearLock(user);
+    return user;
   }
 
   /** Revoke one session, or every session for the user. */
@@ -329,6 +368,32 @@ export class IamService {
       expiresIn: this.#opts.accessTokenTtl,
       permVersion: user.permVersion,
     };
+  }
+
+  /**
+   * Fold one wrong password into the user's run, and lock the account if it trips the threshold.
+   *
+   * The attempt that trips it is still reported as `bad_password` — that is what happened, and the
+   * lock applies from the NEXT attempt. Reporting it as `locked` would make the two counters
+   * double-count one event and would tell the attacker precisely which guess closed the door.
+   */
+  #recordFailure(user: User): void {
+    const now = this.#now();
+    const next = nextFailure(user, now, this.#lockout);
+    user.failedAttempts = next.failedAttempts;
+    user.firstFailedAt = next.firstFailedAt;
+    if (!next.locked) return;
+
+    user.state = 'locked';
+    user.lockedUntil = new Date(now + this.#lockout.durationMs).toISOString();
+    this.#signals.lockedOut();
+    this.#audit({
+      username: user.username,
+      userId: user.id,
+      result: 'locked',
+      reason: `locked after ${next.failedAttempts} consecutive failures, until ${user.lockedUntil}`,
+      ctx: {},
+    });
   }
 
   #audit(input: {

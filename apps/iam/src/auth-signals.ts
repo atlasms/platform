@@ -42,6 +42,8 @@ export interface AuthSignals {
   issued(grant: Grant): void;
   /** `sessions` refresh tokens moved from live to revoked — 0 is not recorded. */
   revoked(reason: RevocationReason, sessions: number): void;
+  /** One account crossed the failure threshold and was locked. */
+  lockedOut(): void;
   /** Seconds spent compiling one effective policy. */
   policyCompiled(seconds: number): void;
 }
@@ -77,6 +79,14 @@ export function authSignals(registry: MetricRegistry): AuthSignals {
     labelNames: ['reason'],
   });
 
+  // The lockout EVENT, which is a different question from `login_attempts_total{outcome="locked"}`
+  // — that counts attempts made against an account already locked, and stays high for as long as
+  // an attacker keeps knocking. This one fires once, when the lock closes. Alert on this.
+  const lockouts = registry.counter({
+    name: 'atlas_iam_lockouts_total',
+    help: 'Accounts locked by the failed-attempt policy.',
+  });
+
   // Named in iam.md §12 as "permission-resolution latency". It is not an HTTP concern — the same
   // compile runs on every token issue — so the golden-signal route histogram does not cover it.
   // It grows with a subject's role and group count, which is what makes it worth watching.
@@ -97,6 +107,7 @@ export function authSignals(registry: MetricRegistry): AuthSignals {
       // create the series, making an empty revocation indistinguishable from none at all.
       if (sessions > 0) revoked.inc({ reason }, sessions);
     },
+    lockedOut: () => lockouts.inc(),
     policyCompiled: (seconds) => policyCompile.observe({}, seconds),
   };
 }
