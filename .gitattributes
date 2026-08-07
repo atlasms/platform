@@ -30,8 +30,14 @@ Dockerfile*   text eol=lf
 *.golden.*        -text -diff
 **/fixtures/**    -text
 
-# Generated — collapse in PR diffs so reviews stay readable.
-package-lock.json linguist-generated=true -diff
+# Generated — collapsed by default in PR diffs so reviews stay readable.
+#
+# `linguist-generated` alone does that job. It deliberately does NOT carry `-diff`: that attribute
+# makes git treat the file as binary, so `git diff` on a lock file locally shows "Bin 18176 ->
+# 18166 bytes" and nothing else. Reviewing which dependency moved — the one thing a lock file diff
+# is for, and the thing a security bump has to be checked against — then needs `--text` and knowing
+# to reach for it. Collapsed-but-expandable is the goal; unreadable is not.
+package-lock.json linguist-generated=true
 
 # Keep docs out of the language stats; this is a platform, not a docs project.
 docs/**  linguist-documentation=true
