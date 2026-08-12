@@ -16,7 +16,7 @@
     "@atlas/contracts": "*",
     "@atlas/policy": "*",
     "@atlas/service-kit": "*",
-    "fastify": "^5.11.0",
+    "fastify": "^5.11.3",
     "jose": "^6.2.4"
   },
   "devDependencies": {
