@@ -19,6 +19,13 @@ export {
 } from './auth.ts';
 export { createLogger, type Logger } from './logger.ts';
 export {
+  configEtag,
+  matchesEtag,
+  serveSnapshot,
+  type SnapshotResult,
+  type Versioned,
+} from './snapshot.ts';
+export {
   Counter,
   Gauge,
   Histogram,

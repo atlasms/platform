@@ -163,3 +163,71 @@ test('every response is traceable', async () => {
   });
   assert.equal(res.json().correlationId, 'trace-me');
 });
+
+// --- EP-04.8: GET /reference, and its ETag ----------------------------------
+
+test('GET /reference returns the snapshot with an ETag', async () => {
+  const a = app(['asset:read', 'asset:write', 'taxonomy:read']);
+  const res = await a.inject({ method: 'GET', url: '/api/v1/reference', headers: identity });
+
+  assert.equal(res.statusCode, 200);
+  assert.match(
+    res.headers['etag'] as string,
+    /^W\/"cv-\d+"$/,
+    'a WEAK tag — the body is assembled',
+  );
+  assert.ok(typeof res.json<{ configVersion: number }>().configVersion === 'number');
+});
+
+test('DANGER: an unchanged snapshot revalidates to 304, and the 304 keeps the ETag', async () => {
+  // A 304 without an ETag tells the client its cached entry has no validator, so the next request
+  // is unconditional — the revalidation quietly stops working and every poll ships the snapshot.
+  const a = app(['asset:read', 'asset:write', 'taxonomy:read']);
+  const first = await a.inject({ method: 'GET', url: '/api/v1/reference', headers: identity });
+  const etag = first.headers['etag'] as string;
+
+  const second = await a.inject({
+    method: 'GET',
+    url: '/api/v1/reference',
+    headers: { ...identity, 'if-none-match': etag },
+  });
+
+  assert.equal(second.statusCode, 304);
+  assert.equal(second.body, '', 'the body is the saving');
+  assert.equal(second.headers['etag'], etag);
+});
+
+test('a changed vocabulary breaks the revalidation, as it must', async () => {
+  const a = app(['asset:read', 'asset:write', 'taxonomy:read']);
+  const created = await a.inject({
+    method: 'POST',
+    url: '/api/v1/assets',
+    headers: identity,
+    payload: { title: 'Clip', mediaType: 'video', fileType: 'mxf' },
+  });
+  const id = created.json<{ id: string }>().id;
+
+  const before = await a.inject({ method: 'GET', url: '/api/v1/reference', headers: identity });
+  const etag = before.headers['etag'] as string;
+
+  await a.inject({
+    method: 'PUT',
+    url: `/api/v1/assets/${id}/tags`,
+    headers: identity,
+    payload: { tags: ['Freshly Minted'] },
+  });
+
+  const after = await a.inject({
+    method: 'GET',
+    url: '/api/v1/reference',
+    headers: { ...identity, 'if-none-match': etag },
+  });
+  assert.equal(after.statusCode, 200, 'a stale validator must NOT produce a 304');
+  assert.notEqual(after.headers['etag'], etag);
+});
+
+test('SECURITY: /reference needs taxonomy:read', async () => {
+  const a = app(['asset:read']);
+  const res = await a.inject({ method: 'GET', url: '/api/v1/reference', headers: identity });
+  assert.equal(res.statusCode, 403);
+});

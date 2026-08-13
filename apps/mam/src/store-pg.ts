@@ -128,6 +128,21 @@ export const pgTagsMigration: Migration = {
  * editor types most — the half-finished word — and the failure shows up as latency at library
  * scale rather than as a wrong answer.
  */
+/**
+ * MAM's reference-data version (EP-04.8).
+ *
+ * ONE row, pinned by a CHECK — a version table that can grow rows is a version table that will,
+ * and then "the" config version is a question about which row you read.
+ */
+export const pgConfigMigration: Migration = {
+  id: 'mam_config',
+  up: `CREATE TABLE IF NOT EXISTS mam_config (
+         id      integer PRIMARY KEY CHECK (id = 1),
+         version bigint NOT NULL
+       );
+       INSERT INTO mam_config (id, version) VALUES (1, 1) ON CONFLICT (id) DO NOTHING;`,
+};
+
 export const pgSearchMigration: Migration = {
   id: 'mam_search',
   up: `CREATE TABLE IF NOT EXISTS asset_search (
@@ -152,6 +167,7 @@ export const mamMigrations: Migration[] = [
   // Appended, never inserted: migrations run in list order and a deployed database has already
   // recorded the ones above. Slotting this next to its table would re-order history.
   outboxHeadersMigration,
+  pgConfigMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
@@ -267,11 +283,33 @@ export function pgAssetStore(pool: PgPool): AssetStore {
       return rows.map((r) => ({ assetId: r.asset_id, score: Number(r.score) }));
     },
 
+    async configVersion() {
+      const { rows } = await pool.query<{ version: string }>(
+        'SELECT version FROM mam_config WHERE id = 1',
+      );
+      // bigint arrives as a STRING from node-postgres — it does not fit a JS number in general, so
+      // the driver refuses to guess. Number() is safe here because a version counter will not pass
+      // 2^53 before the heat death of the newsroom.
+      return Number(rows[0]?.version ?? 1);
+    },
     async transaction(fn) {
       return withTransaction(pool, async (client) => {
         // The tx handle is built per transaction and closes over THIS client. That is the point:
         // a write that reached for the pool instead would land in a different transaction, and the
         // atomicity the outbox exists for would be gone without a single error.
+
+        /**
+         * Advance the reference-data version (EP-04.8), on THIS client so it commits with the
+         * change that caused it.
+         *
+         * A closure rather than a method on `AssetTx`: the service never bumps by hand — the store
+         * bumps on the writes that change reference data — and putting it on the port would invite
+         * a caller to bump without changing anything, or to change something without bumping.
+         */
+        const bumpConfig = async (): Promise<void> => {
+          await client.query('UPDATE mam_config SET version = version + 1 WHERE id = 1');
+        };
+
         const tx: AssetTx = {
           async put(asset) {
             await client.query(
@@ -310,6 +348,7 @@ export function pgAssetStore(pool: PgPool): AssetStore {
                 JSON.stringify(schema.fields),
               ],
             );
+            await bumpConfig();
           },
           async setTags(assetId, channelId, candidates) {
             const resolved: Tag[] = [];
@@ -340,6 +379,10 @@ export function pgAssetStore(pool: PgPool): AssetStore {
               ]);
             }
 
+            // Bumped on ANY tag write, not only when a label is genuinely new. Over-bumping costs
+            // a client one wasted revalidation; under-bumping serves a vocabulary missing the tag
+            // somebody just created. For a cache validator those are not comparable risks.
+            await bumpConfig();
             return resolved;
           },
           async indexTerms(assetId, channelId, terms) {

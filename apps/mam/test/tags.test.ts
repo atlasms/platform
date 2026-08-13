@@ -362,3 +362,96 @@ test('over HTTP: tags need the gateway’s identity headers like everything else
     assert.equal((await app.inject({ method: 'GET', url })).statusCode, 401, url);
   }
 });
+
+// =============================================================================
+// EP-04.8 — the versioned reference snapshot
+// =============================================================================
+
+/** taxonomy:read deliberately absent — the snapshot IS the tag vocabulary. */
+const NO_TAXONOMY: Rule[] = [
+  { id: 'read', permissions: ['asset:read'], scope: { channelIds: [CHANNEL] } },
+  { id: 'write', permissions: ['asset:write'], scope: { channelIds: [CHANNEL] } },
+];
+
+const OTHER_CHANNEL: Rule[] = [
+  { id: 'read', permissions: ['asset:read', 'taxonomy:read'], scope: { channelIds: ['ch99'] } },
+];
+
+test('the reference snapshot carries the channel tag vocabulary and a version', async () => {
+  const { service, caller, store } = harness();
+  const who = caller();
+  const asset = await service.create(who, NEW_ASSET);
+  await service.setTags(who, asset.id, ['Football', 'Highlights']);
+
+  const snapshot = await service.referenceSnapshot(who);
+  assert.ok(snapshot.configVersion >= 1);
+  assert.deepEqual(
+    snapshot.vocabularies.tag.map((t) => t.label).sort(),
+    ['Football', 'Highlights'],
+    'the vocabulary IS the tag list',
+  );
+  // `key` is the NORMALIZED form: a snapshot validates ("is this a known tag?") as well as renders,
+  // and those want different strings.
+  assert.deepEqual(snapshot.vocabularies.tag.map((t) => t.key).sort(), ['football', 'highlights']);
+  assert.equal(await store.configVersion(), snapshot.configVersion);
+});
+
+test('DANGER: the version moves when the vocabulary does', async () => {
+  // The whole caching contract. If a tag can be minted without the version moving, every holder
+  // revalidates to 304 forever and never sees the new term — and validation then rejects a tag a
+  // user just created.
+  const { service, caller } = harness();
+  const who = caller();
+  const asset = await service.create(who, NEW_ASSET);
+
+  const before = (await service.referenceSnapshot(who)).configVersion;
+  await service.setTags(who, asset.id, ['Brand New Tag']);
+  const after = (await service.referenceSnapshot(who)).configVersion;
+
+  assert.ok(after > before, `version did not move: ${before} -> ${after}`);
+});
+
+test('the version is MONOTONIC, never a content hash', async () => {
+  // §5's convergence story is "holders refresh when they see a HIGHER version", so the number has
+  // to carry ordering. A content hash revalidates correctly and breaks that — and reverting to an
+  // earlier vocabulary would reuse an earlier value.
+  const { service, caller } = harness();
+  const who = caller();
+  const asset = await service.create(who, NEW_ASSET);
+
+  const versions: number[] = [];
+  for (const label of ['one', 'two', 'three', 'two']) {
+    await service.setTags(who, asset.id, [label]);
+    versions.push((await service.referenceSnapshot(who)).configVersion);
+  }
+
+  for (let i = 1; i < versions.length; i += 1) {
+    assert.ok(
+      (versions[i] as number) > (versions[i - 1] as number),
+      `not monotonic at ${i}: ${versions.join(', ')}`,
+    );
+  }
+});
+
+test('SECURITY: the snapshot needs taxonomy:read, like the tag list it contains', async () => {
+  // Serving it more freely would hand out under one name exactly what is guarded under another.
+  const { service, caller } = harness(NO_TAXONOMY);
+  await assert.rejects(service.referenceSnapshot(caller()), /taxonomy/);
+});
+
+test('SECURITY: the snapshot is one channel, not the deployment', async () => {
+  const { service, caller, store } = harness();
+  const who = caller();
+  const asset = await service.create(who, NEW_ASSET);
+  await service.setTags(who, asset.id, ['MineOnly']);
+
+  // A caller in a different channel, holding a grant scoped to THAT channel.
+  const other = new MamService({ store });
+  const snapshot = await other.referenceSnapshot({
+    userId: 'user-3',
+    channelId: 'ch99',
+    policy: compile({ subjectId: 'user-3', permVersion: 1, rules: OTHER_CHANNEL }),
+  });
+  assert.deepEqual(snapshot.vocabularies.tag, [], 'another channel sees none of it');
+  assert.ok(snapshot.configVersion >= 1, 'but the version is deployment-wide');
+});
