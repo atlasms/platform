@@ -101,6 +101,34 @@ Panels are permission-matched with `canMatch`, not `canActivate`: a route the us
 never matches, so the router falls through to the catch-all rather than navigating then bouncing —
 and the panel's chunk is never fetched.
 
+## API types come from the contract (EP-11.5)
+
+`src/app/core/generated/*.types.ts` is generated from `docs/architecture/openapi/*.yaml` and checked
+in, so a type change shows up as a reviewable diff in a pull request rather than materialising
+during a build.
+
+```sh
+npm run api:types    # regenerate
+npm run api:check    # fail if the checked-in output is stale — runs in CI
+```
+
+**It found drift on the first run.** `iam.yaml` called the permission version `permissionVersion`
+while [FR-IAM-14](../../docs/requirements/05-functional-requirements.md#iam), the JWT claim, the
+`x-atlas-perm-version` header and every line of code called it `permVersion` — and the contract
+omitted `expiresIn` entirely. Nothing had ever compared the two, because until now the OpenAPI stubs
+were documentation only: referenced in comments, parsed by nothing. The contract was corrected.
+
+`api:check` is a **separate CI step**, not part of `nx test`. Nx skips unaffected projects, and
+editing `docs/architecture/openapi/*.yaml` touches no project — so the one change that can cause
+drift is exactly the one an affected-only run would ignore.
+
+The generator formats its output with the repo's prettier config before writing _or_ comparing.
+Otherwise `api:check` and `format:check` contradict each other, and two required checks that cannot
+both pass is a build nobody can fix.
+
+It handles a deliberately narrow subset of JSON Schema and **throws** on anything else, rather than
+emitting `unknown` — a generator that quietly degrades puts the drift back one field at a time.
+
 ## Toolchain divergence, on purpose
 
 Studio is the one project that **emits**, and it ships its own toolchain:

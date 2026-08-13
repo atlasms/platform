@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Atlas Automation — service-based media/broadcast automation platform. Nx monorepo: shared libraries under libs/, deployables under apps/, design docs under docs/.",
+  "description": "Atlas Automation \u2014 service-based media/broadcast automation platform. Nx monorepo: shared libraries under libs/, deployables under apps/, design docs under docs/.",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=24.0.0"
@@ -22,9 +22,11 @@
     "affected:lint": "nx affected -t lint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "api:types": "node scripts/generate-api-types.mjs",
+    "api:check": "node scripts/generate-api-types.mjs --check",
     "graph": "nx graph",
     "lock:check": "npm ci --dry-run",
-    "verify": "npm run lock:check && npm run format:check && npm run lint && npm run typecheck && npm run test",
+    "verify": "npm run lock:check && npm run format:check && npm run api:check && npm run lint && npm run typecheck && npm run test",
     "k8s:build": "docker build -f infra/docker/Dockerfile --build-arg SERVICE=iam -t atlas/iam:dev . && docker build -f infra/docker/Dockerfile --build-arg SERVICE=mam -t atlas/mam:dev . && docker build -f infra/docker/Dockerfile --build-arg SERVICE=api-gateway -t atlas/api-gateway:dev .",
     "k8s:load": "kind load docker-image atlas/iam:dev atlas/mam:dev atlas/api-gateway:dev --name atlas-dev",
     "k8s:deploy": "kubectl apply -k infra/k8s/overlays/dev",
@@ -41,7 +43,8 @@
     "prettier": "^3.4.0",
     "tsx": "^4.23.1",
     "typescript": "^5.7.0",
-    "typescript-eslint": "^8.18.0"
+    "typescript-eslint": "^8.18.0",
+    "yaml": "^2.9.0"
   },
   "overrides": {
     "nx": {

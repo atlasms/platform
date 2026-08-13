@@ -145,11 +145,17 @@ components:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
     TokenPair:
       type: object
-      required: [accessToken, refreshToken, permissionVersion]
+      # `permVersion`, not `permissionVersion`. This stub said the latter while FR-IAM-14, the JWT
+      # claim, the `x-atlas-perm-version` internal header and every line of code said the former —
+      # a documented lie about a live endpoint that survived because nothing ever compared the two.
+      # EP-11.5 generates Studio's types from this file, which is what finally made them disagree
+      # out loud. `expiresIn` was simply missing.
+      required: [accessToken, refreshToken, expiresIn, permVersion]
       properties:
         accessToken: { type: string }
         refreshToken: { type: string }
-        permissionVersion: { type: integer }
+        expiresIn: { type: string, description: 'Access-token lifetime, e.g. "15m".' }
+        permVersion: { type: integer }
     User:
       type: object
       required: [id, login]

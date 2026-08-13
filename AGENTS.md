@@ -54,7 +54,7 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                                                                                                                                                                                                                                                                      |
 | **EP-10** `iam`                  | ✅ 55 tests, incl. `/metrics` + auth signals (#205) and failed-attempt lockout (#240). ⬜ 10.4 CRUD, 10.6 event emission                                                                                                                                                                                                                |
 | **EP-13** walking skeleton       | ✅ 12 tests incl. **13.3 one trace across gateway → service → broker → consumer** + **13.4 smoke suite green** (13/13)                                                                                                                                                                                                                  |
-| **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.2 real sign-in against IAM**, 11.3 the workbench, 11.7 `can()` rendering — 57 tests. ⬜ 11.4 ws, 11.5 clients, 11.6 i18n/RTL                                                                                                                                                                                     |
+| **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.2 real sign-in against IAM**, 11.3 the workbench, 11.7 `can()` rendering — 57 tests. **11.5 generated API clients** (`npm run api:check`). ⬜ 11.4 ws, 11.6 i18n/RTL                                                                                                                                             |
 | **EP-17** `mam` (Phase 1)        | ✅ 238 tests — asset core, lifecycle, metadata gate, outbox events, Postgres, deployed, **17.2 extensible metadata**, **17.3 free-form tags**, **17.4 search**, field-group scoping (#225). ⬜ 17.7, 17.8 (need services that do not exist yet)                                                                                         |
 | **EP-12** observability          | ✅ 12.4 alerts + golden signals everywhere; **12.1 logs + 12.2 metrics** — Prometheus/Loki/Alloy/Grafana in [`infra/k8s/observability`](infra/k8s/observability/), optional per [ADR-0003](docs/adr/0003-observability-stack.md). **12.3 tracing** (Alloy OTLP → Tempo, logs↔traces linked in Grafana). ⬜ #245 per-service access logs |
 
@@ -92,7 +92,7 @@ Studio signs in against it for real — `npm run k8s:up`, then `npm start -w @at
 proxies `/auth` and `/api` to the gateway.
 
 **Suggested next tasks:** `EP-11.5` (generated API clients, so Studio panels can show real assets) ·
-`EP-11.5` (generated API clients, so Studio panels can show real assets) ·
+`EP-20.1/20.2` (Studio panels — the generated clients are now there to build on) ·
 `EP-08.5` (aggregated `GET /reference`).
 
 > **Adapters are separate packages, held to shared conformance suites.** `@atlas/messaging` and
