@@ -13,10 +13,11 @@ export const API_BASE_URL = new InjectionToken<string>('API_BASE_URL', {
   factory: () => '',
 });
 
-/** IAM's token pair, exactly as `/auth/login` and `/auth/refresh` return it. */
-export interface TokenPair {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: string;
-  permVersion: number;
-}
+// Re-exported from the GENERATED types rather than declared here (EP-11.5).
+//
+// This interface used to be hand-written, and that is exactly how it drifted: the contract said
+// `permissionVersion`, this said `permVersion`, and both were "obviously right" to whoever last
+// looked at one of them. Now the contract decides and `npm run api:check` fails the build if this
+// file's source and `docs/architecture/openapi/iam.yaml` disagree.
+export type { TokenPair, User, PermissionRule } from './generated/iam.types.ts';
+export type { Asset, Tag, Person, VocabularyTerm } from './generated/mam.types.ts';

@@ -112,6 +112,13 @@ jobs:
       - name: Format check
         run: npm run format:check
 
+      # The generated API types must match the OpenAPI contracts (EP-11.5). NOT part of `nx test`:
+      # nx skips unaffected projects, and a change to `docs/architecture/openapi/*.yaml` touches no
+      # project at all — so the one edit that can cause drift is exactly the one an affected-only
+      # run would ignore.
+      - name: API types match the contracts
+        run: npm run api:check
+
       # --- PR: only what this change affects -------------------------------
       - name: Affected (lint, typecheck, test)
         if: github.event_name == 'pull_request'
