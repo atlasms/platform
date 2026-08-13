@@ -12,6 +12,8 @@
 // Getting any of this subtly wrong does not throw — it produces traces that silently do not join
 // up, which is the failure mode tracing exists to prevent. Hence the tests.
 
+import { currentContext } from './correlation.ts';
+
 /** A parsed, VALID trace context. Constructing one of these means the header was well-formed. */
 export interface TraceContext {
   /** 32 lowercase hex characters, never all zero. */
@@ -71,6 +73,25 @@ export function parseTraceparent(value: unknown): TraceContext | undefined {
 /** Render the header a downstream hop should receive. */
 export function formatTraceparent(ctx: TraceContext): string {
   return `00-${ctx.traceId}-${ctx.spanId}-${ctx.sampled ? '01' : '00'}`;
+}
+
+/**
+ * The ambient trace context as a `traceparent`, or undefined if nothing is being traced.
+ *
+ * For propagation from places that have no span object to hand — chiefly an outbox record, which is
+ * WRITTEN inside a request and PUBLISHED minutes later by a background relay. Instrumenting the
+ * publish call instead would capture the relay's context, which is empty, and the message would
+ * start a brand-new trace with no link to the request that caused it. Capturing here is the
+ * difference between "an event happened" and "this event happened BECAUSE of that request".
+ */
+export function currentTraceparent(): string | undefined {
+  const ctx = currentContext();
+  if (ctx?.traceId === undefined || ctx.spanId === undefined) return undefined;
+  return formatTraceparent({
+    traceId: ctx.traceId,
+    spanId: ctx.spanId,
+    sampled: ctx.sampled === true,
+  });
 }
 
 /**

@@ -11,7 +11,13 @@
 
 import { buildEnvelope, subjectFor, ulid, validatePayload, type Envelope } from '@atlas/contracts';
 import { can, canEnforce, type EffectivePolicy } from '@atlas/policy';
-import { Conflict, Forbidden, NotFound, ValidationError } from '@atlas/service-kit';
+import {
+  Conflict,
+  currentTraceparent,
+  Forbidden,
+  NotFound,
+  ValidationError,
+} from '@atlas/service-kit';
 import {
   orphanedFields,
   requiredFieldNames,
@@ -880,6 +886,12 @@ export class MamService {
         id: envelope.messageId,
         subject: subjectFor(channelId, eventType),
         body: envelope,
+        // The trace context is captured HERE, where the event is created inside the request — not
+        // where it is published. The outbox relay publishes minutes later on a timer with no
+        // ambient context at all, so instrumenting `broker.publish()` would attach nothing and the
+        // consumer would start a fresh trace. That is the difference between "an event happened"
+        // and "this event happened BECAUSE of that request" (EP-13.3).
+        ...defined({ headers: traceHeaders() }),
       },
     };
   }
@@ -960,6 +972,18 @@ function pickUpdatable(patch: UpdateAssetInput): UpdateAssetInput {
  * `exactOptionalPropertyTypes` is on, so `{ a: undefined }` is not the same as `{}` — and on the
  * wire an explicit null is noise every consumer has to handle.
  */
+/**
+ * The ambient trace context as message headers, or undefined when nothing is being traced.
+ *
+ * Undefined rather than `{}` so an untraced deployment's messages are byte-identical to what they
+ * were before tracing existed — an empty headers object would change every event envelope on the
+ * wire for services that never turn tracing on.
+ */
+function traceHeaders(): Record<string, string> | undefined {
+  const traceparent = currentTraceparent();
+  return traceparent === undefined ? undefined : { traceparent };
+}
+
 function defined<T extends Record<string, unknown>>(
   source: T,
 ): { [K in keyof T]?: Exclude<T[K], undefined> } {

@@ -124,6 +124,16 @@ export interface Tracer {
     options: { adoptRemote: boolean; attributes?: Record<string, AttributeValue> },
     fn: (span: Span) => T,
   ): T;
+  /**
+   * Start a span for a message taken off the broker, continuing the trace that PUBLISHED it.
+   *
+   * `headers` are the message's, not an HTTP request's — W3C Trace Context is transport-agnostic,
+   * which is why the same `traceparent` works on a NATS message as on a request. `adoptRemote` is
+   * not offered: a message arrives from inside the platform, so there is no untrusted publisher to
+   * defend against, and refusing the context would break the trace at exactly the hop that is
+   * hardest to reconstruct by hand.
+   */
+  consumer<T>(name: string, headers: Record<string, string> | undefined, fn: (span: Span) => T): T;
   /** Start a child span of whatever is current, or a new trace if nothing is. */
   start(name: string, kind: SpanKindValue, attributes?: Record<string, AttributeValue>): Span;
   /** Spans finished but not yet sent. */
@@ -252,6 +262,27 @@ export function createTracer(options: TracerOptions): Tracer {
         sampled: ctx.sampled,
       };
       return runWithContext(next, () => fn(span));
+    },
+
+    consumer(name, headers, fn) {
+      const remote = parseTraceparent(headers?.[TRACEPARENT_HEADER]);
+      const ctx: TraceContext = remote
+        ? { traceId: remote.traceId, spanId: newSpanId(), sampled: remote.sampled }
+        : { traceId: newTraceId(), spanId: newSpanId(), sampled: Math.random() < sampleRatio };
+
+      const span = makeSpan(name, SpanKind.CONSUMER, ctx, remote?.spanId, {});
+      // A consumer runs on a relay's timer with NO ambient context, so unlike `server` there is
+      // nothing to merge — the correlation id comes from the trace the publisher started, which is
+      // the only thing tying this work back to the request that caused it.
+      return runWithContext(
+        {
+          correlationId: ctx.traceId,
+          traceId: ctx.traceId,
+          spanId: ctx.spanId,
+          sampled: ctx.sampled,
+        },
+        () => fn(span),
+      );
     },
 
     start(name, kind, attributes) {

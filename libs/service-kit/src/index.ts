@@ -37,6 +37,7 @@ export {
   type RequestSample,
 } from './golden-signals.ts';
 export {
+  currentTraceparent,
   formatTraceparent,
   newSpanId,
   newTraceId,

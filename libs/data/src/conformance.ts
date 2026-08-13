@@ -75,6 +75,44 @@ export function outboxConformance(name: string, harness: OutboxHarness): void {
     });
   });
 
+  test(`[${name}] message HEADERS survive the round trip through storage`, async () => {
+    // They did not. Both stores persisted only (id, subject, body), so anything a publisher put in
+    // `Message.headers` — part of the contract all along — vanished between the transaction and the
+    // broker. Found via tracing: the `traceparent` written inside a request never reached the
+    // consumer, so the async half of every workflow began a brand-new trace (EP-13.3). Nothing
+    // about the bug was tracing-specific, which is why the fix is pinned HERE rather than there.
+    await withFixture(async (f) => {
+      await f.transaction(async () => {
+        await f.enqueue({
+          id: 'evt-h',
+          message: {
+            ...msg('evt-h'),
+            headers: { traceparent: '00-' + 'a'.repeat(32) + '-' + 'b'.repeat(16) + '-01' },
+          },
+        });
+      });
+
+      const [pending] = await f.store.listUnsent(10);
+      assert.deepEqual(pending?.message.headers, {
+        traceparent: '00-' + 'a'.repeat(32) + '-' + 'b'.repeat(16) + '-01',
+      });
+    });
+  });
+
+  test(`[${name}] a message with NO headers round-trips without gaining any`, async () => {
+    // The other half: `headers: {}` and "no headers" are different things under
+    // exactOptionalPropertyTypes, and a row written before the column existed must come back as
+    // exactly the message it was.
+    await withFixture(async (f) => {
+      await f.transaction(async () => {
+        await f.enqueue({ id: 'evt-none', message: msg('evt-none') });
+      });
+
+      const [pending] = await f.store.listUnsent(10);
+      assert.equal(pending?.message.headers, undefined);
+    });
+  });
+
   test(`[${name}] ATOMICITY: a rolled-back unit of work leaves neither row nor event`, async () => {
     // The whole reason the outbox exists. If this fails, the platform can announce things that
     // did not happen, or do things it never announced.

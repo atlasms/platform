@@ -5,7 +5,13 @@
 // (tenant isolation, outbox atomicity) are properties of the adapter, not of the service.
 
 import type { Migration } from '@atlas/data';
-import { outboxMigration, PgOutboxStore, withTransaction, type PgPool } from '@atlas/data-pg';
+import {
+  outboxHeadersMigration,
+  outboxMigration,
+  PgOutboxStore,
+  withTransaction,
+  type PgPool,
+} from '@atlas/data-pg';
 import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { AssetStore, AssetTx } from './store.ts';
@@ -143,6 +149,9 @@ export const mamMigrations: Migration[] = [
   pgExtendedMigration,
   pgTagsMigration,
   pgSearchMigration,
+  // Appended, never inserted: migrations run in list order and a deployed database has already
+  // recorded the ones above. Slotting this next to its table would re-order history.
+  outboxHeadersMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {

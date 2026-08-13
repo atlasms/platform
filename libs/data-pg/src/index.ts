@@ -6,4 +6,4 @@ export {
   type PgOptions,
   type PgPool,
 } from './db.ts';
-export { PgOutboxStore, outboxMigration } from './outbox.ts';
+export { PgOutboxStore, outboxMigration, outboxHeadersMigration } from './outbox.ts';

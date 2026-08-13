@@ -6,6 +6,7 @@
 import {
   migrate,
   openDb,
+  outboxHeadersMigration,
   outboxMigration,
   SqliteOutboxStore,
   withTransactionAsync,
@@ -84,6 +85,9 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     sqliteExtendedMigration,
     sqliteTagsMigration,
     sqliteSearchMigration,
+    // Appended, never inserted: migrations run in list order and a deployed database has already
+    // recorded the ones above. Slotting this next to its table would re-order history.
+    outboxHeadersMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
 

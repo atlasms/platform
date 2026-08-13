@@ -7,6 +7,7 @@ import {
   jsonRepo,
   jsonTableMigration,
   SqliteOutboxStore,
+  outboxHeadersMigration,
   outboxMigration,
 } from '../src/index.ts';
 import { withTransactionAsync } from '../src/db.ts';
@@ -24,17 +25,21 @@ const rec = (id: string, type: string): OutboxRecord => ({
 
 function setup() {
   const db = openDb();
-  migrate(db, [jsonTableMigration('asset'), outboxMigration]);
+  migrate(db, [jsonTableMigration('asset'), outboxMigration, outboxHeadersMigration]);
   return { db, assets: jsonRepo<AssetRow>(db, 'asset'), outbox: new SqliteOutboxStore(db) };
 }
 
 test('migrations apply once and are idempotent', () => {
   const db = openDb();
-  const first = migrate(db, [jsonTableMigration('asset'), outboxMigration]);
-  assert.deepEqual(first.applied, ['table_asset', 'core_outbox']);
-  const second = migrate(db, [jsonTableMigration('asset'), outboxMigration]); // re-run
+  const first = migrate(db, [jsonTableMigration('asset'), outboxMigration, outboxHeadersMigration]);
+  assert.deepEqual(first.applied, ['table_asset', 'core_outbox', 'core_outbox_headers']);
+  const second = migrate(db, [
+    jsonTableMigration('asset'),
+    outboxMigration,
+    outboxHeadersMigration,
+  ]); // re-run
   assert.deepEqual(second.applied, []); // nothing new
-  assert.equal((db.prepare('SELECT count(*) c FROM _migrations').get() as any).c, 2);
+  assert.equal((db.prepare('SELECT count(*) c FROM _migrations').get() as any).c, 3);
 });
 
 test('a bad migration fails without half-applying', () => {
@@ -110,6 +115,7 @@ outboxConformance('SqliteOutboxStore', {
     const db = openDb(':memory:');
     migrate(db, [
       outboxMigration,
+      outboxHeadersMigration,
       { id: 'fixture', up: 'CREATE TABLE assets (id TEXT PRIMARY KEY)' },
     ]);
     const store = new SqliteOutboxStore(db);

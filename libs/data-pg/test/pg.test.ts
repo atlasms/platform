@@ -12,6 +12,7 @@ import { outboxConformance } from '@atlas/data/conformance';
 import {
   migrate,
   openPool,
+  outboxHeadersMigration,
   outboxMigration,
   PgOutboxStore,
   withTransaction,
@@ -52,6 +53,7 @@ if (!URL) {
 
       await migrate(pool, [
         outboxMigration,
+        outboxHeadersMigration,
         { id: 'fixture_domain', up: 'CREATE TABLE assets (id text PRIMARY KEY)' },
       ]);
 
@@ -98,14 +100,15 @@ if (!URL) {
     pool.on('connect', (c) => void c.query(`SET search_path TO ${schema}`));
     await pool.query(`SET search_path TO ${schema}`);
 
-    const first = await migrate(pool, [outboxMigration]);
-    assert.deepEqual(first.applied, ['core_outbox']);
+    const first = await migrate(pool, [outboxMigration, outboxHeadersMigration]);
+    assert.deepEqual(first.applied, ['core_outbox', 'core_outbox_headers']);
 
-    const second = await migrate(pool, [outboxMigration]);
+    const second = await migrate(pool, [outboxMigration, outboxHeadersMigration]);
     assert.deepEqual(second.applied, [], 're-running must be a no-op');
 
     const third = await migrate(pool, [
       outboxMigration,
+      outboxHeadersMigration,
       { id: 'add_thing', up: 'CREATE TABLE thing (id text PRIMARY KEY)' },
     ]);
     assert.deepEqual(third.applied, ['add_thing'], 'only the new migration runs');
@@ -146,6 +149,7 @@ if (!URL) {
     await pool.query(`SET search_path TO ${schema}`);
     await migrate(pool, [
       outboxMigration,
+      outboxHeadersMigration,
       { id: 'd', up: 'CREATE TABLE assets (id text PRIMARY KEY)' },
     ]);
 

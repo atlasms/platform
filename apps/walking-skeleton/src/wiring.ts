@@ -9,6 +9,7 @@ import { buildGateway, type GatewayOptions } from '@atlas/api-gateway';
 import { InMemoryBroker, OutboxRelay } from '@atlas/messaging';
 import { ConnectionRegistry, startBridge } from '@atlas/websocket';
 import type { EffectivePolicy } from '@atlas/policy';
+import type { Tracer } from '@atlas/service-kit';
 import type { FastifyInstance } from 'fastify';
 import { buildAssetService, type AssetService } from './asset-service.ts';
 
@@ -27,15 +28,25 @@ export interface SpineOptions {
   policyFor: (userId: string) => EffectivePolicy | undefined;
   issuer?: string;
   audience?: string;
+  /**
+   * ONE tracer for the whole spine (EP-13.3).
+   *
+   * Passing the same instance to the gateway, the service and the bridge is what makes a single
+   * trace span all four hops in this process. In production they are separate processes with
+   * separate tracers, and the trace still joins up — because it joins on the WIRE, through
+   * `traceparent`, not through a shared object.
+   */
+  tracer?: Tracer;
 }
 
 export function buildSpine(options: SpineOptions): Spine {
-  const service = buildAssetService({ policyFor: options.policyFor });
+  const tracerOpt = options.tracer !== undefined ? { tracer: options.tracer } : {};
+  const service = buildAssetService({ policyFor: options.policyFor, ...tracerOpt });
   const broker = new InMemoryBroker();
   const relay = new OutboxRelay(service.outbox, broker);
   const sockets = new ConnectionRegistry();
 
-  startBridge({ broker, registry: sockets });
+  startBridge({ broker, registry: sockets, ...tracerOpt });
 
   const gateway = buildGateway({
     jwks: options.jwks,
@@ -46,6 +57,7 @@ export function buildSpine(options: SpineOptions): Spine {
       { service: 'assets', origin: 'http://assets', prefix: '/api/v1/assets' },
     ],
     fetchImpl: injectInto(service.app),
+    ...tracerOpt,
   });
 
   return {

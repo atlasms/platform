@@ -16,6 +16,23 @@ export const outboxMigration: Migration = {
        )`,
 };
 
+/**
+ * Message HEADERS were not persisted, so the outbox silently dropped them.
+ *
+ * `Message.headers` has been part of the contract all along; the store simply never stored the
+ * column, so anything a publisher put there vanished between the transaction and the broker. It
+ * surfaced with tracing (EP-13.3) — the `traceparent` written inside the request never reached the
+ * consumer, so the async half of every workflow began a brand-new trace — but nothing about the
+ * bug is tracing-specific: it applies to any header any publisher ever sets.
+ *
+ * A separate migration rather than an edit to the one above, because the original has already run
+ * on deployed databases and `CREATE TABLE IF NOT EXISTS` would do nothing there.
+ */
+export const outboxHeadersMigration: Migration = {
+  id: 'core_outbox_headers',
+  up: `ALTER TABLE outbox ADD COLUMN headers TEXT`,
+};
+
 export class SqliteOutboxStore implements OutboxStore {
   private readonly db: Db;
 
@@ -25,9 +42,15 @@ export class SqliteOutboxStore implements OutboxStore {
 
   /** Synchronous enqueue for use within a withTransaction block. */
   enqueue(rec: OutboxRecord): void {
-    this.db
-      .prepare('INSERT INTO outbox (id, subject, body) VALUES (?, ?, ?)')
-      .run(rec.id, rec.message.subject, JSON.stringify(rec.message.body));
+    this.db.prepare('INSERT INTO outbox (id, subject, body, headers) VALUES (?, ?, ?, ?)').run(
+      rec.id,
+      rec.message.subject,
+      JSON.stringify(rec.message.body),
+      // NULL rather than '{}' when there are none, so a row is byte-identical to what it was
+      // before headers were stored and the column reads as "nothing was set" rather than
+      // "something was set and it was empty".
+      rec.message.headers === undefined ? null : JSON.stringify(rec.message.headers),
+    );
   }
 
   async add(rec: OutboxRecord): Promise<void> {
@@ -37,12 +60,24 @@ export class SqliteOutboxStore implements OutboxStore {
   async listUnsent(limit: number): Promise<OutboxRecord[]> {
     const rows = this.db
       .prepare(
-        'SELECT id, subject, body FROM outbox WHERE sent_at IS NULL ORDER BY created_at LIMIT ?',
+        'SELECT id, subject, body, headers FROM outbox WHERE sent_at IS NULL ORDER BY created_at LIMIT ?',
       )
-      .all(limit) as { id: string; subject: string; body: string }[];
+      .all(limit) as {
+      id: string;
+      subject: string;
+      body: string;
+      headers: string | null;
+    }[];
     return rows.map((r) => ({
       id: r.id,
-      message: { id: r.id, subject: r.subject, body: JSON.parse(r.body) },
+      message: {
+        id: r.id,
+        subject: r.subject,
+        body: JSON.parse(r.body),
+        // Omitted rather than set to undefined: under exactOptionalPropertyTypes those differ, and
+        // a row written before this column existed must round-trip to the same message it did then.
+        ...(r.headers === null ? {} : { headers: JSON.parse(r.headers) as Record<string, string> }),
+      },
     }));
   }
 
