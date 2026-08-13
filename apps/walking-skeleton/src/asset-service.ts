@@ -7,7 +7,16 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { buildEnvelope, subjectFor, ulid, type Envelope } from '@atlas/contracts';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
-import { Forbidden, Unauthorized, runWithContext, toProblem } from '@atlas/service-kit';
+import {
+  currentTraceparent,
+  Forbidden,
+  isTraceable,
+  Unauthorized,
+  runWithContext,
+  toProblem,
+  type Span,
+  type Tracer,
+} from '@atlas/service-kit';
 import {
   SqliteOutboxStore,
   jsonRepo,
@@ -30,6 +39,8 @@ export interface AssetServiceOptions {
   /** Resolves the caller's compiled policy. In production this is the cached IAM snapshot. */
   policyFor: (userId: string) => EffectivePolicy | undefined;
   db?: Db;
+  /** Tracer (EP-13.3). Omit and the service behaves exactly as before. */
+  tracer?: Tracer;
 }
 
 export interface AssetService {
@@ -51,7 +62,28 @@ export function buildAssetService(options: AssetServiceOptions): AssetService {
     // The gateway always sets this; falling back keeps the service testable standalone.
     const incoming = req.headers['x-correlation-id'];
     req.correlationId = typeof incoming === 'string' && incoming ? incoming : ulid();
-    runWithContext({ correlationId: req.correlationId }, () => done());
+    runWithContext({ correlationId: req.correlationId }, () => {
+      const route = (req as { routeOptions?: { url?: string } }).routeOptions?.url ?? req.url;
+      // ADOPTS the gateway's traceparent — this is a service behind the edge, not the edge.
+      if (!options.tracer || !isTraceable(route)) return done();
+      options.tracer.server(
+        `${req.method} ${route}`,
+        req.headers,
+        { adoptRemote: true },
+        (span) => {
+          req.span = span;
+          done();
+        },
+      );
+    });
+  });
+
+  app.addHook('onResponse', (req, reply, done) => {
+    if (req.span) {
+      req.span.setAttribute('http.response.status_code', reply.statusCode);
+      req.span.end();
+    }
+    done();
   });
 
   app.post('/api/v1/assets', async (req, reply) => {
@@ -92,6 +124,9 @@ export function buildAssetService(options: AssetServiceOptions): AssetService {
         correlationId: req.correlationId,
       });
 
+      // Read before the transaction, while still inside the request's context.
+      const traceparent = currentTraceparent();
+
       // THE POINT OF THE SKELETON: the row and its event commit together, or neither does.
       withTransaction(db, () => {
         assets.put(asset);
@@ -101,6 +136,9 @@ export function buildAssetService(options: AssetServiceOptions): AssetService {
             id: envelope.messageId,
             subject: subjectFor(channelId, envelope.type),
             body: envelope,
+            // Captured inside the request — the relay publishes later with no ambient context, so
+            // instrumenting the publish would attach nothing (EP-13.3).
+            ...(traceparent !== undefined ? { headers: { traceparent } } : {}),
           },
         });
       });
@@ -123,10 +161,13 @@ export function buildAssetService(options: AssetServiceOptions): AssetService {
   return { app, db, outbox, assets };
 }
 
+// The skeleton opens a fresh in-memory database every run, so unlike the deployed stores it has no
+// history to migrate around and `headers` is simply part of the table.
 const OUTBOX_DDL = `CREATE TABLE IF NOT EXISTS outbox (
   id TEXT PRIMARY KEY,
   subject TEXT NOT NULL,
   body TEXT NOT NULL,
+  headers TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   sent_at TEXT
 )`;
@@ -134,5 +175,6 @@ const OUTBOX_DDL = `CREATE TABLE IF NOT EXISTS outbox (
 declare module 'fastify' {
   interface FastifyRequest {
     correlationId: string;
+    span?: Span;
   }
 }

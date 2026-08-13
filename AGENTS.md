@@ -49,18 +49,18 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-04** `@atlas/service-kit`   | ✅ 57 tests — errors, config, auth, health, logging, metrics, alerts, **04.7 tracing** ([ADR-0004](docs/adr/0004-tracing-implementation.md): W3C Trace Context + OTLP by hand)                                                                                                                                                          |
 | **EP-05** `@atlas/policy`        | ✅ 13 tests, now also driving Studio rendering. ⬜ 05.5/05.6                                                                                                                                                                                                                                                                            |
 | **EP-06** `@atlas/reference`     | ✅ 17 tests. ⬜ 06.6 seed loader (Node-only, cannot live in a browser-safe entry point)                                                                                                                                                                                                                                                 |
-| **EP-07** `@atlas/data`          | ✅ 11 tests + `@atlas/data-pg` on **real Postgres** (8). ⬜ 07.4–07.6                                                                                                                                                                                                                                                                   |
+| **EP-07** `@atlas/data`          | ✅ 13 tests + `@atlas/data-pg` on **real Postgres** (10) — outbox now persists message **headers**. ⬜ 07.4–07.6                                                                                                                                                                                                                        |
 | **EP-08** `api-gateway`          | ✅ 36 tests, routes MAM, proxies bodies byte-transparently, **08.3 rate limiting + size caps** (per replica — see README). ⬜ 08.5 reference aggregation                                                                                                                                                                                |
 | **EP-09** `websocket`            | ✅ 16 tests. ⬜ 09.4 reconnect/polling (client-side, needs Studio)                                                                                                                                                                                                                                                                      |
 | **EP-10** `iam`                  | ✅ 55 tests, incl. `/metrics` + auth signals (#205) and failed-attempt lockout (#240). ⬜ 10.4 CRUD, 10.6 event emission                                                                                                                                                                                                                |
-| **EP-13** walking skeleton       | ✅ 11 tests + **13.4 smoke suite green against a real cluster** (13/13, now including MAM)                                                                                                                                                                                                                                              |
+| **EP-13** walking skeleton       | ✅ 12 tests incl. **13.3 one trace across gateway → service → broker → consumer** + **13.4 smoke suite green** (13/13)                                                                                                                                                                                                                  |
 | **EP-11** Studio shell (Angular) | ✅ 11.1 skeleton, **11.2 real sign-in against IAM**, 11.3 the workbench, 11.7 `can()` rendering — 57 tests. ⬜ 11.4 ws, 11.5 clients, 11.6 i18n/RTL                                                                                                                                                                                     |
 | **EP-17** `mam` (Phase 1)        | ✅ 238 tests — asset core, lifecycle, metadata gate, outbox events, Postgres, deployed, **17.2 extensible metadata**, **17.3 free-form tags**, **17.4 search**, field-group scoping (#225). ⬜ 17.7, 17.8 (need services that do not exist yet)                                                                                         |
 | **EP-12** observability          | ✅ 12.4 alerts + golden signals everywhere; **12.1 logs + 12.2 metrics** — Prometheus/Loki/Alloy/Grafana in [`infra/k8s/observability`](infra/k8s/observability/), optional per [ADR-0003](docs/adr/0003-observability-stack.md). **12.3 tracing** (Alloy OTLP → Tempo, logs↔traces linked in Grafana). ⬜ #245 per-service access logs |
 
-**447 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
-forward), merged to `main`. A further **54 need real infrastructure** — 34 in `mam`, 12 in
-`messaging-nats`, 8 in `data-pg` — and **CI now runs those too**, against a Postgres service and a
+**450 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
+forward), merged to `main`. A further **56 need real infrastructure** — 34 in `mam`, 12 in
+`messaging-nats`, 10 in `data-pg` — and **CI now runs those too**, against a Postgres service and a
 JetStream container the workflow provides. They still skip on a laptop without Docker, but a
 missing `ATLAS_PG_URL` / `ATLAS_NATS_URL` **in CI is a hard failure**, so the infrastructure cannot
 be removed without the build saying so. Plus **13 smoke tests** against a deployed cluster (not in
@@ -91,8 +91,7 @@ committing a customer name, an internal hostname or a real credential in a novel
 Studio signs in against it for real — `npm run k8s:up`, then `npm start -w @atlas/studio`, which
 proxies `/auth` and `/api` to the gateway.
 
-**Suggested next tasks:** `EP-13.3` (one end-to-end trace gateway → service → **broker** → consumer;
-the HTTP hops are done, the internal `fetch` and broker hops are not) ·
+**Suggested next tasks:** `EP-11.5` (generated API clients, so Studio panels can show real assets) ·
 `EP-11.5` (generated API clients, so Studio panels can show real assets) · `EP-03.4` (DLQ tooling) ·
 `EP-08.5` (aggregated `GET /reference`).
 

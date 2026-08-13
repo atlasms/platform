@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import { compile, type EffectivePolicy } from '@atlas/policy';
 import {
   AlertEvaluator,
+  createTracer,
   generateTestKey,
   MetricRegistry,
   type AlertRaised,
+  type Tracer,
 } from '@atlas/service-kit';
 import {
   buildEnvelope,
@@ -29,12 +31,14 @@ const policyOf = (userId: string, permissions: string[]): EffectivePolicy =>
 
 async function spine(
   grants: Record<string, string[]> = { 'user-1': ['asset:write', 'asset:read'] },
+  tracer?: Tracer,
 ) {
   const key = await generateTestKey();
   const policies = new Map(Object.entries(grants).map(([u, p]) => [u, policyOf(u, p)] as const));
   const s = buildSpine({
     jwks: key.jwks,
     policyFor: (userId) => policies.get(userId),
+    ...(tracer !== undefined ? { tracer } : {}),
   });
   const tokenFor = (sub: string) =>
     key.sign({ sub, channelId: CHANNEL, permissions: grants[sub] ?? [], permVersion: 1 });
@@ -389,4 +393,77 @@ test('EP-12.4: a sustained breach does not re-alert on every evaluation', async 
   await evaluator.evaluate();
 
   assert.equal(frames.filter((f) => f.type === 'event').length, 1);
+});
+
+// =============================================================================
+// EP-13.3 — one trace, gateway → service → broker → consumer
+// =============================================================================
+
+test('ONE trace spans the gateway, the service, the broker and the consumer', async () => {
+  // The exit criterion the whole spine exists to demonstrate, and the hop that makes it hard is
+  // the BROKER: the event is written inside the request's transaction and published minutes later
+  // by a relay that has no ambient context at all. Instrumenting `broker.publish()` would capture
+  // the relay's context — nothing — and the consumer would begin a brand-new trace. The link has to
+  // be captured where the event is CREATED and carried in the message.
+  const exported: { name: string; traceId: string; spanId: string; parentSpanId?: string }[] = [];
+  const tracer = createTracer({
+    service: 'skeleton',
+    endpoint: 'http://collector:4318',
+    flushIntervalMs: 1_000_000,
+    fetchImpl: (async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as {
+        resourceSpans: { scopeSpans: { spans: typeof exported }[] }[];
+      };
+      for (const rs of body.resourceSpans)
+        for (const ss of rs.scopeSpans) exported.push(...ss.spans);
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch,
+  });
+
+  const s = await spine(undefined, tracer);
+  const { events } = studioClient(s, 'user-1');
+
+  const created = await s.gateway.inject({
+    method: 'POST',
+    url: '/api/v1/assets',
+    headers: {
+      authorization: `Bearer ${await s.tokenFor('user-1')}`,
+      'content-type': 'application/json',
+    },
+    payload: { title: 'Traced clip', channelId: CHANNEL },
+  });
+  assert.equal(created.statusCode, 201);
+
+  // The async half: drain the outbox, fan out to the consumer.
+  await s.settle();
+  assert.equal(events().length, 1, 'the event reached the socket');
+
+  await tracer.flush();
+
+  // Every span belongs to ONE trace. If the broker hop were broken this would be two.
+  const traceIds = new Set(exported.map((sp) => sp.traceId));
+  assert.equal(
+    traceIds.size,
+    1,
+    `expected one trace across all hops, got ${traceIds.size}: ${exported.map((sp) => `${sp.name}=${sp.traceId.slice(0, 8)}`).join(', ')}`,
+  );
+
+  const names = exported.map((sp) => sp.name);
+  assert.ok(
+    names.some((n) => n.includes('POST /api/v1/assets') && n.includes('→')),
+    `the gateway span is missing: ${names.join(', ')}`,
+  );
+  assert.ok(
+    names.some((n) => n.startsWith('consume atlas.')),
+    `the consumer span is missing: ${names.join(', ')}`,
+  );
+
+  // And the tree actually joins: every span except the root names a parent that is present.
+  const byId = new Map(exported.map((sp) => [sp.spanId, sp]));
+  const roots = exported.filter((sp) => sp.parentSpanId === undefined);
+  assert.equal(roots.length, 1, 'exactly one root — the gateway');
+  for (const sp of exported) {
+    if (sp.parentSpanId === undefined) continue;
+    assert.ok(byId.has(sp.parentSpanId), `"${sp.name}" is orphaned — its parent was not exported`);
+  }
 });

@@ -23,6 +23,22 @@ export const outboxMigration: Migration = {
        CREATE INDEX IF NOT EXISTS outbox_unsent_idx ON outbox (seq) WHERE sent_at IS NULL;`,
 };
 
+/**
+ * Message HEADERS were not persisted, so the outbox silently dropped them.
+ *
+ * `Message.headers` has been part of the contract all along; the store simply never had the column,
+ * so anything a publisher put there vanished between the transaction and the broker. Found via
+ * tracing (EP-13.3) — a `traceparent` written inside the request never reached the consumer — but
+ * the bug is not tracing-specific: it applies to any header any publisher ever sets.
+ *
+ * A separate migration, because the one above has already run on deployed databases where
+ * `CREATE TABLE IF NOT EXISTS` is a no-op. `IF NOT EXISTS` on the column keeps it re-runnable.
+ */
+export const outboxHeadersMigration: Migration = {
+  id: 'core_outbox_headers',
+  up: `ALTER TABLE outbox ADD COLUMN IF NOT EXISTS headers jsonb`,
+};
+
 export class PgOutboxStore implements OutboxStore {
   private readonly pool: PgPool;
 
@@ -39,10 +55,13 @@ export class PgOutboxStore implements OutboxStore {
    * Making the client mandatory means that mistake cannot compile.
    */
   async enqueue(client: PgClient, rec: { id: string; message: Message }): Promise<void> {
-    await client.query('INSERT INTO outbox (id, subject, body) VALUES ($1, $2, $3)', [
+    await client.query('INSERT INTO outbox (id, subject, body, headers) VALUES ($1, $2, $3, $4)', [
       rec.id,
       rec.message.subject,
       JSON.stringify(rec.message.body),
+      // NULL rather than '{}' when there are none: the column then reads as "nothing was set"
+      // rather than "something was set and it was empty".
+      rec.message.headers === undefined ? null : JSON.stringify(rec.message.headers),
     ]);
   }
 
@@ -53,24 +72,40 @@ export class PgOutboxStore implements OutboxStore {
    * atomicity the pattern exists for.
    */
   async add(rec: OutboxRecord): Promise<void> {
-    await this.pool.query('INSERT INTO outbox (id, subject, body) VALUES ($1, $2, $3)', [
-      rec.id,
-      rec.message.subject,
-      JSON.stringify(rec.message.body),
-    ]);
+    await this.pool.query(
+      'INSERT INTO outbox (id, subject, body, headers) VALUES ($1, $2, $3, $4)',
+      [
+        rec.id,
+        rec.message.subject,
+        JSON.stringify(rec.message.body),
+        rec.message.headers === undefined ? null : JSON.stringify(rec.message.headers),
+      ],
+    );
   }
 
   async listUnsent(limit: number): Promise<OutboxRecord[]> {
     // Ordered by seq, not created_at: two rows in the same millisecond would otherwise come back
     // in an arbitrary order, and the relay publishes in list order.
-    const { rows } = await this.pool.query<{ id: string; subject: string; body: unknown }>(
-      'SELECT id, subject, body FROM outbox WHERE sent_at IS NULL ORDER BY seq LIMIT $1',
+    const { rows } = await this.pool.query<{
+      id: string;
+      subject: string;
+      body: unknown;
+      headers: Record<string, string> | null;
+    }>(
+      'SELECT id, subject, body, headers FROM outbox WHERE sent_at IS NULL ORDER BY seq LIMIT $1',
       [limit],
     );
     return rows.map((r) => ({
       id: r.id,
       // jsonb comes back already parsed — no JSON.parse, unlike the sqlite store's text column.
-      message: { id: r.id, subject: r.subject, body: r.body },
+      message: {
+        id: r.id,
+        subject: r.subject,
+        body: r.body,
+        // Omitted rather than undefined: a row written before this column existed must round-trip
+        // to exactly the message it did then.
+        ...(r.headers === null ? {} : { headers: r.headers }),
+      },
     }));
   }
 
