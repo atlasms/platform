@@ -18,7 +18,13 @@ export {
   type CreateAssetInput,
   type UpdateAssetInput,
 } from './asset.ts';
-export { MamService, type Caller, type MamOptions, type SearchSources } from './service.ts';
+export {
+  MamService,
+  type MamReferenceSnapshot,
+  type Caller,
+  type MamOptions,
+  type SearchSources,
+} from './service.ts';
 export {
   FIELD_TYPES,
   orphanedFields,

@@ -62,6 +62,15 @@ export interface AssetStore {
   /** Every FieldSchema in one channel. Small, operator-managed, and read on nearly every write. */
   schemas(channelId: string): Promise<FieldSchema[]>;
 
+  /**
+   * MAM's reference-data version, for `GET /reference` (EP-04.8).
+   *
+   * MONOTONIC, per configuration-and-reference-data.md §5 — not a content hash. A hash revalidates
+   * correctly but carries no ordering, and §5's convergence story is "holders refresh when they see
+   * a HIGHER version".
+   */
+  configVersion(): Promise<number>;
+
   /** The tags on one asset, ordered by normalized label (EP-17.3). */
   tagsOf(assetId: string): Promise<Tag[]>;
 

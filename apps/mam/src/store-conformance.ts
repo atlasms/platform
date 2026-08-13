@@ -165,6 +165,33 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
 
   // --- the extensible document (EP-17.2) -------------------------------------
 
+  test(`${name}: the config version is MONOTONIC and moves when the vocabulary does`, async () => {
+    // EP-04.8. Both stores keep this counter themselves, so both have to be held to it: a store
+    // that never bumps serves a snapshot every holder revalidates to 304 forever, and validation
+    // then rejects a tag somebody just created. A content hash would pass a "does it change?" test
+    // and fail this one, which is the point of asserting the ORDER.
+    await withFixture(async ({ store }) => {
+      const start = await store.configVersion();
+      assert.ok(Number.isInteger(start) && start >= 1, `expected an integer version, got ${start}`);
+
+      const versions: number[] = [];
+      for (const label of ['alpha', 'beta', 'alpha']) {
+        await store.transaction(async (tx) => {
+          await tx.setTags('asset-cv', 'ch12', [{ id: `tag-${label}`, label, normalized: label }]);
+        });
+        versions.push(await store.configVersion());
+      }
+
+      assert.ok(versions[0]! > start, 'the first tag write did not move the version');
+      for (let i = 1; i < versions.length; i += 1) {
+        assert.ok(
+          versions[i]! > versions[i - 1]!,
+          `not monotonic: ${start}, ${versions.join(', ')} — re-adding an earlier tag must not reuse a version`,
+        );
+      }
+    });
+  });
+
   test(`${name}: an extended document round-trips, and upserts`, async () => {
     await withFixture(async ({ store }) => {
       const a = asset();

@@ -12,6 +12,7 @@ import {
   HealthRegistry,
   MetricRegistry,
   runWithContext,
+  serveSnapshot,
   toProblem,
   Unauthorized,
   ValidationError,
@@ -294,6 +295,23 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     handle(req, reply, async () =>
       options.service.putSchema(await callerOf(req), req.body as never),
     ),
+  );
+
+  // The versioned reference snapshot (EP-04.8, configuration-and-reference-data.md §5).
+  //
+  // Reference data is read from here, not queried row by row per request — which is what makes
+  // "is this a known tag?" an in-memory set lookup in every service and in the browser. The ETag
+  // is what keeps that cheap: holders revalidate constantly and almost always get a 304.
+  app.get('/api/v1/reference', async (req, reply) =>
+    handle(req, reply, async () => {
+      const snapshot = await options.service.referenceSnapshot(await callerOf(req));
+      const result = serveSnapshot(snapshot, req.headers['if-none-match']);
+      // The ETag goes on BOTH statuses. A 304 without one tells the client its cached entry has no
+      // validator, so the next request is unconditional and the revalidation quietly stops working.
+      void reply.header('etag', result.etag);
+      if (result.status === 304) return reply.code(304).send();
+      return result.body;
+    }),
   );
 
   // Lifecycle transitions are their own endpoints, not a PATCH of `state`. The verb is the point:

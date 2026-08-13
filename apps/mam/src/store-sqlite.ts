@@ -48,6 +48,21 @@ export const sqliteExtendedMigration: Migration = {
          ON field_schemas (channel_id, media_type);`,
 };
 
+/**
+ * MAM's reference-data version (EP-04.8).
+ *
+ * ONE row, pinned by a CHECK — a version table that can grow rows is a version table that will,
+ * and then "the" config version is a question about which row you read.
+ */
+export const sqliteConfigMigration: Migration = {
+  id: 'mam_config',
+  up: `CREATE TABLE IF NOT EXISTS mam_config (
+         id      INTEGER PRIMARY KEY CHECK (id = 1),
+         version INTEGER NOT NULL
+       );
+       INSERT OR IGNORE INTO mam_config (id, version) VALUES (1, 1);`,
+};
+
 export const sqliteTagsMigration: Migration = {
   id: 'mam_tags',
   up: `CREATE TABLE IF NOT EXISTS tags (
@@ -86,13 +101,26 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     sqliteTagsMigration,
     sqliteSearchMigration,
     // Appended, never inserted: migrations run in list order and a deployed database has already
-    // recorded the ones above. Slotting this next to its table would re-order history.
+    // recorded the ones above. Slotting these next to their tables would re-order history.
     outboxHeadersMigration,
+    sqliteConfigMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
 
   const read = (row: { data: string } | undefined): Asset | undefined =>
     row ? (JSON.parse(row.data) as Asset) : undefined;
+
+  /**
+   * Advance the reference-data version (EP-04.8).
+   *
+   * `version + 1` read and written in one statement, and it runs inside the caller's transaction —
+   * so the bump commits with the change that caused it. Bumping afterwards would leave a window
+   * where the new tag is readable at the OLD version, and a client that revalidated in that window
+   * would cache an incomplete vocabulary against a version that never changes again.
+   */
+  const bump = (): void => {
+    db.prepare('UPDATE mam_config SET version = version + 1 WHERE id = 1').run();
+  };
 
   const tx: AssetTx = {
     async put(asset) {
@@ -125,6 +153,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         schema.categoryPath ?? null,
         JSON.stringify(schema.fields),
       );
+      bump();
     },
     async setTags(assetId, channelId, candidates) {
       const resolved = candidates.map((c) => {
@@ -149,6 +178,10 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
       const link = db.prepare('INSERT INTO asset_tags (asset_id, tag_id) VALUES (?, ?)');
       for (const tag of resolved) link.run(assetId, tag.id);
 
+      // Bumped on ANY tag write, not only when a label is genuinely new. Over-bumping costs a
+      // client one wasted revalidation; under-bumping serves a vocabulary that is missing the tag
+      // somebody just created. For a cache validator those are not comparable risks.
+      bump();
       return resolved;
     },
     async indexTerms(assetId, channelId, terms) {
@@ -290,6 +323,11 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
       }
       const rows = db.prepare(sql).all(...(params as never[])) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as Asset);
+    },
+    async configVersion() {
+      const row = db.prepare('SELECT version FROM mam_config WHERE id = 1').get() as
+        { version: number } | undefined;
+      return row?.version ?? 1;
     },
     async transaction(fn) {
       return withTransactionAsync(db, () => fn(tx));

@@ -162,6 +162,17 @@ export interface Caller {
   correlationId?: string;
 }
 
+/**
+ * What `GET /reference` returns for MAM — the shape mam.yaml's `ReferenceSnapshot` describes.
+ *
+ * `key` is the NORMALIZED label and `label` the display spelling, because a snapshot is used for
+ * validation ("is this a known tag?") as well as for rendering, and those want different strings.
+ */
+export interface MamReferenceSnapshot {
+  configVersion: number;
+  vocabularies: { tag: Array<{ id: string; key: string; label: string }> };
+}
+
 export class MamService {
   private readonly options: MamOptions;
   private readonly now: () => Date;
@@ -537,6 +548,29 @@ export class MamService {
   async listTags(caller: Caller): Promise<Tag[]> {
     this.authorize(caller, 'taxonomy:read');
     return this.options.store.listTags(caller.channelId);
+  }
+
+  /**
+   * MAM's reference snapshot — its vocabularies and the version they are at (EP-04.8).
+   *
+   * Channel-scoped like every other read here, and behind the same `taxonomy:read` grant as
+   * `listTags`: the snapshot IS the tag vocabulary, so serving it more freely would hand out under
+   * one name exactly what is guarded under another.
+   *
+   * `config.changed` (configuration-and-reference-data.md §5 step 3) is not emitted yet — that
+   * belongs with the admin write path in EP-33. Until then holders converge on their cache TTL,
+   * which the design already allows for: "convergence is bounded by the cache TTL".
+   */
+  async referenceSnapshot(caller: Caller): Promise<MamReferenceSnapshot> {
+    this.authorize(caller, 'taxonomy:read');
+    const [configVersion, tags] = await Promise.all([
+      this.options.store.configVersion(),
+      this.options.store.listTags(caller.channelId),
+    ]);
+    return {
+      configVersion,
+      vocabularies: { tag: tags.map((t) => ({ id: t.id, key: t.normalized, label: t.label })) },
+    };
   }
 
   /**
