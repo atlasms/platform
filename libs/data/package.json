@@ -17,6 +17,6 @@
     "@atlas/messaging": "*"
   },
   "devDependencies": {
-    "tsx": "^4.23.1"
+    "tsx": "^4.23.12"
   }
 }
