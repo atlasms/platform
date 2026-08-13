@@ -10,7 +10,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { Broker, Message } from './types.ts';
+import { isDeadLetterQueue, type Broker, type Message } from './types.ts';
 
 export interface ConformanceHarness {
   /** A fresh broker. Called once per test; give each one an isolated namespace if needed. */
@@ -36,10 +36,11 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 export function brokerConformance(name: string, harness: ConformanceHarness): void {
   const timeout = harness.timeoutMs ?? 5_000;
 
-  async function waitFor(predicate: () => boolean): Promise<boolean> {
+  /** Poll until true or the budget runs out. Async predicates too — a real DLQ is a round trip. */
+  async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<boolean> {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
-      if (predicate()) return true;
+      if (await predicate()) return true;
       await sleep(20);
     }
     return predicate();
@@ -186,6 +187,90 @@ export function brokerConformance(name: string, harness: ConformanceHarness): vo
           'an exhausted message must be dead-lettered, not dropped silently',
         );
       }
+    });
+  });
+
+  // --- dead letters: inspection and replay (EP-03.4) -------------------------------------------
+  //
+  // Only run against a broker that claims the capability. The in-memory double and the JetStream
+  // adapter reach dead letters by completely different routes — one keeps an array, the other
+  // reconstructs from advisories and a second read of the source stream — which is exactly why
+  // they belong under one suite rather than one set of tests each.
+
+  test(`[${name}] a dead letter can be inspected, and names the message that failed`, async () => {
+    await withBroker(async (broker, chan) => {
+      if (!isDeadLetterQueue(broker)) return; // capability not offered
+      const id = mid();
+
+      broker.subscribe(
+        `atlas.${chan}.>`,
+        () => {
+          throw new Error('always fails');
+        },
+        { maxAttempts: 2 },
+      );
+      await sleep(harness.timeoutMs ? 500 : 0);
+      await broker.publish({ id, subject: `atlas.${chan}.asset.created`, body: { n: 1 } });
+
+      assert.ok(
+        await waitFor(async () => (await broker.deadLetterCount()) >= 1),
+        'the message never reached the dead-letter queue',
+      );
+      await sleep(harness.timeoutMs ? 1_500 : 0);
+
+      const entries = await broker.listDeadLetters(10);
+      const entry = entries.find((e) => e.id === id);
+      assert.ok(entry, `no dead letter for ${id}: saw ${entries.map((e) => e.id).join(', ')}`);
+      assert.equal(entry.subject, `atlas.${chan}.asset.created`);
+      assert.ok(entry.attempts >= 2, `expected the attempts it made, saw ${entry.attempts}`);
+      // The payload has to come back or replay is impossible and inspection is a count.
+      assert.deepEqual(entry.message?.body, { n: 1 });
+    });
+  });
+
+  test(`[${name}] DANGER: replay actually re-delivers, rather than reporting success`, async () => {
+    // The trap this pins is JetStream's: it deduplicates on msgID across the whole stream for the
+    // dedupe window, so republishing under the ORIGINAL id resolves successfully and is silently
+    // discarded. A replay that reports success and delivers nothing is worse than one that fails.
+    await withBroker(async (broker, chan) => {
+      if (!isDeadLetterQueue(broker)) return;
+      const id = mid();
+      let fail = true;
+      let delivered = 0;
+
+      broker.subscribe(
+        `atlas.${chan}.>`,
+        () => {
+          delivered++;
+          if (fail) throw new Error('failing on purpose');
+        },
+        { maxAttempts: 2 },
+      );
+      await sleep(harness.timeoutMs ? 500 : 0);
+      await broker.publish({ id, subject: `atlas.${chan}.asset.created`, body: { n: 1 } });
+
+      assert.ok(await waitFor(async () => (await broker.deadLetterCount()) >= 1));
+      await sleep(harness.timeoutMs ? 1_500 : 0);
+      const before = delivered;
+
+      // The handler is fixed — which is the whole reason an operator replays.
+      fail = false;
+      const result = await broker.replay(id);
+      assert.equal(result.replayed, true, result.reason ?? 'replay refused');
+
+      assert.ok(
+        await waitFor(() => delivered > before),
+        'replay claimed success but nothing was delivered',
+      );
+    });
+  });
+
+  test(`[${name}] replaying an unknown id is refused with a reason, not silently`, async () => {
+    await withBroker(async (broker) => {
+      if (!isDeadLetterQueue(broker)) return;
+      const result = await broker.replay('no-such-message');
+      assert.equal(result.replayed, false);
+      assert.ok(result.reason, 'a refusal must say why — an operator is reading this');
     });
   });
 

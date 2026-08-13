@@ -45,7 +45,7 @@ Then read **only** the specific docs your task touches — e.g.
 | GitHub backlog                   | ✅ 175 issues on org project **#2**                                                                                                                                                                                                                                                                                                     |
 | **EP-01** foundations            | ✅ **Complete** — monorepo, CI, CODEOWNERS, containers, K8s ([ADR-0002](docs/adr/0002-deployment-target.md)), [offline bundle](docs/operations/offline-bundle.md)                                                                                                                                                                       |     |
 | **EP-02** `@atlas/contracts`     | ✅ 8 tests — loads all 53 schemas from `docs/`. ⬜ 02.2–02.6                                                                                                                                                                                                                                                                            |
-| **EP-03** `@atlas/messaging`     | ✅ 13 tests + `@atlas/messaging-nats` on **real JetStream** (13), on the `@nats-io/*` client (#207). [ADR-0001](docs/adr/0001-message-broker.md). ⬜ 03.4 DLQ tooling, 03.7 relay pipelining                                                                                                                                            |
+| **EP-03** `@atlas/messaging`     | ✅ 13 tests + `@atlas/messaging-nats` on **real JetStream** (13), on the `@nats-io/*` client (#207). [ADR-0001](docs/adr/0001-message-broker.md). **03.4 DLQ inspection + replay** (`scripts/dlq.mjs`). ⬜ 03.7 relay pipelining                                                                                                        |
 | **EP-04** `@atlas/service-kit`   | ✅ 57 tests — errors, config, auth, health, logging, metrics, alerts, **04.7 tracing** ([ADR-0004](docs/adr/0004-tracing-implementation.md): W3C Trace Context + OTLP by hand)                                                                                                                                                          |
 | **EP-05** `@atlas/policy`        | ✅ 13 tests, now also driving Studio rendering. ⬜ 05.5/05.6                                                                                                                                                                                                                                                                            |
 | **EP-06** `@atlas/reference`     | ✅ 17 tests. ⬜ 06.6 seed loader (Node-only, cannot live in a browser-safe entry point)                                                                                                                                                                                                                                                 |
@@ -58,7 +58,7 @@ Then read **only** the specific docs your task touches — e.g.
 | **EP-17** `mam` (Phase 1)        | ✅ 238 tests — asset core, lifecycle, metadata gate, outbox events, Postgres, deployed, **17.2 extensible metadata**, **17.3 free-form tags**, **17.4 search**, field-group scoping (#225). ⬜ 17.7, 17.8 (need services that do not exist yet)                                                                                         |
 | **EP-12** observability          | ✅ 12.4 alerts + golden signals everywhere; **12.1 logs + 12.2 metrics** — Prometheus/Loki/Alloy/Grafana in [`infra/k8s/observability`](infra/k8s/observability/), optional per [ADR-0003](docs/adr/0003-observability-stack.md). **12.3 tracing** (Alloy OTLP → Tempo, logs↔traces linked in Grafana). ⬜ #245 per-service access logs |
 
-**450 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
+**453 tests across 14 projects, all green** (counted from `nx run-many -t test`, not carried
 forward), merged to `main`. A further **56 need real infrastructure** — 34 in `mam`, 12 in
 `messaging-nats`, 10 in `data-pg` — and **CI now runs those too**, against a Postgres service and a
 JetStream container the workflow provides. They still skip on a laptop without Docker, but a
@@ -92,7 +92,7 @@ Studio signs in against it for real — `npm run k8s:up`, then `npm start -w @at
 proxies `/auth` and `/api` to the gateway.
 
 **Suggested next tasks:** `EP-11.5` (generated API clients, so Studio panels can show real assets) ·
-`EP-11.5` (generated API clients, so Studio panels can show real assets) · `EP-03.4` (DLQ tooling) ·
+`EP-11.5` (generated API clients, so Studio panels can show real assets) ·
 `EP-08.5` (aggregated `GET /reference`).
 
 > **Adapters are separate packages, held to shared conformance suites.** `@atlas/messaging` and

@@ -38,7 +38,35 @@ consumer starts from the beginning of the stream under `DeliverPolicy.All`.
 
 JetStream has no DLQ. It caps redelivery at `max_deliver` and publishes an advisory, which this
 adapter captures into an `ATLAS_DLQ` stream so nothing is dropped silently. ADR-0001 records this
-as a real cost of the choice. Inspection and replay are **EP-03.4**.
+as a real cost of the choice, and EP-03.4 is where the cost is actually paid:
+
+**The DLQ stream holds advisories, not messages.** An advisory names the stream, the consumer and
+the sequence, and carries none of the payload. So `listDeadLetters()` is a two-step read — advisory,
+then the original by sequence from the source stream — and the original may have aged out in the
+meantime. When it has, the entry comes back **without** `message` rather than with a fabricated one:
+an operator has to be able to tell "here it is" from "it existed and is now unrecoverable".
+
+It is also why `DeadLetterEntry.error` is optional and absent here. The advisory says the consumer
+gave up; it never says why the handler threw. That lives in the consumer's logs, found by the id.
+
+### Replay mints a fresh dedupe id
+
+**The trap:** JetStream deduplicates on `msgID` across the whole stream for the dedupe window, so
+republishing under the original id would resolve **successfully and be silently discarded** — a
+replay that reports success and delivers nothing.
+
+So replay publishes with a new broker-level `msgID` and a byte-identical payload. `envelope.messageId`
+is therefore unchanged, and consumer idempotency still recognises it — which is the layer replay
+safety actually comes from. A conformance test pins this: reintroduce the original id and it fails.
+
+```sh
+ATLAS_NATS_URL=nats://localhost:54222 node --import tsx scripts/dlq.mjs list
+ATLAS_NATS_URL=nats://localhost:54222 node --import tsx scripts/dlq.mjs replay <id>
+```
+
+A script rather than an endpoint, deliberately: replay re-delivers production events, so it is an
+operator action taken from a shell with credentials rather than something reachable over HTTP.
+Exit codes are scriptable — `2` misuse, `1` not replayed, `0` done.
 
 ## Tests
 
