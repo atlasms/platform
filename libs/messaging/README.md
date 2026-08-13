@@ -28,6 +28,9 @@ await new OutboxRelay(store, broker).drain();
 
 - **Subject matching**: NATS-style `*` (one token) and `>` (trailing).
 - **In-memory broker**: awaited delivery, per-subscription retry, and a dead-letter queue.
+- **`DeadLetterQueue`** (EP-03.4): inspection and replay, as a capability a broker MAY implement
+  rather than part of `Broker`. Every service publishes and subscribes; none of them should be able
+  to replay. `isDeadLetterQueue(broker)` is how a tool asks.
 - **Outbox relay**: publishes then marks sent (publish-before-mark ⇒ a crash is a safe redelivery).
 - **`idempotent`**: dedupes redelivered messages by id — process-once under at-least-once delivery.
 

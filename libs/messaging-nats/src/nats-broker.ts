@@ -20,9 +20,23 @@ import {
   type JetStreamManager,
   type JsMsg,
 } from '@nats-io/jetstream';
-import { headers as headersFactory, nanos, type NatsConnection } from '@nats-io/nats-core';
+import {
+  headers as headersFactory,
+  nanos,
+  type MsgHdrs,
+  type NatsConnection,
+} from '@nats-io/nats-core';
 import { connect } from '@nats-io/transport-node';
-import type { Broker, Handler, Message, SubscribeOptions, Subscription } from '@atlas/messaging';
+import type {
+  Broker,
+  DeadLetterEntry,
+  DeadLetterQueue,
+  Handler,
+  Message,
+  ReplayResult,
+  SubscribeOptions,
+  Subscription,
+} from '@atlas/messaging';
 
 export interface NatsBrokerOptions {
   /** e.g. `nats://localhost:4222`. */
@@ -67,7 +81,7 @@ const MAX_DELIVERIES_ADVISORY = '$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.>';
  */
 const STREAM_NAME_IN_USE = 10058;
 
-export class NatsBroker implements Broker {
+export class NatsBroker implements Broker, DeadLetterQueue {
   private nc?: NatsConnection;
   private js?: JetStreamClient;
   private jsm?: JetStreamManager;
@@ -201,7 +215,16 @@ export class NatsBroker implements Broker {
     }
   }
 
-  /** How many messages the broker has given up on. Backs EP-03.4's inspection tool. */
+  // --- DeadLetterQueue (EP-03.4) ---------------------------------------------------------------
+  //
+  // JetStream has no dead-letter queue. What it has is an ADVISORY published when a consumer
+  // exhausts max_deliver, and ADR-0001 recorded the reconstruction as a real cost of choosing it.
+  //
+  // The consequence lands here: the DLQ stream holds advisories, NOT messages. An advisory names
+  // the stream, the consumer and the sequence, and carries none of the payload — so inspection is
+  // a two-step read, and the original may have aged out of the source stream in the meantime.
+
+  /** How many messages the broker has given up on. */
   async deadLetterCount(): Promise<number> {
     if (!this.jsm) return 0;
     try {
@@ -210,6 +233,66 @@ export class NatsBroker implements Broker {
     } catch {
       return 0;
     }
+  }
+
+  /** Dead letters, newest first, each resolved back to its original message where possible. */
+  async listDeadLetters(limit = 50): Promise<DeadLetterEntry[]> {
+    const jsm = this.jsm;
+    if (!jsm) return [];
+
+    let state;
+    try {
+      state = (await jsm.streams.info(DLQ_STREAM)).state;
+    } catch {
+      return []; // no DLQ stream yet means nothing has ever failed
+    }
+
+    const entries: DeadLetterEntry[] = [];
+    // Downward from the newest: an operator opening this is looking at what just broke. Reading
+    // upward and reversing would fetch the whole history to show the last ten of it.
+    for (let seq = state.last_seq; seq >= state.first_seq && entries.length < limit; seq -= 1) {
+      const advisory = await readAdvisory(jsm, seq);
+      if (!advisory) continue; // a gap: the advisory aged out or was purged between calls
+
+      const original = await readOriginal(jsm, advisory.stream, advisory.stream_seq);
+      entries.push({
+        // The ORIGINAL message id, not the advisory's — the advisory id means nothing to anyone
+        // grepping logs for the event that failed.
+        id: original?.id ?? `${advisory.stream}:${advisory.stream_seq}`,
+        subject: original?.subject ?? '(original no longer in the stream)',
+        attempts: advisory.deliveries,
+        failedAt: advisory.timestamp,
+        consumer: advisory.consumer,
+        // `error` is deliberately absent: the advisory says the consumer gave up, never why the
+        // handler threw. That lives in the consumer's logs, found by this id.
+        ...(original !== undefined ? { message: original } : {}),
+      });
+    }
+    return entries;
+  }
+
+  async replay(id: string): Promise<ReplayResult> {
+    const js = this.js;
+    if (!js) return { id, replayed: false, reason: 'not connected' };
+
+    const found = (await this.listDeadLetters(MAX_REPLAY_SCAN)).find((e) => e.id === id);
+    if (!found) return { id, replayed: false, reason: 'no dead letter with that id' };
+    if (!found.message) {
+      return { id, replayed: false, reason: 'the original message is no longer in the stream' };
+    }
+
+    // A FRESH broker-level dedupe id, and this is the trap the whole method turns on. JetStream
+    // deduplicates on msgID across the entire stream for the length of the dedupe window, so
+    // republishing under the original id inside that window would resolve successfully and be
+    // SILENTLY DISCARDED — a replay that reports success and delivers nothing.
+    //
+    // The payload is byte-identical, so `envelope.messageId` is unchanged and consumer idempotency
+    // still recognises it. That is the layer replay safety actually comes from.
+    await js.publish(found.message.subject, encode(found.message.body), {
+      msgID: `replay-${crypto.randomUUID()}`,
+      ...(found.message.headers ? { headers: toHeaders(found.message.headers) } : {}),
+    });
+    return { id, replayed: true };
   }
 
   async close(): Promise<void> {
@@ -230,6 +313,69 @@ export function durableName(service: string, pattern: string): string {
 }
 
 const slug = (s: string): string => s.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '');
+
+/** How far back `replay` will look for an id before giving up. */
+const MAX_REPLAY_SCAN = 500;
+
+/**
+ * The JetStream MAX_DELIVERIES advisory, as much of it as matters here.
+ *
+ * `stream_seq` is the load-bearing field: it points at the original message in the SOURCE stream,
+ * which is the only way back to a payload the advisory does not contain.
+ */
+interface MaxDeliveriesAdvisory {
+  stream: string;
+  consumer: string;
+  stream_seq: number;
+  deliveries: number;
+  timestamp: string;
+}
+
+async function readAdvisory(
+  jsm: JetStreamManager,
+  seq: number,
+): Promise<MaxDeliveriesAdvisory | undefined> {
+  try {
+    const stored = await jsm.streams.getMessage(DLQ_STREAM, { seq });
+    if (!stored) return undefined;
+    const parsed = JSON.parse(decoder.decode(stored.data)) as Partial<MaxDeliveriesAdvisory>;
+    if (typeof parsed.stream !== 'string' || typeof parsed.stream_seq !== 'number') {
+      return undefined; // not an advisory shape we understand — skip rather than throw
+    }
+    return {
+      stream: parsed.stream,
+      consumer: parsed.consumer ?? '(unknown)',
+      stream_seq: parsed.stream_seq,
+      deliveries: parsed.deliveries ?? 0,
+      timestamp: parsed.timestamp ?? stored.time.toISOString(),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Fetch the original message an advisory points at, if the stream still holds it. */
+async function readOriginal(
+  jsm: JetStreamManager,
+  stream: string,
+  seq: number,
+): Promise<Message | undefined> {
+  try {
+    const stored = await jsm.streams.getMessage(stream, { seq });
+    if (!stored) return undefined;
+    const headers = storedHeaders(stored.header);
+    return {
+      id: stored.header?.get('Nats-Msg-Id') || String(stored.seq),
+      subject: stored.subject,
+      body: decode(stored.data),
+      ...(headers !== undefined ? { headers } : {}),
+    };
+  } catch {
+    // Aged out, purged, or the stream is gone. Absent rather than fabricated: an operator must be
+    // able to tell "here it is" from "it existed and is now unrecoverable".
+    return undefined;
+  }
+}
 
 /** Create the stream, or update it if the config drifted. Idempotent across restarts. */
 async function upsertStream(
@@ -262,12 +408,23 @@ function toHeaders(headers: Record<string, string>): ReturnType<typeof headersFa
   return h;
 }
 
-function headersOf(m: JsMsg): Record<string, string> | undefined {
-  if (!m.headers) return undefined;
+const headersOf = (m: JsMsg): Record<string, string> | undefined => pickHeaders(m.headers);
+const storedHeaders = (h: MsgHdrs | undefined): Record<string, string> | undefined =>
+  pickHeaders(h);
+
+/**
+ * The caller's headers, minus the transport's own.
+ *
+ * Shared by the delivery path and the dead-letter reader so the `Nats-` filtering rule lives in one
+ * place — a dead letter must present exactly the headers its live delivery would have, or a replay
+ * is not a replay of the same message.
+ */
+function pickHeaders(hdrs: MsgHdrs | undefined): Record<string, string> | undefined {
+  if (!hdrs) return undefined;
   const out: Record<string, string> = {};
-  for (const key of m.headers.keys()) {
+  for (const key of hdrs.keys()) {
     if (key.startsWith('Nats-')) continue; // transport bookkeeping, not the caller's headers
-    const value = m.headers.get(key);
+    const value = hdrs.get(key);
     if (value) out[key] = value;
   }
   return Object.keys(out).length > 0 ? out : undefined;
