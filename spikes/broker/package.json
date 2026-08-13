@@ -21,6 +21,6 @@
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.6",
-    "tsx": "^4.23.1"
+    "tsx": "^4.23.12"
   }
 }
