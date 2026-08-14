@@ -82,6 +82,46 @@ Fastify enforced its own 1 MiB default all along, but raised `FST_ERR_CTP_BODY_T
 `toProblem` did not recognise and mapped to `INTERNAL`/**500** — telling the caller the server had
 failed, and putting a 5xx on the error-rate dashboard for what is squarely a client error.
 
+## The aggregated reference snapshot (EP-08.5)
+
+`GET /api/v1/reference` is the **one path the gateway answers itself** rather than proxying, and it
+earns the exception: the aggregate does not exist in any single service, so there is nothing to
+forward it to.
+
+Each owning service serves its own (EP-04.8); this fans out, merges, and returns one document — so
+Studio holds one snapshot rather than one per service and revalidates once rather than N times.
+
+- **`configVersion` is the SUM** of the contributors. Monotonic because each contributor is, and
+  collision-free for the same reason: two combinations can only share a sum if one contributor went
+  _down_, which a persisted counter never does. That is why EP-04.8 persists MAM's rather than
+  keeping it in memory.
+- **`sources` names each contributor's own version**, so an operator can see _which_ service moved.
+- Authentication happens at the gateway; the established identity is **forwarded**, so each upstream
+  applies its own authorization. The gateway does not decide who may read MAM's tags — MAM does.
+
+### A partial snapshot is never served
+
+If any contributor is unreachable the whole request is **503**, naming the service:
+
+```json
+{
+  "code": "INTERNAL",
+  "status": 503,
+  "message": "reference source \"mam\" is unavailable: fetch failed"
+}
+```
+
+The snapshot is what validation reads
+([§5 step 4](../../docs/architecture/configuration-and-reference-data.md)), so a missing service does
+not degrade the answer — it _changes_ it: "is this a known classification?" starts returning no for
+every term that service owned, and valid writes get rejected.
+
+A client cannot tell a partial snapshot from a complete one. It **can** tell a failure, and
+`SnapshotClient` already keeps the last good snapshot when a refresh fails — which is exactly
+[FR-PLat-7](../../docs/requirements/05-functional-requirements.md#platform)'s _"a stale snapshot
+keeps the system fully operational"_. Failing hands the situation to the one component equipped
+for it.
+
 ## Failure shapes
 
 - **Unrouted path** → `404 NOT_FOUND`, as a problem+JSON body.
@@ -94,7 +134,7 @@ failed, and putting a 5xx on the error-rate dashboard for what is squarely a cli
 ## Tests
 
 ```bash
-npx nx test @atlas/api-gateway   # 36 tests
+npx nx test @atlas/api-gateway   # 47 tests
 ```
 
 Headless throughout via `app.inject()`: no ports, no sockets, no flakiness. `fetch` is injected so
@@ -103,6 +143,5 @@ behaviour is asserted without sleeping.
 
 ## Not implemented yet
 
-- **EP-08.5** aggregated `GET /reference` — needs services to aggregate from.
 - **BFF views** (`/api/v1/bff/{view}`) — needs MAM/HSM/MTS to exist.
 - **Cluster-wide** rate limiting — see the per-replica note above; wants a shared counter and an ADR.

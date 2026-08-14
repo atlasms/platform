@@ -69,9 +69,17 @@ const health = new HealthRegistry().register(
   { critical: true },
 );
 
+// Services that own reference data (EP-08.5). Only MAM does so far; each entry is added when a
+// service starts serving `GET /reference`, and a service that does not is simply absent — the
+// aggregate is the union of what exists, not a list of what is planned.
+const referenceSources = [
+  { service: 'mam', url: new URL('/api/v1/reference', config.mamOrigin).toString() },
+];
+
 const app = buildGateway({
   jwks,
   routes,
+  referenceSources,
   issuer: config.issuer,
   audience: config.audience,
   health,
