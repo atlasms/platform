@@ -192,6 +192,58 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  test(`${name}: DANGER — a descending page is newest-first, and its cursor pages the same way`, async () => {
+    // EP-20.1 needs "recent", and sorting a PAGE client-side cannot produce it: page one of an
+    // ascending list is the OLDEST assets in the channel, so a Recent heading over it is exactly
+    // wrong at any real catalogue size.
+    //
+    // The cursor is the part that breaks quietly. A keyset cursor only means "the next page"
+    // relative to the direction it was produced in, so keeping `id > after` under DESC pages
+    // BACKWARDS into rows the caller has already seen — an infinite scroll that repeats itself.
+    await withFixture(async ({ store }) => {
+      const ids = ['01AAA', '01BBB', '01CCC', '01DDD'];
+      for (const id of ids) {
+        await store.transaction(async (tx) => {
+          await tx.put(asset({ id, channelId: 'ch12', title: id }));
+        });
+      }
+
+      const desc = await store.listByChannel('ch12', { order: 'desc' });
+      assert.deepEqual(
+        desc.map((a) => a.id),
+        [...ids].reverse(),
+        'newest first',
+      );
+
+      const firstPage = await store.listByChannel('ch12', { order: 'desc', limit: 2 });
+      assert.deepEqual(
+        firstPage.map((a) => a.id),
+        ['01DDD', '01CCC'],
+      );
+
+      const last = firstPage[firstPage.length - 1]?.id;
+      assert.ok(last, 'the first page must carry a cursor to continue from');
+      const secondPage = await store.listByChannel('ch12', {
+        order: 'desc',
+        limit: 2,
+        after: last,
+      });
+      assert.deepEqual(
+        secondPage.map((a) => a.id),
+        ['01BBB', '01AAA'],
+        'the cursor continued DOWNWARD rather than repeating the first page',
+      );
+
+      // And the default is untouched, because every existing caller depends on it.
+      const ascending = await store.listByChannel('ch12');
+      assert.deepEqual(
+        ascending.map((a) => a.id),
+        ids,
+        'asc is still the default',
+      );
+    });
+  });
+
   test(`${name}: an extended document round-trips, and upserts`, async () => {
     await withFixture(async ({ store }) => {
       const a = asset();

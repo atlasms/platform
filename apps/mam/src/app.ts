@@ -217,14 +217,24 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
   // every client forgets to read, which turns "there is more" into "there is nothing".
   app.get('/api/v1/assets', async (req, reply) =>
     handle(req, reply, async () => {
-      const { limit, cursor } = req.query as { limit?: string; cursor?: string };
+      const { limit, cursor, order } = req.query as {
+        limit?: string;
+        cursor?: string;
+        order?: string;
+      };
       const parsed = limit === undefined ? undefined : Number(limit);
       if (parsed !== undefined && !Number.isInteger(parsed)) {
         throw new ValidationError('limit must be an integer');
       }
+      // Rejected rather than coerced: silently treating `order=newest` as ascending would serve
+      // the OLDEST assets under a heading that says Recent, which is worse than a 422.
+      if (order !== undefined && order !== 'asc' && order !== 'desc') {
+        throw new ValidationError("order must be 'asc' or 'desc'");
+      }
       return options.service.list(await callerOf(req), {
         ...(parsed === undefined ? {} : { limit: parsed }),
         ...(cursor === undefined ? {} : { cursor }),
+        ...(order === undefined ? {} : { order }),
       });
     }),
   );

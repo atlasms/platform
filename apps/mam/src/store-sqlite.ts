@@ -310,13 +310,18 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
       // Ordered by id, which is a ULID and therefore chronological — a stable order without a
       // second column, and the one a catalogue listing wants anyway. It is also what makes the
       // keyset cursor work: `id > after` is meaningless without a total order on the same column.
+      const desc = options.order === 'desc';
       const where = ['channel_id = ?'];
       const params: unknown[] = [channelId];
       if (options.after !== undefined) {
-        where.push('id > ?');
+        // The comparison flips with the order: a keyset cursor only means "the next page"
+        // relative to the direction it was produced in, so `id > after` under DESC would page
+        // backwards into rows the caller has already seen.
+        where.push(desc ? 'id < ?' : 'id > ?');
         params.push(options.after);
       }
-      let sql = `SELECT data FROM assets WHERE ${where.join(' AND ')} ORDER BY id`;
+      let sql =
+        `SELECT data FROM assets WHERE ${where.join(' AND ')} ORDER BY id` + (desc ? ' DESC' : '');
       if (options.limit !== undefined) {
         sql += ' LIMIT ?';
         params.push(options.limit);
