@@ -352,3 +352,62 @@ test('the app exposes the SERVICE’s registry, so no wiring step can be forgott
   const after = await scrape(app);
   assert.equal(sample(after, 'atlas_iam_login_attempts_total', { outcome: 'success' }), 2);
 });
+
+// --- #245: the per-request access record ------------------------------------
+
+test('a failed request is logged with the route TEMPLATE, not the raw path', async () => {
+  // A raw path puts a ULID in a log field operators filter on — the Loki version of the same
+  // cardinality trap the metrics avoid — and makes "how slow is this route" unanswerable.
+  const records: Record<string, unknown>[] = [];
+  const keyRing = await KeyRing.create('k1');
+  const service = new IamService({ keyRing });
+  const app = buildIamApp({
+    service,
+    keyRing,
+    onAccessLog: (r) => records.push(r as unknown as Record<string, unknown>),
+  });
+
+  await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { username: 'nobody', password: 'x' },
+  });
+
+  assert.equal(records.length, 1, 'a 401 is always logged');
+  assert.equal(records[0]?.['route'], '/auth/login');
+  assert.equal(records[0]?.['status'], 401);
+  assert.equal(records[0]?.['method'], 'POST');
+  assert.ok(typeof records[0]?.['latencyMs'] === 'number');
+  assert.ok(records[0]?.['requestId'], 'and it carries the correlation id — the whole point');
+});
+
+test('a fast success is NOT logged, and probes never are', async () => {
+  // The volume decision: an access line per service multiplies log volume by the number of hops,
+  // and a fast 200 is already fully described by the golden signals.
+  const records: unknown[] = [];
+  const keyRing = await KeyRing.create('k1');
+  const service = new IamService({ keyRing });
+  const app = buildIamApp({ service, keyRing, onAccessLog: (r) => records.push(r) });
+
+  await app.inject({ method: 'GET', url: '/.well-known/jwks.json' });
+  for (const url of ['/healthz', '/readyz', '/metrics']) {
+    await app.inject({ method: 'GET', url });
+  }
+
+  assert.deepEqual(records, [], 'nothing worth a line happened');
+});
+
+test('sampling can be turned up when an investigation needs the happy path', async () => {
+  const records: unknown[] = [];
+  const keyRing = await KeyRing.create('k1');
+  const service = new IamService({ keyRing });
+  const app = buildIamApp({
+    service,
+    keyRing,
+    accessLogPolicy: { sampleRatio: 1 },
+    onAccessLog: (r) => records.push(r),
+  });
+
+  await app.inject({ method: 'GET', url: '/.well-known/jwks.json' });
+  assert.equal(records.length, 1, 'now the successful request is logged too');
+});
