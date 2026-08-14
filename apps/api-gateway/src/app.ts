@@ -9,9 +9,11 @@ import {
   goldenSignals,
   isTraceable,
   HealthRegistry,
+  Internal,
   MetricRegistry,
   PayloadTooLarge,
   runWithContext,
+  serveSnapshot,
   toProblem,
   NotFound,
   TooManyRequests,
@@ -23,6 +25,7 @@ import {
   type Tracer,
 } from '@atlas/service-kit';
 import { matchRoute, defaultRoutes, type RoutingTable } from './routing.ts';
+import { aggregateReference, ReferenceUnavailable, type ReferenceSource } from './reference.ts';
 import {
   clientAddress,
   RateLimiter,
@@ -95,6 +98,13 @@ export interface GatewayOptions {
    * stops a public client pinning every request to one trace id or forcing the sampled flag.
    */
   tracer?: Tracer;
+  /**
+   * Services that own reference data, aggregated by `GET /api/v1/reference` (EP-08.5).
+   *
+   * Omit and the route is not registered at all — a gateway with nothing to aggregate should 404
+   * rather than serve an empty snapshot that looks like "there is no reference data".
+   */
+  referenceSources?: readonly ReferenceSource[];
   /** Injected for testability; defaults to global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -279,6 +289,65 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
     const r = await health.readiness();
     return reply.code(r.status === 'ready' ? 200 : 503).send(r);
   });
+
+  // --- the aggregated reference snapshot (EP-08.5) ---------------------------------------
+  //
+  // The ONE path the gateway answers itself rather than proxying, and it earns the exception: the
+  // aggregate does not exist in any single service, so there is nothing to forward it to. Declared
+  // before the catch-all because Fastify matches a literal path ahead of a wildcard.
+  if (options.referenceSources && options.referenceSources.length > 0) {
+    const sources = options.referenceSources;
+    app.get('/api/v1/reference', async (req, reply) => {
+      // Authentication happens here as it does for any protected route — the aggregate is a
+      // channel's vocabulary, not public data — and the established identity is forwarded so each
+      // upstream applies its OWN authorization. The gateway does not decide who may read MAM's
+      // tags; MAM does.
+      let claims: Claims;
+      try {
+        const auth = req.headers.authorization;
+        const token = typeof auth === 'string' ? BEARER.exec(auth)?.[1] : undefined;
+        if (!token) throw new Unauthorized('missing bearer token');
+        claims = await verifyJwt(token, options.jwks, {
+          ...(options.issuer !== undefined ? { issuer: options.issuer } : {}),
+          ...(options.audience !== undefined ? { audience: options.audience } : {}),
+        });
+      } catch (err) {
+        const problem = toProblem(err, req.correlationId);
+        return reply.code(problem.status).send(problem);
+      }
+
+      const headers: Record<string, string> = {
+        [INTERNAL_HEADERS.correlation]: req.correlationId,
+        ...(req.span ? { [TRACEPARENT_HEADER]: req.span.traceparent() } : {}),
+        ...(claims.sub !== undefined ? { [INTERNAL_HEADERS.user]: claims.sub } : {}),
+        ...(claims.channelId !== undefined ? { [INTERNAL_HEADERS.channel]: claims.channelId } : {}),
+        ...(claims.permissions !== undefined
+          ? { [INTERNAL_HEADERS.scopes]: claims.permissions.join(' ') }
+          : {}),
+      };
+
+      try {
+        const snapshot = await aggregateReference({
+          sources,
+          headers,
+          ...(options.fetchImpl !== undefined ? { fetchImpl: options.fetchImpl } : {}),
+        });
+        const result = serveSnapshot(snapshot, req.headers['if-none-match']);
+        void reply.header('etag', result.etag);
+        if (result.status === 304) return reply.code(304).send();
+        return result.body;
+      } catch (err) {
+        if (err instanceof ReferenceUnavailable) {
+          // 503, not a partial snapshot. See ReferenceUnavailable — a client cannot tell an
+          // incomplete snapshot from a complete one, but it can tell a failure, and its own client
+          // keeps the last good one. Failing hands the situation to the component equipped for it.
+          const problem = toProblem(new Internal(err.message), req.correlationId);
+          return reply.code(503).send({ ...problem, status: 503 });
+        }
+        throw err;
+      }
+    });
+  }
 
   // --- everything else is proxied --------------------------------------------------------
   app.all('/*', async (req, reply) => {

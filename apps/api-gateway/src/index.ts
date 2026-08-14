@@ -12,3 +12,9 @@ export {
   type RateLimiterOptions,
   type RateLimitPolicy,
 } from './rate-limit.ts';
+export {
+  aggregateReference,
+  ReferenceUnavailable,
+  type AggregatedSnapshot,
+  type ReferenceSource,
+} from './reference.ts';
