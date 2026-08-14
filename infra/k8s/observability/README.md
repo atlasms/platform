@@ -76,11 +76,18 @@ something whose job is to read text.
 mint a stream per request and shred the index. Same cardinality trap as a user id in a metric label.
 It stays in the line, where `|= "01K…"` finds it across every service in one query.
 
-**Only the gateway logs an access line per request.** MAM and IAM log lifecycle events and errors,
-and those lines do carry the correlation id — `runWithContext` sees to that — so the
-one-request view fills in when something goes wrong, which is when it gets read, and is thin on a
-healthy request. Per-service access logging is
-[#245](https://github.com/atlasms/platform/issues/245), not this story.
+**Every service logs a per-request access record** ([#245](https://github.com/atlasms/platform/issues/245)),
+so the one-request view spans services rather than showing the gateway alone.
+
+The volume decision is deliberate, because an access line per service multiplies log volume by
+roughly the number of hops and ADR-0003 already names footprint as the main argument against the
+stack. **Non-2xx and slow requests are always logged; everything else is sampled and defaults to
+off.** A fast successful request is already fully described by the golden signals — rate, status
+class, and a latency histogram, per route — so a line for it adds bytes and no answer. Raise
+`sampleRatio` when an investigation needs the happy path.
+
+The gateway is the exception and still logs every request: it is the edge, so its log is the one
+place every request appears exactly once.
 
 Loki and Alloy are themselves **scraped**. The collector is the component whose failure is hardest to
 notice: when a log shipper stops, the symptom is silence, and silence looks exactly like a quiet

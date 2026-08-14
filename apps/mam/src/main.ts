@@ -94,6 +94,7 @@ const app = buildMamApp({
   policyFor: (userId) => policies.policyFor(userId),
   health,
   tracer,
+  onAccessLog: (record) => log.info('access', { ...record }),
   onError: (err, ctx) =>
     log.error('unhandled error', {
       ...ctx,

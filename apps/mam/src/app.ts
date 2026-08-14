@@ -7,15 +7,19 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { ulid } from '@atlas/contracts';
 import type { EffectivePolicy } from '@atlas/policy';
 import {
+  accessRecord,
   goldenSignals,
   isTraceable,
   HealthRegistry,
   MetricRegistry,
   runWithContext,
+  shouldLogAccess,
   serveSnapshot,
   toProblem,
   Unauthorized,
   ValidationError,
+  type AccessLogPolicy,
+  type AccessRecord,
   type Span,
   type Tracer,
 } from '@atlas/service-kit';
@@ -28,6 +32,16 @@ export interface MamAppOptions {
   policyFor: (userId: string) => Promise<EffectivePolicy | undefined> | EffectivePolicy | undefined;
   health?: HealthRegistry;
   metrics?: MetricRegistry;
+  /**
+   * Per-request access log (#245). Omit and nothing is logged — this service emitted no access
+   * record at all before, so the default must not suddenly triple anyone's log volume.
+   *
+   * The POLICY decides what is worth a line; see `access-log.ts`. Non-2xx and slow requests are
+   * always logged, the rest is sampled and defaults to off, because a fast successful request is
+   * already fully described by the golden signals.
+   */
+  onAccessLog?: (record: AccessRecord) => void;
+  accessLogPolicy?: AccessLogPolicy;
   /**
    * Tracer (EP-04.7). Omit and no spans are produced. MAM **adopts** the inbound `traceparent` —
    * its caller is the gateway, which is trusted, and re-deciding sampling here would leave holes
@@ -121,6 +135,30 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
       status: reply.statusCode,
       duration: (Date.now() - req.startedAt) / 1000,
     });
+
+    // The access record (#245). Probes and the scraper are excluded for the same reason they are
+    // not traced: they are almost all the requests, and an operator reading this is looking for a
+    // request somebody made.
+    if (options.onAccessLog && isTraceable(template)) {
+      const latencyMs = Date.now() - req.startedAt;
+      if (shouldLogAccess({ status: reply.statusCode, latencyMs }, options.accessLogPolicy)) {
+        const userId = req.headers['x-atlas-user'];
+        options.onAccessLog(
+          accessRecord({
+            requestId: req.correlationId,
+            method: req.method,
+            // The TEMPLATE, never req.url — a ULID in a log field is the Loki version of the
+            // cardinality trap the metrics already avoid, and it makes "how slow is
+            // GET /assets/:id" unanswerable because every request is its own route.
+            route: template,
+            status: reply.statusCode,
+            latencyMs,
+            ...(typeof userId === 'string' ? { userId } : {}),
+            ...(req.span ? { traceId: req.span.traceId } : {}),
+          }),
+        );
+      }
+    }
     done();
   });
 

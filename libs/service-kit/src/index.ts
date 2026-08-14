@@ -19,6 +19,13 @@ export {
 } from './auth.ts';
 export { createLogger, type Logger } from './logger.ts';
 export {
+  accessRecord,
+  shouldLogAccess,
+  DEFAULT_ACCESS_POLICY,
+  type AccessLogPolicy,
+  type AccessRecord,
+} from './access-log.ts';
+export {
   configEtag,
   matchesEtag,
   serveSnapshot,

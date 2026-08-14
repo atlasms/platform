@@ -96,7 +96,13 @@ if (seedUser && seedPassword) {
   });
 }
 
-const app = buildIamApp({ service, keyRing, health, tracer });
+const app = buildIamApp({
+  service,
+  keyRing,
+  health,
+  tracer,
+  onAccessLog: (record) => log.info('access', { ...record }),
+});
 
 await app.listen({ port: config.port, host: config.host });
 log.info('iam listening', { port: config.port, host: config.host });

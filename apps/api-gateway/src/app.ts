@@ -45,7 +45,10 @@ export const INTERNAL_HEADERS = {
 export interface AccessLogRecord {
   requestId: string;
   method: string;
+  /** What the client asked for, verbatim. The edge is the one place that is worth keeping. */
   path: string;
+  /** The matched routing-table prefix — bounded, so it aggregates (#245). */
+  route?: string;
   status: number;
   userId?: string;
   latencyMs: number;
@@ -257,7 +260,14 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
     options.onAccessLog?.({
       requestId: req.correlationId,
       method: req.method,
+      // The RAW path, and here that is right: the gateway is the edge, and what the outside world
+      // actually asked for is the thing an operator wants when reading the edge log.
       path: req.url,
+      // The matched ROUTE as well (#245), so the gateway's records aggregate alongside every other
+      // service's. Fastify's own template is the catch-all `/*` for everything proxied, so the
+      // useful bounded value is the routing table's prefix — which `req.matchedRoute` records once
+      // the table has matched.
+      ...(req.matchedRoute !== undefined ? { route: req.matchedRoute } : {}),
       status: reply.statusCode,
       ...(req.claims?.sub !== undefined ? { userId: req.claims.sub } : {}),
       latencyMs: Date.now() - req.startedAt,
@@ -376,6 +386,7 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
     // the property a span name needs, and readable as "which service did this go to".
     req.span?.setName(`${req.method} ${route.prefix} → ${route.service}`);
     req.span?.setAttribute('atlas.upstream', route.service);
+    req.matchedRoute = route.prefix;
 
     const headers: Record<string, string> = {
       [INTERNAL_HEADERS.correlation]: req.correlationId,
@@ -487,6 +498,7 @@ declare module 'fastify' {
     startedAt: number;
     inFlight?: boolean;
     span?: Span;
+    matchedRoute?: string;
     claims?: Claims;
   }
 }
