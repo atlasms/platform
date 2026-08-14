@@ -112,6 +112,8 @@ const MAX_PAGE_SCANS = 5;
 export interface ListPage {
   limit?: number;
   cursor?: string;
+  /** `desc` reads newest-first — what a "Recent" listing means (EP-20.1). Default `asc`. */
+  order?: 'asc' | 'desc';
 }
 
 /**
@@ -230,7 +232,7 @@ export class MamService {
       const fetch = limit * PAGE_OVERFETCH;
       const page = await this.options.store.listByChannel(caller.channelId, {
         limit: fetch,
-        ...defined({ after: cursor }),
+        ...defined({ after: cursor, order: options.order }),
       });
       // A short page from the store means the channel is exhausted; a full one means there is more.
       more = page.length === fetch;

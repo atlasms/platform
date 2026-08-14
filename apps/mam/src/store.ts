@@ -31,6 +31,17 @@ export type ExtendedValues = Record<string, unknown>;
 export interface ListOptions {
   limit?: number;
   after?: string;
+  /**
+   * Which end of the catalogue to read from. Default `asc` — oldest first, unchanged.
+   *
+   * `desc` exists because "recent" is the first thing any media panel shows, and sorting a PAGE
+   * client-side cannot produce it: page one of an ascending list is the oldest assets in the
+   * channel, so a "Recent" heading over it would be exactly wrong at any real catalogue size.
+   *
+   * The cursor comparison flips with it — `id < after` rather than `id > after` — because a keyset
+   * cursor only means "the next page" relative to the order it was produced in.
+   */
+  order?: 'asc' | 'desc';
 }
 
 /**

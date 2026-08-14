@@ -184,11 +184,14 @@ export function pgAssetStore(pool: PgPool): AssetStore {
     async listByChannel(channelId, options = {}) {
       // Ordered by id (a ULID, so chronological). That total order is what makes the keyset cursor
       // work at all: `id > after` means nothing without it.
+      const desc = options.order === 'desc';
       const params: unknown[] = [channelId];
       const p = (v: unknown): string => `$${params.push(v)}`;
       let sql = 'SELECT data FROM assets WHERE channel_id = $1';
-      if (options.after !== undefined) sql += ` AND id > ${p(options.after)}`;
-      sql += ' ORDER BY id';
+      // The cursor comparison flips with the order: a keyset cursor only means "the next page"
+      // relative to the direction it was produced in.
+      if (options.after !== undefined) sql += ` AND id ${desc ? '<' : '>'} ${p(options.after)}`;
+      sql += desc ? ' ORDER BY id DESC' : ' ORDER BY id';
       if (options.limit !== undefined) sql += ` LIMIT ${p(options.limit)}`;
 
       const { rows } = await pool.query<{ data: Asset }>(sql, params);
