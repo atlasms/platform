@@ -6,6 +6,7 @@ import { AssetsService } from '../core/assets.service.ts';
 import type { Asset, UpdateAssetInput } from '../core/generated/mam.types.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
+import { LocaleService } from '../core/locale.service.ts';
 import { AssetEditor } from './asset-editor.ts';
 
 const record = (overrides: Partial<Asset> = {}): Asset => ({
@@ -42,6 +43,53 @@ class FakeAssets {
   }
 }
 
+class FakeLocale {
+  locale = () => 'en';
+  loading = () => false;
+  t(key: string): string {
+    const translations: Record<string, string> = {
+      'assetEditor.basicInfo': 'Basic info',
+      'assetEditor.files': 'Files',
+      'assetEditor.identity': 'Identity',
+      'assetEditor.classification': 'Classification',
+      'assetEditor.rights': 'Rights',
+      'assetEditor.title': 'Title',
+      'assetEditor.description': 'Description',
+      'assetEditor.mediaType': 'Media type',
+      'assetEditor.state': 'State',
+      'assetEditor.episodeNumber': 'Episode number',
+      'assetEditor.duration': 'Duration (seconds)',
+      'assetEditor.categoryId': 'Category ID',
+      'assetEditor.structureId': 'Structure ID',
+      'assetEditor.allowedBroadcasts': 'Allowed broadcasts',
+      'assetEditor.expiresAt': 'Expires at (ISO-8601)',
+      'assetEditor.recommendedWindow': 'Recommended window',
+      'assetEditor.notSet': 'Not set',
+      'assetEditor.editable': 'Editable',
+      'assetEditor.readOnly': 'Read only',
+      'assetEditor.saveChanges': 'Save changes',
+      'assetEditor.saving': 'Saving…',
+      'assetEditor.saveError': 'Could not save these changes. Your edits are still here.',
+      'assetEditor.saved': 'Changes saved.',
+      'assetEditor.changedFields': 'changed field(s)',
+      'assetEditor.createdBy': 'Created by',
+      'assetEditor.createdAt': 'Created',
+      'assetEditor.updatedAt': 'Updated',
+      'assetEditor.sourceContainer': 'Source container',
+      'assetEditor.renditionSet': 'Rendition set',
+      'assetEditor.renditionsAttached': 'Renditions attached',
+      'assetEditor.awaitingRenditions': 'Awaiting renditions',
+      'assetEditor.filesNote': 'Individual file rows, checksums, storage tier and technical metadata will appear here when MAM\'s FileRef projection is available. HSM remains the source of truth for files.',
+      'assetEditor.loading': 'Loading asset…',
+      'common.retry': 'Retry',
+    };
+    return translations[key] ?? key;
+  }
+  setLocale(_locale: 'en' | 'ar'): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
 interface InternalEditor {
   asset: () => Asset | null;
   section: { set(value: 'basic' | 'files'): void };
@@ -62,6 +110,7 @@ function setup(fieldGroups: string[] = ['core', 'taxonomy', 'rights']) {
       provideZonelessChangeDetection(),
       EditorStore,
       { provide: AssetsService, useValue: fake },
+      { provide: LocaleService, useClass: FakeLocale },
     ],
   });
   TestBed.inject(SessionStore).signIn({

@@ -1,0 +1,94 @@
+{
+  "app": {
+    "title": "أطلس ستوديو",
+    "loading": "جاري التحميل…"
+  },
+  "auth": {
+    "signIn": "تسجيل الدخول",
+    "username": "اسم المستخدم",
+    "password": "كلمة المرور",
+    "signingIn": "جاري تسجيل الدخول…",
+    "signOut": "تسجيل الخروج"
+  },
+  "workbench": {
+    "panels": {
+      "media": "الوسائط",
+      "schedule": "الجدول",
+      "ingest": "الاستيراد",
+      "search": "البحث",
+      "dashboard": "لوحة التحكم",
+      "users": "المستخدمون"
+    },
+    "activityBar": {
+      "panels": "اللوحات"
+    },
+    "statusBar": {
+      "unsavedChanges": "● تغييرات غير محفوظة",
+      "panelsVisible": "من اللوحات مرئية"
+    },
+    "sideBar": {
+      "resize": "تغيير حجم الشريط الجانبي"
+    }
+  },
+  "mediaPanel": {
+    "recent": "الأخيرة",
+    "search": "بحث",
+    "searchPlaceholder": "البحث عن أصول…",
+    "tags": "العلامات",
+    "filterByTags": "تصفية حسب العلامات",
+    "noResults": "لم يتم العثور على أصول",
+    "loading": "جاري تحميل الأصول…",
+    "error": "تعذر تحميل الأصول",
+    "loadMore": "تحميل المزيد"
+  },
+  "assetEditor": {
+    "basicInfo": "معلومات أساسية",
+    "files": "الملفات",
+    "identity": "الهوية",
+    "classification": "التصنيف",
+    "rights": "الحقوق",
+    "title": "العنوان",
+    "description": "الوصف",
+    "mediaType": "نوع الوسائط",
+    "state": "الحالة",
+    "episodeNumber": "رقم الحلقة",
+    "duration": "المدة (ثوانٍ)",
+    "categoryId": "معرف الفئة",
+    "structureId": "معرف البنية",
+    "allowedBroadcasts": "البث المسموح",
+    "expiresAt": "ينتهي في (ISO-8601)",
+    "recommendedWindow": "النافذة المقترحة",
+    "notSet": "غير محدد",
+    "editable": "قابل للتحرير",
+    "readOnly": "للقراءة فقط",
+    "saveChanges": "حفظ التغييرات",
+    "saving": "جاري الحفظ…",
+    "saveError": "تعذر حفظ هذه التغييرات. تعديلاتك لا تزال هنا.",
+    "saved": "تم حفظ التغييرات.",
+    "changedFields": "حقل(حقول) تم تغييرها",
+    "recordMeta": "تفاصيل السجل",
+    "createdBy": "أنشئ بواسطة",
+    "createdAt": "تم الإنشاء",
+    "updatedAt": "تم التحديث",
+    "sourceContainer": "حاوية المصدر",
+    "renditionSet": "مجموعة النسخ",
+    "renditionsAttached": "النسخ مرفقة",
+    "awaitingRenditions": "في انتظار النسخ",
+    "filesNote": "ستظهر صفوف الملفات الفردية، و مجموعات التحقق، ومستوى التخزين، والبيانات الوصفية التقنية هنا عند توفر إسقاط FileRef الخاص بـ MAM. يظل HSM مصدر الحقيقة للملفات."
+  },
+  "editor": {
+    "close": "إغلاق",
+    "closeOthers": "إغلاق الباقي",
+    "closeAll": "إغلاق الكل",
+    "split": "تقسيم",
+    "pin": "تثبيت",
+    "unpin": "إلغاء التثبيت"
+  },
+  "common": {
+    "retry": "إعادة المحاولة",
+    "cancel": "إلغاء",
+    "ok": "موافق",
+    "error": "خطأ",
+    "success": "نجاح"
+  }
+}

@@ -3,6 +3,7 @@ import { AssetsService } from '../core/assets.service.ts';
 import type { Asset, UpdateAssetInput } from '../core/generated/mam.types.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
+import { LocaleService } from '../core/locale.service.ts';
 
 type EditorSection = 'basic' | 'files';
 type EditableField = keyof UpdateAssetInput;
@@ -32,11 +33,11 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (loading()) {
-      <div class="state"><p>Loading asset…</p></div>
+      <div class="state"><p>{{ locale.t('assetEditor.loading') }}</p></div>
     } @else if (loadError()) {
       <div class="state" role="alert">
         <p>{{ loadError() }}</p>
-        <button type="button" (click)="reload()">Retry</button>
+        <button type="button" (click)="reload()">{{ locale.t('common.retry') }}</button>
       </div>
     } @else if (asset(); as current) {
       <header class="editor-header">
@@ -55,7 +56,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
           [class.active]="section() === 'basic'"
           (click)="section.set('basic')"
         >
-          Basic info
+          {{ locale.t('assetEditor.basicInfo') }}
         </button>
         <button
           type="button"
@@ -64,7 +65,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
           [class.active]="section() === 'files'"
           (click)="section.set('files')"
         >
-          Files
+          {{ locale.t('assetEditor.files') }}
         </button>
       </nav>
 
@@ -72,12 +73,12 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
         <form class="basic" (submit)="save($event)">
           <section class="field-group">
             <div class="group-heading">
-              <h3>Identity</h3>
-              <span>{{ canEdit('core') ? 'Editable' : 'Read only' }}</span>
+              <h3>{{ locale.t('assetEditor.identity') }}</h3>
+              <span>{{ canEdit('core') ? locale.t('assetEditor.editable') : locale.t('assetEditor.readOnly') }}</span>
             </div>
             <div class="grid">
               <label class="wide">
-                Title
+                {{ locale.t('assetEditor.title') }}
                 <input
                   name="title"
                   required
@@ -87,15 +88,15 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                 />
               </label>
               <label>
-                Media type
+                {{ locale.t('assetEditor.mediaType') }}
                 <input [value]="current.mediaType" disabled />
               </label>
               <label>
-                State
+                {{ locale.t('assetEditor.state') }}
                 <input [value]="current.state" disabled />
               </label>
               <label class="wide">
-                Description
+                {{ locale.t('assetEditor.description') }}
                 <textarea
                   name="description"
                   rows="4"
@@ -105,7 +106,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                 ></textarea>
               </label>
               <label>
-                Episode number
+                {{ locale.t('assetEditor.episodeNumber') }}
                 <input
                   name="episodeNo"
                   type="number"
@@ -117,7 +118,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                 />
               </label>
               <label>
-                Duration (seconds)
+                {{ locale.t('assetEditor.duration') }}
                 <input
                   name="durationSec"
                   type="number"
@@ -133,12 +134,12 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
 
           <section class="field-group">
             <div class="group-heading">
-              <h3>Classification</h3>
-              <span>{{ canEdit('taxonomy') ? 'Editable' : 'Read only' }}</span>
+              <h3>{{ locale.t('assetEditor.classification') }}</h3>
+              <span>{{ canEdit('taxonomy') ? locale.t('assetEditor.editable') : locale.t('assetEditor.readOnly') }}</span>
             </div>
             <div class="grid">
               <label>
-                Category ID
+                {{ locale.t('assetEditor.categoryId') }}
                 <input
                   name="categoryId"
                   [disabled]="!canEdit('taxonomy')"
@@ -147,7 +148,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                 />
               </label>
               <label>
-                Structure ID
+                {{ locale.t('assetEditor.structureId') }}
                 <input
                   name="structureId"
                   [disabled]="!canEdit('taxonomy')"
@@ -160,12 +161,12 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
 
           <section class="field-group">
             <div class="group-heading">
-              <h3>Rights</h3>
-              <span>{{ canEdit('rights') ? 'Editable' : 'Read only' }}</span>
+              <h3>{{ locale.t('assetEditor.rights') }}</h3>
+              <span>{{ canEdit('rights') ? locale.t('assetEditor.editable') : locale.t('assetEditor.readOnly') }}</span>
             </div>
             <div class="grid">
               <label>
-                Allowed broadcasts
+                {{ locale.t('assetEditor.allowedBroadcasts') }}
                 <input
                   name="allowedBroadcastCount"
                   type="number"
@@ -177,7 +178,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                 />
               </label>
               <label>
-                Expires at (ISO-8601)
+                {{ locale.t('assetEditor.expiresAt') }}
                 <input
                   name="expiresAt"
                   [disabled]="!canEdit('rights')"
@@ -186,34 +187,34 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                 />
               </label>
               <div class="readonly-value">
-                <span>Recommended window</span>
+                <span>{{ locale.t('assetEditor.recommendedWindow') }}</span>
                 <strong>
-                  {{ current.recommendedBroadcastStart || 'Not set' }}
+                  {{ current.recommendedBroadcastStart || locale.t('assetEditor.notSet') }}
                   —
-                  {{ current.recommendedBroadcastEnd || 'Not set' }}
+                  {{ current.recommendedBroadcastEnd || locale.t('assetEditor.notSet') }}
                 </strong>
               </div>
             </div>
           </section>
 
           <section class="record-meta" aria-label="Record details">
-            <span>Created by {{ current.createdBy }}</span>
-            <span>Created {{ current.createdAt }}</span>
-            <span>Updated {{ current.updatedAt }}</span>
+            <span>{{ locale.t('assetEditor.createdBy') }} {{ current.createdBy }}</span>
+            <span>{{ locale.t('assetEditor.createdAt') }} {{ current.createdAt }}</span>
+            <span>{{ locale.t('assetEditor.updatedAt') }} {{ current.updatedAt }}</span>
           </section>
 
           @if (saveError()) {
             <p class="message error" role="alert">{{ saveError() }}</p>
           } @else if (saved()) {
-            <p class="message" role="status">Changes saved.</p>
+            <p class="message" role="status">{{ locale.t('assetEditor.saved') }}</p>
           }
 
           @if (mayEditAnything()) {
             <div class="actions">
               <button type="submit" [disabled]="saving() || dirtyCount() === 0">
-                {{ saving() ? 'Saving…' : 'Save changes' }}
+                {{ saving() ? locale.t('assetEditor.saving') : locale.t('assetEditor.saveChanges') }}
               </button>
-              <span>{{ dirtyCount() }} changed field{{ dirtyCount() === 1 ? '' : 's' }}</span>
+              <span>{{ dirtyCount() }} {{ locale.t('assetEditor.changedFields') }}</span>
             </div>
           }
         </form>
@@ -223,22 +224,21 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
             <span class="file-icon" aria-hidden="true">▤</span>
             <div>
               <h3>{{ current.fileType }}</h3>
-              <p>{{ current.hasRenditions ? 'Renditions attached' : 'Awaiting renditions' }}</p>
+              <p>{{ current.hasRenditions ? locale.t('assetEditor.renditionsAttached') : locale.t('assetEditor.awaitingRenditions') }}</p>
             </div>
           </div>
           <dl>
             <div>
-              <dt>Source container</dt>
+              <dt>{{ locale.t('assetEditor.sourceContainer') }}</dt>
               <dd>{{ current.fileType }}</dd>
             </div>
             <div>
-              <dt>Rendition set</dt>
-              <dd>{{ current.hasRenditions ? 'Available' : 'Pending' }}</dd>
+              <dt>{{ locale.t('assetEditor.renditionSet') }}</dt>
+              <dd>{{ current.hasRenditions ? locale.t('assetEditor.renditionsAttached') : locale.t('assetEditor.awaitingRenditions') }}</dd>
             </div>
           </dl>
           <p class="files-note">
-            Individual file rows, checksums, storage tier and technical metadata will appear here
-            when MAM's FileRef projection is available. HSM remains the source of truth for files.
+            {{ locale.t('assetEditor.filesNote') }}
           </p>
         </section>
       }
@@ -253,6 +253,7 @@ export class AssetEditor {
   private readonly assetsApi = inject(AssetsService);
   private readonly permissions = inject(PermissionService);
   private readonly editors = inject(EditorStore);
+  protected readonly locale = inject(LocaleService);
 
   protected readonly asset = signal<Asset | null>(null);
   protected readonly draft = signal<Draft | null>(null);
