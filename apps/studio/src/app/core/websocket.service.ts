@@ -177,7 +177,10 @@ export class WebSocketService {
       case 'permissions-changed':
         if (frame.subject !== undefined) {
           this.subscriptions.delete(frame.subject);
-          this.permissionsChanged$.next({ pattern: frame.subject, message: frame.message ?? 'Subscription dropped' });
+          this.permissionsChanged$.next({
+            pattern: frame.subject,
+            message: frame.message ?? 'Subscription dropped',
+          });
         }
         break;
     }

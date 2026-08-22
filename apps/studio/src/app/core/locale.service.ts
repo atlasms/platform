@@ -30,9 +30,7 @@ export class LocaleService {
   private readonly _loading = signal(false);
 
   readonly locale = this._locale.asReadonly();
-  readonly direction = computed<Direction>(() =>
-    this._locale() === 'ar' ? 'rtl' : 'ltr',
-  );
+  readonly direction = computed<Direction>(() => (this._locale() === 'ar' ? 'rtl' : 'ltr'));
   readonly loading = this._loading.asReadonly();
 
   constructor() {

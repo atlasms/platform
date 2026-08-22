@@ -61,7 +61,9 @@ import { LocaleService } from '../core/locale.service.ts';
     } @else if (assets().length === 0) {
       <!-- The two empty states are different questions, and answering both with "No results" makes
            an empty channel look like a failed search. -->
-      <p class="muted">{{ query() ? locale.t('mediaPanel.noResults') : locale.t('mediaPanel.noResults') }}</p>
+      <p class="muted">
+        {{ query() ? locale.t('mediaPanel.noResults') : locale.t('mediaPanel.noResults') }}
+      </p>
     } @else {
       <ul class="items">
         @for (asset of assets(); track asset.id) {

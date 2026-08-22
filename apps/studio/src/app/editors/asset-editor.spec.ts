@@ -79,7 +79,8 @@ class FakeLocale {
       'assetEditor.renditionSet': 'Rendition set',
       'assetEditor.renditionsAttached': 'Renditions attached',
       'assetEditor.awaitingRenditions': 'Awaiting renditions',
-      'assetEditor.filesNote': 'Individual file rows, checksums, storage tier and technical metadata will appear here when MAM\'s FileRef projection is available. HSM remains the source of truth for files.',
+      'assetEditor.filesNote':
+        "Individual file rows, checksums, storage tier and technical metadata will appear here when MAM's FileRef projection is available. HSM remains the source of truth for files.",
       'assetEditor.loading': 'Loading asset…',
       'common.retry': 'Retry',
     };

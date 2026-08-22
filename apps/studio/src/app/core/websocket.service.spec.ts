@@ -8,7 +8,9 @@ import { WebSocketService } from './websocket.service.ts';
 
 class FakeAuth {
   tokenValue: string | null = 'test-access-token';
-  token() { return this.tokenValue; }
+  token() {
+    return this.tokenValue;
+  }
 }
 
 class FakeSession {
@@ -16,10 +18,18 @@ class FakeSession {
   userIdValue = 'user-1';
   channelIdValue = 'ch12';
   policyValue = { subjectId: 'user-1', permVersion: 1, rules: [] };
-  isAuthenticated() { return this.authenticated; }
-  userId() { return this.userIdValue; }
-  channelId() { return this.channelIdValue; }
-  policy() { return this.policyValue; }
+  isAuthenticated() {
+    return this.authenticated;
+  }
+  userId() {
+    return this.userIdValue;
+  }
+  channelId() {
+    return this.channelIdValue;
+  }
+  policy() {
+    return this.policyValue;
+  }
 }
 
 describe('WebSocketService', () => {

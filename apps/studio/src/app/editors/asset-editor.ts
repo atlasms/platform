@@ -33,7 +33,9 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (loading()) {
-      <div class="state"><p>{{ locale.t('assetEditor.loading') }}</p></div>
+      <div class="state">
+        <p>{{ locale.t('assetEditor.loading') }}</p>
+      </div>
     } @else if (loadError()) {
       <div class="state" role="alert">
         <p>{{ loadError() }}</p>
@@ -74,7 +76,11 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
           <section class="field-group">
             <div class="group-heading">
               <h3>{{ locale.t('assetEditor.identity') }}</h3>
-              <span>{{ canEdit('core') ? locale.t('assetEditor.editable') : locale.t('assetEditor.readOnly') }}</span>
+              <span>{{
+                canEdit('core')
+                  ? locale.t('assetEditor.editable')
+                  : locale.t('assetEditor.readOnly')
+              }}</span>
             </div>
             <div class="grid">
               <label class="wide">
@@ -135,7 +141,11 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
           <section class="field-group">
             <div class="group-heading">
               <h3>{{ locale.t('assetEditor.classification') }}</h3>
-              <span>{{ canEdit('taxonomy') ? locale.t('assetEditor.editable') : locale.t('assetEditor.readOnly') }}</span>
+              <span>{{
+                canEdit('taxonomy')
+                  ? locale.t('assetEditor.editable')
+                  : locale.t('assetEditor.readOnly')
+              }}</span>
             </div>
             <div class="grid">
               <label>
@@ -162,7 +172,11 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
           <section class="field-group">
             <div class="group-heading">
               <h3>{{ locale.t('assetEditor.rights') }}</h3>
-              <span>{{ canEdit('rights') ? locale.t('assetEditor.editable') : locale.t('assetEditor.readOnly') }}</span>
+              <span>{{
+                canEdit('rights')
+                  ? locale.t('assetEditor.editable')
+                  : locale.t('assetEditor.readOnly')
+              }}</span>
             </div>
             <div class="grid">
               <label>
@@ -212,7 +226,9 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
           @if (mayEditAnything()) {
             <div class="actions">
               <button type="submit" [disabled]="saving() || dirtyCount() === 0">
-                {{ saving() ? locale.t('assetEditor.saving') : locale.t('assetEditor.saveChanges') }}
+                {{
+                  saving() ? locale.t('assetEditor.saving') : locale.t('assetEditor.saveChanges')
+                }}
               </button>
               <span>{{ dirtyCount() }} {{ locale.t('assetEditor.changedFields') }}</span>
             </div>
@@ -224,7 +240,13 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
             <span class="file-icon" aria-hidden="true">▤</span>
             <div>
               <h3>{{ current.fileType }}</h3>
-              <p>{{ current.hasRenditions ? locale.t('assetEditor.renditionsAttached') : locale.t('assetEditor.awaitingRenditions') }}</p>
+              <p>
+                {{
+                  current.hasRenditions
+                    ? locale.t('assetEditor.renditionsAttached')
+                    : locale.t('assetEditor.awaitingRenditions')
+                }}
+              </p>
             </div>
           </div>
           <dl>
@@ -234,7 +256,13 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
             </div>
             <div>
               <dt>{{ locale.t('assetEditor.renditionSet') }}</dt>
-              <dd>{{ current.hasRenditions ? locale.t('assetEditor.renditionsAttached') : locale.t('assetEditor.awaitingRenditions') }}</dd>
+              <dd>
+                {{
+                  current.hasRenditions
+                    ? locale.t('assetEditor.renditionsAttached')
+                    : locale.t('assetEditor.awaitingRenditions')
+                }}
+              </dd>
             </div>
           </dl>
           <p class="files-note">

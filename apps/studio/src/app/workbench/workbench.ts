@@ -1,4 +1,11 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  signal,
+} from '@angular/core';
 import { Router, RouterLink, RouterOutlet } from '@angular/router';
 import { AuthService } from '../core/auth.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
@@ -73,10 +80,14 @@ const MAX_SIDE_BAR = 640;
         <span class="sep">·</span>
         <span>{{ locale.t('workbench.statusBar.unsavedChanges') }}</span>
         <span class="spacer"></span>
-        <span>{{ visiblePanels().length }} {{ locale.t('workbench.statusBar.panelsVisible') }}</span>
+        <span
+          >{{ visiblePanels().length }} {{ locale.t('workbench.statusBar.panelsVisible') }}</span
+        >
         @if (session.isAuthenticated()) {
           <span class="sep">·</span>
-          <button type="button" class="link" (click)="signOut()">{{ locale.t('auth.signOut') }}</button>
+          <button type="button" class="link" (click)="signOut()">
+            {{ locale.t('auth.signOut') }}
+          </button>
         }
         <span class="sep">·</span>
         <select
