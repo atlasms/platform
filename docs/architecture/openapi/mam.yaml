@@ -35,6 +35,7 @@ paths:
       parameters:
         - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
         - { name: cursor, in: query, required: false, schema: { type: string }, description: The last id from the previous page. }
+        - { name: order, in: query, required: false, schema: { type: string, enum: [asc, desc], default: asc }, description: ULID order; use desc for newest-first views. }
       responses:
         '200':
           description: One page of assets
@@ -50,7 +51,7 @@ paths:
       operationId: createAsset
       tags: [assets]
       summary: Create an asset (scope asset:write)
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateAssetInput' } } } }
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
         '4XX': { $ref: '#/components/responses/Error' }
@@ -68,9 +69,13 @@ paths:
       operationId: updateAsset
       tags: [assets]
       summary: Update asset metadata (scope asset:write)
-      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+      description: >-
+        Partial update of user-editable metadata only. Lifecycle, tenant, identity, ownership,
+        media type, file type and audit fields are server-managed and cannot be changed here.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateAssetInput' } } } }
       responses:
         '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
   /assets/{id}/versions:
     post:
       operationId: createAssetVersion
@@ -351,22 +356,57 @@ components:
         normalized: { type: string }
     Asset:
       type: object
-      required: [title]
+      description: The complete core asset record returned by MAM. Extensible metadata and tags have separate resources.
+      required: [id, channelId, title, mediaType, fileType, state, version, hasRenditions, createdBy, createdAt, updatedAt]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
         title: { type: string }
         description: { type: string }
+        mediaType: { type: string, description: Operator-managed media kind vocabulary key. }
         durationSec: { type: number }
         fileType: { type: string }
-        resolution: { type: string }
-        aspectRatio: { type: string }
-        audioChannels: { type: integer }
+        categoryId: { type: string }
+        structureId: { type: string }
         state: { type: string, enum: [created, processing, ready, approved, expired, rejected, replaced, purged] }
+        episodeNo: { type: integer }
+        allowedBroadcastCount: { type: integer }
+        recommendedBroadcastStart: { type: string, format: date-time }
+        recommendedBroadcastEnd: { type: string, format: date-time }
         version: { type: integer }
         expiresAt: { type: string, format: date-time, description: 'Usable-until; past this the media is unusable and needs re-review (FR-APP-7). Absent = permanent.' }
         retainUntil: { type: string, format: date-time, description: 'For rejected media: purge time (FR-APP-8).' }
-        tags: { type: array, items: { type: string } }
-        extended: { type: object, additionalProperties: true }
+        replacesId: { $ref: '#/components/schemas/Ulid' }
+        hasRenditions: { type: boolean, description: True once MTS renditions have been attached; individual files arrive through the FileRef projection (EP-17.8). }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateAssetInput:
+      type: object
+      required: [title, mediaType, fileType]
+      properties:
+        title: { type: string }
+        mediaType: { type: string }
+        fileType: { type: string }
+        description: { type: string }
+        categoryId: { type: string }
+        structureId: { type: string }
+        episodeNo: { type: integer }
+        durationSec: { type: number }
+        allowedBroadcastCount: { type: integer }
+        expiresAt: { type: string, format: date-time }
+    UpdateAssetInput:
+      type: object
+      description: User-editable core metadata. Omitted fields are unchanged.
+      properties:
+        title: { type: string }
+        description: { type: string }
+        categoryId: { type: string }
+        structureId: { type: string }
+        episodeNo: { type: integer }
+        durationSec: { type: number }
+        allowedBroadcastCount: { type: integer }
+        expiresAt: { type: string, format: date-time }
     Person:
       type: object
       required: [name]

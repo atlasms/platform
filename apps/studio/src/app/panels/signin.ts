@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../core/auth.service.ts';
+import { LocaleService } from '../core/locale.service.ts';
 
 @Component({
   selector: 'atlas-signin',
@@ -9,9 +10,9 @@ import { AuthService } from '../core/auth.service.ts';
   imports: [FormsModule],
   template: `
     <form class="signin" (ngSubmit)="submit()">
-      <h1>Sign in to Atlas</h1>
+      <h1>{{ locale.t('app.title') }}</h1>
 
-      <label for="username">Username</label>
+      <label for="username">{{ locale.t('auth.username') }}</label>
       <input
         id="username"
         name="username"
@@ -21,7 +22,7 @@ import { AuthService } from '../core/auth.service.ts';
         required
       />
 
-      <label for="password">Password</label>
+      <label for="password">{{ locale.t('auth.password') }}</label>
       <input
         id="password"
         name="password"
@@ -39,7 +40,7 @@ import { AuthService } from '../core/auth.service.ts';
       }
 
       <button type="submit" [disabled]="auth.busy()">
-        {{ auth.busy() ? 'Signing in…' : 'Sign in' }}
+        {{ auth.busy() ? locale.t('auth.signingIn') : locale.t('auth.signIn') }}
       </button>
     </form>
   `,
@@ -60,6 +61,7 @@ import { AuthService } from '../core/auth.service.ts';
 })
 export class SignIn {
   protected readonly auth = inject(AuthService);
+  protected readonly locale = inject(LocaleService);
   private readonly router = inject(Router);
 
   protected username = '';

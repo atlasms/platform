@@ -108,6 +108,10 @@
   overflow: auto;
 }
 
+.editor-pane {
+  min-block-size: 100%;
+}
+
 .empty-state {
   display: grid;
   place-content: center;

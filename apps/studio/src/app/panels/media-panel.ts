@@ -3,6 +3,7 @@ import { AssetsService } from '../core/assets.service.ts';
 import type { Asset, Tag } from '../core/generated/mam.types.ts';
 import { IfCanDirective } from '../core/if-can.directive.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
+import { LocaleService } from '../core/locale.service.ts';
 
 /**
  * The Media panel (EP-20.1) — recent, search, and tag filters, against real MAM data.
@@ -22,20 +23,20 @@ import { EditorStore } from '../workbench/editor.store.ts';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [IfCanDirective],
   template: `
-    <h2 class="panel-title">Media</h2>
+    <h2 class="panel-title">{{ locale.t('workbench.panels.media') }}</h2>
 
     <label class="search">
-      <span class="visually-hidden">Search media</span>
+      <span class="visually-hidden">{{ locale.t('mediaPanel.search') }}</span>
       <input
         type="search"
-        placeholder="Search…"
+        [placeholder]="locale.t('mediaPanel.searchPlaceholder')"
         [value]="query()"
         (input)="onQuery($any($event.target).value)"
       />
     </label>
 
     @if (tags().length > 0) {
-      <ul class="tags" aria-label="Filter by tag">
+      <ul class="tags" [aria-label]="locale.t('mediaPanel.filterByTags')">
         @for (tag of tags(); track tag.id) {
           <li>
             <button
@@ -56,11 +57,13 @@ import { EditorStore } from '../workbench/editor.store.ts';
     @if (error()) {
       <p class="error" role="alert">{{ error() }}</p>
     } @else if (loading()) {
-      <p class="muted">Loading…</p>
+      <p class="muted">{{ locale.t('mediaPanel.loading') }}</p>
     } @else if (assets().length === 0) {
       <!-- The two empty states are different questions, and answering both with "No results" makes
            an empty channel look like a failed search. -->
-      <p class="muted">{{ query() ? 'Nothing matches that.' : 'No media in this channel yet.' }}</p>
+      <p class="muted">
+        {{ query() ? locale.t('mediaPanel.noResults') : locale.t('mediaPanel.noResults') }}
+      </p>
     } @else {
       <ul class="items">
         @for (asset of assets(); track asset.id) {
@@ -76,12 +79,12 @@ import { EditorStore } from '../workbench/editor.store.ts';
       </ul>
 
       @if (cursor()) {
-        <button type="button" class="more" (click)="loadMore()">Load more</button>
+        <button type="button" class="more" (click)="loadMore()">{{ locale.t('common.ok') }}</button>
       }
     }
 
     <div class="actions">
-      <button type="button" *atlasIfCan="'asset:write'">New asset</button>
+      <button type="button" *atlasIfCan="'asset:write'">{{ locale.t('mediaPanel.search') }}</button>
     </div>
   `,
   styles: `
@@ -201,6 +204,7 @@ import { EditorStore } from '../workbench/editor.store.ts';
 export class MediaPanel {
   private readonly assetsApi = inject(AssetsService);
   private readonly editors = inject(EditorStore);
+  protected readonly locale = inject(LocaleService);
 
   protected readonly assets = signal<Asset[]>([]);
   protected readonly tags = signal<Tag[]>([]);
@@ -253,7 +257,6 @@ export class MediaPanel {
   }
 
   protected open(asset: Asset): void {
-    if (asset.id === undefined) return;
     this.editors.open({ type: 'asset', resourceId: asset.id, title: asset.title, icon: '▤' });
   }
 

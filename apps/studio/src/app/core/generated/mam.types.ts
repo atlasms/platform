@@ -14,16 +14,19 @@ export interface Tag {
   normalized: string;
 }
 
+/** The complete core asset record returned by MAM. Extensible metadata and tags have separate resources. */
 export interface Asset {
-  id?: Ulid;
+  id: Ulid;
+  channelId: string;
   title: string;
   description?: string;
+  /** Operator-managed media kind vocabulary key. */
+  mediaType: string;
   durationSec?: number;
-  fileType?: string;
-  resolution?: string;
-  aspectRatio?: string;
-  audioChannels?: number;
-  state?:
+  fileType: string;
+  categoryId?: string;
+  structureId?: string;
+  state:
     | 'created'
     | 'processing'
     | 'ready'
@@ -32,13 +35,46 @@ export interface Asset {
     | 'rejected'
     | 'replaced'
     | 'purged';
-  version?: number;
+  episodeNo?: number;
+  allowedBroadcastCount?: number;
+  recommendedBroadcastStart?: string;
+  recommendedBroadcastEnd?: string;
+  version: number;
   /** Usable-until; past this the media is unusable and needs re-review (FR-APP-7). Absent = permanent. */
   expiresAt?: string;
   /** For rejected media: purge time (FR-APP-8). */
   retainUntil?: string;
-  tags?: string[];
-  extended?: Record<string, unknown>;
+  replacesId?: Ulid;
+  /** True once MTS renditions have been attached; individual files arrive through the FileRef projection (EP-17.8). */
+  hasRenditions: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateAssetInput {
+  title: string;
+  mediaType: string;
+  fileType: string;
+  description?: string;
+  categoryId?: string;
+  structureId?: string;
+  episodeNo?: number;
+  durationSec?: number;
+  allowedBroadcastCount?: number;
+  expiresAt?: string;
+}
+
+/** User-editable core metadata. Omitted fields are unchanged. */
+export interface UpdateAssetInput {
+  title?: string;
+  description?: string;
+  categoryId?: string;
+  structureId?: string;
+  episodeNo?: number;
+  durationSec?: number;
+  allowedBroadcastCount?: number;
+  expiresAt?: string;
 }
 
 export interface Person {

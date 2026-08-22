@@ -1,8 +1,17 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  signal,
+} from '@angular/core';
 import { Router, RouterLink, RouterOutlet } from '@angular/router';
 import { AuthService } from '../core/auth.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { SessionStore } from '../core/session.store.ts';
+import { WebSocketService } from '../core/websocket.service.ts';
+import { LocaleService } from '../core/locale.service.ts';
 import { EditorArea } from './editor-area.ts';
 import { EditorStore } from './editor.store.ts';
 import { PANELS, type PanelDefinition } from './panels.ts';
@@ -53,7 +62,7 @@ const MAX_SIDE_BAR = 640;
         class="resizer"
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize side bar"
+        [attr.aria-label]="locale.t('workbench.sideBar.resize')"
         tabindex="0"
         [attr.aria-valuenow]="sideBarWidth()"
         [attr.aria-valuemin]="minWidth"
@@ -67,19 +76,29 @@ const MAX_SIDE_BAR = 640;
       </main>
 
       <footer class="status-bar">
-        <span>{{ session.userId() ?? 'signed out' }}</span>
+        <span>{{ session.userId() ?? locale.t('auth.signIn') }}</span>
         <span class="sep">·</span>
-        <span>channel {{ session.channelId() ?? '—' }}</span>
-        @if (editors.hasUnsavedChanges()) {
-          <span class="sep">·</span>
-          <span title="Some editors have unsaved changes">● unsaved</span>
-        }
+        <span>{{ locale.t('workbench.statusBar.unsavedChanges') }}</span>
         <span class="spacer"></span>
-        <span>{{ visiblePanels().length }} of {{ allPanels.length }} panels visible</span>
+        <span
+          >{{ visiblePanels().length }} {{ locale.t('workbench.statusBar.panelsVisible') }}</span
+        >
         @if (session.isAuthenticated()) {
           <span class="sep">·</span>
-          <button type="button" class="link" (click)="signOut()">Sign out</button>
+          <button type="button" class="link" (click)="signOut()">
+            {{ locale.t('auth.signOut') }}
+          </button>
         }
+        <span class="sep">·</span>
+        <select
+          [value]="locale.locale()"
+          (change)="onLocaleChange($event)"
+          [disabled]="locale.loading()"
+          aria-label="Language"
+        >
+          <option value="en">English</option>
+          <option value="ar">العربية</option>
+        </select>
       </footer>
     </div>
   `,
@@ -88,8 +107,10 @@ const MAX_SIDE_BAR = 640;
 export class Workbench {
   protected readonly session = inject(SessionStore);
   protected readonly editors = inject(EditorStore);
+  protected readonly locale = inject(LocaleService);
   private readonly permissions = inject(PermissionService);
   private readonly auth = inject(AuthService);
+  private readonly ws = inject(WebSocketService);
   private readonly router = inject(Router);
 
   protected async signOut(): Promise<void> {
@@ -104,6 +125,20 @@ export class Workbench {
   protected readonly sideBarWidth = signal(240);
   protected readonly minWidth = MIN_SIDE_BAR;
   protected readonly maxWidth = MAX_SIDE_BAR;
+
+  /**
+   * Connect/disconnect the websocket when the session becomes authenticated/unauthenticated.
+   *
+   * The websocket carries live events (asset.created, asset.updated, schedule.updated, etc.)
+   * and respects the same permissions as the API — the server re-checks eligibility per message.
+   */
+  private readonly wsEffect = effect(() => {
+    if (this.session.isAuthenticated()) {
+      this.ws.connect();
+    } else {
+      this.ws.disconnect();
+    }
+  });
 
   /**
    * Panels the user may see.
@@ -145,5 +180,12 @@ export class Workbench {
 
   private setWidth(width: number): void {
     this.sideBarWidth.set(Math.max(MIN_SIDE_BAR, Math.min(MAX_SIDE_BAR, Math.round(width))));
+  }
+
+  protected onLocaleChange(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    if (select.value === 'en' || select.value === 'ar') {
+      this.locale.setLocale(select.value);
+    }
   }
 }

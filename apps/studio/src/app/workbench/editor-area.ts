@@ -1,20 +1,20 @@
 import { CdkDrag, CdkDropList, CdkDropListGroup, type CdkDragDrop } from '@angular/cdk/drag-drop';
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { AssetEditor } from '../editors/asset-editor.ts';
 import { EditorStore } from './editor.store.ts';
-import type { EditorGroup, EditorTab } from './editor.model.ts';
 
 /**
  * The editor area: tabbed groups side by side, with tabs draggable between them
  * ([studio-frontend.md §1.2](../../../../../docs/architecture/studio-frontend.md)).
  *
- * Group *contents* are a placeholder — rendering an actual asset or schedule editor needs those
- * services (EP-17 onward). What is real here is the tab machinery: order, focus, pinning, dirty
- * marking, splitting, drag between groups, and persistence across reloads.
+ * Every tab pane remains mounted while another tab is focused. Destroying an inactive asset editor
+ * would discard its unsaved form while the tab still showed a dirty dot — an especially dangerous
+ * lie in a multi-tab workbench.
  */
 @Component({
   selector: 'atlas-editor-area',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CdkDrag, CdkDropList, CdkDropListGroup],
+  imports: [CdkDrag, CdkDropList, CdkDropListGroup, AssetEditor],
   template: `
     @if (store.isEmpty()) {
       <div class="empty-state">
@@ -77,12 +77,20 @@ import type { EditorGroup, EditorTab } from './editor.model.ts';
             </div>
 
             <div class="editor-body">
-              @if (activeOf(group); as tab) {
-                <h2>{{ tab.title }}</h2>
-                <p class="muted">A {{ tab.type }} editor renders here once that service exists.</p>
-                <button type="button" (click)="store.setDirty(tab.id, !tab.dirty)">
-                  {{ tab.dirty ? 'Mark saved' : 'Simulate an edit' }}
-                </button>
+              @for (tab of group.tabs; track tab.id) {
+                <div class="editor-pane" [hidden]="tab.id !== group.activeTabId">
+                  @switch (tab.type) {
+                    @case ('asset') {
+                      <atlas-asset-editor [assetId]="tab.resourceId" [tabId]="tab.id" />
+                    }
+                    @default {
+                      <h2>{{ tab.title }}</h2>
+                      <p class="muted">
+                        A {{ tab.type }} editor renders here once that service exists.
+                      </p>
+                    }
+                  }
+                </div>
               }
             </div>
           </section>
@@ -94,10 +102,6 @@ import type { EditorGroup, EditorTab } from './editor.model.ts';
 })
 export class EditorArea {
   protected readonly store = inject(EditorStore);
-
-  protected activeOf(group: EditorGroup): EditorTab | undefined {
-    return group.tabs.find((t) => t.id === group.activeTabId);
-  }
 
   protected onClose(event: Event, groupId: string, tabId: string): void {
     // Without this the click also reaches the tab and focuses what is being removed.

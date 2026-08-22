@@ -1,0 +1,94 @@
+{
+  "app": {
+    "title": "Atlas Studio",
+    "loading": "Loading…"
+  },
+  "auth": {
+    "signIn": "Sign in",
+    "username": "Username",
+    "password": "Password",
+    "signingIn": "Signing in…",
+    "signOut": "Sign out"
+  },
+  "workbench": {
+    "panels": {
+      "media": "Media",
+      "schedule": "Schedule",
+      "ingest": "Ingest",
+      "search": "Search",
+      "dashboard": "Dashboard",
+      "users": "Users"
+    },
+    "activityBar": {
+      "panels": "Panels"
+    },
+    "statusBar": {
+      "unsavedChanges": "● unsaved",
+      "panelsVisible": "of panels visible"
+    },
+    "sideBar": {
+      "resize": "Resize side bar"
+    }
+  },
+  "mediaPanel": {
+    "recent": "Recent",
+    "search": "Search",
+    "searchPlaceholder": "Search assets…",
+    "tags": "Tags",
+    "filterByTags": "Filter by tags",
+    "noResults": "No assets found",
+    "loading": "Loading assets…",
+    "error": "Could not load assets",
+    "loadMore": "Load more"
+  },
+  "assetEditor": {
+    "basicInfo": "Basic info",
+    "files": "Files",
+    "identity": "Identity",
+    "classification": "Classification",
+    "rights": "Rights",
+    "title": "Title",
+    "description": "Description",
+    "mediaType": "Media type",
+    "state": "State",
+    "episodeNumber": "Episode number",
+    "duration": "Duration (seconds)",
+    "categoryId": "Category ID",
+    "structureId": "Structure ID",
+    "allowedBroadcasts": "Allowed broadcasts",
+    "expiresAt": "Expires at (ISO-8601)",
+    "recommendedWindow": "Recommended window",
+    "notSet": "Not set",
+    "editable": "Editable",
+    "readOnly": "Read only",
+    "saveChanges": "Save changes",
+    "saving": "Saving…",
+    "saveError": "Could not save these changes. Your edits are still here.",
+    "saved": "Changes saved.",
+    "changedFields": "changed field(s)",
+    "recordMeta": "Record details",
+    "createdBy": "Created by",
+    "createdAt": "Created",
+    "updatedAt": "Updated",
+    "sourceContainer": "Source container",
+    "renditionSet": "Rendition set",
+    "renditionsAttached": "Renditions attached",
+    "awaitingRenditions": "Awaiting renditions",
+    "filesNote": "Individual file rows, checksums, storage tier and technical metadata will appear here when MAM's FileRef projection is available. HSM remains the source of truth for files."
+  },
+  "editor": {
+    "close": "Close",
+    "closeOthers": "Close others",
+    "closeAll": "Close all",
+    "split": "Split",
+    "pin": "Pin",
+    "unpin": "Unpin"
+  },
+  "common": {
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "ok": "OK",
+    "error": "Error",
+    "success": "Success"
+  }
+}
