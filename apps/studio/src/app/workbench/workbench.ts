@@ -1,8 +1,9 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { Router, RouterLink, RouterOutlet } from '@angular/router';
 import { AuthService } from '../core/auth.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { SessionStore } from '../core/session.store.ts';
+import { WebSocketService } from '../core/websocket.service.ts';
 import { EditorArea } from './editor-area.ts';
 import { EditorStore } from './editor.store.ts';
 import { PANELS, type PanelDefinition } from './panels.ts';
@@ -90,6 +91,7 @@ export class Workbench {
   protected readonly editors = inject(EditorStore);
   private readonly permissions = inject(PermissionService);
   private readonly auth = inject(AuthService);
+  private readonly ws = inject(WebSocketService);
   private readonly router = inject(Router);
 
   protected async signOut(): Promise<void> {
@@ -104,6 +106,20 @@ export class Workbench {
   protected readonly sideBarWidth = signal(240);
   protected readonly minWidth = MIN_SIDE_BAR;
   protected readonly maxWidth = MAX_SIDE_BAR;
+
+  /**
+   * Connect/disconnect the websocket when the session becomes authenticated/unauthenticated.
+   *
+   * The websocket carries live events (asset.created, asset.updated, schedule.updated, etc.)
+   * and respects the same permissions as the API — the server re-checks eligibility per message.
+   */
+  private readonly wsEffect = effect(() => {
+    if (this.session.isAuthenticated()) {
+      this.ws.connect();
+    } else {
+      this.ws.disconnect();
+    }
+  });
 
   /**
    * Panels the user may see.
