@@ -1,7 +1,8 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
+import { map } from 'rxjs';
 import { API_BASE_URL } from './api.ts';
-import type { Asset, Tag } from './generated/mam.types.ts';
+import type { Asset, Tag, UpdateAssetInput } from './generated/mam.types.ts';
 
 /**
  * MAM reads, through the gateway (EP-20.1).
@@ -43,6 +44,16 @@ export class AssetsService {
     return this.http.get<Page<Asset>>(`${this.base}/api/v1/assets`, { params });
   }
 
+  /** One complete core record for an editor tab. */
+  get(id: string) {
+    return this.http.get<Asset>(`${this.base}/api/v1/assets/${encodeURIComponent(id)}`);
+  }
+
+  /** Save only changed, user-editable core fields; MAM remains the authorization boundary. */
+  update(id: string, patch: UpdateAssetInput) {
+    return this.http.patch<Asset>(`${this.base}/api/v1/assets/${encodeURIComponent(id)}`, patch);
+  }
+
   /**
    * Simple search.
    *
@@ -52,7 +63,12 @@ export class AssetsService {
   search(q: string, limit?: number) {
     let params = new HttpParams().set('q', q);
     if (limit !== undefined) params = params.set('limit', limit);
-    return this.http.get<Page<Asset>>(`${this.base}/api/v1/search`, { params });
+    // MAM's search contract is a bounded bare array (there is no search cursor yet). Normalize it
+    // to the panel's page shape here so browse and search have one UI-facing interface without
+    // lying about the wire response. A fake returning `{ items }` hid this mismatch in EP-20.1.
+    return this.http
+      .get<Asset[]>(`${this.base}/api/v1/search`, { params })
+      .pipe(map((items) => ({ items })));
   }
 
   /** The channel's tag vocabulary — what the filter list offers. */

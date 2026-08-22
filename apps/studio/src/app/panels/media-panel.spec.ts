@@ -13,7 +13,19 @@ import type { Asset, Tag } from '../core/generated/mam.types.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { MediaPanel } from './media-panel.ts';
 
-const asset = (id: string, title = id): Asset => ({ id, title, state: 'ready' });
+const asset = (id: string, title = id): Asset => ({
+  id,
+  channelId: 'ch12',
+  title,
+  mediaType: 'video',
+  fileType: 'mxf',
+  state: 'ready',
+  version: 1,
+  hasRenditions: true,
+  createdBy: 'u1',
+  createdAt: '2026-08-17T08:00:00.000Z',
+  updatedAt: '2026-08-17T08:00:00.000Z',
+});
 
 /**
  * A stand-in AssetsService whose responses the test resolves by hand, in whatever order it likes.
@@ -176,7 +188,7 @@ describe('MediaPanel', () => {
     expect(component.assets().length).toBe(1);
   });
 
-  it('opening an asset adds a tab; an asset with no id is ignored', () => {
+  it('opening an asset adds a tab identified by the contract-required id', () => {
     const { component } = harness;
     const editors = TestBed.inject(EditorStore);
     const openTabs = () => editors.groups().flatMap((g) => g.tabs);
@@ -185,11 +197,5 @@ describe('MediaPanel', () => {
     component.open(asset('01ABC', 'Clip'));
     expect(editors.activeTab()?.resourceId).toBe('01ABC');
     expect(openTabs().length).toBe(before + 1);
-
-    // `id` is optional in the generated type because the contract says so. Opening a tab keyed on
-    // `undefined` would collide with any other id-less asset.
-    component.open({ title: 'No id' } as Asset);
-    expect(openTabs().length).toBe(before + 1);
-    expect(editors.activeTab()?.resourceId).toBe('01ABC');
   });
 });

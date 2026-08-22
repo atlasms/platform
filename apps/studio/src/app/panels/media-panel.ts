@@ -253,7 +253,6 @@ export class MediaPanel {
   }
 
   protected open(asset: Asset): void {
-    if (asset.id === undefined) return;
     this.editors.open({ type: 'asset', resourceId: asset.id, title: asset.title, icon: '▤' });
   }
 

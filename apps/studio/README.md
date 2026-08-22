@@ -15,11 +15,16 @@ npm test -w @atlas/studio
 **EP-11.2** — the sign-in flow: real tokens from IAM, refresh, sign-out.
 **EP-11.3** — the workbench: tabbed and splittable editor groups, drag between groups, a resizable
 side bar, workspace persistence.
+**EP-11.5** — generated API types checked against the IAM and MAM OpenAPI contracts.
 **EP-11.7** — `can()` integration: permission-driven rendering.
+**EP-20.1** — the Media panel: real recent/search/tag-filter reads from MAM.
+**EP-20.2 (in progress)** — the asset editor: real Basic-info reads and minimal PATCHes,
+dirty-state tracking, independent `core`/`taxonomy`/`rights` field-group rendering, and the Files
+rendition-readiness view. Per-file rows await the MAM FileRef projection (EP-17.8).
 
-**Not built:** the WebSocket client (**EP-11.4**), generated API clients (**EP-11.5**), and the full
-token system with i18n/RTL (**EP-11.6**). Editor _contents_ are placeholders — rendering an actual
-asset or schedule needs those services (EP-17 onward).
+**Not built:** the WebSocket client (**EP-11.4**) and the full token system with i18n/RTL
+(**EP-11.6**). Schedule and later editor types remain placeholders until their owning services
+exist.
 
 ## Signing in
 
@@ -60,6 +65,17 @@ subtly wrong:
   dragging the last tab out. A stranded empty pane is the classic bug here.
 - **Pinned tabs survive "close others" and "close all"** — that is what pinning is for.
 - **Splitting a single-tab group is refused**, since it would empty the source and achieve nothing.
+
+Asset tabs render the real [`asset-editor.ts`](src/app/editors/asset-editor.ts). Every tab pane stays
+mounted while another tab is active; otherwise switching tabs would destroy unsaved form state
+while the tab continued to display its dirty dot. Saves send only changed fields and clear the dot
+only after MAM returns successfully. A failed save leaves the edits and dirty state intact.
+
+The Basic-info form asks `PermissionService` separately for `core`, `taxonomy`, and `rights`, so a
+role can edit a title without also changing expiry or classification. These checks are affordances;
+MAM repeats them server-side with strict resource context. The Files tab shows the core record's
+container and rendition readiness today. Individual checksums, storage tiers and technical rows
+wait for the FileRef mirror (EP-17.8) rather than being synthesized in Studio.
 
 Workspace persistence ([FR-UI-3](../../docs/requirements/05-functional-requirements.md#studio)) is
 localStorage for now; the requirement is server-side, which needs an endpoint that does not exist

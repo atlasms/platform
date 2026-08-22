@@ -1,0 +1,175 @@
+import { provideZonelessChangeDetection } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { Subject } from 'rxjs';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { AssetsService } from '../core/assets.service.ts';
+import type { Asset, UpdateAssetInput } from '../core/generated/mam.types.ts';
+import { SessionStore } from '../core/session.store.ts';
+import { EditorStore } from '../workbench/editor.store.ts';
+import { AssetEditor } from './asset-editor.ts';
+
+const record = (overrides: Partial<Asset> = {}): Asset => ({
+  id: '01K00000000000000000000000',
+  channelId: 'ch12',
+  title: 'Morning bulletin',
+  description: 'Top stories',
+  mediaType: 'video',
+  fileType: 'mxf',
+  categoryId: 'news',
+  state: 'ready',
+  version: 3,
+  hasRenditions: true,
+  createdBy: 'u1',
+  createdAt: '2026-08-17T08:00:00.000Z',
+  updatedAt: '2026-08-17T08:10:00.000Z',
+  ...overrides,
+});
+
+class FakeAssets {
+  readonly gets: Array<{ id: string; result: Subject<Asset> }> = [];
+  readonly updates: Array<{ id: string; patch: UpdateAssetInput; result: Subject<Asset> }> = [];
+
+  get(id: string) {
+    const result = new Subject<Asset>();
+    this.gets.push({ id, result });
+    return result;
+  }
+
+  update(id: string, patch: UpdateAssetInput) {
+    const result = new Subject<Asset>();
+    this.updates.push({ id, patch, result });
+    return result;
+  }
+}
+
+interface InternalEditor {
+  asset: () => Asset | null;
+  section: { set(value: 'basic' | 'files'): void };
+  dirtyCount: () => number;
+  loadError: () => string | null;
+  saveError: () => string | null;
+  saved: () => boolean;
+  canEdit(group: 'core' | 'taxonomy' | 'rights'): boolean;
+  change(field: keyof UpdateAssetInput, value: string): void;
+  save(event: Event): void;
+}
+
+function setup(fieldGroups: string[] = ['core', 'taxonomy', 'rights']) {
+  localStorage.clear();
+  const fake = new FakeAssets();
+  TestBed.configureTestingModule({
+    providers: [
+      provideZonelessChangeDetection(),
+      EditorStore,
+      { provide: AssetsService, useValue: fake },
+    ],
+  });
+  TestBed.inject(SessionStore).signIn({
+    userId: 'u1',
+    channelId: 'ch12',
+    policy: {
+      subjectId: 'u1',
+      permVersion: 1,
+      rules: [{ id: 'write', permissions: ['asset:write'], fieldGroups }],
+    },
+  });
+  const editors = TestBed.inject(EditorStore);
+  editors.open({ type: 'asset', resourceId: '01K00000000000000000000000', title: 'Bulletin' });
+
+  const fixture = TestBed.createComponent(AssetEditor);
+  fixture.componentRef.setInput('assetId', '01K00000000000000000000000');
+  fixture.componentRef.setInput('tabId', 'asset:01K00000000000000000000000');
+  fixture.detectChanges();
+  return {
+    fixture,
+    component: fixture.componentInstance as unknown as InternalEditor,
+    fake,
+    editors,
+  };
+}
+
+describe('AssetEditor', () => {
+  beforeEach(() => TestBed.resetTestingModule());
+
+  it('loads the complete core record for its tab', () => {
+    const { component, fake } = setup();
+    expect(fake.gets[0]?.id).toBe('01K00000000000000000000000');
+
+    fake.gets[0]?.result.next(record());
+    expect(component.asset()?.title).toBe('Morning bulletin');
+    expect(component.loadError()).toBeNull();
+  });
+
+  it('gates each field group independently using the shared policy', () => {
+    const { component, fake, fixture } = setup(['core']);
+    fake.gets[0]?.result.next(record());
+    fixture.detectChanges();
+
+    expect(component.canEdit('core')).toBe(true);
+    expect(component.canEdit('taxonomy')).toBe(false);
+    expect(component.canEdit('rights')).toBe(false);
+
+    const root = fixture.nativeElement as HTMLElement;
+    expect((root.querySelector('[name="title"]') as HTMLInputElement).disabled).toBe(false);
+    expect((root.querySelector('[name="categoryId"]') as HTMLInputElement).disabled).toBe(true);
+    expect((root.querySelector('[name="expiresAt"]') as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it('sends only changed fields and clears the workbench dirty marker after success', () => {
+    const { component, fake, editors } = setup();
+    fake.gets[0]?.result.next(record());
+
+    component.change('title', 'Evening bulletin');
+    expect(component.dirtyCount()).toBe(1);
+    expect(editors.activeTab()?.dirty).toBe(true);
+
+    component.save(new Event('submit'));
+    expect(fake.updates).toHaveLength(1);
+    expect(fake.updates[0]?.patch).toEqual({ title: 'Evening bulletin' });
+
+    fake.updates[0]?.result.next(record({ title: 'Evening bulletin', version: 4 }));
+    expect(component.dirtyCount()).toBe(0);
+    expect(editors.activeTab()?.dirty).toBe(false);
+    expect(component.saved()).toBe(true);
+  });
+
+  it('keeps edits dirty when MAM refuses or cannot save them', () => {
+    const { component, fake, editors } = setup();
+    fake.gets[0]?.result.next(record());
+    component.change('description', 'Rewritten');
+    component.save(new Event('submit'));
+
+    fake.updates[0]?.result.error(new Error('network'));
+    expect(component.dirtyCount()).toBe(1);
+    expect(editors.activeTab()?.dirty).toBe(true);
+    expect(component.saveError()).toContain('edits are still here');
+  });
+
+  it('refuses invalid numeric and expiry values before making a request', () => {
+    const { component, fake } = setup();
+    fake.gets[0]?.result.next(record());
+
+    component.change('allowedBroadcastCount', '-1');
+    component.save(new Event('submit'));
+    expect(fake.updates).toHaveLength(0);
+    expect(component.saveError()).toContain('non-negative integer');
+
+    component.change('allowedBroadcastCount', '2');
+    component.change('expiresAt', 'not a date');
+    component.save(new Event('submit'));
+    expect(fake.updates).toHaveLength(0);
+    expect(component.saveError()).toContain('ISO-8601');
+  });
+
+  it('shows rendition readiness without inventing unavailable FileRef rows', () => {
+    const { component, fake, fixture } = setup();
+    fake.gets[0]?.result.next(record({ hasRenditions: true }));
+    component.section.set('files');
+    fixture.detectChanges();
+
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    expect(text).toContain('Renditions attached');
+    expect(text).toContain('FileRef projection');
+    expect(text).toContain('HSM remains the source of truth');
+  });
+});

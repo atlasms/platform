@@ -87,6 +87,18 @@ Its tabs map directly to the [Asset aggregate](data-model.md#1-the-asset-aggrega
 | **Files** | every file — original, hi-res, low-res, thumbnail, … (set varies by category/BMS) — each with its integrity hash, online/offline state, and technical info (codec, bitrate, size) | [HSM](services/hsm.md) (files) + MAM (set) |
 | **History** | git-style diff timeline of metadata edits | [Logging](services/logging-analytics.md#64-change-history--diff-read-model) |
 
+**MVP implementation (EP-20.2).** Opening a Media-panel result loads the complete core record from
+`GET /assets/{id}` into a real editor tab. Basic-info inputs are enabled independently for the
+`core`, `taxonomy`, and `rights` field groups using the shared policy evaluator; the PATCH contains
+only fields the user actually changed, and MAM remains the enforcement boundary. Inactive editor
+panes stay mounted, so changing tabs cannot discard an unsaved form while leaving a misleading
+dirty marker behind.
+
+The Files tab currently reports the asset's source container and whether its rendition set is
+attached. Per-file rows (checksum, storage tier, online/offline state, and technical metadata) are
+not invented from that aggregate flag: they become available when the MAM `FileRef` projection
+consumes HSM/MTS events (EP-17.8). HSM remains the source of truth for physical files.
+
 ### 2.2 The schedule editor (the reel)
 
 The schedule editor **owns reel correctness** — deliberately, to keep the backend write path thin
