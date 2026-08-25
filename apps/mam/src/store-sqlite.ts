@@ -378,23 +378,23 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
       const rows = db
         .prepare('SELECT * FROM file_refs WHERE asset_id = ? ORDER BY kind, variant')
         .all(assetId) as {
-          id: string;
-          channel_id: string;
-          asset_id: string;
-          kind: string;
-          variant: string | null;
-          storage_target_id: string;
-          path: string;
-          tier: string;
-          status: string;
-          checksum: string;
-          last_verified_at: string | null;
-          size_bytes: number;
-          technical: string;
-          provenance: string;
-          created_at: string;
-          deleted_at: string | null;
-        }[];
+        id: string;
+        channel_id: string;
+        asset_id: string;
+        kind: string;
+        variant: string | null;
+        storage_target_id: string;
+        path: string;
+        tier: string;
+        status: string;
+        checksum: string;
+        last_verified_at: string | null;
+        size_bytes: number;
+        technical: string;
+        provenance: string;
+        created_at: string;
+        deleted_at: string | null;
+      }[];
       return rows.map(toFileRef);
     },
     async search(channelId, query, limit) {
