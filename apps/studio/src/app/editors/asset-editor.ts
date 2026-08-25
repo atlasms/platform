@@ -1,9 +1,19 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  input,
+  signal,
+} from '@angular/core';
 import { AssetsService } from '../core/assets.service.ts';
 import type { Asset, UpdateAssetInput } from '../core/generated/mam.types.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { SessionStore } from '../core/session.store.ts';
+import { WebSocketService } from '../core/websocket.service.ts';
 
 type EditorSection = 'basic' | 'files';
 type EditableField = keyof UpdateAssetInput;
@@ -282,6 +292,8 @@ export class AssetEditor {
   private readonly permissions = inject(PermissionService);
   private readonly editors = inject(EditorStore);
   protected readonly locale = inject(LocaleService);
+  private readonly session = inject(SessionStore);
+  private readonly ws = inject(WebSocketService);
 
   protected readonly asset = signal<Asset | null>(null);
   protected readonly draft = signal<Draft | null>(null);
@@ -296,6 +308,27 @@ export class AssetEditor {
   protected readonly mayEditAnything = computed(() =>
     (['core', 'taxonomy', 'rights'] as const).some((group) => this.canEdit(group)),
   );
+
+  // Subscribe to live updates for this specific asset when channel and assetId are available
+  private readonly wsSubscription = effect(() => {
+    const channelId = this.session.channelId();
+    const assetId = this.assetId();
+    if (channelId && assetId) {
+      const pattern = `atlas.${channelId}.asset.${assetId}.>`;
+      this.ws.subscribe(pattern).then((result) => {
+        if (!result.ok) {
+          console.warn('Failed to subscribe to asset updates:', result.reason);
+        }
+      });
+    }
+  });
+
+  // Handle incoming WebSocket events for this asset
+  private readonly wsEventHandler = effect(() => {
+    this.ws.events$.subscribe(({ subject, payload }) => {
+      this.handleAssetEvent(subject, payload);
+    });
+  });
 
   ngOnInit(): void {
     this.reload();
@@ -429,6 +462,32 @@ export class AssetEditor {
   private invalid(message: string): null {
     this.saveError.set(message);
     return null;
+  }
+
+  private handleAssetEvent(subject: string, payload: unknown): void {
+    // Subject format: atlas.<channelId>.asset.<assetId>.<action>
+    // Actions: updated, approved, rejected, expired, deleted, replaced, ready
+    const action = subject.split('.').pop();
+    if (!action) return;
+
+    const envelope = payload as {
+      type: string;
+      channelId: string;
+      payload: {
+        assetId: string;
+        changedFields?: string[];
+      };
+    };
+
+    const assetId = envelope.payload?.assetId;
+    if (!assetId || assetId !== this.assetId()) return;
+
+    // Only process events for our current channel
+    if (envelope.channelId !== this.session.channelId()) return;
+
+    // For any state-changing event, reload the asset to get the latest version
+    // This handles updated, approved, rejected, expired, ready, deleted, replaced
+    this.reload();
   }
 }
 
