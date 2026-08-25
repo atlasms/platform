@@ -21,3 +21,4 @@ export const API_BASE_URL = new InjectionToken<string>('API_BASE_URL', {
 // file's source and `docs/architecture/openapi/iam.yaml` disagree.
 export type { TokenPair, User, PermissionRule } from './generated/iam.types.ts';
 export type { Asset, Tag, Person, VocabularyTerm } from './generated/mam.types.ts';
+export type { IngestJob } from './generated/rim.types.ts';

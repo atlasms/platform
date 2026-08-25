@@ -49,6 +49,23 @@
     "emptyHint": "اكتب للبحث في الفهرس",
     "createAsset": "أصل جديد"
   },
+  "ingest": {
+    "title": "الاستيراد",
+    "loading": "جاري تحميل الطابور…",
+    "empty": "لا توجد مهام استيراد في الطابور",
+    "upload": "رفع",
+    "accept": "قبول",
+    "reject": "رفض",
+    "rejectPrompt": "سبب الرفض:",
+    "state": {
+      "detected": "مكتشف",
+      "validating": "قيد التحقق",
+      "quarantined": "معزول",
+      "rejected": "مرفوض",
+      "accepted": "مقبول",
+      "registered": "مسجل"
+    }
+  },
   "assetEditor": {
     "basicInfo": "معلومات أساسية",
     "files": "الملفات",
