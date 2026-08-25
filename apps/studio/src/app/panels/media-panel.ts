@@ -1,4 +1,11 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  signal,
+} from '@angular/core';
 import { AssetsService } from '../core/assets.service.ts';
 import type { Asset, Tag } from '../core/generated/mam.types.ts';
 import { IfCanDirective } from '../core/if-can.directive.ts';

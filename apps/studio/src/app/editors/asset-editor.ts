@@ -1,4 +1,12 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  input,
+  signal,
+} from '@angular/core';
 import { AssetsService } from '../core/assets.service.ts';
 import type { Asset, UpdateAssetInput } from '../core/generated/mam.types.ts';
 import { PermissionService } from '../core/permission.service.ts';
