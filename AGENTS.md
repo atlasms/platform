@@ -247,7 +247,6 @@ so `../../../docs/...` references keep working unchanged.
 - `Closes #<number>` — only if the story is _fully_ done. If partial, use `Refs #<n>` and say what
   remains. (EP-03 closed only `#66` for exactly this reason.)
 
-
 ## 10. When you are unsure
 
 - **A design question** → the answer is almost certainly already in `docs/`. Search before deciding.
