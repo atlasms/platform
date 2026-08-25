@@ -246,10 +246,6 @@ so `../../../docs/...` references keep working unchanged.
 - Explain **why** in the body, not just what — especially any decision or trade-off.
 - `Closes #<number>` — only if the story is _fully_ done. If partial, use `Refs #<n>` and say what
   remains. (EP-03 closed only `#66` for exactly this reason.)
-- End with:
-  ```
-  Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-  ```
 
 ## 10. When you are unsure
 
