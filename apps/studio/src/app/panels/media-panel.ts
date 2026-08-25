@@ -1,9 +1,11 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { AssetsService } from '../core/assets.service.ts';
 import type { Asset, Tag } from '../core/generated/mam.types.ts';
 import { IfCanDirective } from '../core/if-can.directive.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { SessionStore } from '../core/session.store.ts';
+import { WebSocketService } from '../core/websocket.service.ts';
 
 /**
  * The Media panel (EP-20.1) — recent, search, and tag filters, against real MAM data.
@@ -205,6 +207,8 @@ export class MediaPanel {
   private readonly assetsApi = inject(AssetsService);
   private readonly editors = inject(EditorStore);
   protected readonly locale = inject(LocaleService);
+  private readonly session = inject(SessionStore);
+  private readonly ws = inject(WebSocketService);
 
   protected readonly assets = signal<Asset[]>([]);
   protected readonly tags = signal<Tag[]>([]);
@@ -230,6 +234,24 @@ export class MediaPanel {
     // A tag list that fails is not worth an error banner: the filters simply do not appear, and
     // everything else on the panel still works.
     this.assetsApi.tags().subscribe({ next: (t) => this.tags.set(t), error: () => undefined });
+
+    // Subscribe to live asset updates for this channel
+    effect(() => {
+      const channelId = this.session.channelId();
+      if (channelId) {
+        const pattern = `atlas.${channelId}.asset.>`;
+        this.ws.subscribe(pattern).then((result) => {
+          if (!result.ok) {
+            console.warn('Failed to subscribe to asset updates:', result.reason);
+          }
+        });
+      }
+    });
+
+    // Handle incoming WebSocket events for asset updates
+    this.ws.events$.subscribe(({ subject, payload }) => {
+      this.handleAssetEvent(subject, payload);
+    });
   }
 
   protected onQuery(value: string): void {
@@ -289,6 +311,101 @@ export class MediaPanel {
         this.error.set('Could not load media.');
         this.loading.set(false);
       },
+    });
+  }
+
+  private handleAssetEvent(subject: string, payload: unknown): void {
+    // Subject format: atlas.<channelId>.asset.<action>
+    // Actions: created, updated, approved, rejected, expired, deleted, replaced, ready
+    const action = subject.split('.').pop();
+    if (!action) return;
+
+    const envelope = payload as {
+      type: string;
+      channelId: string;
+      payload: {
+        assetId: string;
+        core?: Record<string, unknown>;
+        changedFields?: string[];
+      };
+    };
+
+    const assetId = envelope.payload?.assetId;
+    if (!assetId) return;
+
+    // Only process events for our current channel
+    if (envelope.channelId !== this.session.channelId()) return;
+
+    this.assets.update((current) => {
+      const existingIndex = current.findIndex((a) => a.id === assetId);
+      const exists = existingIndex >= 0;
+
+      switch (action) {
+        case 'created':
+          // For created, we need to fetch the full asset to add to the list
+          // The created event only has core fields, not all Asset fields
+          if (!exists) {
+            // Optimistically add a minimal asset entry; the full data will be fetched
+            // when the user clicks it, or we could refetch the list
+            // For now, just invalidate the list to trigger a refresh on next interaction
+            return current;
+          }
+          break;
+
+        case 'updated':
+          // For updated, we could optimistically update the changed fields
+          // but the safe approach is to refetch or update from the event payload
+          if (exists) {
+            // We only have changedFields, not the new values
+            // Best to refetch the specific asset
+            this.assetsApi.get(assetId).subscribe({
+              next: (asset) => {
+                this.assets.update((list) => {
+                  const idx = list.findIndex((a) => a.id === assetId);
+                  if (idx >= 0) {
+                    const copy = [...list];
+                    copy[idx] = asset;
+                    return copy;
+                  }
+                  return list;
+                });
+              },
+            });
+          }
+          break;
+
+        case 'deleted':
+        case 'replaced':
+          // Remove the asset from the list
+          if (exists) {
+            return current.filter((a) => a.id !== assetId);
+          }
+          break;
+
+        case 'approved':
+        case 'rejected':
+        case 'expired':
+        case 'ready':
+          // State changed - refetch the asset
+          if (exists) {
+            this.assetsApi.get(assetId).subscribe({
+              next: (asset) => {
+                this.assets.update((list) => {
+                  const idx = list.findIndex((a) => a.id === assetId);
+                  if (idx >= 0) {
+                    const copy = [...list];
+                    copy[idx] = asset;
+                    return copy;
+                  }
+                  return list;
+                });
+              },
+            });
+          }
+          break;
+      }
+
+      return current;
     });
   }
 }
