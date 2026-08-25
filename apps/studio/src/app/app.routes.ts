@@ -25,6 +25,11 @@ export const routes: Routes = [
     loadComponent: () => import('./panels/search-panel.ts').then((m) => m.SearchPanel),
   },
   {
+    path: 'ingest',
+    canMatch: [requirePermission('ingest:read')],
+    loadComponent: () => import('./panels/ingest-panel.ts').then((m) => m.IngestPanel),
+  },
+  {
     path: '',
     pathMatch: 'full',
     canMatch: [requireSession],

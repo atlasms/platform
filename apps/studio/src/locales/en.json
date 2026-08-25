@@ -49,6 +49,23 @@
     "emptyHint": "Type to search the catalogue",
     "createAsset": "New asset"
   },
+  "ingest": {
+    "title": "Ingest",
+    "loading": "Loading queue…",
+    "empty": "No ingest jobs in queue",
+    "upload": "Upload",
+    "accept": "Accept",
+    "reject": "Reject",
+    "rejectPrompt": "Reason for rejection:",
+    "state": {
+      "detected": "Detected",
+      "validating": "Validating",
+      "quarantined": "Quarantined",
+      "rejected": "Rejected",
+      "accepted": "Accepted",
+      "registered": "Registered"
+    }
+  },
   "assetEditor": {
     "basicInfo": "Basic info",
     "files": "Files",

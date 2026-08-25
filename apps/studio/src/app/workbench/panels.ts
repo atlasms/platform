@@ -41,7 +41,7 @@ export const PANELS: readonly PanelDefinition[] = [
     icon: '⇥',
     permission: 'ingest:read',
     route: '/ingest',
-    available: false,
+    available: true,
   },
   {
     id: 'schedule',
