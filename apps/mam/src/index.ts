@@ -17,6 +17,7 @@ export {
   type Asset,
   type CreateAssetInput,
   type UpdateAssetInput,
+  type FileRef,
 } from './asset.ts';
 export {
   MamService,
@@ -75,6 +76,7 @@ export {
   sqliteExtendedMigration,
   sqliteTagsMigration,
   sqliteSearchMigration,
+  sqliteFileRefMigration,
 } from './store-sqlite.ts';
 export {
   pgAssetStore,
@@ -82,6 +84,7 @@ export {
   pgExtendedMigration,
   pgTagsMigration,
   pgSearchMigration,
+  pgFileRefMigration,
   mamMigrations,
 } from './store-pg.ts';
 export { PolicyClient, type PolicyClientOptions } from './policy-client.ts';

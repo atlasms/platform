@@ -77,3 +77,60 @@ export function presentFieldsOf(asset: Asset): readonly string[] {
     .filter(([, value]) => value !== undefined && value !== null && value !== '')
     .map(([key]) => key);
 }
+
+/**
+ * FileRef — MAM's mirror of the HSM file ledger (EP-17.8).
+ *
+ * HSM is the system of record for physical files (location, tier, integrity). MAM holds the
+ * logical references so the catalogue and Studio can display file rows with checksums, storage
+ * tier, and technical metadata without querying HSM directly.
+ *
+ * A file belongs to EXACTLY ONE asset (assetId). An asset has many files (original, proxy,
+ * broadcast, thumbnail, vtt-filmstrip, hover-preview). The (assetId, kind, variant) tuple is
+ * unique — variants distinguish multiple files of the same kind (e.g. subtitle languages,
+ * thumbnail indices).
+ */
+export interface FileRef {
+  id: string;
+  channelId: string;
+  assetId: string;
+  /** The kind of rendition — original, proxy, broadcast, thumbnail, vtt-filmstrip, hover-preview. */
+  kind: 'original' | 'proxy' | 'broadcast' | 'thumbnail' | 'vtt-filmstrip' | 'hover-preview';
+  /** Distinguishes multiple files of the same kind (e.g. subtitle language, thumbnail index). */
+  variant?: string;
+  /** HSM storage target id. */
+  storageTargetId: string;
+  /** HSM-resolved logical path. */
+  path: string;
+  /** Storage tier: online, near-line, offline. */
+  tier: 'online' | 'near-line' | 'offline';
+  /** File status: available, restoring, missing, quarantined. */
+  status: 'available' | 'restoring' | 'missing' | 'quarantined';
+  /** System-generated checksum on placement; re-verified by HSM integrity sweeps. */
+  checksum: { algorithm: string; value: string };
+  /** When the checksum was last verified. */
+  lastVerifiedAt?: string;
+  /** File size in bytes. */
+  sizeBytes: number;
+  /** ffprobe-derived technical metadata. */
+  technical: {
+    container?: string;
+    videoCodec?: string;
+    audioCodec?: string;
+    durationSec?: number;
+    width?: number;
+    height?: number;
+    aspectRatio?: string;
+    audioChannels?: number;
+    frameRate?: number;
+    [key: string]: unknown;
+  };
+  /** How this file came to exist. */
+  provenance: {
+    producedBy: 'ingest' | 'transcode' | 'editor' | 'import';
+    jobId?: string;
+    profile?: string;
+  };
+  createdAt: string;
+  deletedAt?: string;
+}

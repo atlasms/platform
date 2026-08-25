@@ -36,6 +36,7 @@ import {
   type Asset,
   type CreateAssetInput,
   type UpdateAssetInput,
+  type FileRef,
 } from './asset.ts';
 import {
   canTransition,
@@ -422,6 +423,112 @@ export class MamService {
     };
     await this.options.store.transaction(async (tx) => tx.put(updated));
     return updated;
+  }
+
+  // --- FileRef event consumers (EP-17.8) ---------------------------------------
+
+  /**
+   * Consume `file.placed` from HSM.
+   *
+   * HSM emits this when a rendition's bytes are placed on a tier. We mirror the file metadata
+   * into the FileRef table so the catalogue and Studio can display file rows without querying HSM.
+   * Idempotent on fileRef.id (ULID from HSM).
+   */
+  async consumeFilePlaced(payload: {
+    assetId: string;
+    renditionKind: FileRef['kind'];
+    tier: FileRef['tier'];
+    path: string;
+    checksum: FileRef['checksum'];
+  }): Promise<FileRef> {
+    const asset = await this.options.store.get(payload.assetId);
+    if (!asset) throw new NotFound(`asset ${payload.assetId} not found`);
+
+    const fileRef: FileRef = {
+      id: ulid(),
+      channelId: asset.channelId,
+      assetId: payload.assetId,
+      kind: payload.renditionKind,
+      storageTargetId: '', // HSM doesn't provide this in file.placed; could be enriched later
+      path: payload.path,
+      tier: payload.tier,
+      status: 'available',
+      checksum: payload.checksum,
+      sizeBytes: 0, // HSM doesn't provide size in file.placed; could be enriched later
+      technical: {},
+      provenance: { producedBy: 'ingest' },
+      createdAt: new Date().toISOString(),
+    };
+
+    await this.options.store.transaction(async (tx) => {
+      await tx.putFileRef(fileRef);
+    });
+
+    return fileRef;
+  }
+
+  /**
+   * Consume `transcode.completed` from MTS.
+   *
+   * MTS emits this when all renditions for a job are produced and checksummed. We create FileRef
+   * entries for each rendition and set hasRenditions=true on the asset (which may trigger
+   * markReady if mandatory metadata is present).
+   */
+  async consumeTranscodeCompleted(payload: {
+    assetId: string;
+    jobId: string;
+    renditions: Array<{
+      kind: FileRef['kind'];
+      path: string;
+      checksum: FileRef['checksum'];
+      sizeBytes?: number;
+      durationSec?: number;
+    }>;
+  }): Promise<FileRef[]> {
+    const asset = await this.options.store.get(payload.assetId);
+    if (!asset) throw new NotFound(`asset ${payload.assetId} not found`);
+
+    const fileRefs: FileRef[] = [];
+    const now = this.now().toISOString();
+
+    for (const rendition of payload.renditions) {
+      const fileRef: FileRef = {
+        id: ulid(),
+        channelId: asset.channelId,
+        assetId: payload.assetId,
+        kind: rendition.kind,
+        storageTargetId: '', // MTS doesn't provide target id; could be enriched from HSM
+        path: rendition.path,
+        tier: 'online', // Transcoded renditions start in online tier
+        status: 'available',
+        checksum: rendition.checksum,
+        sizeBytes: rendition.sizeBytes ?? 0,
+        technical: {
+          durationSec: rendition.durationSec,
+        },
+        provenance: {
+          producedBy: 'transcode',
+          jobId: payload.jobId,
+        },
+        createdAt: now,
+      };
+      fileRefs.push(fileRef);
+    }
+
+    await this.options.store.transaction(async (tx) => {
+      for (const fileRef of fileRefs) {
+        await tx.putFileRef(fileRef);
+      }
+      // Update asset to mark renditions as attached
+      const updated: Asset = {
+        ...asset,
+        hasRenditions: true,
+        updatedAt: now,
+      };
+      await tx.put(updated);
+    });
+
+    return fileRefs;
   }
 
   // --- extensible metadata (EP-17.2) -----------------------------------------

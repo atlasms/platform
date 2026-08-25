@@ -33,7 +33,7 @@ export const PANELS: readonly PanelDefinition[] = [
     icon: '⌕',
     permission: 'asset:read',
     route: '/search',
-    available: false,
+    available: true,
   },
   {
     id: 'ingest',

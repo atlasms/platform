@@ -20,6 +20,11 @@ export const routes: Routes = [
     loadComponent: () => import('./panels/media-panel.ts').then((m) => m.MediaPanel),
   },
   {
+    path: 'search',
+    canMatch: [requirePermission('asset:read')],
+    loadComponent: () => import('./panels/search-panel.ts').then((m) => m.SearchPanel),
+  },
+  {
     path: '',
     pathMatch: 'full',
     canMatch: [requireSession],

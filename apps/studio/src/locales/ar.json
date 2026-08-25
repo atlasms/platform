@@ -41,6 +41,14 @@
     "error": "تعذر تحميل الأصول",
     "loadMore": "تحميل المزيد"
   },
+  "search": {
+    "title": "البحث",
+    "placeholder": "البحث عن أصول…",
+    "loading": "جاري البحث…",
+    "noResults": "لا توجد أصول تطابق استعلامك",
+    "emptyHint": "اكتب للبحث في الفهرس",
+    "createAsset": "أصل جديد"
+  },
   "assetEditor": {
     "basicInfo": "معلومات أساسية",
     "files": "الملفات",
