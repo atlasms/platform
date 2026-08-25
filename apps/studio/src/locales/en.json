@@ -41,6 +41,14 @@
     "error": "Could not load assets",
     "loadMore": "Load more"
   },
+  "search": {
+    "title": "Search",
+    "placeholder": "Search assets…",
+    "loading": "Searching…",
+    "noResults": "No assets match your query",
+    "emptyHint": "Type to search the catalogue",
+    "createAsset": "New asset"
+  },
   "assetEditor": {
     "basicInfo": "Basic info",
     "files": "Files",
