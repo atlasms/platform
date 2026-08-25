@@ -8,7 +8,7 @@
 // the reverse, and the production store is Postgres.
 
 import type { OutboxRecord } from '@atlas/messaging';
-import type { Asset, FileRef } from './asset.ts';
+import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { ParsedQuery, SearchHit } from './search.ts';
 import type { Tag, TagCandidate } from './tag.ts';
@@ -95,13 +95,6 @@ export interface AssetStore {
   listTags(channelId: string): Promise<Tag[]>;
 
   /**
-   * FileRef — MAM's mirror of the HSM file ledger (EP-17.8).
-   *
-   * Returns all file references for an asset, ordered by kind then variant.
-   */
-  fileRefsOf(assetId: string): Promise<FileRef[]>;
-
-  /**
    * Assets in one channel matching every term of `query` (EP-17.4).
    *
    * **AND semantics**: an asset must carry every exact term, and — when the query ends mid-word —
@@ -156,12 +149,4 @@ export interface AssetTx {
   indexTerms(assetId: string, channelId: string, terms: readonly string[]): Promise<void>;
   /** Enqueue a domain event on the outbox — in THIS transaction, with the row it announces. */
   enqueue(record: OutboxRecord): Promise<void>;
-  /**
-   * Upsert a FileRef (EP-17.8).
-   *
-   * Called from the event consumer when HSM emits `file.placed` or MTS emits `transcode.completed`.
-   * The (assetId, kind, variant) tuple is unique — a file belongs to exactly one asset, and
-   * variants distinguish multiple files of the same kind.
-   */
-  putFileRef(fileRef: FileRef): Promise<void>;
 }

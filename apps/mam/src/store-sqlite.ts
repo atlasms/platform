@@ -13,7 +13,7 @@ import {
   type Db,
   type Migration,
 } from '@atlas/data';
-import type { Asset, FileRef } from './asset.ts';
+import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { AssetStore, AssetTx } from './store.ts';
 import { prefixUpperBound } from './search.ts';
@@ -63,43 +63,6 @@ export const sqliteConfigMigration: Migration = {
        INSERT OR IGNORE INTO mam_config (id, version) VALUES (1, 1);`,
 };
 
-/**
- * FileRef — MAM's mirror of the HSM file ledger (EP-17.8).
- *
- * HSM is the source of truth for physical files. This table mirrors the logical file metadata
- * so the catalogue and Studio can display file rows without querying HSM directly.
- *
- * (asset_id, kind, variant) is UNIQUE: a file belongs to exactly one asset, and variants
- * distinguish multiple files of the same kind (e.g. subtitle languages, thumbnail indices).
- */
-export const sqliteFileRefMigration: Migration = {
-  id: 'mam_file_refs',
-  up: `CREATE TABLE IF NOT EXISTS file_refs (
-         id                TEXT PRIMARY KEY,
-         channel_id        TEXT NOT NULL,
-         asset_id          TEXT NOT NULL,
-         kind              TEXT NOT NULL,
-         variant           TEXT,
-         storage_target_id TEXT NOT NULL,
-         path              TEXT NOT NULL,
-         tier              TEXT NOT NULL,
-         status            TEXT NOT NULL,
-         checksum          TEXT NOT NULL,
-         last_verified_at  TEXT,
-         size_bytes        INTEGER NOT NULL,
-         technical         TEXT NOT NULL,
-         provenance        TEXT NOT NULL,
-         created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-         deleted_at        TEXT
-       );
-       CREATE UNIQUE INDEX IF NOT EXISTS file_refs_identity_idx
-         ON file_refs (asset_id, kind, variant);
-       CREATE INDEX IF NOT EXISTS file_refs_asset_idx
-         ON file_refs (asset_id);
-       CREATE INDEX IF NOT EXISTS file_refs_channel_idx
-         ON file_refs (channel_id);`,
-};
-
 export const sqliteTagsMigration: Migration = {
   id: 'mam_tags',
   up: `CREATE TABLE IF NOT EXISTS tags (
@@ -141,7 +104,6 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     // recorded the ones above. Slotting these next to their tables would re-order history.
     outboxHeadersMigration,
     sqliteConfigMigration,
-    sqliteFileRefMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
 
@@ -232,47 +194,6 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     async enqueue(record) {
       outbox.enqueue(record);
     },
-    async putFileRef(fileRef) {
-      db.prepare(
-        `INSERT INTO file_refs (
-           id, channel_id, asset_id, kind, variant, storage_target_id, path, tier, status,
-           checksum, last_verified_at, size_bytes, technical, provenance, created_at, deleted_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (id) DO UPDATE SET
-           channel_id        = excluded.channel_id,
-           asset_id          = excluded.asset_id,
-           kind              = excluded.kind,
-           variant           = excluded.variant,
-           storage_target_id = excluded.storage_target_id,
-           path              = excluded.path,
-           tier              = excluded.tier,
-           status            = excluded.status,
-           checksum          = excluded.checksum,
-           last_verified_at  = excluded.last_verified_at,
-           size_bytes        = excluded.size_bytes,
-           technical         = excluded.technical,
-           provenance        = excluded.provenance,
-           created_at        = excluded.created_at,
-           deleted_at        = excluded.deleted_at`,
-      ).run(
-        fileRef.id,
-        fileRef.channelId,
-        fileRef.assetId,
-        fileRef.kind,
-        fileRef.variant ?? null,
-        fileRef.storageTargetId,
-        fileRef.path,
-        fileRef.tier,
-        fileRef.status,
-        JSON.stringify(fileRef.checksum),
-        fileRef.lastVerifiedAt ?? null,
-        fileRef.sizeBytes,
-        JSON.stringify(fileRef.technical),
-        JSON.stringify(fileRef.provenance),
-        fileRef.createdAt,
-        fileRef.deletedAt ?? null,
-      );
-    },
   };
 
   const toTag = (r: {
@@ -285,42 +206,6 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     channelId: r.channel_id,
     label: r.label,
     normalized: r.normalized,
-  });
-
-  const toFileRef = (r: {
-    id: string;
-    channel_id: string;
-    asset_id: string;
-    kind: string;
-    variant: string | null;
-    storage_target_id: string;
-    path: string;
-    tier: string;
-    status: string;
-    checksum: string;
-    last_verified_at: string | null;
-    size_bytes: number;
-    technical: string;
-    provenance: string;
-    created_at: string;
-    deleted_at: string | null;
-  }): FileRef => ({
-    id: r.id,
-    channelId: r.channel_id,
-    assetId: r.asset_id,
-    kind: r.kind as FileRef['kind'],
-    variant: r.variant ?? undefined,
-    storageTargetId: r.storage_target_id,
-    path: r.path,
-    tier: r.tier as FileRef['tier'],
-    status: r.status as FileRef['status'],
-    checksum: JSON.parse(r.checksum),
-    lastVerifiedAt: r.last_verified_at ?? undefined,
-    sizeBytes: r.size_bytes,
-    technical: JSON.parse(r.technical),
-    provenance: JSON.parse(r.provenance),
-    createdAt: r.created_at,
-    deletedAt: r.deleted_at ?? undefined,
   });
 
   return {
@@ -373,29 +258,6 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         )
         .all(channelId) as { id: string; channel_id: string; label: string; normalized: string }[];
       return rows.map(toTag);
-    },
-    async fileRefsOf(assetId) {
-      const rows = db
-        .prepare('SELECT * FROM file_refs WHERE asset_id = ? ORDER BY kind, variant')
-        .all(assetId) as {
-        id: string;
-        channel_id: string;
-        asset_id: string;
-        kind: string;
-        variant: string | null;
-        storage_target_id: string;
-        path: string;
-        tier: string;
-        status: string;
-        checksum: string;
-        last_verified_at: string | null;
-        size_bytes: number;
-        technical: string;
-        provenance: string;
-        created_at: string;
-        deleted_at: string | null;
-      }[];
-      return rows.map(toFileRef);
     },
     async search(channelId, query, limit) {
       const clauses: string[] = [];

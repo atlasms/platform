@@ -18,7 +18,6 @@ import {
   toProblem,
   Unauthorized,
   ValidationError,
-  NotFound,
   type AccessLogPolicy,
   type AccessRecord,
   type Span,
@@ -307,19 +306,6 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
   /** The channel's tag cloud — what an autocomplete offers. Not the admin surface. */
   app.get('/api/v1/tags', async (req, reply) =>
     handle(req, reply, async () => options.service.listTags(await callerOf(req))),
-  );
-
-  // FileRef — MAM's mirror of the HSM file ledger (EP-17.8).
-  app.get('/api/v1/assets/:id/files', async (req, reply) =>
-    handle(req, reply, async () => {
-      const caller = await callerOf(req);
-      const assetId = (req.params as { id: string }).id;
-      // Verify asset exists and caller can read it
-      const asset = await options.service.get(caller, assetId);
-      if (!asset) throw new NotFound(`asset ${assetId} not found`);
-      // The get() call already authorizes asset:read
-      return options.service.fileRefsOf(assetId);
-    }),
   );
 
   // Simple search (EP-17.4). A GET with the query in the URL, because a search result is a

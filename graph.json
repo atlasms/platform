@@ -1,0 +1,1542 @@
+{
+  "graph": {
+    "nodes": {
+      "@atlas/walking-skeleton": {
+        "name": "@atlas/walking-skeleton",
+        "type": "lib",
+        "data": {
+          "root": "apps/walking-skeleton",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --no-warnings --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/walking-skeleton",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "The Phase 0 exit criteria, executable: a trivial asset created through the gateway, stored atomically with its event, relayed to the broker, and pushed live to a permission-checked subscriber — with one correlation id threaded through every hop.",
+            "js": {
+              "packageName": "@atlas/walking-skeleton",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/messaging-nats": {
+        "name": "@atlas/messaging-nats",
+        "type": "lib",
+        "data": {
+          "root": "libs/messaging-nats",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/messaging-nats",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "NATS JetStream adapter for @atlas/messaging (ADR-0001). Separate from @atlas/messaging so the interface every service depends on keeps zero runtime dependencies — only a composition root pulls the transport in.",
+            "js": {
+              "packageName": "@atlas/messaging-nats",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/api-gateway": {
+        "name": "@atlas/api-gateway",
+        "type": "lib",
+        "data": {
+          "root": "apps/api-gateway",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/api-gateway",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "The single ingress for Studio and third parties: authenticate once, establish correlation, proxy to the owning service with a signed internal identity header set, and log access. Adds no domain endpoints of its own.",
+            "js": {
+              "packageName": "@atlas/api-gateway",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/service-kit": {
+        "name": "@atlas/service-kit",
+        "type": "lib",
+        "data": {
+          "root": "libs/service-kit",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/service-kit",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "The service template: structured logging with correlation context, bootstrap config load/validate, JWT/JWKS verification, the error taxonomy, and health/readiness. Every service starts from this so the cross-cutting behaviour is identical and never re-implemented.",
+            "js": {
+              "packageName": "@atlas/service-kit",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/contracts": {
+        "name": "@atlas/contracts",
+        "type": "lib",
+        "data": {
+          "root": "libs/contracts",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/contracts",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "Executable message contracts: the envelope + every event payload schema, an envelope builder/validator, ULID, and subject helpers. Reads the single-source schemas in docs/architecture/schemas.",
+            "js": {
+              "packageName": "@atlas/contracts",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/messaging": {
+        "name": "@atlas/messaging",
+        "type": "lib",
+        "data": {
+          "root": "libs/messaging",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/messaging",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "Broker-agnostic transport: subject matching, an in-memory broker (dev/test) with retry+DLQ, the transactional-outbox relay, and idempotent-consumer wrapping. Swap the in-memory broker for NATS/RabbitMQ behind the same Broker interface.",
+            "js": {
+              "packageName": "@atlas/messaging",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts",
+                "./conformance": "./src/conformance.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/reference": {
+        "name": "@atlas/reference",
+        "type": "lib",
+        "data": {
+          "root": "libs/reference",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/reference",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "Admin-editable runtime configuration: the setting-descriptor registry (defineSettings), validation from descriptors, nearest-wins scope resolution with origin, the Tier-1 registry guard, and the cached snapshot client. Browser-safe, so Studio generates its admin UI from the same descriptors the services validate against.",
+            "js": {
+              "packageName": "@atlas/reference",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/websocket": {
+        "name": "@atlas/websocket",
+        "type": "lib",
+        "data": {
+          "root": "apps/websocket",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/websocket",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "Permission-aware fan-out of platform events to Studio clients. Public channels carry what everyone in a tenant may see; private channels are per-user. Eligibility is computed from the user's effective policy at subscribe time and RE-CHECKED on permissions.changed.",
+            "js": {
+              "packageName": "@atlas/websocket",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/broker-spike": {
+        "name": "@atlas/broker-spike",
+        "type": "lib",
+        "data": {
+          "root": "spikes/broker",
+          "targets": {
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "spike": {
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --import tsx src/main.ts",
+                "runCommand": "npm run spike"
+              },
+              "options": {
+                "script": "spike"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/broker-spike",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "spike",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "EP-03.0 — time-boxed spike comparing NATS JetStream and RabbitMQ behind the @atlas/messaging Broker interface. Requires infra/docker-compose.dev.yml to be up; deliberately has NO test script so CI never runs it.",
+            "js": {
+              "packageName": "@atlas/broker-spike",
+              "packageVersion": "0.0.0",
+              "packageExports": {
+                ".": "./src/index.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/data-pg": {
+        "name": "@atlas/data-pg",
+        "type": "lib",
+        "data": {
+          "root": "libs/data-pg",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --no-warnings --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/data-pg",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "Postgres implementation of the @atlas/data conventions: async unit of work, migration runner and the transactional outbox. Separate package so @atlas/data stays dependency-free and tests keep running on node:sqlite.",
+            "js": {
+              "packageName": "@atlas/data-pg",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/policy": {
+        "name": "@atlas/policy",
+        "type": "lib",
+        "data": {
+          "root": "libs/policy",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/policy",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "The pure authorization evaluator: can(), compile(). Zero runtime dependencies and browser-safe, so the SAME decision function runs in every service (to enforce) and in Studio (to render). A second implementation would be the bug.",
+            "js": {
+              "packageName": "@atlas/policy",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/studio": {
+        "name": "@atlas/studio",
+        "type": "app",
+        "data": {
+          "root": "apps/studio",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "ng test",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.app.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "cache": true,
+              "inputs": [
+                "production",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "outputs": [
+                "{projectRoot}/dist"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "ng build",
+                "runCommand": "npm run build"
+              },
+              "options": {
+                "script": "build"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "start": {
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "ng serve",
+                "runCommand": "npm run start"
+              },
+              "options": {
+                "script": "start"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/studio",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "start",
+                "build",
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "Studio — the Angular SPA that is Atlas' only user-facing interface. A VS Code-style workbench where every panel, view and action is permission-gated by the same @atlas/policy the services enforce with.",
+            "js": {
+              "packageName": "@atlas/studio",
+              "packageVersion": "0.1.0",
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/data": {
+        "name": "@atlas/data",
+        "type": "lib",
+        "data": {
+          "root": "libs/data",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --no-warnings --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/data",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "Data-plane conventions: a migration runner, withTransaction (unit of work), a JSON row repository, and a SQL-backed outbox store that plugs into @atlas/messaging's OutboxRelay. Demonstrates the REAL transactional outbox — state change + outbox row in one transaction, proven by an atomic rollback test.",
+            "js": {
+              "packageName": "@atlas/data",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts",
+                "./conformance": "./src/conformance.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/iam": {
+        "name": "@atlas/iam",
+        "type": "lib",
+        "data": {
+          "root": "apps/iam",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/iam",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "Identity and access: users, credentials, groups/roles/rules, authentication, and the compiled effective policy every other service evaluates locally. Issues JWT access + rotating refresh tokens and publishes its public keys as a JWKS.",
+            "js": {
+              "packageName": "@atlas/iam",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@atlas/mam": {
+        "name": "@atlas/mam",
+        "type": "lib",
+        "data": {
+          "root": "apps/mam",
+          "targets": {
+            "test": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "node --no-warnings --import tsx --test test/*.test.ts",
+                "runCommand": "npm run test"
+              },
+              "options": {
+                "script": "test"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "typecheck": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ],
+              "dependsOn": [
+                "^build"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "tsc -p tsconfig.json --noEmit",
+                "runCommand": "npm run typecheck"
+              },
+              "options": {
+                "script": "typecheck"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/eslint.config.mjs"
+              ],
+              "executor": "nx:run-script",
+              "metadata": {
+                "scriptContent": "eslint src test",
+                "runCommand": "npm run lint"
+              },
+              "options": {
+                "script": "lint"
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "@atlas/mam",
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {
+              "NPM Scripts": [
+                "test",
+                "typecheck",
+                "lint"
+              ]
+            },
+            "description": "MAM — the media asset catalogue. Owns the asset aggregate, its lifecycle, and the events every other service reacts to.",
+            "js": {
+              "packageName": "@atlas/mam",
+              "packageVersion": "0.1.0",
+              "packageExports": {
+                ".": "./src/index.ts",
+                "./store-conformance": "./src/store-conformance.ts"
+              },
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "implicitDependencies": []
+        }
+      }
+    },
+    "dependencies": {
+      "@atlas/walking-skeleton": [
+        {
+          "source": "@atlas/walking-skeleton",
+          "target": "@atlas/api-gateway",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/walking-skeleton",
+          "target": "@atlas/contracts",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/walking-skeleton",
+          "target": "@atlas/data",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/walking-skeleton",
+          "target": "@atlas/messaging",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/walking-skeleton",
+          "target": "@atlas/policy",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/walking-skeleton",
+          "target": "@atlas/service-kit",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/walking-skeleton",
+          "target": "@atlas/websocket",
+          "type": "static"
+        }
+      ],
+      "@atlas/messaging-nats": [
+        {
+          "source": "@atlas/messaging-nats",
+          "target": "@atlas/messaging",
+          "type": "static"
+        }
+      ],
+      "@atlas/api-gateway": [
+        {
+          "source": "@atlas/api-gateway",
+          "target": "@atlas/contracts",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/api-gateway",
+          "target": "@atlas/service-kit",
+          "type": "static"
+        }
+      ],
+      "@atlas/service-kit": [],
+      "@atlas/contracts": [],
+      "@atlas/messaging": [],
+      "@atlas/reference": [],
+      "@atlas/websocket": [
+        {
+          "source": "@atlas/websocket",
+          "target": "@atlas/contracts",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/websocket",
+          "target": "@atlas/messaging",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/websocket",
+          "target": "@atlas/policy",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/websocket",
+          "target": "@atlas/service-kit",
+          "type": "static"
+        }
+      ],
+      "@atlas/broker-spike": [
+        {
+          "source": "@atlas/broker-spike",
+          "target": "@atlas/messaging",
+          "type": "static"
+        }
+      ],
+      "@atlas/data-pg": [
+        {
+          "source": "@atlas/data-pg",
+          "target": "@atlas/data",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/data-pg",
+          "target": "@atlas/messaging",
+          "type": "static"
+        }
+      ],
+      "@atlas/policy": [],
+      "@atlas/studio": [
+        {
+          "source": "@atlas/studio",
+          "target": "@atlas/policy",
+          "type": "static"
+        }
+      ],
+      "@atlas/data": [
+        {
+          "source": "@atlas/data",
+          "target": "@atlas/messaging",
+          "type": "static"
+        }
+      ],
+      "@atlas/iam": [
+        {
+          "source": "@atlas/iam",
+          "target": "@atlas/contracts",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/iam",
+          "target": "@atlas/policy",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/iam",
+          "target": "@atlas/service-kit",
+          "type": "static"
+        }
+      ],
+      "@atlas/mam": [
+        {
+          "source": "@atlas/mam",
+          "target": "@atlas/contracts",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/mam",
+          "target": "@atlas/data",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/mam",
+          "target": "@atlas/data-pg",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/mam",
+          "target": "@atlas/messaging",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/mam",
+          "target": "@atlas/messaging-nats",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/mam",
+          "target": "@atlas/policy",
+          "type": "static"
+        },
+        {
+          "source": "@atlas/mam",
+          "target": "@atlas/service-kit",
+          "type": "static"
+        }
+      ]
+    }
+  }
+}

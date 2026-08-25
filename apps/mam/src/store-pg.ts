@@ -12,7 +12,7 @@ import {
   withTransaction,
   type PgPool,
 } from '@atlas/data-pg';
-import type { Asset, FileRef } from './asset.ts';
+import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { AssetStore, AssetTx } from './store.ts';
 import type { Tag } from './tag.ts';
@@ -22,40 +22,6 @@ interface TagRow {
   channel_id: string;
   label: string;
   normalized: string;
-}
-
-interface FileRefRow {
-  id: string;
-  channel_id: string;
-  asset_id: string;
-  kind: string;
-  variant: string | null;
-  storage_target_id: string;
-  path: string;
-  tier: string;
-  status: string;
-  checksum: { algorithm: string; value: string };
-  last_verified_at: string | null;
-  size_bytes: string;
-  technical: {
-    container?: string;
-    videoCodec?: string;
-    audioCodec?: string;
-    durationSec?: number;
-    width?: number;
-    height?: number;
-    aspectRatio?: string;
-    audioChannels?: number;
-    frameRate?: number;
-    [key: string]: unknown;
-  };
-  provenance: {
-    producedBy: 'ingest' | 'transcode' | 'editor' | 'import';
-    jobId?: string;
-    profile?: string;
-  };
-  created_at: string;
-  deleted_at: string | null;
 }
 
 /**
@@ -75,25 +41,6 @@ const toTag = (r: TagRow): Tag => ({
   channelId: r.channel_id,
   label: r.label,
   normalized: r.normalized,
-});
-
-const toFileRef = (r: FileRefRow): FileRef => ({
-  id: r.id,
-  channelId: r.channel_id,
-  assetId: r.asset_id,
-  kind: r.kind as FileRef['kind'],
-  variant: r.variant ?? undefined,
-  storageTargetId: r.storage_target_id,
-  path: r.path,
-  tier: r.tier as FileRef['tier'],
-  status: r.status as FileRef['status'],
-  checksum: r.checksum,
-  lastVerifiedAt: r.last_verified_at ?? undefined,
-  sizeBytes: Number(r.size_bytes),
-  technical: r.technical,
-  provenance: r.provenance,
-  createdAt: r.created_at,
-  deletedAt: r.deleted_at ?? undefined,
 });
 
 /**
@@ -196,43 +143,6 @@ export const pgConfigMigration: Migration = {
        INSERT INTO mam_config (id, version) VALUES (1, 1) ON CONFLICT (id) DO NOTHING;`,
 };
 
-/**
- * FileRef — MAM's mirror of the HSM file ledger (EP-17.8).
- *
- * HSM is the source of truth for physical files. This table mirrors the logical file metadata
- * so the catalogue and Studio can display file rows without querying HSM directly.
- *
- * (asset_id, kind, variant) is UNIQUE: a file belongs to exactly one asset, and variants
- * distinguish multiple files of the same kind (e.g. subtitle languages, thumbnail indices).
- */
-export const pgFileRefMigration: Migration = {
-  id: 'mam_file_refs',
-  up: `CREATE TABLE IF NOT EXISTS file_refs (
-         id                text PRIMARY KEY,
-         channel_id        text NOT NULL,
-         asset_id          text NOT NULL,
-         kind              text NOT NULL,
-         variant           text,
-         storage_target_id text NOT NULL,
-         path              text NOT NULL,
-         tier              text NOT NULL,
-         status            text NOT NULL,
-         checksum          jsonb NOT NULL,
-         last_verified_at  timestamptz,
-         size_bytes        bigint NOT NULL,
-         technical         jsonb NOT NULL,
-         provenance        jsonb NOT NULL,
-         created_at        timestamptz NOT NULL DEFAULT now(),
-         deleted_at        timestamptz
-       );
-       CREATE UNIQUE INDEX IF NOT EXISTS file_refs_identity_idx
-         ON file_refs (asset_id, kind, variant);
-       CREATE INDEX IF NOT EXISTS file_refs_asset_idx
-         ON file_refs (asset_id);
-       CREATE INDEX IF NOT EXISTS file_refs_channel_idx
-         ON file_refs (channel_id);`,
-};
-
 export const pgSearchMigration: Migration = {
   id: 'mam_search',
   up: `CREATE TABLE IF NOT EXISTS asset_search (
@@ -258,7 +168,6 @@ export const mamMigrations: Migration[] = [
   // recorded the ones above. Slotting this next to its table would re-order history.
   outboxHeadersMigration,
   pgConfigMigration,
-  pgFileRefMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
@@ -336,14 +245,6 @@ export function pgAssetStore(pool: PgPool): AssetStore {
         [channelId],
       );
       return rows.map(toTag);
-    },
-
-    async fileRefsOf(assetId) {
-      const { rows } = await pool.query<FileRefRow>(
-        `SELECT * FROM file_refs WHERE asset_id = $1 ORDER BY kind, variant`,
-        [assetId],
-      );
-      return rows.map(toFileRef);
     },
 
     async search(channelId, query, limit) {
@@ -501,48 +402,6 @@ export function pgAssetStore(pool: PgPool): AssetStore {
           },
           async enqueue(record) {
             await outbox.enqueue(client, record);
-          },
-          async putFileRef(fileRef) {
-            await client.query(
-              `INSERT INTO file_refs (
-                 id, channel_id, asset_id, kind, variant, storage_target_id, path, tier, status,
-                 checksum, last_verified_at, size_bytes, technical, provenance, created_at, deleted_at
-               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-               ON CONFLICT (id) DO UPDATE SET
-                 channel_id        = excluded.channel_id,
-                 asset_id          = excluded.asset_id,
-                 kind              = excluded.kind,
-                 variant           = excluded.variant,
-                 storage_target_id = excluded.storage_target_id,
-                 path              = excluded.path,
-                 tier              = excluded.tier,
-                 status            = excluded.status,
-                 checksum          = excluded.checksum,
-                 last_verified_at  = excluded.last_verified_at,
-                 size_bytes        = excluded.size_bytes,
-                 technical         = excluded.technical,
-                 provenance        = excluded.provenance,
-                 created_at        = excluded.created_at,
-                 deleted_at        = excluded.deleted_at`,
-              [
-                fileRef.id,
-                fileRef.channelId,
-                fileRef.assetId,
-                fileRef.kind,
-                fileRef.variant ?? null,
-                fileRef.storageTargetId,
-                fileRef.path,
-                fileRef.tier,
-                fileRef.status,
-                JSON.stringify(fileRef.checksum),
-                fileRef.lastVerifiedAt ?? null,
-                fileRef.sizeBytes,
-                JSON.stringify(fileRef.technical),
-                JSON.stringify(fileRef.provenance),
-                fileRef.createdAt,
-                fileRef.deletedAt ?? null,
-              ],
-            );
           },
         };
         return fn(tx);
