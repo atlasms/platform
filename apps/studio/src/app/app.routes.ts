@@ -33,7 +33,7 @@ export const routes: Routes = [
     path: '',
     pathMatch: 'full',
     canMatch: [requireSession],
-    loadComponent: () => import('./panels/welcome.ts').then((m) => m.Welcome),
+    loadComponent: () => import('./panels/dashboard.ts').then((m) => m.Dashboard),
   },
   {
     path: '**',
