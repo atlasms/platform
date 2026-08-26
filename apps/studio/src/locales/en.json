@@ -66,6 +66,17 @@
       "registered": "Registered"
     }
   },
+  "dashboard": {
+    "title": "Dashboard",
+    "systemState": "System State",
+    "whatsNew": "What's New",
+    "inbox": "Inbox",
+    "notifications": "Notifications",
+    "loading": "Loading…",
+    "noRecent": "No recent assets",
+    "inboxPlaceholder": "Tasks and messages will appear here",
+    "notificationsPlaceholder": "Notifications about your assets will appear here"
+  },
   "assetEditor": {
     "basicInfo": "Basic info",
     "files": "Files",

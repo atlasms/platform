@@ -66,6 +66,17 @@
       "registered": "مسجل"
     }
   },
+  "dashboard": {
+    "title": "لوحة التحكم",
+    "systemState": "حالة النظام",
+    "whatsNew": "ما الجديد",
+    "inbox": "صندوق الوارد",
+    "notifications": "الإشعارات",
+    "loading": "جاري التحميل…",
+    "noRecent": "لا توجد أصول حديثة",
+    "inboxPlaceholder": "ستظهر المهام والرسائل هنا",
+    "notificationsPlaceholder": "ستظهر إشعارات أصولك هنا"
+  },
   "assetEditor": {
     "basicInfo": "معلومات أساسية",
     "files": "الملفات",
