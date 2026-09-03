@@ -41,7 +41,10 @@ export const PANELS: readonly PanelDefinition[] = [
     icon: '⇥',
     permission: 'ingest:read',
     route: '/ingest',
-    available: true,
+    // The panel exists (EP-20.3) but nothing serves its API: RIM is EP-15, unbuilt, and the
+    // gateway has no /api/v1/ingest route. The convention is `available: false` until the
+    // service exists — showing it anyway would be a permanently erroring panel.
+    available: false,
   },
   {
     id: 'schedule',

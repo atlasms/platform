@@ -10,6 +10,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { Subject } from 'rxjs';
 import { AssetsService, type ListOptions, type Page } from '../core/assets.service.ts';
 import type { Asset, Tag } from '../core/generated/mam.types.ts';
+import { LocaleService } from '../core/locale.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { MediaPanel } from './media-panel.ts';
 
@@ -64,6 +65,19 @@ class FakeAssets {
   }
 }
 
+/** The English strings for the keys this panel uses — enough to assert on text, not keys. */
+class FakeLocale {
+  locale = () => 'en';
+  loading = () => false;
+  t(key: string): string {
+    const translations: Record<string, string> = {
+      'mediaPanel.recent': 'Recent',
+      'mediaPanel.results': 'Results',
+    };
+    return translations[key] ?? key;
+  }
+}
+
 function panel() {
   const fake = new FakeAssets();
   TestBed.configureTestingModule({
@@ -71,6 +85,7 @@ function panel() {
       provideZonelessChangeDetection(),
       EditorStore,
       { provide: AssetsService, useValue: fake },
+      { provide: LocaleService, useClass: FakeLocale },
     ],
   });
   const fixture = TestBed.createComponent(MediaPanel);

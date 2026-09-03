@@ -49,9 +49,18 @@ export class WebSocketService {
   private readonly baseUrl = inject(API_BASE_URL);
 
   private ws: WebSocket | null = null;
+  // Never completed for the service's lifetime: `disconnect()` is a pause, not the end of the
+  // app — completing this made every reconnect after a sign-out/sign-in cycle silently dead.
   private readonly destroy$ = new Subject<void>();
+  /** True once disconnect() was called explicitly; suppresses the reconnect that an onclose would start. */
+  private intentionalClose = false;
   private readonly pending = new Map<number, PendingSubscription>();
   private pendingId = 0;
+  /**
+   * The DESIRED subscription set — what the UI asked for, confirmed or not. subscribe() records
+   * here immediately so a pattern requested while connecting (or during a reconnect gap) is sent
+   * the moment the socket opens rather than being silently dropped.
+   */
   private subscriptions = new Set<string>();
   private reconnectAttempt = 0;
   private readonly maxReconnectDelay = 30_000;
@@ -75,32 +84,40 @@ export class WebSocketService {
       this.lastError.set('Not authenticated');
       return;
     }
+    this.intentionalClose = false;
     this.open();
   }
 
-  /** Disconnect and clear state. */
+  /** Disconnect and clear state. The desired set survives, so a later connect() restores it. */
   disconnect(): void {
-    this.destroy$.next();
-    this.destroy$.complete();
+    this.intentionalClose = true;
+    this.destroy$.next(); // cancel any pending reconnect timer; the subject stays open for next time
     this.cleanup();
     this.state.set('disconnected');
-    this.subscriptions.clear();
     this.reconnectAttempt = 0;
   }
 
-  /** Subscribe to a pattern. Returns a promise that resolves when the server confirms. */
+  /**
+   * Subscribe to a pattern. The pattern joins the DESIRED set immediately and is (re)sent on
+   * every open, so calling before the socket is ready is fine — nothing is silently dropped.
+   * The returned promise only reports registration, not server confirmation: a refusal arrives
+   * later as an `error` frame and drops the pattern from the set (see `subscribed$`/`lastError`).
+   */
   subscribe(pattern: string): Promise<{ ok: boolean; reason?: string }> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return Promise.resolve({ ok: false, reason: 'Not connected' });
-    }
     if (this.subscriptions.has(pattern)) {
       return Promise.resolve({ ok: true });
     }
-    const id = ++this.pendingId;
-    return new Promise((resolve) => {
-      this.pending.set(id, { pattern, resolve });
-      this.ws!.send(JSON.stringify({ type: 'subscribe', pattern }));
-    });
+    this.subscriptions.add(pattern);
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      const id = ++this.pendingId;
+      return new Promise((resolve) => {
+        this.pending.set(id, { pattern, resolve });
+        this.ws!.send(JSON.stringify({ type: 'subscribe', pattern }));
+      });
+    }
+    // Not open: onopen sends every desired pattern, this one included. Resolving `ok` here means
+    // "queued", not "confirmed" — the server has not seen it yet.
+    return Promise.resolve({ ok: true });
   }
 
   /** Unsubscribe from a pattern. */
@@ -141,7 +158,7 @@ export class WebSocketService {
     this.ws.onmessage = (event) => this.handleMessage(event.data);
 
     this.ws.onclose = (event) => {
-      if (!this.destroy$.closed) {
+      if (!this.intentionalClose) {
         this.scheduleReconnect(event.wasClean ? null : event.reason || 'Connection closed');
       }
     };
@@ -176,6 +193,8 @@ export class WebSocketService {
         break;
       case 'permissions-changed':
         if (frame.subject !== undefined) {
+          // The server dropped it, so it leaves the desired set too — a reconnect must not
+          // resurrect a subscription the server has ruled ineligible.
           this.subscriptions.delete(frame.subject);
           this.permissionsChanged$.next({
             pattern: frame.subject,
@@ -197,9 +216,8 @@ export class WebSocketService {
         resolve({ ok: false, reason: 'Subscription refused' });
       }
     }
-    if (ok) {
-      this.subscriptions.add(pattern);
-    } else {
+    if (!ok) {
+      // Refused server-side — drop it from the desired set or every reconnect re-asks.
       this.subscriptions.delete(pattern);
     }
     this.subscribed$.next({ pattern, ok });
@@ -208,6 +226,8 @@ export class WebSocketService {
   private handleError(message: string, subject?: string): void {
     this.lastError.set(message);
     if (subject) {
+      // An error for a subscribe (e.g. forbidden pattern) is a refusal — drop it like one.
+      this.subscriptions.delete(subject);
       const pending = [...this.pending.entries()].find(([, v]) => v.pattern === subject);
       if (pending) {
         const [id, { resolve }] = pending;
@@ -218,7 +238,7 @@ export class WebSocketService {
   }
 
   private scheduleReconnect(_reason: string | null): void {
-    if (this.destroy$.closed) return;
+    if (this.intentionalClose) return;
     this.state.set('reconnecting');
     this.cleanup();
 
@@ -229,12 +249,9 @@ export class WebSocketService {
       .pipe(takeUntil(this.destroy$))
       .subscribe({
         next: () => {
-          if (!this.destroy$.closed && this.auth.token() && this.session.isAuthenticated()) {
+          if (!this.intentionalClose && this.auth.token() && this.session.isAuthenticated()) {
             this.open();
           }
-        },
-        error: () => {
-          // destroyed
         },
       });
   }

@@ -23,6 +23,7 @@
       "panels": "Panels"
     },
     "statusBar": {
+      "channel": "channel",
       "unsavedChanges": "● unsaved",
       "panelsVisible": "of panels visible"
     },
@@ -32,11 +33,13 @@
   },
   "mediaPanel": {
     "recent": "Recent",
+    "results": "Results",
     "search": "Search",
     "searchPlaceholder": "Search assets…",
     "tags": "Tags",
     "filterByTags": "Filter by tags",
-    "noResults": "No assets found",
+    "noResults": "Nothing matches that.",
+    "emptyChannel": "No media in this channel yet.",
     "loading": "Loading assets…",
     "error": "Could not load assets",
     "loadMore": "Load more"
@@ -46,8 +49,7 @@
     "placeholder": "Search assets…",
     "loading": "Searching…",
     "noResults": "No assets match your query",
-    "emptyHint": "Type to search the catalogue",
-    "createAsset": "New asset"
+    "emptyHint": "Type to search the catalogue"
   },
   "ingest": {
     "title": "Ingest",
@@ -75,9 +77,20 @@
     "loading": "Loading…",
     "noRecent": "No recent assets",
     "inboxPlaceholder": "Tasks and messages will appear here",
-    "notificationsPlaceholder": "Notifications about your assets will appear here"
+    "notificationsPlaceholder": "Notifications about your assets will appear here",
+    "state": {
+      "created": "Created",
+      "processing": "Processing",
+      "ready": "Ready",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "expired": "Expired",
+      "replaced": "Replaced",
+      "purged": "Purged"
+    }
   },
   "assetEditor": {
+    "loading": "Loading asset…",
     "basicInfo": "Basic info",
     "files": "Files",
     "identity": "Identity",
@@ -118,7 +131,10 @@
     "closeAll": "Close all",
     "split": "Split",
     "pin": "Pin",
-    "unpin": "Unpin"
+    "unpin": "Unpin",
+    "pinned": "pinned",
+    "empty": "No editors open.",
+    "emptyHint": "Open something from a panel — tabs, splits and layout are restored next time."
   },
   "common": {
     "retry": "Retry",

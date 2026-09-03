@@ -15,15 +15,28 @@ npm test -w @atlas/studio
 **EP-11.2** — the sign-in flow: real tokens from IAM, refresh, sign-out.
 **EP-11.3** — the workbench: tabbed and splittable editor groups, drag between groups, a resizable
 side bar, workspace persistence.
+**EP-11.4** — the WebSocket client: desired-set subscriptions (queued until the socket opens),
+exponential-backoff reconnect, re-subscribe on open. The `/ws` endpoint it talks to does not exist
+yet — that server is EP-13.2's scope.
 **EP-11.5** — generated API types checked against the IAM and MAM OpenAPI contracts.
+**EP-11.6** — i18n/RTL: runtime locale files (en/ar), a `LocaleService` that flips `<html dir>`,
+and the design-token theme (light/dark via `prefers-color-scheme`).
 **EP-11.7** — `can()` integration: permission-driven rendering.
 **EP-20.1** — the Media panel: real recent/search/tag-filter reads from MAM.
-**EP-20.2 (in progress)** — the asset editor: real Basic-info reads and minimal PATCHes,
+**EP-20.2** — the asset editor: real Basic-info reads and minimal PATCHes,
 dirty-state tracking, independent `core`/`taxonomy`/`rights` field-group rendering, and the Files
 rendition-readiness view. Per-file rows await the MAM FileRef projection (EP-17.8).
+**EP-20.3** — the Ingest panel: queue, quarantine accept/reject — **built but not routed**: RIM
+(EP-15) does not exist and the gateway has no `/api/v1/ingest` route, so the panel is
+`available: false` until the service lands.
+**EP-20.4** — the Search panel: simple query against MAM search, results open in the asset editor.
+**EP-20.6** — the dashboard: an editor tab opened as the default landing view — system-state
+counts and what's-new against real MAM, live-refreshed. State counts page the channel with a
+1000-asset cap; a real counts endpoint is a follow-up.
+**EP-20.9** — live updates: panels and the asset editor subscribe to `atlas.<channel>.asset.>`
+and reconcile by refetch; a live event never clobbers a dirty form.
 
-**Not built:** the WebSocket client (**EP-11.4**) and the full token system with i18n/RTL
-(**EP-11.6**). Schedule and later editor types remain placeholders until their owning services
+**Not built:** Schedule and later editor types remain placeholders until their owning services
 exist.
 
 ## Signing in

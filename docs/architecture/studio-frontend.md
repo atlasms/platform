@@ -129,6 +129,14 @@ composed of widgets:
 
 Widgets are **permission-aware**, **live** (WebSocket), rearrangeable, and the layout persists per user.
 
+**MVP implementation (EP-20.6).** The dashboard is a real editor tab, opened by the workbench as
+the default landing view (a restored workspace is left untouched). System state counts and the
+what's-new list come from MAM's catalogue reads — newest-first, following the keyset cursor with a
+1000-asset cap; a channel beyond that needs a real per-state counts endpoint, which is a follow-up
+rather than a silently truncated number. Both widgets refresh on `asset.*` events once the
+WebSocket server (EP-13.2) exists; the client subscription is already queued. Rearrangement and
+per-user layouts are not built.
+
 ## 4. Welcome & What's New
 
 On login **after a version rollout**, Studio shows a **Welcome / What's New** editor tab
@@ -178,6 +186,9 @@ sequenceDiagram
 - **Live updates** ([FR-UI-4](../requirements/05-functional-requirements.md#studio)) — WebSocket
   topics drive lists, badges, dashboard widgets, and the transfer tray without manual refresh; **public**
   changes update everyone, **private** target the user.
+  _MVP (EP-11.4/20.9): the client queues subscriptions until the socket opens and reconciles events
+  by refetching the affected record — never by clobbering a dirty form. The `/ws` server endpoint is
+  EP-13.2's scope; until it exists the panels poll nothing and simply render their last fetch._
 - **Permission-gating** ([FR-UI-5](../requirements/05-functional-requirements.md#studio)) — panels,
   views, tabs, and actions render only for the user's effective permissions; the gateway still enforces.
 - **Workspace persistence** ([FR-UI-3](../requirements/05-functional-requirements.md#studio)) — open
