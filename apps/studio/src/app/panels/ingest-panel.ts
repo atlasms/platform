@@ -1,14 +1,20 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { DatePipe } from '@angular/common';
 import { IngestService } from '../core/ingest.service.ts';
 import type { IngestJob } from '../core/generated/rim.types.ts';
 import { IfCanDirective } from '../core/if-can.directive.ts';
 import { LocaleService } from '../core/locale.service.ts';
 
+/**
+ * The Ingest/Import panel (EP-20.3) — queue, quarantine accept/reject.
+ *
+ * NOT ROUTED YET: RIM (EP-15) does not exist and the gateway has no `/api/v1/ingest` route, so
+ * panels.ts marks the panel `available: false`. This component is ready for the day the service
+ * lands; wiring it visible before then would show a permanently erroring queue.
+ */
 @Component({
   selector: 'atlas-ingest-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [IfCanDirective, DatePipe],
+  imports: [IfCanDirective],
   template: `
     <h2 class="panel-title">{{ locale.t('ingest.title') }}</h2>
 
@@ -33,7 +39,9 @@ import { LocaleService } from '../core/locale.service.ts';
                 <span class="job-asset">→ asset {{ job.assetId }}</span>
               }
             </div>
-            <div class="job-reason" *ngIf="job.reason">{{ job.reason }}</div>
+            @if (job.reason) {
+              <div class="job-reason">{{ job.reason }}</div>
+            }
             <div class="job-actions">
               @if (job.state === 'quarantined') {
                 <button

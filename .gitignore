@@ -37,3 +37,6 @@ npm-debug.log*
 
 # angular build cache
 .angular/
+
+# local agent tooling config — machine-specific, never committed (it leaked once, #270)
+.kilo/

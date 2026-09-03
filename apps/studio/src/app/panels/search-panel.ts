@@ -1,14 +1,12 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { AssetsService } from '../core/assets.service.ts';
 import type { Asset } from '../core/generated/mam.types.ts';
-import { IfCanDirective } from '../core/if-can.directive.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { LocaleService } from '../core/locale.service.ts';
 
 @Component({
   selector: 'atlas-search-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [IfCanDirective],
   template: `
     <h2 class="panel-title">{{ locale.t('search.title') }}</h2>
 
@@ -46,12 +44,6 @@ import { LocaleService } from '../core/locale.service.ts';
     } @else {
       <p class="muted">{{ locale.t('search.emptyHint') }}</p>
     }
-
-    <div class="actions">
-      <button type="button" *atlasIfCan="'asset:write'">
-        {{ locale.t('search.createAsset') }}
-      </button>
-    </div>
   `,
   styles: `
     :host {

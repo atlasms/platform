@@ -7,6 +7,7 @@ import type { Asset, UpdateAssetInput } from '../core/generated/mam.types.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { WebSocketService } from '../core/websocket.service.ts';
 import { AssetEditor } from './asset-editor.ts';
 
 const record = (overrides: Partial<Asset> = {}): Asset => ({
@@ -101,6 +102,19 @@ interface InternalEditor {
   canEdit(group: 'core' | 'taxonomy' | 'rights'): boolean;
   change(field: keyof UpdateAssetInput, value: string): void;
   save(event: Event): void;
+}
+
+/** The live-update surface, driven through the shared WebSocketService's event stream. */
+function emitAssetEvent(
+  ws: WebSocketService,
+  assetId: string,
+  action: string,
+  channelId = 'ch12',
+): void {
+  ws.events$.next({
+    subject: `atlas.${channelId}.asset.${action}`,
+    payload: { type: `asset.${action}`, channelId, payload: { assetId } },
+  });
 }
 
 function setup(fieldGroups: string[] = ['core', 'taxonomy', 'rights']) {
@@ -221,5 +235,33 @@ describe('AssetEditor', () => {
     expect(text).toContain('Renditions attached');
     expect(text).toContain('FileRef projection');
     expect(text).toContain('HSM remains the source of truth');
+  });
+
+  it('a live event for THIS asset refetches it — for another asset it does nothing', () => {
+    const { component, fake } = setup();
+    fake.gets[0]?.result.next(record());
+    const ws = TestBed.inject(WebSocketService);
+
+    emitAssetEvent(ws, '01K00000000000000000000000', 'updated');
+    expect(fake.gets).toHaveLength(2); // the reload
+
+    fake.gets[1]?.result.next(record({ title: 'Renamed elsewhere', version: 4 }));
+    expect(component.asset()?.title).toBe('Renamed elsewhere');
+
+    emitAssetEvent(ws, '01SOMEONEELSE0000000000000', 'updated');
+    expect(fake.gets).toHaveLength(2); // untouched
+  });
+
+  it('a live event while DIRTY does not discard the unsaved form', () => {
+    // Regression: the first live-update version reloaded on every event, and a reload replaces
+    // the draft — another user saving the same asset would silently erase this user's edits.
+    const { component, fake } = setup();
+    fake.gets[0]?.result.next(record());
+    component.change('title', 'My unsaved edit');
+    expect(component.dirtyCount()).toBe(1);
+
+    emitAssetEvent(TestBed.inject(WebSocketService), '01K00000000000000000000000', 'updated');
+    expect(fake.gets).toHaveLength(1); // no reload
+    expect(component.dirtyCount()).toBe(1); // the edit survives
   });
 });

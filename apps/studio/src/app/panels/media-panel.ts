@@ -1,14 +1,15 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   computed,
   effect,
   inject,
   signal,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AssetsService } from '../core/assets.service.ts';
 import type { Asset, Tag } from '../core/generated/mam.types.ts';
-import { IfCanDirective } from '../core/if-can.directive.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { SessionStore } from '../core/session.store.ts';
@@ -30,7 +31,6 @@ import { WebSocketService } from '../core/websocket.service.ts';
 @Component({
   selector: 'atlas-media-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [IfCanDirective],
   template: `
     <h2 class="panel-title">{{ locale.t('workbench.panels.media') }}</h2>
 
@@ -71,7 +71,7 @@ import { WebSocketService } from '../core/websocket.service.ts';
       <!-- The two empty states are different questions, and answering both with "No results" makes
            an empty channel look like a failed search. -->
       <p class="muted">
-        {{ query() ? locale.t('mediaPanel.noResults') : locale.t('mediaPanel.noResults') }}
+        {{ query() ? locale.t('mediaPanel.noResults') : locale.t('mediaPanel.emptyChannel') }}
       </p>
     } @else {
       <ul class="items">
@@ -88,13 +88,11 @@ import { WebSocketService } from '../core/websocket.service.ts';
       </ul>
 
       @if (cursor()) {
-        <button type="button" class="more" (click)="loadMore()">{{ locale.t('common.ok') }}</button>
+        <button type="button" class="more" (click)="loadMore()">
+          {{ locale.t('mediaPanel.loadMore') }}
+        </button>
       }
     }
-
-    <div class="actions">
-      <button type="button" *atlasIfCan="'asset:write'">{{ locale.t('mediaPanel.search') }}</button>
-    </div>
   `,
   styles: `
     .panel-title {
@@ -216,6 +214,7 @@ export class MediaPanel {
   protected readonly locale = inject(LocaleService);
   private readonly session = inject(SessionStore);
   private readonly ws = inject(WebSocketService);
+  private readonly destroyRef = inject(DestroyRef);
 
   protected readonly assets = signal<Asset[]>([]);
   protected readonly tags = signal<Tag[]>([]);
@@ -225,7 +224,9 @@ export class MediaPanel {
   /** Present only while browsing; a search returns one page and no cursor. */
   protected readonly cursor = signal<string | undefined>(undefined);
 
-  protected readonly heading = computed(() => (this.query() ? 'Results' : 'Recent'));
+  protected readonly heading = computed(() =>
+    this.query() ? this.locale.t('mediaPanel.results') : this.locale.t('mediaPanel.recent'),
+  );
 
   /**
    * Guards against an out-of-order response overwriting a newer one.
@@ -242,21 +243,19 @@ export class MediaPanel {
     // everything else on the panel still works.
     this.assetsApi.tags().subscribe({ next: (t) => this.tags.set(t), error: () => undefined });
 
-    // Subscribe to live asset updates for this channel
+    // Subscribe to live asset updates for this channel. The service queues the pattern if the
+    // socket is not open yet, so mounting before the connection lands is not a silent loss.
     effect(() => {
       const channelId = this.session.channelId();
       if (channelId) {
-        const pattern = `atlas.${channelId}.asset.>`;
-        this.ws.subscribe(pattern).then((result) => {
-          if (!result.ok) {
-            console.warn('Failed to subscribe to asset updates:', result.reason);
-          }
-        });
+        void this.ws.subscribe(`atlas.${channelId}.asset.>`);
       }
     });
 
-    // Handle incoming WebSocket events for asset updates
-    this.ws.events$.subscribe(({ subject, payload }) => {
+    // Handle incoming WebSocket events for asset updates. takeUntilDestroyed: panels are created
+    // and destroyed with the routed view, and a leaked subscription would keep refetching for a
+    // panel that no longer exists.
+    this.ws.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(({ subject, payload }) => {
       this.handleAssetEvent(subject, payload);
     });
   }
@@ -343,76 +342,46 @@ export class MediaPanel {
     // Only process events for our current channel
     if (envelope.channelId !== this.session.channelId()) return;
 
-    this.assets.update((current) => {
-      const existingIndex = current.findIndex((a) => a.id === assetId);
-      const exists = existingIndex >= 0;
+    const exists = this.assets().some((a) => a.id === assetId);
 
-      switch (action) {
-        case 'created':
-          // For created, we need to fetch the full asset to add to the list
-          // The created event only has core fields, not all Asset fields
-          if (!exists) {
-            // Optimistically add a minimal asset entry; the full data will be fetched
-            // when the user clicks it, or we could refetch the list
-            // For now, just invalidate the list to trigger a refresh on next interaction
-            return current;
-          }
-          break;
+    switch (action) {
+      case 'created':
+        // The created event carries only core fields, not a full record, so insert nothing
+        // blind. In the unfiltered Recent view the honest move is to refetch page one; inside a
+        // search result a new asset has no defined rank, so leave the list alone.
+        if (!exists && !this.query()) {
+          this.loadRecent();
+        }
+        break;
 
-        case 'updated':
-          // For updated, we could optimistically update the changed fields
-          // but the safe approach is to refetch or update from the event payload
-          if (exists) {
-            // We only have changedFields, not the new values
-            // Best to refetch the specific asset
-            this.assetsApi.get(assetId).subscribe({
-              next: (asset) => {
-                this.assets.update((list) => {
-                  const idx = list.findIndex((a) => a.id === assetId);
-                  if (idx >= 0) {
-                    const copy = [...list];
-                    copy[idx] = asset;
-                    return copy;
-                  }
-                  return list;
-                });
-              },
-            });
-          }
-          break;
+      case 'updated':
+      case 'approved':
+      case 'rejected':
+      case 'expired':
+      case 'ready':
+        // The event carries changedFields, not new values — refetch the one record and splice it
+        // in, so a live list never shows a stale row.
+        if (exists) {
+          this.assetsApi.get(assetId).subscribe({
+            next: (asset) => {
+              this.assets.update((list) => {
+                const idx = list.findIndex((a) => a.id === assetId);
+                if (idx < 0) return list;
+                const copy = [...list];
+                copy[idx] = asset;
+                return copy;
+              });
+            },
+          });
+        }
+        break;
 
-        case 'deleted':
-        case 'replaced':
-          // Remove the asset from the list
-          if (exists) {
-            return current.filter((a) => a.id !== assetId);
-          }
-          break;
-
-        case 'approved':
-        case 'rejected':
-        case 'expired':
-        case 'ready':
-          // State changed - refetch the asset
-          if (exists) {
-            this.assetsApi.get(assetId).subscribe({
-              next: (asset) => {
-                this.assets.update((list) => {
-                  const idx = list.findIndex((a) => a.id === assetId);
-                  if (idx >= 0) {
-                    const copy = [...list];
-                    copy[idx] = asset;
-                    return copy;
-                  }
-                  return list;
-                });
-              },
-            });
-          }
-          break;
-      }
-
-      return current;
-    });
+      case 'deleted':
+      case 'replaced':
+        if (exists) {
+          this.assets.update((list) => list.filter((a) => a.id !== assetId));
+        }
+        break;
+    }
   }
 }

@@ -78,7 +78,11 @@ const MAX_SIDE_BAR = 640;
       <footer class="status-bar">
         <span>{{ session.userId() ?? locale.t('auth.signIn') }}</span>
         <span class="sep">·</span>
-        <span>{{ locale.t('workbench.statusBar.unsavedChanges') }}</span>
+        <span>{{ locale.t('workbench.statusBar.channel') }} {{ session.channelId() ?? '—' }}</span>
+        @if (editors.hasUnsavedChanges()) {
+          <span class="sep">·</span>
+          <span>{{ locale.t('workbench.statusBar.unsavedChanges') }}</span>
+        }
         <span class="spacer"></span>
         <span
           >{{ visiblePanels().length }} {{ locale.t('workbench.statusBar.panelsVisible') }}</span
@@ -137,6 +141,27 @@ export class Workbench {
       this.ws.connect();
     } else {
       this.ws.disconnect();
+    }
+  });
+
+  /**
+   * The dashboard is the default landing view (studio-frontend.md §3) — an EDITOR TAB, not a
+   * side-bar panel: the widgets need the editor area's width, and "default" means it is open
+   * when the workspace has nothing, not that it occupies the navigation column. A restored
+   * workspace is left exactly as the user left it.
+   */
+  // Auto-open once per session: an effect re-run must not resurrect the tab the user just closed.
+  private dashboardOpened = false;
+  private readonly dashboardEffect = effect(() => {
+    if (this.session.isAuthenticated() && !this.dashboardOpened && this.editors.isEmpty()) {
+      this.dashboardOpened = true;
+      this.editors.open({
+        type: 'dashboard',
+        resourceId: 'dashboard',
+        title: this.locale.t('dashboard.title'),
+        icon: '▣',
+        preserveFocus: false,
+      });
     }
   });
 

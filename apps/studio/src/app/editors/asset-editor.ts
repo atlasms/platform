@@ -1,12 +1,14 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   computed,
   effect,
   inject,
   input,
   signal,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AssetsService } from '../core/assets.service.ts';
 import type { Asset, UpdateAssetInput } from '../core/generated/mam.types.ts';
 import { PermissionService } from '../core/permission.service.ts';
@@ -309,26 +311,25 @@ export class AssetEditor {
     (['core', 'taxonomy', 'rights'] as const).some((group) => this.canEdit(group)),
   );
 
-  // Subscribe to live updates for this specific asset when channel and assetId are available
+  private readonly destroyRef = inject(DestroyRef);
+
+  // Live updates for this channel's assets. MAM publishes to atlas.<channel>.asset.<action> —
+  // there is no per-asset subject — so the subscription is the channel stream and the payload's
+  // assetId does the filtering. The service queues the pattern until the socket is open.
   private readonly wsSubscription = effect(() => {
     const channelId = this.session.channelId();
-    const assetId = this.assetId();
-    if (channelId && assetId) {
-      const pattern = `atlas.${channelId}.asset.${assetId}.>`;
-      this.ws.subscribe(pattern).then((result) => {
-        if (!result.ok) {
-          console.warn('Failed to subscribe to asset updates:', result.reason);
-        }
-      });
+    if (channelId) {
+      void this.ws.subscribe(`atlas.${channelId}.asset.>`);
     }
   });
 
-  // Handle incoming WebSocket events for this asset
-  private readonly wsEventHandler = effect(() => {
-    this.ws.events$.subscribe(({ subject, payload }) => {
+  // takeUntilDestroyed: closing a tab destroys this component, and a leaked subscription would
+  // keep refetching assets for an editor that no longer exists.
+  private readonly wsEvents = this.ws.events$
+    .pipe(takeUntilDestroyed(this.destroyRef))
+    .subscribe(({ subject, payload }) => {
       this.handleAssetEvent(subject, payload);
     });
-  });
 
   ngOnInit(): void {
     this.reload();
@@ -465,8 +466,8 @@ export class AssetEditor {
   }
 
   private handleAssetEvent(subject: string, payload: unknown): void {
-    // Subject format: atlas.<channelId>.asset.<assetId>.<action>
-    // Actions: updated, approved, rejected, expired, deleted, replaced, ready
+    // Subject format: atlas.<channelId>.asset.<action>
+    // Actions: created, updated, approved, rejected, expired, deleted, replaced, ready
     const action = subject.split('.').pop();
     if (!action) return;
 
@@ -485,8 +486,10 @@ export class AssetEditor {
     // Only process events for our current channel
     if (envelope.channelId !== this.session.channelId()) return;
 
-    // For any state-changing event, reload the asset to get the latest version
-    // This handles updated, approved, rejected, expired, ready, deleted, replaced
+    // A reload REPLACES the draft. With unsaved edits that would silently discard the user's
+    // work, so skip the refresh while dirty; the next save's version conflict or a manual
+    // reload reconciles instead. When clean, reload for any state-changing event.
+    if (this.dirtyFields().size > 0) return;
     this.reload();
   }
 }

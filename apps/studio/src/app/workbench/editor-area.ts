@@ -1,6 +1,8 @@
 import { CdkDrag, CdkDropList, CdkDropListGroup, type CdkDragDrop } from '@angular/cdk/drag-drop';
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { AssetEditor } from '../editors/asset-editor.ts';
+import { Dashboard } from '../panels/dashboard.ts';
+import { LocaleService } from '../core/locale.service.ts';
 import { EditorStore } from './editor.store.ts';
 
 /**
@@ -14,13 +16,13 @@ import { EditorStore } from './editor.store.ts';
 @Component({
   selector: 'atlas-editor-area',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CdkDrag, CdkDropList, CdkDropListGroup, AssetEditor],
+  imports: [CdkDrag, CdkDropList, CdkDropListGroup, AssetEditor, Dashboard],
   template: `
     @if (store.isEmpty()) {
       <div class="empty-state">
-        <p>No editors open.</p>
+        <p>{{ locale.t('editor.empty') }}</p>
         <p class="muted">
-          Open something from a panel — tabs, splits and layout are restored next time.
+          {{ locale.t('editor.emptyHint') }}
         </p>
       </div>
     } @else {
@@ -47,14 +49,14 @@ import { EditorStore } from './editor.store.ts';
                   [class.pinned]="tab.pinned"
                   (click)="store.focus(group.id, tab.id)"
                   (dblclick)="store.togglePin(tab.id)"
-                  [title]="tab.title + (tab.pinned ? ' (pinned)' : '')"
+                  [title]="tab.title + (tab.pinned ? ' (' + locale.t('editor.pinned') + ')' : '')"
                 >
                   <span class="icon" aria-hidden="true">{{ tab.icon }}</span>
                   <span class="label">{{ tab.title }}</span>
                   <button
                     type="button"
                     class="close"
-                    [attr.aria-label]="'Close ' + tab.title"
+                    [attr.aria-label]="locale.t('editor.close') + ' ' + tab.title"
                     (click)="onClose($event, group.id, tab.id)"
                   >
                     <!-- A dirty tab shows a dot instead of the ✕ until hovered, so unsaved work is
@@ -68,7 +70,7 @@ import { EditorStore } from './editor.store.ts';
                 <button
                   type="button"
                   class="split"
-                  title="Split the active tab into a new group"
+                  [title]="locale.t('editor.split')"
                   (click)="store.splitTo(group.id, group.activeTabId)"
                 >
                   ⫲
@@ -82,6 +84,9 @@ import { EditorStore } from './editor.store.ts';
                   @switch (tab.type) {
                     @case ('asset') {
                       <atlas-asset-editor [assetId]="tab.resourceId" [tabId]="tab.id" />
+                    }
+                    @case ('dashboard') {
+                      <atlas-dashboard />
                     }
                     @default {
                       <h2>{{ tab.title }}</h2>
@@ -102,6 +107,7 @@ import { EditorStore } from './editor.store.ts';
 })
 export class EditorArea {
   protected readonly store = inject(EditorStore);
+  protected readonly locale = inject(LocaleService);
 
   protected onClose(event: Event, groupId: string, tabId: string): void {
     // Without this the click also reaches the tab and focuses what is being removed.

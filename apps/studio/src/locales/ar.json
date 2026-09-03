@@ -23,6 +23,7 @@
       "panels": "اللوحات"
     },
     "statusBar": {
+      "channel": "القناة",
       "unsavedChanges": "● تغييرات غير محفوظة",
       "panelsVisible": "من اللوحات مرئية"
     },
@@ -32,11 +33,13 @@
   },
   "mediaPanel": {
     "recent": "الأخيرة",
+    "results": "النتائج",
     "search": "بحث",
     "searchPlaceholder": "البحث عن أصول…",
     "tags": "العلامات",
     "filterByTags": "تصفية حسب العلامات",
-    "noResults": "لم يتم العثور على أصول",
+    "noResults": "لا شيء يطابق هذا.",
+    "emptyChannel": "لا توجد وسائط في هذه القناة بعد.",
     "loading": "جاري تحميل الأصول…",
     "error": "تعذر تحميل الأصول",
     "loadMore": "تحميل المزيد"
@@ -46,8 +49,7 @@
     "placeholder": "البحث عن أصول…",
     "loading": "جاري البحث…",
     "noResults": "لا توجد أصول تطابق استعلامك",
-    "emptyHint": "اكتب للبحث في الفهرس",
-    "createAsset": "أصل جديد"
+    "emptyHint": "اكتب للبحث في الفهرس"
   },
   "ingest": {
     "title": "الاستيراد",
@@ -75,9 +77,20 @@
     "loading": "جاري التحميل…",
     "noRecent": "لا توجد أصول حديثة",
     "inboxPlaceholder": "ستظهر المهام والرسائل هنا",
-    "notificationsPlaceholder": "ستظهر إشعارات أصولك هنا"
+    "notificationsPlaceholder": "ستظهر إشعارات أصولك هنا",
+    "state": {
+      "created": "تم الإنشاء",
+      "processing": "قيد المعالجة",
+      "ready": "جاهز",
+      "approved": "معتمد",
+      "rejected": "مرفوض",
+      "expired": "منتهي الصلاحية",
+      "replaced": "مستبدل",
+      "purged": "محذوف"
+    }
   },
   "assetEditor": {
+    "loading": "جاري تحميل الأصل…",
     "basicInfo": "معلومات أساسية",
     "files": "الملفات",
     "identity": "الهوية",
@@ -118,7 +131,10 @@
     "closeAll": "إغلاق الكل",
     "split": "تقسيم",
     "pin": "تثبيت",
-    "unpin": "إلغاء التثبيت"
+    "unpin": "إلغاء التثبيت",
+    "pinned": "مثبت",
+    "empty": "لا توجد محررات مفتوحة.",
+    "emptyHint": "افتح شيئًا من لوحة — يتم استعادة علامات التبويب والتقسيمات والتخطيط في المرة القادمة."
   },
   "common": {
     "retry": "إعادة المحاولة",

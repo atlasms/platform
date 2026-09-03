@@ -1,13 +1,33 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  effect,
+  inject,
+  signal,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AssetsService } from '../core/assets.service.ts';
 import type { Asset } from '../core/generated/mam.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { SessionStore } from '../core/session.store.ts';
+import { WebSocketService } from '../core/websocket.service.ts';
+import { EditorStore } from '../workbench/editor.store.ts';
 
 interface StateCount {
   state: Asset['state'];
   count: number;
   label: string;
 }
+
+/**
+ * Counting more than this would mean paging on and on for a number that is a glance, not a
+ * report. Past the cap the widget still counts — a channel that large needs a real counts
+ * endpoint (mam.yaml has none yet), which is a deliberate follow-up rather than a silent lie.
+ */
+const COUNT_PAGE_LIMIT = 200;
+const COUNT_MAX_PAGES = 5;
 
 @Component({
   selector: 'atlas-dashboard',
@@ -272,15 +292,17 @@ interface StateCount {
 export class Dashboard {
   private readonly assetsApi = inject(AssetsService);
   protected readonly locale = inject(LocaleService);
+  private readonly editors = inject(EditorStore);
+  private readonly session = inject(SessionStore);
+  private readonly ws = inject(WebSocketService);
+  private readonly destroyRef = inject(DestroyRef);
 
   protected readonly loading = signal(true);
+  /** Assets counted for state totals — paged newest-first up to the cap, NOT one page of fifty. */
   protected readonly assets = signal<Asset[]>([]);
 
   protected readonly stateCounts = computed<StateCount[]>(() => {
-    const items = this.assets();
     const counts = new Map<Asset['state'], number>();
-
-    // Initialize all states
     const allStates: Asset['state'][] = [
       'created',
       'processing',
@@ -291,61 +313,59 @@ export class Dashboard {
       'replaced',
       'purged',
     ];
-    for (const state of allStates) {
-      counts.set(state, 0);
-    }
-
-    for (const asset of items) {
+    for (const state of allStates) counts.set(state, 0);
+    for (const asset of this.assets()) {
       counts.set(asset.state, (counts.get(asset.state) ?? 0) + 1);
     }
-
-    const labelMap: Record<Asset['state'], string> = {
-      created: 'Created',
-      processing: 'Processing',
-      ready: 'Ready',
-      approved: 'Approved',
-      rejected: 'Rejected',
-      expired: 'Expired',
-      replaced: 'Replaced',
-      purged: 'Purged',
-    };
-
     return Array.from(counts.entries()).map(([state, count]) => ({
       state,
       count,
-      label: labelMap[state],
+      label: this.locale.t(`dashboard.state.${state}`),
     }));
   });
 
-  protected readonly recentAssets = computed(() =>
-    this.assets()
-      .slice()
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-      .slice(0, 10),
-  );
+  // Already newest-first from the store (`order: 'desc'`) — re-sorting by updatedAt would claim
+  // an ordering "recently touched" the query never asked for.
+  protected readonly recentAssets = computed(() => this.assets().slice(0, 10));
 
   constructor() {
     this.load();
-  }
 
-  private load(): void {
-    this.loading.set(true);
-    // Load recent 50 assets for dashboard (state counts + recent list)
-    this.assetsApi.list({ limit: 50, order: 'desc' }).subscribe({
-      next: (page) => {
-        this.assets.set(page.items);
-        this.loading.set(false);
-      },
-      error: () => {
-        this.loading.set(false);
-      },
+    // Widgets are live (studio-frontend.md §3): any asset event in this channel changes the
+    // numbers, so refetch. The service queues the subscription until the socket is open.
+    effect(() => {
+      const channelId = this.session.channelId();
+      if (channelId) {
+        void this.ws.subscribe(`atlas.${channelId}.asset.>`);
+      }
+    });
+    this.ws.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(({ subject }) => {
+      if (subject.startsWith(`atlas.${this.session.channelId()}.asset.`)) this.load();
     });
   }
 
+  /** Newest-first, following the keyset cursor so the counts cover the catalogue, not page one. */
+  private load(cursor?: string, pages = 0, acc: Asset[] = []): void {
+    this.loading.set(true);
+    this.assetsApi
+      .list({ limit: COUNT_PAGE_LIMIT, order: 'desc', ...(cursor ? { cursor } : {}) })
+      .subscribe({
+        next: (page) => {
+          const items = [...acc, ...page.items];
+          if (page.nextCursor && pages + 1 < COUNT_MAX_PAGES) {
+            this.load(page.nextCursor, pages + 1, items);
+            return;
+          }
+          this.assets.set(items);
+          this.loading.set(false);
+        },
+        error: () => {
+          this.loading.set(false);
+        },
+      });
+  }
+
   protected openAsset(asset: Asset): void {
-    // Navigate to media panel and open asset editor
-    // For now, we'll use the editor store
-    // This would need to be wired up properly
-    console.log('Open asset:', asset.id);
+    this.editors.open({ type: 'asset', resourceId: asset.id, title: asset.title, icon: '▤' });
   }
 }
