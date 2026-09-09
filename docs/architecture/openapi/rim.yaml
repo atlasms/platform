@@ -99,7 +99,12 @@ components:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
     IngestJob:
       type: object
-      required: [id, state]
+      # `channelId` is required because it is required of EVERY row and every message on this
+      # platform (AGENTS.md §5.3, docs/roadmap/20-delivery-process.md) — queries are channel-scoped
+      # by default, and a job that cannot say which channel it belongs to cannot be scoped at all.
+      # `source` and `sizeBytes` stay optional on purpose: a `detected` job exists before the
+      # watcher has finished sizing the file.
+      required: [id, channelId, state]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
         channelId: { type: string }

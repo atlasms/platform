@@ -13,11 +13,17 @@
   "workbench": {
     "panels": {
       "media": "Media",
-      "schedule": "Schedule",
-      "ingest": "Ingest",
       "search": "Search",
-      "dashboard": "Dashboard",
-      "users": "Users"
+      "ingest": "Ingest",
+      "schedule": "Schedule",
+      "newsroom": "Newsroom",
+      "inbox": "Inbox",
+      "workflows": "Workflows",
+      "taxonomy": "People & Taxonomy",
+      "feeds": "Feeds & Integration",
+      "admin": "Admin",
+      "logs": "Logs & Analytics",
+      "notBuilt": "not built yet"
     },
     "activityBar": {
       "panels": "Panels"
@@ -66,7 +72,8 @@
       "rejected": "Rejected",
       "accepted": "Accepted",
       "registered": "Registered"
-    }
+    },
+    "uploadUnavailable": "Uploads need the ingest service (EP-15), which does not exist yet."
   },
   "dashboard": {
     "title": "Dashboard",

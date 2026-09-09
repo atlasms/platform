@@ -77,7 +77,7 @@ import { LocaleService } from '../core/locale.service.ts';
       border: 0;
     }
     .muted {
-      color: var(--color-text-muted);
+      color: var(--color-fg-muted);
       font-size: 0.875rem;
       margin: 0;
     }
@@ -109,11 +109,11 @@ import { LocaleService } from '../core/locale.service.ts';
         border-color 0.1s;
     }
     .items li button:hover {
-      background: var(--color-surface-hover);
+      background: var(--color-bg-hover);
       border-color: var(--color-border-hover);
     }
     .items li button:focus-visible {
-      outline: 2px solid var(--color-primary);
+      outline: 2px solid var(--color-focus);
       outline-offset: 2px;
     }
     .title {
@@ -126,8 +126,8 @@ import { LocaleService } from '../core/locale.service.ts';
       font-size: 0.75rem;
       padding: 0.125rem 0.375rem;
       border-radius: 9999px;
-      background: var(--color-surface);
-      color: var(--color-text-muted);
+      background: var(--color-bg-raised);
+      color: var(--color-fg-muted);
       white-space: nowrap;
     }
     .actions {
@@ -150,17 +150,23 @@ export class SearchPanel {
   protected readonly loading = signal(false);
   protected readonly error = signal<string | null>(null);
 
+  /**
+   * Guards against an out-of-order response overwriting a newer one — the same shape the media
+   * panel uses, and for the same reason: typing "foo" fires three searches and they can return in
+   * any order.
+   */
   private requestId = 0;
 
   protected onQuery(value: string): void {
     this.query.set(value);
-    this.requestId++;
-    this.run(this.requestId, value);
+    this.run(++this.requestId, value);
   }
 
   protected onEnter(): void {
-    // Just trigger search again in case they typed without the input event firing
-    this.run(this.requestId, this.query());
+    // Re-runs the search rather than waiting for the debounce a future story will add. It MUST
+    // take a new id: reusing the current one leaves two in-flight requests that both pass the
+    // staleness check, and then the slower one wins — which is the exact race the id prevents.
+    this.run(++this.requestId, this.query());
   }
 
   protected open(asset: Asset): void {

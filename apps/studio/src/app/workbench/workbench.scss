@@ -49,7 +49,20 @@
    * statement, and these are not that. */
   &.active {
     color: var(--color-fg);
+    /* The marker belongs on the bar's INLINE-START edge, and `box-shadow` has no logical form —
+     * in RTL the activity bar is the rightmost grid track, so an unflipped `inset 2px` draws the
+     * marker down the middle of the workbench instead of against its outer edge.
+     *
+     * `:host-context`, not a plain `[dir='rtl'] &`: emulated encapsulation stamps its content
+     * attribute onto EVERY compound selector, so `[dir='rtl'] .activity-item` compiles to
+     * `[dir='rtl'][_ngcontent-x] …` and can never match `<html dir="rtl">` — the element carrying
+     * `dir` is outside this component and has no such attribute. `:host-context` is the one form
+     * Angular compiles into a real ancestor match. */
     box-shadow: inset 2px 0 0 var(--color-accent);
+
+    :host-context([dir='rtl']) & {
+      box-shadow: inset -2px 0 0 var(--color-accent);
+    }
   }
 
   &.disabled {

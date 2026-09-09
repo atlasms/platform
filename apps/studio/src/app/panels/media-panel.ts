@@ -113,7 +113,7 @@ import { WebSocketService } from '../core/websocket.service.ts';
       border-radius: var(--radius-md);
     }
     .search input:focus-visible {
-      border-color: var(--color-accent, currentColor);
+      border-color: var(--color-accent);
       outline: none;
     }
     .tags {
@@ -182,7 +182,7 @@ import { WebSocketService } from '../core/websocket.service.ts';
       margin-block-end: var(--space-4);
       color: var(--color-fg-muted);
       background: none;
-      border: 1px dashed var(--color-border, currentColor);
+      border: 1px dashed var(--color-border);
       border-radius: var(--radius-md);
       cursor: pointer;
     }
@@ -197,7 +197,7 @@ import { WebSocketService } from '../core/websocket.service.ts';
       font-size: 0.8125rem;
     }
     .error {
-      color: var(--color-danger, currentColor);
+      color: var(--color-danger);
     }
     .visually-hidden {
       position: absolute;

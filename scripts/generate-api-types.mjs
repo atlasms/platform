@@ -28,10 +28,17 @@ import * as prettier from 'prettier';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const OUT_DIR = join(ROOT, 'apps/studio/src/app/core/generated');
 
-/** Only what Studio talks to. The gateway fronts these; the rest of the estate is not its business. */
+/** Only what Studio talks to. The gateway fronts these; the rest of the estate is not its business.
+ *
+ * A service Studio has a client for belongs here even before the service exists. `rim.types.ts` was
+ * hand-written with a GENERATED banner on it and left out of this list, so nothing compared it to
+ * the contract for a month — and it had already drifted: three fields the contract leaves optional
+ * were typed required, which is how `formatSize(job.sizeBytes)` came to render "NaN GB" against a
+ * response the contract explicitly allows. The banner is a promise; this list is what keeps it. */
 const SPECS = [
   { file: 'iam.yaml', out: 'iam.types.ts', title: 'IAM' },
   { file: 'mam.yaml', out: 'mam.types.ts', title: 'MAM' },
+  { file: 'rim.yaml', out: 'rim.types.ts', title: 'RIM' },
 ];
 
 const check = process.argv.includes('--check');

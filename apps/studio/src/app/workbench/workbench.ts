@@ -41,11 +41,11 @@ const MAX_SIDE_BAR = 640;
             [class.active]="panel.id === activePanelId()"
             [routerLink]="panel.available ? panel.route : null"
             [attr.aria-disabled]="!panel.available"
-            [title]="panel.available ? panel.title : panel.title + ' — not built yet'"
+            [title]="panelTitle(panel)"
             (click)="panel.available && activePanelId.set(panel.id)"
           >
             <span aria-hidden="true">{{ panel.icon }}</span>
-            <span class="sr-only">{{ panel.title }}</span>
+            <span class="sr-only">{{ locale.t(panel.titleKey) }}</span>
           </a>
         } @empty {
           <p class="empty" title="No panel matches your permissions">∅</p>
@@ -176,17 +176,36 @@ export class Workbench {
     return PANELS.filter((panel) => this.permissions.can(panel.permission));
   });
 
+  /** The icon's tooltip: the translated name, and for an unbuilt panel, why it does nothing. */
+  protected panelTitle(panel: PanelDefinition): string {
+    const name = this.locale.t(panel.titleKey);
+    return panel.available ? name : `${name} — ${this.locale.t('workbench.panels.notBuilt')}`;
+  }
+
+  /**
+   * +1 in LTR, −1 in RTL.
+   *
+   * The workbench is a CSS grid, and grid tracks are laid out along the INLINE axis — so under
+   * `dir="rtl"` the activity bar and side bar sit on the right and the divider's "grow" direction
+   * is leftwards. Without this, EP-11.6's Arabic mode has a side bar that shrinks when you drag it
+   * open, and ArrowRight narrows the panel it is pointing away from.
+   */
+  private get inlineSign(): 1 | -1 {
+    return this.locale.direction() === 'rtl' ? -1 : 1;
+  }
+
   protected startResize(event: PointerEvent): void {
     event.preventDefault();
     const target = event.target as HTMLElement;
     const startX = event.clientX;
     const startWidth = this.sideBarWidth();
+    const sign = this.inlineSign;
 
     // Pointer capture keeps the drag alive when the cursor outruns the 4px divider — without it
     // a fast drag simply stops.
     target.setPointerCapture(event.pointerId);
 
-    const move = (e: PointerEvent): void => this.setWidth(startWidth + (e.clientX - startX));
+    const move = (e: PointerEvent): void => this.setWidth(startWidth + sign * (e.clientX - startX));
     const up = (): void => {
       target.removeEventListener('pointermove', move);
       target.removeEventListener('pointerup', up);
@@ -196,7 +215,10 @@ export class Workbench {
   }
 
   protected onResizeKey(event: KeyboardEvent): void {
-    const step = event.shiftKey ? 50 : 10;
+    const step = (event.shiftKey ? 50 : 10) * this.inlineSign;
+    // The keys stay PHYSICAL — ArrowRight moves the divider right on screen — because that is what
+    // a separator's arrow keys mean to a screen-reader user in either direction. Which side of the
+    // divider that grows is what flips.
     if (event.key === 'ArrowLeft') this.setWidth(this.sideBarWidth() - step);
     else if (event.key === 'ArrowRight') this.setWidth(this.sideBarWidth() + step);
     else return;
@@ -210,7 +232,9 @@ export class Workbench {
   protected onLocaleChange(event: Event): void {
     const select = event.target as HTMLSelectElement;
     if (select.value === 'en' || select.value === 'ar') {
-      this.locale.setLocale(select.value);
+      // `void`: the switch is already reflected by `locale.loading()` on the control, so there is
+      // nothing to await here — but an unmarked floating promise reads like a forgotten one.
+      void this.locale.setLocale(select.value);
     }
   }
 }

@@ -39,6 +39,18 @@ class FakeSession {
  */
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
+  /**
+   * The readyState constants, which a stand-in for `globalThis.WebSocket` MUST carry.
+   *
+   * Without them every `readyState === WebSocket.OPEN` guard in the service compares against
+   * `undefined` and is therefore always false — so the fake reported "socket closed" no matter
+   * what the test had set, and every open-socket path was quietly unreachable. A double that
+   * cannot be in the state under test does not test it.
+   */
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
   readonly url: string;
   readyState = 0; // CONNECTING
   onopen: (() => void) | null = null;
@@ -170,6 +182,103 @@ describe('WebSocketService', () => {
     expect(second.sent).toEqual([
       JSON.stringify({ type: 'subscribe', pattern: 'atlas.ch12.asset.>' }),
     ]);
+  });
+
+  it('unsubscribe leaves the desired set even while the socket is DOWN', async () => {
+    // The mirror of the queueing test above. unsubscribe() used to return early whenever the
+    // socket was not open, so a panel destroyed during a reconnect gap kept its pattern in the
+    // desired set — and the reconnect resubscribed on behalf of a component that no longer
+    // existed, forever. Letting go must work in every state that asking for it works in.
+    await service.subscribe('atlas.ch12.asset.>');
+    expect(service.isSubscribed('atlas.ch12.asset.>')).toBe(true);
+
+    service.unsubscribe('atlas.ch12.asset.>');
+    expect(service.isSubscribed('atlas.ch12.asset.>')).toBe(false);
+
+    service.connect();
+    const socket = FakeWebSocket.instances[0]!;
+    socket.readyState = 1;
+    socket.onopen?.();
+    expect(socket.sent).toEqual([]); // nothing was left to re-ask for
+  });
+
+  it('unsubscribe sends the frame when the socket IS open', async () => {
+    service.connect();
+    const socket = FakeWebSocket.instances[0]!;
+    socket.readyState = 1;
+    socket.onopen?.();
+    // On an OPEN socket the promise settles on the server's ack, not on registration — so ack it
+    // rather than awaiting a frame nobody is going to send.
+    const subscribed = service.subscribe('atlas.ch12.asset.>');
+    socket.onmessage?.({
+      data: JSON.stringify({ type: 'subscribed', subject: 'atlas.ch12.asset.>' }),
+    });
+    await expect(subscribed).resolves.toEqual({ ok: true });
+    socket.sent.length = 0;
+
+    service.unsubscribe('atlas.ch12.asset.>');
+    expect(socket.sent).toEqual([
+      JSON.stringify({ type: 'unsubscribe', pattern: 'atlas.ch12.asset.>' }),
+    ]);
+
+    // A second call is a no-op: the pattern is already gone, so there is nothing to tell the
+    // server about and no frame to send.
+    socket.sent.length = 0;
+    service.unsubscribe('atlas.ch12.asset.>');
+    expect(socket.sent).toEqual([]);
+  });
+
+  it('an `unsubscribed` ack does not resolve a pending SUBSCRIBE as refused', async () => {
+    // The two acknowledgements shared one handler, which read `unsubscribed` as ok=false — the
+    // same value a refusal carries. So unsubscribing one pattern while subscribing to it again
+    // reported the new subscription denied, and told subscribed$ a confirmation had failed.
+    service.connect();
+    const socket = FakeWebSocket.instances[0]!;
+    socket.readyState = 1;
+    socket.onopen?.();
+
+    const seen: { pattern: string; ok: boolean }[] = [];
+    service.subscribed$.subscribe((s) => seen.push({ pattern: s.pattern, ok: s.ok }));
+
+    const pending = service.subscribe('atlas.ch12.asset.>');
+    socket.onmessage?.({
+      data: JSON.stringify({ type: 'unsubscribed', subject: 'atlas.ch12.asset.>' }),
+    });
+    expect(seen).toEqual([]); // an ack for letting go is not a confirmation of anything
+
+    socket.onmessage?.({
+      data: JSON.stringify({ type: 'subscribed', subject: 'atlas.ch12.asset.>' }),
+    });
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(seen).toEqual([{ pattern: 'atlas.ch12.asset.>', ok: true }]);
+  });
+
+  it('a refusal is what makes subscribed$ report ok:false', async () => {
+    // A denied pattern arrives as an `error` frame, and that branch never emitted on subscribed$ —
+    // so the one stream a panel can watch to learn it was denied stayed silent on every denial.
+    service.connect();
+    const socket = FakeWebSocket.instances[0]!;
+    socket.readyState = 1;
+    socket.onopen?.();
+
+    const seen: { pattern: string; ok: boolean; reason?: string }[] = [];
+    service.subscribed$.subscribe((s) => seen.push(s));
+
+    const pending = service.subscribe('atlas.ch99.asset.>');
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'error',
+        subject: 'atlas.ch99.asset.>',
+        message: 'Forbidden pattern',
+      }),
+    });
+
+    await expect(pending).resolves.toEqual({ ok: false, reason: 'Forbidden pattern' });
+    expect(seen).toEqual([
+      { pattern: 'atlas.ch99.asset.>', ok: false, reason: 'Forbidden pattern' },
+    ]);
+    // Refused server-side, so it must not come back on the next reconnect.
+    expect(service.isSubscribed('atlas.ch99.asset.>')).toBe(false);
   });
 });
 

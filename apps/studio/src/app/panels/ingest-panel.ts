@@ -30,7 +30,10 @@ import { LocaleService } from '../core/locale.service.ts';
           <li class="job-row" [class]="'state-' + job.state">
             <div class="job-main">
               <span class="job-id">{{ job.id }}</span>
-              <span class="job-source">{{ job.source }}</span>
+              <!-- Both are optional in the contract: a detected job exists before the watcher has
+                   named its source or finished sizing the file. An em dash says "not known yet";
+                   the previous code rendered a raw undefined and "NaN GB". -->
+              <span class="job-source">{{ job.source || '—' }}</span>
               <span class="job-size">{{ formatSize(job.sizeBytes) }}</span>
               <span class="job-state" [attr.data-state]="job.state">{{
                 locale.t('ingest.state.' + job.state)
@@ -67,8 +70,17 @@ import { LocaleService } from '../core/locale.service.ts';
       </ul>
     }
 
+    <!-- Disabled, not wired: the upload story (EP-15.1, chunked/resumable) has no endpoint yet, so
+         there is nothing for this to POST to. Shown-but-disabled is the same convention panels.ts
+         uses for a panel whose service does not exist — it says "designed, not built" rather than
+         hiding the affordance or opening a dialog that cannot finish. -->
     <div class="actions">
-      <button type="button" *atlasIfCan="'ingest:write'" (click)="openUpload()">
+      <button
+        type="button"
+        *atlasIfCan="'ingest:write'"
+        disabled
+        [title]="locale.t('ingest.uploadUnavailable')"
+      >
         {{ locale.t('ingest.upload') }}
       </button>
     </div>
@@ -87,7 +99,7 @@ import { LocaleService } from '../core/locale.service.ts';
       font-weight: 600;
     }
     .muted {
-      color: var(--color-text-muted);
+      color: var(--color-fg-muted);
       font-size: 0.875rem;
       margin: 0;
     }
@@ -104,7 +116,7 @@ import { LocaleService } from '../core/locale.service.ts';
       gap: 0.5rem;
     }
     .job-row {
-      background: var(--color-surface);
+      background: var(--color-bg-raised);
       border: 1px solid var(--color-border);
       border-radius: 6px;
       padding: 0.75rem;
@@ -123,7 +135,7 @@ import { LocaleService } from '../core/locale.service.ts';
     .job-id {
       font-family: monospace;
       font-size: 0.75rem;
-      color: var(--color-text-muted);
+      color: var(--color-fg-muted);
     }
     .job-source {
       font-weight: 500;
@@ -133,7 +145,7 @@ import { LocaleService } from '../core/locale.service.ts';
     }
     .job-size {
       font-size: 0.875rem;
-      color: var(--color-text-muted);
+      color: var(--color-fg-muted);
       white-space: nowrap;
     }
     .job-state {
@@ -169,7 +181,7 @@ import { LocaleService } from '../core/locale.service.ts';
     }
     .job-asset {
       font-size: 0.75rem;
-      color: var(--color-text-muted);
+      color: var(--color-fg-muted);
       font-family: monospace;
     }
     .job-reason {
@@ -182,26 +194,33 @@ import { LocaleService } from '../core/locale.service.ts';
       display: flex;
       gap: 0.5rem;
     }
+    /* Outlined, not filled. A filled status button needs a foreground that contrasts with the
+       status colour, and the status tokens invert between themes — the light palette's danger is
+       dark, the dark palette's is bright — so one hard-coded white cannot be right in both.
+       Drawing the border from currentColor keeps the whole control on one token. */
     .job-actions button {
       padding: 0.375rem 0.75rem;
       border-radius: 4px;
       font-size: 0.875rem;
       font-weight: 500;
       cursor: pointer;
-      border: none;
+      background: transparent;
+      border: 1px solid currentColor;
       transition: opacity 0.1s;
     }
     .job-actions button:disabled {
       opacity: 0.5;
       cursor: not-allowed;
     }
+    .job-actions button:focus-visible {
+      outline: 2px solid var(--color-focus);
+      outline-offset: 2px;
+    }
     .job-actions .accept {
-      background: var(--color-success);
-      color: white;
+      color: var(--color-success);
     }
     .job-actions .reject {
-      background: var(--color-danger);
-      color: white;
+      color: var(--color-danger);
     }
     .actions {
       margin-top: 0.5rem;
@@ -270,12 +289,8 @@ export class IngestPanel {
     });
   }
 
-  protected openUpload(): void {
-    // TODO: Implement upload dialog (EP-20.3 full)
-    alert('Upload dialog - to be implemented');
-  }
-
-  protected formatSize(bytes: number): string {
+  protected formatSize(bytes: number | undefined): string {
+    if (bytes === undefined) return '—';
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;

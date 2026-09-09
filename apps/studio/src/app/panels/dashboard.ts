@@ -112,7 +112,7 @@ const COUNT_MAX_PAGES = 5;
     }
 
     .widget {
-      background: var(--color-surface);
+      background: var(--color-bg-raised);
       border: 1px solid var(--color-border);
       border-radius: 8px;
       padding: 1rem;
@@ -172,7 +172,7 @@ const COUNT_MAX_PAGES = 5;
       color: var(--color-success);
     }
     .state-card.state-approved .state-count {
-      color: var(--color-primary);
+      color: var(--color-accent);
     }
     .state-card.state-rejected .state-count {
       color: var(--color-danger);
@@ -214,12 +214,12 @@ const COUNT_MAX_PAGES = 5;
     }
 
     .recent-list li button:hover {
-      background: var(--color-surface-hover);
+      background: var(--color-bg-hover);
       border-color: var(--color-border-hover);
     }
 
     .recent-list li button:focus-visible {
-      outline: 2px solid var(--color-primary);
+      outline: 2px solid var(--color-focus);
       outline-offset: 2px;
     }
 
@@ -252,8 +252,8 @@ const COUNT_MAX_PAGES = 5;
       color: var(--color-success);
     }
     .recent-state[data-state='approved'] {
-      background: var(--color-primary-bg);
-      color: var(--color-primary);
+      background: var(--color-accent-bg);
+      color: var(--color-accent);
     }
     .recent-state[data-state='rejected'] {
       background: var(--color-danger-bg);
@@ -265,7 +265,7 @@ const COUNT_MAX_PAGES = 5;
     }
     .recent-state[data-state='replaced'],
     .recent-state[data-state='purged'] {
-      background: var(--color-surface);
+      background: var(--color-bg-raised);
       color: var(--color-fg-muted);
     }
 
