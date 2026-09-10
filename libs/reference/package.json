@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Admin-editable runtime configuration: the setting-descriptor registry (defineSettings), validation from descriptors, nearest-wins scope resolution with origin, the Tier-1 registry guard, and the cached snapshot client. Browser-safe, so Studio generates its admin UI from the same descriptors the services validate against.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./seed": "./src/seed.ts"
   },
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts",
