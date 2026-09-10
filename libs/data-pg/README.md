@@ -1,7 +1,8 @@
 # `@atlas/data-pg`
 
 Postgres implementation of the [`@atlas/data`](../data/) conventions: a pooled unit of work, a
-migration runner, and the transactional outbox. Postgres is the system of record
+migration runner, the transactional outbox and the consumer dedup store. Postgres is the system of
+record
 ([04-messaging-and-data](../../docs/architecture/04-messaging-and-data.md)); `node:sqlite` is the
 test double.
 
@@ -27,6 +28,27 @@ Making the client a required argument means the mistake cannot compile. `add()` 
 `OutboxStore` method — does use the pool, so it is for replay tooling and tests only. A test pins
 the difference.
 
+## `PgSeenStore` — an atomic claim, decided by the database
+
+Consumer dedup, and the same "pass the client" rule for the same reason. `mark(client, id)` is
+`INSERT … ON CONFLICT DO NOTHING`: the check and the write are **one statement**, so there is no
+window in which two callers both read "not seen" and both proceed.
+
+```ts
+await withTransaction(pool, async (client) => {
+  if (!(await seen.mark(client, msg.id))) return; // already applied
+  await client.query('INSERT INTO assets ...'); // the effect, in the SAME transaction
+});
+```
+
+Concurrency is Postgres's problem, not ours: a competing transaction inserting the same id **blocks
+on the row lock** until this one settles, then sees the conflict and is told it lost. A test pins
+that it genuinely waits rather than guessing — it asserts the second claim is still unresolved
+300 ms in, and resolves to `false` the moment the first commits.
+
+`markSeen()` uses the pool and so commits independently: dedup without the atomicity that makes
+dedup safe across a crash. Prefer `mark`.
+
 ## Async, where `@atlas/data` is sync
 
 `node:sqlite` is synchronous; `pg` cannot be. A synchronous driver can satisfy an async contract,
@@ -45,9 +67,10 @@ in an arbitrary order, and the relay publishes in list order.
 
 ## Tests
 
-The shared outbox conformance suite (`@atlas/data/conformance`) — the same one the sqlite store
-passes — plus Postgres-specific migration behaviour. **CI runs them against a real Postgres
-service.** Locally they skip unless `ATLAS_PG_URL` is set:
+The shared outbox conformance suite (`@atlas/data/conformance`) and the shared SeenStore suite
+(`@atlas/messaging/conformance`) — the same ones the sqlite stores pass — plus Postgres-specific
+migration and row-locking behaviour. **CI runs them against a real Postgres service.** Locally they
+skip unless `ATLAS_PG_URL` is set:
 
 ```sh
 docker compose -f infra/docker-compose.dev.yml up -d

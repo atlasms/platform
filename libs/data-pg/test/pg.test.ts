@@ -9,12 +9,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { outboxConformance } from '@atlas/data/conformance';
+import { seenStoreConformance } from '@atlas/messaging/conformance';
 import {
   migrate,
   openPool,
   outboxHeadersMigration,
   outboxMigration,
   PgOutboxStore,
+  PgSeenStore,
+  seenMigration,
   withTransaction,
   type PgClient,
 } from '../src/index.ts';
@@ -89,6 +92,125 @@ if (!URL) {
         },
       };
     },
+  });
+
+  // --- consumer dedup ----------------------------------------------------------
+  // The SAME suite the in-memory and sqlite stores pass. Here it runs across real connections,
+  // which is the only place the atomicity case is more than a formality.
+
+  seenStoreConformance('PgSeenStore', {
+    make: async () => {
+      const schema = `seen_${Date.now().toString(36)}_${n++}`;
+      const pool = openPool({ connectionString });
+      await pool.query(`CREATE SCHEMA ${schema}`);
+      // Queued on each new connection BEFORE the pool hands it out, so every client in the pool
+      // is pinned to this schema — which matters here because the atomicity case deliberately
+      // uses several connections at once.
+      pool.on('connect', (c) => void c.query(`SET search_path TO ${schema}`));
+      await pool.query(`SET search_path TO ${schema}`);
+      await migrate(pool, [seenMigration]);
+
+      return {
+        store: new PgSeenStore(pool),
+        cleanup: async () => {
+          await pool.query(`DROP SCHEMA ${schema} CASCADE`).catch(() => undefined);
+          await pool.end();
+        },
+      };
+    },
+  });
+
+  test('SEEN: a competing transaction BLOCKS on the row lock, then loses', async () => {
+    // What makes `INSERT ... ON CONFLICT DO NOTHING` an atomic claim rather than a hopeful one:
+    // the second transaction does not read a stale "not seen" and proceed. It waits for the first
+    // to settle and is then told, correctly, that the id is taken. The ordering is decided by the
+    // database, not by which caller happened to be scheduled first.
+    const schema = `lock_${Date.now().toString(36)}`;
+    const pool = openPool({ connectionString });
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    pool.on('connect', (c) => void c.query(`SET search_path TO ${schema}`));
+    await pool.query(`SET search_path TO ${schema}`);
+    await migrate(pool, [seenMigration]);
+    const store = new PgSeenStore(pool);
+
+    const a = await pool.connect();
+    const b = await pool.connect();
+    try {
+      await a.query('BEGIN');
+      await b.query('BEGIN');
+
+      assert.equal(await store.mark(a, 'evt-contended'), true, 'the first claim succeeds');
+
+      // B must not resolve while A holds the row.
+      const pending = store.mark(b, 'evt-contended');
+      const settledEarly = await Promise.race([
+        pending.then(() => 'resolved'),
+        new Promise((r) => setTimeout(() => r('still-blocked'), 300)),
+      ]);
+      assert.equal(settledEarly, 'still-blocked', 'the competing claim must wait, not guess');
+
+      await a.query('COMMIT');
+      assert.equal(await pending, false, 'and once it can see the winner, it must lose');
+      await b.query('COMMIT');
+    } finally {
+      a.release();
+      b.release();
+      await pool.query(`DROP SCHEMA ${schema} CASCADE`).catch(() => undefined);
+      await pool.end();
+    }
+  });
+
+  test('SEEN: the mark and the domain write commit — or roll back — TOGETHER', async () => {
+    // The crash window closed. A claim that commits on its own connection survives a handler that
+    // never finished, and every redelivery is then suppressed for an effect that never happened.
+    const schema = `seentx_${Date.now().toString(36)}`;
+    const pool = openPool({ connectionString });
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    pool.on('connect', (c) => void c.query(`SET search_path TO ${schema}`));
+    await pool.query(`SET search_path TO ${schema}`);
+    await migrate(pool, [
+      seenMigration,
+      { id: 'fixture_domain', up: 'CREATE TABLE assets (id text PRIMARY KEY)' },
+    ]);
+    const store = new PgSeenStore(pool);
+
+    await assert.rejects(
+      withTransaction(pool, async (client) => {
+        assert.equal(await store.mark(client, 'evt-1'), true);
+        await client.query('INSERT INTO assets (id) VALUES ($1)', ['a1']);
+        throw new Error('handler failed after both writes');
+      }),
+      /handler failed/,
+    );
+
+    const assets = await pool.query<{ c: string }>('SELECT count(*) c FROM assets');
+    assert.equal(Number(assets.rows[0]?.c), 0, 'the effect rolled back');
+    assert.equal(await store.count(), 0, 'and the mark rolled back with it');
+    assert.equal(await store.markSeen('evt-1'), true, 'so redelivery is processed, not skipped');
+
+    await pool.query(`DROP SCHEMA ${schema} CASCADE`).catch(() => undefined);
+    await pool.end();
+  });
+
+  test('SEEN: prune drops marks older than the cutoff and keeps the rest', async () => {
+    const schema = `prune_${Date.now().toString(36)}`;
+    const pool = openPool({ connectionString });
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    pool.on('connect', (c) => void c.query(`SET search_path TO ${schema}`));
+    await pool.query(`SET search_path TO ${schema}`);
+    await migrate(pool, [seenMigration]);
+    const store = new PgSeenStore(pool);
+
+    await pool.query("INSERT INTO seen (id, seen_at) VALUES ('old', '2020-01-01Z')");
+    await pool.query("INSERT INTO seen (id, seen_at) VALUES ('recent', '2999-01-01Z')");
+
+    assert.equal(await store.prune(new Date('2021-01-01T00:00:00Z')), 1, 'only the old mark goes');
+    assert.equal(await store.count(), 1);
+    assert.equal(await store.markSeen('recent'), false, 'the retained mark still dedupes');
+    assert.equal(await store.markSeen('old'), true, 'the pruned one no longer does');
+
+    await pool.query(`DROP SCHEMA ${schema} CASCADE`).catch(() => undefined);
+    await pool.end();
   });
 
   // --- Postgres-specific behaviour ---------------------------------------------

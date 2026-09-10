@@ -47,10 +47,46 @@ await new OutboxRelay(store, broker).drain();
 Composes with [`@atlas/contracts`](../contracts/README.md): build the envelope there, wrap it as a
 transport `Message` (`id = messageId`, `subject = subjectFor(...)`, `body = envelope`), publish here.
 
+## Consumer idempotency — `SeenStore`
+
+The receiving half of the outbox's promise. The outbox guarantees an event is published **at least
+once**, and "at least" is exactly what puts a duplicate on the wire.
+
+**The race used to be in the interface.** `SeenStore` was `seen(id)` then `remember(id)` — two calls
+with a gap, which no backing store can make atomic: by the time `remember` runs the decision was
+already taken on stale information, so two concurrent deliveries both observe "not seen" and both
+apply the effect. The port is now a single `markSeen(id): Promise<boolean>` that records **and**
+reports whether this caller was the one that recorded it. Redis `SET NX` and Postgres
+`INSERT … ON CONFLICT DO NOTHING` exist for precisely this reason.
+
+`idempotent()` claims, then processes, then **releases on failure** — and each part of that order is
+load-bearing. Claiming first is what makes concurrent duplicates safe. Releasing on failure is what
+keeps a claim from becoming message loss: without it, one transient handler error means every
+redelivery is skipped by a consumer that never did the work.
+
+> ⚠️ **Which store depends on what the consumer DOES, and getting this backwards breaks things in
+> opposite directions.**
+>
+> - A consumer that **writes to a database** wants a durable, shared store — and its mark must
+>   commit in the **same transaction** as its writes. `SqliteSeenStore` / `PgSeenStore` in
+>   [`@atlas/data`](../data/README.md) take a transaction handle for that. Otherwise a crash between
+>   the claim and the commit leaves the id marked with the effect never applied, and redelivery is
+>   suppressed forever.
+> - A consumer that **fans out to its own connections** — the WebSocket bridge — must use the
+>   per-process `InMemorySeenStore`. Sharing dedup across those replicas is **actively wrong**:
+>   replica A claims the message and replica B's clients silently never receive it. Every replica
+>   must process every message.
+>
+> There is one broker consumer in the platform today (the bridge), and it is the second kind.
+
+Any implementation must pass `seenStoreConformance` from `@atlas/messaging/conformance`, which the
+in-memory, sqlite and Postgres stores all run. Its atomicity case is the one that matters: a store
+with the old check-then-set race passes **every other test in the suite** and fails only that one.
+
 ## Run
 
 ```bash
-npm install && npm test   # 6 tests — zero runtime deps
+npm install && npm test   # 36 tests — zero runtime deps
 ```
 
 ## Tests prove
@@ -59,4 +95,8 @@ npm install && npm test   # 6 tests — zero runtime deps
 - a failing handler **retries then dead-letters**;
 - the outbox relay **drains once and is safe to re-run** (already-sent records skipped);
 - an idempotent consumer processes a **redelivered** message once;
-- end-to-end: outbox → broker → idempotent consumer swallows the duplicate.
+- end-to-end: outbox → broker → idempotent consumer swallows the duplicate;
+- `markSeen` is **atomic**: eight concurrent claims on one id yield exactly one winner;
+- a **failed** handler releases its claim, so the redelivery is retried rather than swallowed;
+- `InMemorySeenStore` is **per-process**, so two replicas of a fan-out consumer both deliver;
+- …and it **grows without bound**, which is the reason the durable stores have `prune`.

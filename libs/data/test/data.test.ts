@@ -9,9 +9,12 @@ import {
   SqliteOutboxStore,
   outboxHeadersMigration,
   outboxMigration,
+  SqliteSeenStore,
+  seenMigration,
 } from '../src/index.ts';
 import { withTransactionAsync } from '../src/db.ts';
 import { outboxConformance } from '../src/conformance.ts';
+import { seenStoreConformance } from '@atlas/messaging/conformance';
 import { InMemoryBroker, OutboxRelay, type OutboxRecord } from '@atlas/messaging';
 
 interface AssetRow {
@@ -131,4 +134,57 @@ outboxConformance('SqliteOutboxStore', {
       cleanup: async () => db.close(),
     };
   },
+});
+
+// --- consumer dedup ----------------------------------------------------------
+// The same suite the in-memory and Postgres stores pass (@atlas/messaging/conformance).
+
+seenStoreConformance('SqliteSeenStore', {
+  make: async () => {
+    const db = openDb(':memory:');
+    migrate(db, [seenMigration]);
+    return { store: new SqliteSeenStore(db) };
+  },
+});
+
+test('SEEN: the mark and the domain write commit — or roll back — TOGETHER', async () => {
+  // The crash window `idempotent()` cannot close on its own, closed. Claiming on a separate
+  // connection and then dying mid-handler leaves the id marked with the effect never applied, so
+  // every redelivery is suppressed and the message is lost. Sharing the transaction makes the two
+  // outcomes the only two: both happened, or neither did.
+  const db = openDb(':memory:');
+  migrate(db, [seenMigration, { id: 'fixture', up: 'CREATE TABLE assets (id TEXT PRIMARY KEY)' }]);
+  const seen = new SqliteSeenStore(db);
+
+  assert.throws(
+    () =>
+      withTransaction(db, (tx) => {
+        assert.equal(seen.mark(tx, 'evt-1'), true, 'claimed inside the unit of work');
+        tx.prepare('INSERT INTO assets (id) VALUES (?)').run('a1');
+        throw new Error('handler failed after both writes');
+      }),
+    /handler failed/,
+  );
+
+  const assets = db.prepare('SELECT count(*) c FROM assets').get() as { c: number };
+  assert.equal(assets.c, 0, 'the effect rolled back');
+  assert.equal(seen.count(), 0, 'and the mark rolled back with it');
+  assert.equal(await seen.markSeen('evt-1'), true, 'so redelivery is processed, not skipped');
+});
+
+test('SEEN: prune drops marks older than the cutoff and keeps the rest', async () => {
+  // Retention is a real decision: the window must outlive the longest redelivery the broker can
+  // produce, because a mark pruned while its message can still arrive lets the duplicate through.
+  const db = openDb(':memory:');
+  migrate(db, [seenMigration]);
+  const seen = new SqliteSeenStore(db);
+
+  // Backdated directly — the column defaults to now(), and what is under test is the boundary.
+  db.prepare('INSERT INTO seen (id, seen_at) VALUES (?, ?)').run('old', '2020-01-01 00:00:00');
+  db.prepare('INSERT INTO seen (id, seen_at) VALUES (?, ?)').run('recent', '2999-01-01 00:00:00');
+
+  assert.equal(seen.prune(new Date('2021-01-01T00:00:00Z')), 1, 'only the old mark goes');
+  assert.equal(seen.count(), 1);
+  assert.equal(await seen.markSeen('recent'), false, 'the retained mark still dedupes');
+  assert.equal(await seen.markSeen('old'), true, 'the pruned one no longer does');
 });
