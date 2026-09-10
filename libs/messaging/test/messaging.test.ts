@@ -9,7 +9,7 @@ import {
   idempotent,
   type Message,
 } from '../src/index.ts';
-import { brokerConformance } from '../src/conformance.ts';
+import { brokerConformance, seenStoreConformance } from '../src/conformance.ts';
 
 const m = (id: string, subject: string, body: unknown = {}): Message => ({ id, subject, body });
 
@@ -84,6 +84,30 @@ test('idempotent consumer processes a redelivered message once', async () => {
   assert.equal(handled, 1);
 });
 
+test('InMemorySeenStore is per-process, which is what a FAN-OUT consumer needs', async () => {
+  // Not a limitation to route around. A websocket bridge delivers to the sockets held by THIS
+  // replica, so every replica must process every message; sharing a dedup store between them would
+  // mean replica A claims the message and replica B's clients silently never receive it. Durable
+  // sharing is for consumers that write to a database, not for ones that fan out to their own
+  // connections. Pinned so nobody "fixes" this by making it distributed.
+  const a = new InMemorySeenStore();
+  const b = new InMemorySeenStore();
+  assert.equal(await a.markSeen('evt-1'), true);
+  assert.equal(await b.markSeen('evt-1'), true, 'a second replica must process it too');
+});
+
+test('InMemorySeenStore grows without bound — which is why a durable store exists', async () => {
+  // Not a defect to fix here; a limit to know about. Nothing evicts, so a long-lived consumer
+  // accumulates one entry per message it has ever seen. `SqliteSeenStore`/`PgSeenStore` have
+  // `prune(before)` for that, and this pins the difference rather than leaving it to a comment.
+  const store = new InMemorySeenStore();
+  for (let i = 0; i < 1_000; i++) await store.markSeen(`evt-${i}`);
+  assert.equal(store.size, 1_000, 'every id is retained forever');
+
+  await store.forget('evt-0');
+  assert.equal(store.size, 999, 'only an explicit forget removes one');
+});
+
 test('end-to-end: outbox -> broker -> idempotent consumer', async () => {
   const broker = new InMemoryBroker();
   const store = new InMemoryOutboxStore();
@@ -101,6 +125,13 @@ test('end-to-end: outbox -> broker -> idempotent consumer', async () => {
   await relay.drain();
   await broker.publish(m('evt-1', 'atlas.ch12.asset.approved')); // duplicate from a retry
   assert.deepEqual(received, ['evt-1']);
+});
+
+// --- shared conformance ------------------------------------------------------
+// The SeenStore suite, against the in-memory store. @atlas/data and @atlas/data-pg run the SAME
+// suite against sqlite and real Postgres, which is what makes "these three agree" a fact.
+seenStoreConformance('InMemorySeenStore', {
+  make: async () => ({ store: new InMemorySeenStore() }),
 });
 
 // --- shared conformance ------------------------------------------------------

@@ -11,6 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isDeadLetterQueue, type Broker, type Message } from './types.ts';
+import { idempotent, type SeenStore } from './idempotency.ts';
 
 export interface ConformanceHarness {
   /** A fresh broker. Called once per test; give each one an isolated namespace if needed. */
@@ -287,6 +288,133 @@ export function brokerConformance(name: string, harness: ConformanceHarness): vo
       assert.ok(await waitFor(() => attempts === 1));
       await sleep(harness.timeoutMs ? 1_500 : 0);
       assert.equal(attempts, 1, 'an acked message must not come back');
+    });
+  });
+}
+
+// --- SeenStore ---------------------------------------------------------------
+//
+// A behaviour suite every SeenStore implementation must pass.
+//
+// Consumer idempotency is the receiving half of the outbox's promise: the outbox guarantees an
+// event is published at least once, and that "at least" is precisely what makes a duplicate
+// arrive. Whether the duplicate is harmless depends entirely on this port being atomic — so the
+// rules live here once, and the in-memory, sqlite and Postgres stores are all held to them.
+
+/** A fresh, empty store per test. `cleanup` drops whatever backing storage it created. */
+export interface SeenStoreHarness {
+  make: () => Promise<{ store: SeenStore; cleanup?: () => Promise<void> }>;
+}
+
+export function seenStoreConformance(name: string, harness: SeenStoreHarness): void {
+  async function withStore(fn: (store: SeenStore) => Promise<void>): Promise<void> {
+    const { store, cleanup } = await harness.make();
+    try {
+      await fn(store);
+    } finally {
+      await cleanup?.();
+    }
+  }
+
+  test(`[${name}] markSeen reports NEW once and duplicate thereafter`, async () => {
+    await withStore(async (store) => {
+      assert.equal(await store.markSeen('evt-1'), true, 'the first sighting is new');
+      assert.equal(await store.markSeen('evt-1'), false, 'the second is a duplicate');
+      assert.equal(await store.markSeen('evt-1'), false, 'and it stays a duplicate');
+    });
+  });
+
+  test(`[${name}] distinct ids do not shadow one another`, async () => {
+    await withStore(async (store) => {
+      assert.equal(await store.markSeen('evt-1'), true);
+      assert.equal(await store.markSeen('evt-2'), true, 'a different id is unaffected');
+      assert.equal(await store.markSeen('evt-1'), false);
+    });
+  });
+
+  test(`[${name}] ATOMICITY: concurrent markSeen of one id yields exactly ONE winner`, async () => {
+    // The reason this port exists in this shape. The old `seen()` + `remember()` pair failed here
+    // by construction: every caller observes "not seen" before any of them has remembered, so all
+    // of them proceed and the effect is applied N times. A store that is not atomic passes every
+    // other test in this suite and fails this one.
+    await withStore(async (store) => {
+      const results = await Promise.all(
+        Array.from({ length: 8 }, async () => store.markSeen('evt-race')),
+      );
+      const winners = results.filter(Boolean).length;
+      assert.equal(winners, 1, `exactly one caller may claim the id, got ${winners}`);
+    });
+  });
+
+  test(`[${name}] forget releases a mark so a redelivery is processed`, async () => {
+    await withStore(async (store) => {
+      assert.equal(await store.markSeen('evt-1'), true);
+      await store.forget('evt-1');
+      assert.equal(await store.markSeen('evt-1'), true, 'a forgotten id is new again');
+    });
+  });
+
+  test(`[${name}] forgetting an id that was never marked is a no-op, not an error`, async () => {
+    // `idempotent` calls forget on the failure path, which can run for an id another replica
+    // already cleaned up. Throwing there would replace the handler's real error with a spurious one.
+    await withStore(async (store) => {
+      await store.forget('never-seen');
+      assert.equal(await store.markSeen('never-seen'), true);
+    });
+  });
+
+  test(`[${name}] idempotent(): a redelivered message is handled once`, async () => {
+    await withStore(async (store) => {
+      let handled = 0;
+      const handler = idempotent(() => {
+        handled++;
+      }, store);
+
+      const msg: Message = { id: 'evt-dup', subject: 'atlas.ch12.asset.created', body: {} };
+      await handler(msg);
+      await handler(msg); // at-least-once redelivery
+      assert.equal(handled, 1);
+    });
+  });
+
+  test(`[${name}] idempotent(): a FAILED handler is retried, not suppressed`, async () => {
+    // The half a claim-first design gets wrong if it forgets to release. Marking before processing
+    // is what makes concurrent duplicates safe; without the release, one transient failure means
+    // the message is skipped by every future redelivery and the effect never happens at all.
+    await withStore(async (store) => {
+      let attempts = 0;
+      const handler = idempotent((): void => {
+        attempts++;
+        if (attempts === 1) throw new Error('transient downstream failure');
+      }, store);
+
+      const msg: Message = { id: 'evt-retry', subject: 'atlas.ch12.asset.created', body: {} };
+      await assert.rejects(handler(msg), /transient downstream failure/);
+      await handler(msg); // the broker redelivers
+      assert.equal(attempts, 2, 'the retry must reach the handler');
+
+      await handler(msg); // and once it has succeeded, it is a duplicate again
+      assert.equal(attempts, 2, 'a success must still suppress later duplicates');
+    });
+  });
+
+  test(`[${name}] idempotent(): keyOf chooses the identity that is deduped`, async () => {
+    await withStore(async (store) => {
+      let handled = 0;
+      const handler = idempotent(
+        () => {
+          handled++;
+        },
+        store,
+        (m) => (m.body as { key: string }).key,
+      );
+
+      await handler({ id: 'a', subject: 'atlas.ch12.asset.created', body: { key: 'k1' } });
+      await handler({ id: 'b', subject: 'atlas.ch12.asset.created', body: { key: 'k1' } });
+      assert.equal(handled, 1, 'different message ids, same business key — handled once');
+
+      await handler({ id: 'c', subject: 'atlas.ch12.asset.created', body: { key: 'k2' } });
+      assert.equal(handled, 2);
     });
   });
 }

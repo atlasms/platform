@@ -7,3 +7,4 @@ export {
   type PgPool,
 } from './db.ts';
 export { PgOutboxStore, outboxMigration, outboxHeadersMigration } from './outbox.ts';
+export { PgSeenStore, seenMigration } from './seen.ts';
