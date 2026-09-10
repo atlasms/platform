@@ -50,6 +50,22 @@ export interface WebsocketAppOptions {
    * `0` disables it, which is what the tests want.
    */
   heartbeatIntervalMs?: number;
+  /**
+   * Node-wide connection cap (websocket.md §11). Refused with 503.
+   *
+   * Load-bearing rather than optional since EP-13.2 routed `/ws` around the gateway: these
+   * connections do not pass through its rate limiting any more, so this is the only thing standing
+   * between a client loop and every file descriptor on the node.
+   */
+  maxConnections?: number;
+  /**
+   * Per-user cap. Refused with 429.
+   *
+   * The node-wide cap alone is not an abuse control — one account can consume all of it and take
+   * the service down for everyone. This is the axis that stops that, and it mirrors the gateway's
+   * own split between an address limit and a principal limit.
+   */
+  maxConnectionsPerUser?: number;
   /** Connection lifecycle (websocket.md §12): connect, subscribe, disconnect-with-reason. */
   onConnectionLog?: (record: ConnectionRecord) => void;
   onError?: (err: unknown, context: { correlationId: string; url: string }) => void;
@@ -65,6 +81,15 @@ export interface ConnectionRecord {
 }
 
 const BEARER = /^Bearer (.+)$/i;
+
+/**
+ * Node's event loop holds tens of thousands of sockets cheaply (websocket.md §8), so this is not a
+ * performance ceiling — it is the point at which the process refuses rather than falls over, and it
+ * is set well below what would actually exhaust it.
+ */
+const DEFAULT_MAX_CONNECTIONS = 10_000;
+/** Generous for a person — several tabs, a reconnect racing a stale socket — and bounded. */
+const DEFAULT_MAX_PER_USER = 10;
 
 /**
  * The token arrives as a QUERY PARAMETER, not a header.
@@ -213,6 +238,35 @@ export async function buildWebsocketApp(options: WebsocketAppOptions): Promise<F
         if (typeof claims.sub !== 'string' || typeof claims.channelId !== 'string') {
           refusals.inc({ service: 'websocket', reason: 'claims' });
           return reply.code(401).send({ error: 'token carries no subject or channel' });
+        }
+
+        // Capacity is checked AFTER the token (so the refusal names a real user in the log) and
+        // BEFORE the policy fetch (so a service at capacity does not also hammer IAM for calls
+        // whose answer it is about to throw away).
+        if (registry.stats().connections >= (options.maxConnections ?? DEFAULT_MAX_CONNECTIONS)) {
+          refusals.inc({ service: 'websocket', reason: 'capacity' });
+          options.onConnectionLog?.({
+            event: 'refused',
+            connectionId: '-',
+            userId: claims.sub,
+            reason: 'node at capacity',
+          });
+          // 503, not 429: the client did nothing wrong and retrying elsewhere (another replica, or
+          // this one later) is the right response. 429 would tell them to slow down, which is
+          // advice for a different problem.
+          return reply.code(503).send({ error: 'service at connection capacity' });
+        }
+
+        const perUser = options.maxConnectionsPerUser ?? DEFAULT_MAX_PER_USER;
+        if (registry.countFor(claims.sub) >= perUser) {
+          refusals.inc({ service: 'websocket', reason: 'per-user' });
+          options.onConnectionLog?.({
+            event: 'refused',
+            connectionId: '-',
+            userId: claims.sub,
+            reason: `already holds ${perUser} connections`,
+          });
+          return reply.code(429).send({ error: 'too many open connections for this user' });
         }
 
         const policy = await options.policyFor(claims.sub);

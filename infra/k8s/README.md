@@ -55,8 +55,9 @@ NodePort exists only because kind has no ingress controller, and Studio's dev pr
 `"ws": true`, so the application code sees one origin in both environments.
 
 One consequence worth stating: WebSocket connections do **not** pass through the gateway's rate
-limiting (EP-08.3). The per-node connection cap that websocket.md §11 specifies is what bounds them,
-and it is not built yet.
+limiting (EP-08.3). What bounds them instead are the service's own caps — `ATLAS_WS_MAX_CONNECTIONS`
+node-wide (503) and `ATLAS_WS_MAX_PER_USER` per principal (429), the same two axes the gateway
+splits its own limits along.
 
 ## Deliberate choices in `base/`
 

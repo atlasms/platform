@@ -129,7 +129,8 @@ next login.
   connection, and that §8's per-node stickiness is easier when the ingress addresses pods directly.
   An ingress path rule sends `/ws` here and everything else to the gateway, so the browser still
   sees one origin. The cost: WebSocket connections are outside the gateway's rate limiting, which
-  makes §11's per-node connection cap load-bearing rather than optional.
+  makes §11's connection caps load-bearing rather than optional — they are enforced at upgrade,
+  node-wide and per user.
 
 ## 8. Scaling & performance
 
@@ -166,6 +167,12 @@ next login.
 
 Resume-window size/TTL; max connections per node; heartbeat interval; backpressure high-water
 marks; which event subjects are eligible for live delivery; presence on/off.
+
+**Built so far** (EP-13.2): `ATLAS_WS_HEARTBEAT_MS`, `ATLAS_WS_MAX_CONNECTIONS` (node-wide, refused
+503) and `ATLAS_WS_MAX_PER_USER` (per principal, refused 429). The per-user axis is not a refinement
+of the node-wide one — without it a single account can consume the whole cap and deny the service to
+everyone, which is why the gateway splits its own limits the same way. The rest of this list waits on
+the Redis the resume window and presence need (EP-07.4).
 
 ## 12. Observability
 
