@@ -1,0 +1,133 @@
+name: Smoke
+
+# EP-13.4 — the smoke suite, run against a real deployment, by CI rather than by whoever remembers.
+#
+# WHY THIS EXISTS, concretely. The suite has always been runnable (`npm run smoke`) and never
+# automated, so it ran when someone happened to bring up kind. #296 shipped a k8s manifest for the
+# websocket service while `k8s:build` and `k8s:load` still named three images — `npm run k8s:up`
+# deployed a pod whose image had never been built. Every unit test was green, CI was green, and the
+# defect reached `main`. It was found by a human running the thing. That is the gap this closes.
+#
+# It is deliberately NOT a job in ci.yml. That workflow is the merge gate and finishes in ~90
+# seconds; this builds four container images and boots a cluster, and holding every PR behind it
+# would trade a fast gate for a slow one on changes that cannot break a deployment.
+#
+# ⚠️ DO NOT ADD THIS TO THE REQUIRED CHECKS in .github/rulesets/main.json. It is path-filtered on
+# pull requests, and GitHub treats a required check that never reports as permanently pending — so
+# every PR that does not touch a deployment path would become unmergeable. Requiring it would mean
+# dropping the path filter and paying ~10 minutes on every PR. The merge gate stays ci.yml.
+
+on:
+  push:
+    branches: [main]
+  # On a PR only when it touches something that can plausibly break the deployment path — which is
+  # exactly the set #298 fell into (a change to the npm scripts). Everything else is covered on main.
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - "package.json"
+      - "package-lock.json"
+      - "apps/*/src/main.ts"
+      - ".github/workflows/smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NX_CLOUD_ACCESS_TOKEN: ""
+  NX_DAEMON: "false"
+  # Pinned, and verified by checksum below. kind is not preinstalled on the runner, and a
+  # third-party action would be a new trusted dependency in the one workflow whose whole job is to
+  # prove the deployment is what we think it is. Everything else here is `actions/*`.
+  KIND_VERSION: v0.30.0
+  KIND_SHA256: 517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889
+
+jobs:
+  smoke:
+    name: deploy to kind · smoke
+    runs-on: ubuntu-latest
+    # Four image builds plus a cluster boot. Generous, because a timeout here reads as a flake and
+    # sends someone looking in the wrong place.
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install kind
+        run: |
+          curl -fsSL -o /tmp/kind \
+            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  /tmp/kind" | sha256sum --check --strict
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          kind version
+
+      # The repo's OWN cluster config, not an inline one. If `kind-cluster.yaml` stops matching what
+      # the manifests need — a NodePort that is no longer forwarded, say — this has to fail, and it
+      # cannot if CI quietly uses a different cluster definition than a developer does.
+      - name: Create the cluster
+        run: kind create cluster --config infra/k8s/kind-cluster.yaml --wait 120s
+
+      # Likewise the repo's own scripts. `k8s:build` and `k8s:load` name every image by hand, and
+      # that hand-maintained list is precisely what was wrong in #298 — so CI runs the same command
+      # a developer runs rather than a bespoke build loop that could stay correct while theirs rots.
+      - name: Build images
+        run: npm run k8s:build
+
+      - name: Load images into the cluster
+        run: npm run k8s:load
+
+      - name: Deploy
+        run: npm run k8s:deploy
+
+      - name: Wait for the data plane
+        run: |
+          kubectl -n atlas rollout status statefulset/postgres --timeout=180s
+          kubectl -n atlas rollout status statefulset/nats --timeout=180s
+
+      - name: Wait for the services
+        run: |
+          for d in iam mam websocket api-gateway; do
+            kubectl -n atlas rollout status "deployment/$d" --timeout=180s
+          done
+
+      - name: Smoke
+        run: npm run smoke
+
+      # Only on failure, and it is the difference between "CI went red" and knowing why. A smoke
+      # failure is a deployment failure: the interesting state is in the pods, and the runner is
+      # destroyed the moment this job ends.
+      - name: Diagnostics
+        if: failure()
+        run: |
+          echo "::group::pods"
+          kubectl -n atlas get pods -o wide || true
+          echo "::endgroup::"
+          echo "::group::events"
+          kubectl -n atlas get events --sort-by=.lastTimestamp | tail -50 || true
+          echo "::endgroup::"
+          for d in iam mam websocket api-gateway; do
+            echo "::group::logs $d"
+            kubectl -n atlas logs "deployment/$d" --tail=100 --all-containers || true
+            echo "::endgroup::"
+          done
+          echo "::group::describe not-running pods"
+          kubectl -n atlas get pods --no-headers \
+            | awk '$3 != "Running" {print $1}' \
+            | xargs -r -n1 kubectl -n atlas describe pod || true
+          echo "::endgroup::"
