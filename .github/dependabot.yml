@@ -39,6 +39,15 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: typescript
         update-types: [version-update:semver-major]
+      # `vitest` belongs to that same set, and for a stricter reason than convention: Studio does
+      # not run vitest, it runs `@angular/build:unit-test`, which DECLARES the version it drives —
+      # `peerOptional vitest@"^4.0.8"` in both 22.1.6 and 22.1.7. vitest 5 is outside it, so
+      # `npm install vitest@^5` is REFUSED by npm rather than merely warned about. #290 nonetheless
+      # arrived green, because Dependabot resolves its own lock with relaxed peer handling and the
+      # 90 tests that existed that day happened to pass under it — a combination CI would install
+      # but no developer could reproduce. The bound moves when @angular/build's peer moves.
+      - dependency-name: vitest
+        update-types: [version-update:semver-major]
       # `@types/node` tracks the RUNTIME, not `latest`. We run Node 24, so the types are pinned ^24;
       # a major bump would type APIs the runtime does not have. This was offered twice (#214, #220)
       # and refused twice — the rule is cheaper than rediscovering the reasoning each month. Move
