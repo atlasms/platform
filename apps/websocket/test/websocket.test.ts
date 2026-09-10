@@ -262,3 +262,32 @@ test('the bridge asks for a fresh policy on permissions.changed, then re-checks'
 
   assert.deepEqual(reg.subscriptionsOf('c1'), [], 'revoked subscription dropped by the bridge');
 });
+
+test('onDelivered reports the fan-out, including when it reaches nobody', async () => {
+  // websocket.md §12 asks for delivered-per-second and a fan-out ratio, and the registry is the
+  // only thing that knows the count — `publish` returns it and, without this, the bridge threw it
+  // away. The zero case is the one worth wiring deliberately: "nothing is being published" and
+  // "everything is being published to nobody" are indistinguishable on a delivery-only counter,
+  // and the second is a permissions bug wearing the first one's clothes.
+  const broker = new InMemoryBroker();
+  const reg = new ConnectionRegistry();
+  const seen: { subject: string; count: number }[] = [];
+  startBridge({
+    broker,
+    registry: reg,
+    onDelivered: (subject, count) => seen.push({ subject, count }),
+  });
+
+  const c = fakeConn();
+  reg.add(c);
+  reg.subscribe('c1', 'atlas.ch12.asset.>');
+
+  await broker.publish({ id: 'm1', subject: 'atlas.ch12.asset.approved', body: { assetId: 'a1' } });
+  await broker.publish({ id: 'm2', subject: 'atlas.ch99.asset.approved', body: { assetId: 'a2' } });
+
+  assert.deepEqual(seen, [
+    { subject: 'atlas.ch12.asset.approved', count: 1 },
+    // Another tenant's event: bridged, offered, delivered to nobody. Still reported.
+    { subject: 'atlas.ch99.asset.approved', count: 0 },
+  ]);
+});

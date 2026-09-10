@@ -33,7 +33,13 @@ paths:
     get:
       operationId: getWsStats
       tags: [ws]
-      summary: Connection and fan-out metrics (internal)
+      summary: Connection and subscription counts for THIS node (internal)
+      description: >-
+        Point-in-time counts held by one replica. With more than one, the number an operator wants
+        is the sum across pods, which is what `/metrics` gives Prometheus. `deliveredPerSec` was
+        specified here and is deliberately not implemented: a rate computed server-side over an
+        arbitrary window is strictly worse than `rate(atlas_ws_events_delivered_total[5m])` over
+        the counter `/metrics` already exposes, and having both invites them to disagree.
       responses:
         '200':
           description: Stats
@@ -41,10 +47,10 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [connections, subscriptions]
                 properties:
                   connections: { type: integer }
                   subscriptions: { type: integer }
-                  deliveredPerSec: { type: number }
   /healthz:
     get:
       operationId: getHealthz
@@ -53,6 +59,26 @@ paths:
       security: []
       responses:
         '200': { description: OK }
+  /readyz:
+    get:
+      operationId: getReadyz
+      tags: [health]
+      summary: Readiness probe — 503 while a critical dependency (IAM) is unreachable
+      security: []
+      responses:
+        '200': { description: Ready }
+        '503': { description: Not ready }
+  /metrics:
+    get:
+      operationId: getMetrics
+      tags: [health]
+      summary: Prometheus exposition (unauthenticated; a scraper is infrastructure, not a user)
+      security: []
+      responses:
+        '200':
+          description: Metrics
+          content:
+            text/plain: { schema: { type: string } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }

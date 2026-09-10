@@ -10,3 +10,4 @@ export {
   type ParsedSubject,
 } from './eligibility.ts';
 export { startBridge, DEFAULT_BRIDGE_PATTERNS, type BridgeOptions } from './bridge.ts';
+export { buildWebsocketApp, type WebsocketAppOptions, type ConnectionRecord } from './app.ts';
