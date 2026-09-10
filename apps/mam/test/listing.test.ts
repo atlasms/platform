@@ -244,3 +244,84 @@ test('over HTTP: the listing is an object with a cursor, not a bare array', asyn
   const bad = await app.inject({ method: 'GET', url: '/api/v1/assets?limit=lots', headers });
   assert.equal(bad.statusCode, 422, bad.body);
 });
+
+// --- state counts (#124 follow-up) -----------------------------------------
+//
+// The aggregate has the same shape of hazard as `list()` did, arriving from the other direction:
+// it CANNOT apply the per-asset check, so the only safe grant to serve it to is an unconditioned
+// one. Getting that wrong would be #236 again, and cheaper to miss — an aggregate names no asset,
+// so a leak looks like a number rather than like someone else's catalogue.
+
+test('counts: an unconditioned reader gets the whole channel, not a page of it', async () => {
+  const { service, caller } = harness();
+  const author = caller();
+  await seed(service, author, [
+    { title: 'A', categoryId: '/news/' },
+    { title: 'B', categoryId: '/news/' },
+    { title: 'C', categoryId: '/sport/' },
+  ]);
+
+  assert.deepEqual(await service.counts(author), { created: 3 });
+});
+
+test('counts: SECURITY — a category-scoped reader is REFUSED, not given the channel total', async () => {
+  // The number they must not receive is 3: it is the whole channel, and two of those assets are
+  // outside their subtree. Refusing is the honest answer, because the alternative that keeps them
+  // served is a scan — which is the cost the endpoint exists to avoid.
+  const { service, caller } = harness();
+  await seed(service, caller(), [
+    { title: 'A', categoryId: '/news/' },
+    { title: 'B', categoryId: '/sport/' },
+    { title: 'C', categoryId: '/sport/' },
+  ]);
+
+  await assert.rejects(() => service.counts(caller(NEWS_ONLY)), /whole channel/);
+});
+
+test('counts: a state-scoped grant is refused for the same reason', async () => {
+  // Not only categories. Any narrowing predicate makes the aggregate a different question from
+  // the one the caller is allowed to ask, and `canEnforce` with a channel-only context is what
+  // notices — a declared predicate with no supplied value cannot be satisfied in strict mode.
+  const { service, caller } = harness();
+  await seed(service, caller(), [{ title: 'A' }]);
+
+  const readyOnly: Rule[] = [
+    { id: 'r', permissions: ['asset:read'], scope: { channelIds: [CHANNEL], states: ['ready'] } },
+  ];
+  await assert.rejects(() => service.counts(caller(readyOnly)), /whole channel/);
+});
+
+test('counts: the tally follows a lifecycle transition', async () => {
+  const { service, caller } = harness();
+  const author = caller();
+  await seed(service, author, [{ title: 'A' }, { title: 'B' }]);
+  const page = await service.list(author);
+  const first = page.items[0]!;
+
+  await service.transition(author, first.id, 'startProcessing');
+
+  assert.deepEqual(await service.counts(author), { created: 1, processing: 1 });
+});
+
+test('counts: over HTTP the static segment is not read as an asset id', async () => {
+  // Fastify's radix router prefers a static segment over a parametric one, so `/assets/counts`
+  // cannot be swallowed by `/assets/:id`. That is a property of the router rather than of this
+  // code, which is exactly why it is worth a test: nothing in the file would tell you if a future
+  // refactor moved these onto different prefixes.
+  const { store, service } = harness();
+  void store;
+  const app = buildMamApp({
+    service,
+    policyFor: () => compile({ subjectId: 'user-1', permVersion: 1, rules: FULL }),
+  });
+
+  const res = await app.inject({
+    method: 'GET',
+    url: '/api/v1/assets/counts',
+    headers: { 'x-atlas-user': 'user-1', 'x-atlas-channel': CHANNEL },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.json(), { counts: {} });
+  await app.close();
+});

@@ -40,7 +40,19 @@ const COUNT_MAX_PAGES = 5;
 
       <!-- System State Widget -->
       <section class="widget" aria-labelledby="system-state-heading">
-        <h2 id="system-state-heading">{{ locale.t('dashboard.systemState') }}</h2>
+        <h2 id="system-state-heading">
+          {{ locale.t('dashboard.systemState') }}
+          <!-- Said out loud rather than left to be assumed. When the aggregate refuses (a reader
+               scoped to a category cannot be given a channel total), these numbers come from a
+               capped page walk — correct for what they may see, but not necessarily complete. A
+               number that might be partial and does not say so is the bug this widget started
+               with. -->
+          @if (approximate()) {
+            <span class="qualifier" [title]="locale.t('dashboard.approximateHint')">
+              {{ locale.t('dashboard.approximate') }}
+            </span>
+          }
+        </h2>
 
         @if (loading()) {
           <p class="muted">{{ locale.t('dashboard.loading') }}</p>
@@ -131,6 +143,18 @@ const COUNT_MAX_PAGES = 5;
       color: var(--color-fg-muted);
       font-size: 0.875rem;
       margin: 0;
+    }
+
+    .qualifier {
+      margin-inline-start: 0.5rem;
+      padding: 0.0625rem 0.375rem;
+      border-radius: 9999px;
+      font-size: 0.6875rem;
+      font-weight: 500;
+      text-transform: none;
+      letter-spacing: 0;
+      background: var(--color-warning-bg);
+      color: var(--color-warning);
     }
 
     /* State Grid */
@@ -298,11 +322,21 @@ export class Dashboard {
   private readonly destroyRef = inject(DestroyRef);
 
   protected readonly loading = signal(true);
-  /** Assets counted for state totals — paged newest-first up to the cap, NOT one page of fifty. */
+  /** The newest page, for "what's new". Not the source of the counts any more. */
   protected readonly assets = signal<Asset[]>([]);
+  /**
+   * Counts from MAM's aggregate, when it will answer.
+   *
+   * `null` means it would not — a reader whose grant is narrowed by category, state or ownership
+   * gets a 403, because the aggregate cannot apply the per-asset check that listing does and would
+   * therefore be counting assets they may not see. Those callers fall back to tallying the pages
+   * below, which IS filtered for them, and the widget goes back to being capped rather than wrong.
+   */
+  private readonly exactCounts = signal<Record<string, number> | null>(null);
+  /** True while the numbers come from the capped page walk rather than the aggregate. */
+  protected readonly approximate = computed(() => this.exactCounts() === null);
 
   protected readonly stateCounts = computed<StateCount[]>(() => {
-    const counts = new Map<Asset['state'], number>();
     const allStates: Asset['state'][] = [
       'created',
       'processing',
@@ -313,9 +347,17 @@ export class Dashboard {
       'replaced',
       'purged',
     ];
-    for (const state of allStates) counts.set(state, 0);
-    for (const asset of this.assets()) {
-      counts.set(asset.state, (counts.get(asset.state) ?? 0) + 1);
+    // Zero-filled HERE rather than by the store: the set of states a dashboard renders is the
+    // client's business, and a store inventing rows for empty states would be asserting something
+    // about the lifecycle it has no business knowing.
+    const exact = this.exactCounts();
+    const counts = new Map<Asset['state'], number>(allStates.map((s) => [s, 0]));
+    if (exact) {
+      for (const state of allStates) counts.set(state, exact[state] ?? 0);
+    } else {
+      for (const asset of this.assets()) {
+        counts.set(asset.state, (counts.get(asset.state) ?? 0) + 1);
+      }
     }
     return Array.from(counts.entries()).map(([state, count]) => ({
       state,
@@ -330,6 +372,7 @@ export class Dashboard {
 
   constructor() {
     this.load();
+    this.loadCounts();
 
     // Widgets are live (studio-frontend.md §3): any asset event in this channel changes the
     // numbers, so refetch. The service queues the subscription until the socket is open.
@@ -340,7 +383,24 @@ export class Dashboard {
       }
     });
     this.ws.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(({ subject }) => {
-      if (subject.startsWith(`atlas.${this.session.channelId()}.asset.`)) this.load();
+      if (subject.startsWith(`atlas.${this.session.channelId()}.asset.`)) {
+        this.load();
+        this.loadCounts();
+      }
+    });
+  }
+
+  /**
+   * The exact tally, when this caller is allowed one.
+   *
+   * A failure is not an error state on the widget: a 403 is the expected answer for a scoped
+   * reader, and the page walk below already produces a correct — if capped — number for them. So
+   * this quietly leaves `exactCounts` null and the widget marks itself approximate.
+   */
+  private loadCounts(): void {
+    this.assetsApi.counts().subscribe({
+      next: (counts) => this.exactCounts.set(counts),
+      error: () => this.exactCounts.set(null),
     });
   }
 

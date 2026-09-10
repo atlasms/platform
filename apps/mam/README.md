@@ -208,6 +208,33 @@ advancing to the end of the store's page would skip every row the loop never rea
 filtering happens after the read, a page can come back **short with a cursor still present** — that
 is normal, not the end of the channel.
 
+## State counts: an aggregate, and who is allowed one
+
+`GET /assets/counts` answers "how many assets are in each state" with a `GROUP BY` over the
+`(channel_id, state)` index — the **whole channel**, not a page of it. Studio's dashboard previously
+derived this by paging to a 1000-asset cap and labelling the result "System State", which is right
+until a channel is big enough for it to matter and then quietly wrong.
+
+**It 403s for a reader whose grant is narrowed**, and that refusal is the interesting part. The
+aggregate cannot apply the per-asset check [`list()`](#listing-paginated-and-filtered-per-asset)
+runs; making it do so means scanning the channel, which is the entire cost this endpoint exists to
+avoid. So the only caller it is a true statement for is one who may read the channel unconditioned —
+and `canEnforce` with a context carrying **only** `channelId` is exactly that question, because in
+strict mode a declared predicate with no supplied value cannot be satisfied. A rule narrowed by
+`categoryPaths`, `states` or `ownedOnly` therefore does not match, and the caller is refused.
+
+The alternative — serving them the channel total anyway — is [#236](../../docs/roadmap/) again, and
+cheaper to miss: an aggregate names no asset, so the leak looks like a number rather than like
+someone else's catalogue.
+
+It is not a regression for those readers. Studio falls back to tallying through `list()`, which is
+per-asset filtered and therefore correct for them, and **labels the widget approximate** so a capped
+number never presents itself as a total.
+
+Only states that have assets come back. Zero-filling is the client's job: it knows which states it
+renders, and a store inventing rows for empty ones would be asserting something about the lifecycle
+it has no business knowing.
+
 ## Persistence is a port with two adapters
 
 The service talks to [`AssetStore`](src/store.ts), never to a driver.

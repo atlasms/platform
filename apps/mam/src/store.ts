@@ -63,6 +63,23 @@ export interface AssetStore {
   listByChannel(channelId: string, options?: ListOptions): Promise<Asset[]>;
 
   /**
+   * How many assets are in each lifecycle state, for ONE channel.
+   *
+   * A dedicated aggregate rather than something the caller derives from {@link listByChannel},
+   * because a count derived from a page is a count of that page. Studio's dashboard did exactly
+   * that — it paged the catalogue to a 1000-asset cap and labelled the result "System State", so
+   * the number was right until a channel got big enough for it to matter and then quietly wrong.
+   *
+   * Returns only states that HAVE assets. Zero-filling belongs to the caller, which knows the set
+   * of states it wants to render; a store that invents rows for states nothing is in would be
+   * asserting something about the lifecycle it has no business knowing.
+   *
+   * Both adapters index `(channel_id, state)`, so this is an index-only aggregate rather than a
+   * scan — which is the difference between a dashboard widget and a reason not to have one.
+   */
+  countByState(channelId: string): Promise<Record<string, number>>;
+
+  /**
    * The extensible document for an asset, or `undefined` when it has none yet.
    *
    * A separate read from {@link get} rather than part of the asset: it is a document that can grow

@@ -55,6 +55,41 @@ paths:
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
         '4XX': { $ref: '#/components/responses/Error' }
+  /assets/counts:
+    get:
+      operationId: getAssetStateCounts
+      tags: [assets]
+      summary: Asset counts per lifecycle state for the channel (scope asset:read, UNSCOPED only)
+      description: >-
+        A `GROUP BY` over the `(channel_id, state)` index - the whole channel, not a page of it.
+        Studio's dashboard previously derived this by paging to a 1000-asset cap and labelling the
+        result "System State", which is right until a channel is big enough for it to matter.
+
+
+        403 FOR A NARROWED GRANT, deliberately. The aggregate cannot apply the per-asset check that
+        `GET /assets` runs, so it is only a true statement for a caller who may read the whole
+        channel unconditioned - one whose `asset:read` is not narrowed by category, state or
+        ownership. Serving such a caller a filtered count would mean scanning the channel, which is
+        the cost this endpoint exists to avoid; serving them an UNfiltered one is #236 again. They
+        count through `GET /assets`, which is per-asset filtered and therefore correct for them.
+
+
+        Only states with at least one asset appear. Zero-filling belongs to the caller, which knows
+        which states it renders.
+      responses:
+        '200':
+          description: Counts by state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [counts]
+                properties:
+                  counts:
+                    type: object
+                    additionalProperties: { type: integer }
+                    description: Keyed by lifecycle state. Absent key means zero.
+        '403': { $ref: '#/components/responses/Error' }
   /assets/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }

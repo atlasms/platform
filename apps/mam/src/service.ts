@@ -212,6 +212,34 @@ export class MamService {
    * strict evaluator per asset with the full resource context — which is the only place the
    * question "may you read THIS" can honestly be answered.
    */
+  /**
+   * How many assets are in each lifecycle state, across the WHOLE channel.
+   *
+   * Only for callers whose read grant is unconditioned, and the check is what makes that safe:
+   * `canEnforce` with a context carrying ONLY `channelId` passes exactly when no matching rule
+   * narrows by category, state or ownership — because in strict mode a declared predicate with no
+   * supplied value cannot be satisfied. That is not a clever reuse of the flag, it is the property
+   * it exists for, and it is the precondition for this aggregate to be a true statement.
+   *
+   * WHY A CATEGORY-SCOPED READER IS REFUSED RATHER THAN SERVED A FILTERED NUMBER. The store counts
+   * with a `GROUP BY` over an index; it cannot apply the per-asset check {@link list} runs, and
+   * making it do so means scanning the channel — which is the cost this endpoint exists to avoid.
+   * The two honest options are a refusal or a scan, and #236 is the reminder of what the third
+   * option costs: `list()` once answered a category-scoped reader with the whole channel.
+   *
+   * A refusal is not a regression for those callers. Studio falls back to counting through
+   * `list()`, which is per-asset filtered and therefore right for them — just bounded.
+   */
+  async counts(caller: Caller): Promise<Record<string, number>> {
+    if (!canEnforce(caller.policy, 'asset:read', { channelId: caller.channelId }).allowed) {
+      throw new Forbidden(
+        'state counts are available only to callers who may read the whole channel; ' +
+          'a grant narrowed by category, state or ownership must count through /assets',
+      );
+    }
+    return this.options.store.countByState(caller.channelId);
+  }
+
   async list(caller: Caller, options: ListPage = {}): Promise<Page<Asset>> {
     if (!can(caller.policy, 'asset:read', { channelId: caller.channelId }).allowed) {
       throw new Forbidden('no rule grants "asset:read"');

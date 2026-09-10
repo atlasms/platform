@@ -94,7 +94,9 @@
       "expired": "Expired",
       "replaced": "Replaced",
       "purged": "Purged"
-    }
+    },
+    "approximate": "approximate",
+    "approximateHint": "Counted from the assets you can see, up to a limit — your permissions do not allow an exact channel total."
   },
   "assetEditor": {
     "loading": "Loading asset…",

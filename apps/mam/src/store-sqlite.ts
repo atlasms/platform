@@ -329,6 +329,16 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
       const rows = db.prepare(sql).all(...(params as never[])) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as Asset);
     },
+
+    async countByState(channelId) {
+      // The `state` COLUMN, not `json_extract(data, '$.state')`. Both would return the same
+      // numbers; only one of them uses `assets_channel_idx (channel_id, state)`, and the whole
+      // reason this is an endpoint rather than a client-side tally is that it must not scan.
+      const rows = db
+        .prepare('SELECT state, COUNT(*) AS n FROM assets WHERE channel_id = ? GROUP BY state')
+        .all(channelId) as { state: string; n: number }[];
+      return Object.fromEntries(rows.map((r) => [r.state, r.n]));
+    },
     async configVersion() {
       const row = db.prepare('SELECT version FROM mam_config WHERE id = 1').get() as
         { version: number } | undefined;

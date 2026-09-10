@@ -365,3 +365,29 @@ test('smoke: EP-13.2 — a write becomes a live update on a real socket', async 
     socket.close();
   }
 });
+
+test('smoke: the state-counts aggregate answers, and is not read as an asset id', async () => {
+  // Two things no unit test covers. The gateway routes `/api/v1/assets` by PREFIX, so this reaches
+  // MAM only if that still holds for a deeper path; and `/assets/counts` must resolve to the static
+  // route rather than being captured by `/assets/:id`, which is a property of Fastify's router and
+  // therefore exactly the kind of thing that changes underneath you.
+  const token = await seedToken();
+  if (!token) {
+    console.log('    (no seed account in this environment — skipping the counts path)');
+    return;
+  }
+
+  const res = await get('/api/v1/assets/counts', {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(res.status, 200, `counts failed: ${res.text}`);
+
+  const body = json(res);
+  assert.ok(body.counts, 'the response must carry a counts object');
+  // A 404 problem document would also be JSON, so assert the SHAPE rather than the status alone:
+  // being answered by `/assets/:id` with "asset not found" is the failure this guards.
+  for (const [state, n] of Object.entries(body.counts)) {
+    assert.equal(typeof n, 'number', `count for "${state}" must be a number, got ${typeof n}`);
+    assert.ok(Number.isInteger(n) && n >= 0, `count for "${state}" must be a non-negative integer`);
+  }
+});

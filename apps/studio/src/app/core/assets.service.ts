@@ -71,6 +71,21 @@ export class AssetsService {
       .pipe(map((items) => ({ items })));
   }
 
+  /**
+   * Asset counts per lifecycle state, for the whole channel.
+   *
+   * MAM answers this with a `GROUP BY` over an index rather than a scan, which is why it can cover
+   * the channel instead of a page of it. It **403s** for a caller whose read grant is narrowed by
+   * category, state or ownership: the aggregate cannot apply the per-asset check that `list()`
+   * does, so for those callers it would not be a true statement. They count through `list()`
+   * instead, which is filtered and therefore right for them — see the dashboard.
+   */
+  counts() {
+    return this.http
+      .get<{ counts: Record<string, number> }>(`${this.base}/api/v1/assets/counts`)
+      .pipe(map((body) => body.counts));
+  }
+
   /** The channel's tag vocabulary — what the filter list offers. */
   tags() {
     return this.http.get<Tag[]>(`${this.base}/api/v1/tags`);
