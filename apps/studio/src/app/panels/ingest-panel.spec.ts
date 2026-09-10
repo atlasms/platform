@@ -5,7 +5,6 @@
 // fields the contract leaves OPTIONAL were typed required in a hand-written "generated" file, so
 // the panel rendered "NaN GB" and a raw undefined against a perfectly valid response.
 
-import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -87,7 +86,6 @@ function setup() {
   const fake = new FakeIngest();
   TestBed.configureTestingModule({
     providers: [
-      provideZonelessChangeDetection(),
       { provide: IngestService, useValue: fake },
       { provide: LocaleService, useClass: FakeLocale },
       { provide: PermissionService, useClass: FakePermissions },

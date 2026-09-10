@@ -1,4 +1,3 @@
-import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { API_BASE_URL } from './api.ts';
@@ -85,7 +84,6 @@ describe('WebSocketService', () => {
     fakeSession = new FakeSession();
     TestBed.configureTestingModule({
       providers: [
-        provideZonelessChangeDetection(),
         WebSocketService,
         { provide: AuthService, useValue: fakeAuth },
         { provide: SessionStore, useValue: fakeSession },

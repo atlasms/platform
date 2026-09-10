@@ -4,7 +4,6 @@
 // version labelled the newest 50 assets "System State"), an open button that logs instead of
 // opening, and a live event that never refreshes the numbers.
 
-import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -63,7 +62,6 @@ function setup() {
   const fake = new FakeAssets();
   TestBed.configureTestingModule({
     providers: [
-      provideZonelessChangeDetection(),
       EditorStore,
       { provide: AssetsService, useValue: fake },
       { provide: LocaleService, useClass: FakeLocale },

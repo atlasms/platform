@@ -9,7 +9,7 @@
 // translated: the activity bar printed a hard-coded English `title` while `workbench.panels.*`
 // sat unused in both locale files.
 
-import { provideZonelessChangeDetection, signal } from '@angular/core';
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -58,7 +58,6 @@ function setup() {
   const locale = new FakeLocale();
   TestBed.configureTestingModule({
     providers: [
-      provideZonelessChangeDetection(),
       provideRouter([]),
       { provide: LocaleService, useValue: locale },
       { provide: AuthService, useValue: new FakeAuth() },
