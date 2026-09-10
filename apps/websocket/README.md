@@ -31,9 +31,22 @@ The browser never learns there are two backends. In kind there is no ingress con
 service gets NodePort 30081 and Studio's dev proxy forwards `/ws` to it with `"ws": true` — the
 application code sees one origin either way.
 
-The consequence worth stating: these connections do **not** pass through the gateway's rate limiting
-(EP-08.3). The per-node connection cap websocket.md §11 specifies is what should bound them, and it
-is not built.
+The consequence: these connections do **not** pass through the gateway's rate limiting (EP-08.3), so
+the caps below are the only thing bounding them.
+
+## Connection caps
+
+Two axes, mirroring the gateway's own split between an address limit and a principal limit:
+
+| Cap                                | Refusal | Why                                                                                                                                                               |
+| ---------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ATLAS_WS_MAX_CONNECTIONS` (10000) | **503** | Protects the process. The client did nothing wrong, and retrying — elsewhere, or here later — is the right response; 429 would be advice for a different problem. |
+| `ATLAS_WS_MAX_PER_USER` (10)       | **429** | The node-wide cap is not an abuse control on its own: one account can consume all of it and take the service down for everyone.                                   |
+
+Both are checked **after** the token is verified — so a refusal names a real user in the log — and
+**before** the policy is fetched. That ordering matters under exactly the conditions that produce it:
+a service at capacity is a service under load, and resolving a policy it is about to discard would
+put that load onto IAM as well.
 
 ## The protocol
 
@@ -93,17 +106,19 @@ Presence, cross-node routing and horizontal scale (§8) need the same Redis. One
 ## Running it
 
 ```sh
-npx nx test @atlas/websocket        # 34 tests
+npx nx test @atlas/websocket        # 37 tests
 node --import tsx src/main.ts       # needs IAM for JWKS; NATS is optional
 ```
 
-| Env                     | Default            | Purpose                                                  |
-| ----------------------- | ------------------ | -------------------------------------------------------- |
-| `PORT` / `HOST`         | `3000` / `0.0.0.0` | Listen address.                                          |
-| `ATLAS_IAM_ORIGIN`      | `http://iam:3000`  | JWKS **and** effective-permissions.                      |
-| `ATLAS_NATS_URL`        | `nats://nats:4222` | The event source.                                        |
-| `ATLAS_POLICY_TTL_MS`   | `30000`            | Policy cache — a **revocation window**, not a perf knob. |
-| `ATLAS_WS_HEARTBEAT_MS` | `30000`            | Ping period; `0` disables.                               |
+| Env                        | Default            | Purpose                                                  |
+| -------------------------- | ------------------ | -------------------------------------------------------- |
+| `PORT` / `HOST`            | `3000` / `0.0.0.0` | Listen address.                                          |
+| `ATLAS_IAM_ORIGIN`         | `http://iam:3000`  | JWKS **and** effective-permissions.                      |
+| `ATLAS_NATS_URL`           | `nats://nats:4222` | The event source.                                        |
+| `ATLAS_POLICY_TTL_MS`      | `30000`            | Policy cache — a **revocation window**, not a perf knob. |
+| `ATLAS_WS_HEARTBEAT_MS`    | `30000`            | Ping period; `0` disables.                               |
+| `ATLAS_WS_MAX_CONNECTIONS` | `10000`            | Node-wide cap — see [above](#connection-caps).           |
+| `ATLAS_WS_MAX_PER_USER`    | `10`               | Per-principal cap.                                       |
 
 **IAM is a critical readiness dependency; NATS is not.** Without IAM every upgrade is a 401, so
 reporting ready would only route connection attempts into refusals. Without NATS the service still

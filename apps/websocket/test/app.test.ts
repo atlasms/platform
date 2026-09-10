@@ -387,3 +387,107 @@ test('disconnectUser closes that user’s sockets and leaves everyone else conne
   theirs.terminate();
   await app.close();
 });
+
+test('the node-wide cap refuses with 503, and only once it is actually reached', async () => {
+  // Load-bearing since EP-13.2 routed /ws around the gateway: these connections no longer pass
+  // through its rate limiting, so this is the only thing between a client loop and every file
+  // descriptor on the node.
+  const key = await generateTestKey();
+  const registry = new ConnectionRegistry();
+  const app = await buildWebsocketApp({
+    registry,
+    jwks: key.jwks,
+    policyFor: () => policyFor(),
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    heartbeatIntervalMs: 0,
+    maxConnections: 2,
+  });
+  await app.ready();
+
+  const a = await app.injectWS(`/ws?token=${await token(key)}`);
+  const b = await app.injectWS(`/ws?token=${await token(key, { sub: 'user-2' })}`);
+  assert.equal(registry.stats().connections, 2);
+
+  const refused = await app.inject({
+    method: 'GET',
+    url: `/ws?token=${await token(key, { sub: 'user-3' })}`,
+  });
+  // 503, not 429 — the client did nothing wrong, and retrying is the right response.
+  assert.equal(refused.statusCode, 503);
+  assert.match(refused.json<{ error: string }>().error, /capacity/);
+
+  // And it frees up again, rather than latching.
+  a.terminate();
+  await until(() => registry.stats().connections === 1);
+  const admitted = await app.injectWS(`/ws?token=${await token(key, { sub: 'user-3' })}`);
+  assert.equal(registry.stats().connections, 2);
+
+  admitted.terminate();
+  b.terminate();
+  await app.close();
+});
+
+test('the per-user cap stops ONE account consuming the whole node', async () => {
+  // The node-wide cap alone is not an abuse control: one account can fill it and take the service
+  // down for everyone. This is the axis that prevents it — the same split the gateway makes
+  // between its address limit and its principal limit.
+  const key = await generateTestKey();
+  const registry = new ConnectionRegistry();
+  const app = await buildWebsocketApp({
+    registry,
+    jwks: key.jwks,
+    policyFor: () => policyFor(),
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    heartbeatIntervalMs: 0,
+    maxConnections: 100,
+    maxConnectionsPerUser: 1,
+  });
+  await app.ready();
+
+  const mine = await app.injectWS(`/ws?token=${await token(key)}`);
+
+  const refused = await app.inject({ method: 'GET', url: `/ws?token=${await token(key)}` });
+  assert.equal(refused.statusCode, 429);
+  assert.match(refused.json<{ error: string }>().error, /too many open connections/);
+
+  // Another user is unaffected — the node has capacity, and this cap is per principal.
+  const theirs = await app.injectWS(`/ws?token=${await token(key, { sub: 'user-2' })}`);
+  assert.equal(registry.stats().connections, 2);
+
+  mine.terminate();
+  theirs.terminate();
+  await app.close();
+});
+
+test('a refusal at capacity never reaches IAM for a policy', async () => {
+  // Ordering, and it matters under exactly the conditions that produce it: a service at capacity
+  // is a service under load, and resolving a policy it is about to discard would put that load
+  // onto IAM as well.
+  const key = await generateTestKey();
+  const registry = new ConnectionRegistry();
+  let policyCalls = 0;
+  const app = await buildWebsocketApp({
+    registry,
+    jwks: key.jwks,
+    policyFor: () => {
+      policyCalls++;
+      return policyFor();
+    },
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    heartbeatIntervalMs: 0,
+    maxConnections: 1,
+  });
+  await app.ready();
+
+  const open = await app.injectWS(`/ws?token=${await token(key)}`);
+  assert.equal(policyCalls, 1);
+
+  await app.inject({ method: 'GET', url: `/ws?token=${await token(key, { sub: 'user-2' })}` });
+  assert.equal(policyCalls, 1, 'the refused upgrade must not have asked IAM for a policy');
+
+  open.terminate();
+  await app.close();
+});

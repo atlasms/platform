@@ -32,6 +32,11 @@ const config = loadConfig({
   // websocket.md §11 calls the heartbeat out as configuration. It is the only thing that
   // distinguishes an idle client from a half-open TCP connection at this layer.
   heartbeatIntervalMs: { env: 'ATLAS_WS_HEARTBEAT_MS', type: 'number', default: 30_000 },
+  // The other two knobs websocket.md §11 names, and they became load-bearing when `/ws` was routed
+  // around the gateway: these connections no longer pass through its rate limiting, so nothing else
+  // bounds them. Node-wide protects the process; per-user is what stops one account consuming it.
+  maxConnections: { env: 'ATLAS_WS_MAX_CONNECTIONS', type: 'number', default: 10_000 },
+  maxConnectionsPerUser: { env: 'ATLAS_WS_MAX_PER_USER', type: 'number', default: 10 },
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
   // still propagates, so a site without a collector pays only the cost of an id.
   otlpEndpoint: { env: 'ATLAS_OTLP_ENDPOINT', type: 'string', default: '' },
@@ -83,6 +88,8 @@ const app = await buildWebsocketApp({
   health,
   metrics,
   heartbeatIntervalMs: config.heartbeatIntervalMs,
+  maxConnections: config.maxConnections,
+  maxConnectionsPerUser: config.maxConnectionsPerUser,
   onConnectionLog: (record) => log.info('connection', { ...record }),
   onError: (err, ctx) =>
     log.error('unhandled error', {

@@ -130,6 +130,13 @@ export class ConnectionRegistry {
     return { dropped };
   }
 
+  /** How many connections this user currently holds. The per-user cap is enforced against it. */
+  countFor(userId: string): number {
+    let n = 0;
+    for (const entry of this.#entries.values()) if (entry.conn.userId === userId) n++;
+    return n;
+  }
+
   /**
    * Close every connection belonging to a user. Returns how many were closed.
    *
