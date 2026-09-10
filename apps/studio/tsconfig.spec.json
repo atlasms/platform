@@ -2,8 +2,12 @@
 /* To learn more about Angular compiler options: https://angular.dev/reference/configs/angular-compiler-options. */
 {
   "extends": "./tsconfig.json",
+  /* `types: []` matches tsconfig.app.json: no ambient @types are pulled in, only what a file
+   * actually imports. It was `["vitest/globals"]`, which types a `describe`/`it`/`expect` that no
+   * spec uses — all thirteen import them from 'vitest' explicitly. Config that advertises a style
+   * the codebase does not follow is worse than no config: it is the first thing someone copies. */
   "compilerOptions": {
-    "types": ["vitest/globals"]
+    "types": []
   },
   "include": ["src/**/*.d.ts", "src/**/*.spec.ts"]
 }

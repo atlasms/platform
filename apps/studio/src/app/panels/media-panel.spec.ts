@@ -6,7 +6,6 @@
 
 import { describe, expect, it, beforeEach } from 'vitest';
 import { TestBed } from '@angular/core/testing';
-import { provideZonelessChangeDetection } from '@angular/core';
 import { Subject } from 'rxjs';
 import { AssetsService, type ListOptions, type Page } from '../core/assets.service.ts';
 import type { Asset, Tag } from '../core/generated/mam.types.ts';
@@ -82,7 +81,6 @@ function panel() {
   const fake = new FakeAssets();
   TestBed.configureTestingModule({
     providers: [
-      provideZonelessChangeDetection(),
       EditorStore,
       { provide: AssetsService, useValue: fake },
       { provide: LocaleService, useClass: FakeLocale },

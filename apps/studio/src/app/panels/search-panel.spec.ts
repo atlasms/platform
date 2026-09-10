@@ -5,7 +5,6 @@
 // the guard is actually armed on every path into a search — including Enter, which used to re-run
 // the search under the id already in flight and so raced against itself.
 
-import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -64,7 +63,6 @@ function setup() {
   const fake = new FakeAssets();
   TestBed.configureTestingModule({
     providers: [
-      provideZonelessChangeDetection(),
       EditorStore,
       { provide: AssetsService, useValue: fake },
       { provide: LocaleService, useClass: FakeLocale },
