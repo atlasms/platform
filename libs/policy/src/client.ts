@@ -1,10 +1,20 @@
 // Where a caller's permissions come from in a deployment.
 //
-// IAM owns grants; MAM enforces them. So MAM asks IAM for the compiled policy
-// (`GET /api/v1/users/me/effective-permissions`) and caches it briefly — the alternative, one
-// authorization round trip per request, puts IAM on the critical path of every read.
+// IAM owns grants; every other service enforces them. So a service asks IAM for the compiled
+// policy (`GET /api/v1/users/me/effective-permissions`) and caches it briefly — the alternative,
+// one authorization round trip per request, puts IAM on the critical path of every read.
+//
+// A SUBPATH EXPORT (`@atlas/policy/client`), not part of the evaluator's main entry. `can()` is
+// pure, browser-safe and zero-dependency, and Studio imports it; this knows IAM's route and the
+// `x-atlas-user` trust-boundary header, which is deployment knowledge the evaluator has no
+// business carrying. Keeping them in one package but separate entry points is what lets both
+// MAM and the WebSocket service share one fail-closed cache without `@atlas/service-kit` growing
+// an edge to `@atlas/policy` — the foundation libs are leaf nodes, and that is load-bearing.
+//
+// It lived in `apps/mam/src/` until the WebSocket service (EP-13.2) needed the identical thing.
+// Two copies of a fail-closed authorization cache is two chances to get "fails closed" wrong.
 
-import type { EffectivePolicy } from '@atlas/policy';
+import type { EffectivePolicy } from './index.ts';
 
 export interface PolicyClientOptions {
   /** IAM's base URL, e.g. `http://iam:3000`. */

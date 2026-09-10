@@ -84,5 +84,8 @@ export {
   pgSearchMigration,
   mamMigrations,
 } from './store-pg.ts';
-export { PolicyClient, type PolicyClientOptions } from './policy-client.ts';
+// Re-exported, not owned. `PolicyClient` moved to `@atlas/policy/client` when the WebSocket
+// service needed the same fail-closed cache; this line keeps `@atlas/mam`'s surface unchanged for
+// anything already importing it from here.
+export { PolicyClient, type PolicyClientOptions } from '@atlas/policy/client';
 export { buildMamApp, type MamAppOptions } from './app.ts';

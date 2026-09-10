@@ -42,6 +42,13 @@ versioned carefully: a change fans out, which is why CI runs **all consumers** o
   graph having no `messaging → contracts` edge is the design working, not a lift defect.
 - `policy` and `reference` must stay **browser-safe** — Studio imports them, so no Node built-ins,
   no DB drivers, no server-only dependencies.
+- **A second entry point is how a lib carries deployment knowledge without leaking it.**
+  `@atlas/policy/client` is the compiled-policy fetch-and-cache that MAM and the WebSocket service
+  share; it knows IAM's route and the `x-atlas-user` trust header, which `can()` has no business
+  knowing. `@atlas/service-kit` would have been the other home, and was rejected: it is a leaf
+  (`jose` only, and its `requirePermission` reads JWT claims rather than an `EffectivePolicy`), so
+  putting this there would have added a `service-kit → policy` edge and made "the foundation libs
+  are leaf nodes" false. Same shape as `@atlas/messaging/conformance`.
 
 ---
 

@@ -238,9 +238,16 @@ ATLAS_PG_URL=postgres://atlas:atlas@localhost:55432/atlas npm test -w @atlas/mam
 
 ## Where permissions come from
 
-IAM owns grants; MAM enforces them. [`PolicyClient`](src/policy-client.ts) fetches the caller's
-compiled policy from IAM and caches it briefly — one authorization round trip per request would put
-IAM on the critical path of every read.
+IAM owns grants; MAM enforces them. [`PolicyClient`](../../libs/policy/src/client.ts) fetches the
+caller's compiled policy from IAM and caches it briefly — one authorization round trip per request
+would put IAM on the critical path of every read.
+
+It used to live here. It moved to **`@atlas/policy/client`** when the WebSocket service (EP-13.2)
+needed the identical component, because two copies of a fail-closed authorization cache is two
+chances to get "fails closed" wrong. It is a subpath export rather than part of `@atlas/policy`'s
+main entry: `can()` is pure, browser-safe and zero-dependency and Studio imports it, while this
+knows IAM's route and the `x-atlas-user` trust-boundary header. `@atlas/mam` still re-exports it, so
+nothing that imported it from here had to change.
 
 That TTL is a **revocation window**, not a performance knob: a permission removed in IAM stays live
 here until the entry expires. Every failure mode resolves to "no policy", which the HTTP layer turns

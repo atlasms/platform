@@ -5,7 +5,8 @@
   "type": "module",
   "description": "The pure authorization evaluator: can(), compile(). Zero runtime dependencies and browser-safe, so the SAME decision function runs in every service (to enforce) and in Studio (to render). A second implementation would be the bug.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
   },
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts",

@@ -9,7 +9,7 @@ import { NatsBroker } from '@atlas/messaging-nats';
 import { PgOutboxStore } from '@atlas/data-pg';
 import { createTracer, createLogger, HealthRegistry, loadConfig } from '@atlas/service-kit';
 import { buildMamApp, mamMigrations, MamService, pgAssetStore } from './index.ts';
-import { PolicyClient } from './policy-client.ts';
+import { PolicyClient } from '@atlas/policy/client';
 
 const config = loadConfig({
   port: { env: 'PORT', type: 'number', default: 3000 },

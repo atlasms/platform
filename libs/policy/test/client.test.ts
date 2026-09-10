@@ -5,8 +5,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { EffectivePolicy } from '@atlas/policy';
-import { PolicyClient } from '../src/index.ts';
+import type { EffectivePolicy } from '../src/index.ts';
+import { PolicyClient } from '../src/client.ts';
 
 const POLICY: EffectivePolicy = {
   subjectId: 'user-1',
