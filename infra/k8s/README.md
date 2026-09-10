@@ -13,7 +13,7 @@ overlays/dev/        local kind cluster — NodePort, single replicas, local ima
 ```sh
 kind create cluster --config infra/k8s/kind-cluster.yaml
 npm run k8s:up            # build images, load them into the node, apply the overlay
-npm run smoke             # 7 checks against http://localhost:30080
+npm run smoke             # checks against http://localhost:30080 (and ws://localhost:30081)
 ```
 
 `npm run k8s:up` is `k8s:build` + `k8s:load` + `k8s:deploy`. Rebuild and reload after a code change:
@@ -28,15 +28,35 @@ kind delete cluster --name atlas-dev
 
 ## What the dev overlay changes, and why each is wrong for production
 
-| Dev                          | Production                                    |
-| ---------------------------- | --------------------------------------------- |
-| **NodePort** on 30080        | Ingress with TLS, host routing, rate limiting |
-| **1 gateway replica**        | ≥2, behind a PodDisruptionBudget              |
-| **Local images, `:dev` tag** | Digests from a registry                       |
-| **Plain env vars**           | Secrets, and a signing key ring IAM can share |
+| Dev                            | Production                                                         |
+| ------------------------------ | ------------------------------------------------------------------ |
+| **NodePorts** on 30080 / 30081 | ONE ingress: /ws to the websocket service, the rest to the gateway |
+| **1 gateway replica**          | ≥2, behind a PodDisruptionBudget                                   |
+| **Local images, `:dev` tag**   | Digests from a registry                                            |
+| **Plain env vars**             | Secrets, and a signing key ring IAM can share                      |
 
 The NodePort is deliberately not dressed up as an ingress: simulating one would hide the TLS and
 routing work rather than schedule it.
+
+## Why the WebSocket service has its own port
+
+It does **not** sit behind the gateway. The gateway proxies with `fetch`, which cannot perform a
+protocol upgrade, so `/ws` was never going to be another row in its routing table — and teaching it
+to pipe raw sockets was the worse of the two options. This service authenticates its own tokens
+already (websocket.md §10 requires validation at upgrade, so the gateway would add no security to
+this path), a stateless proxy tier would hold a second socket open for the life of every connection,
+and §8 wants connections sticky per node, which an ingress addressing pods directly makes easier
+rather than harder.
+
+**In production that is one ingress and one origin**: a path rule sends `/ws` to `websocket` and
+everything else to `api-gateway`. The browser never learns there are two backends. The second
+NodePort exists only because kind has no ingress controller, and Studio's dev proxy hides it again —
+[`apps/studio/proxy.conf.json`](../../apps/studio/proxy.conf.json) forwards `/ws` to 30081 with
+`"ws": true`, so the application code sees one origin in both environments.
+
+One consequence worth stating: WebSocket connections do **not** pass through the gateway's rate
+limiting (EP-08.3). The per-node connection cap that websocket.md §11 specifies is what bounds them,
+and it is not built yet.
 
 ## Deliberate choices in `base/`
 

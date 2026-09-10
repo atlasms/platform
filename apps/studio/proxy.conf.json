@@ -1,4 +1,5 @@
 {
   "/auth": { "target": "http://localhost:30080", "secure": false },
-  "/api": { "target": "http://localhost:30080", "secure": false }
+  "/api": { "target": "http://localhost:30080", "secure": false },
+  "/ws": { "target": "http://localhost:30081", "secure": false, "ws": true }
 }

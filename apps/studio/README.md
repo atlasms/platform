@@ -16,8 +16,12 @@ npm test -w @atlas/studio
 **EP-11.3** — the workbench: tabbed and splittable editor groups, drag between groups, a resizable
 side bar, workspace persistence.
 **EP-11.4** — the WebSocket client: desired-set subscriptions (queued until the socket opens),
-exponential-backoff reconnect, re-subscribe on open. The `/ws` endpoint it talks to does not exist
-yet — that server is EP-13.2's scope.
+exponential-backoff reconnect, re-subscribe on open. **The `/ws` endpoint now exists** (EP-13.2). It
+is not behind the gateway — `fetch` cannot upgrade a protocol — so production routes `/ws` to the
+WebSocket service by ingress path rule while everything else goes to the gateway, and
+[`proxy.conf.json`](proxy.conf.json) does the same for `npm start` by forwarding it to the dev
+NodePort with `"ws": true`. Either way the app sees one origin, which is why none of this reaches
+`websocket.service.ts`.
 **EP-11.5** — generated API types checked against the IAM and MAM OpenAPI contracts.
 **EP-11.6** — i18n/RTL: runtime locale files (en/ar), a `LocaleService` that flips `<html dir>`,
 and the design-token theme (light/dark via `prefers-color-scheme`). See

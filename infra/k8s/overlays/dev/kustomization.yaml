@@ -16,6 +16,7 @@ namespace: atlas
 resources:
   - ../../base
   - nodeport.yaml
+  - ws-nodeport.yaml
 
 # kind has no registry. `kind load docker-image` puts the image on the node directly, and
 # IfNotPresent stops the kubelet trying to pull a tag that exists nowhere. In every real
@@ -24,6 +25,8 @@ images:
   - name: atlas/iam
     newTag: dev
   - name: atlas/mam
+    newTag: dev
+  - name: atlas/websocket
     newTag: dev
   - name: atlas/api-gateway
     newTag: dev

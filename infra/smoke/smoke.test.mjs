@@ -18,6 +18,22 @@ import assert from 'node:assert/strict';
 const BASE = process.env.ATLAS_BASE_URL ?? 'http://localhost:30080';
 const TIMEOUT = Number(process.env.ATLAS_SMOKE_TIMEOUT_MS ?? 10_000);
 
+// A SECOND origin, because the socket does not go through the gateway: the gateway proxies with
+// `fetch`, which cannot perform a protocol upgrade, so `/ws` is routed straight to the service.
+// Production puts both behind one ingress and the browser sees one origin; kind has no ingress
+// controller, hence the second NodePort.
+const WS_BASE = process.env.ATLAS_WS_URL ?? 'ws://localhost:30081';
+
+/** Poll until `condition` holds or the deadline passes. Returns whether it held. */
+async function waitFor(condition, timeoutMs = TIMEOUT) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return true;
+}
+
 async function get(path, init = {}) {
   const response = await fetch(new URL(path, BASE), {
     ...init,
@@ -275,4 +291,77 @@ test('smoke: metric labels carry no identifiers', async () => {
   const res = await get('/metrics');
 
   assert.doesNotMatch(res.text, /01H2XKZQ/, 'a resource id leaked into a metric label');
+});
+
+test('smoke: EP-13.2 — a write becomes a live update on a real socket', async () => {
+  // THE walking-skeleton assertion, and the one no unit test can make: a POST through the gateway
+  // commits in MAM's transaction, lands in its outbox, is relayed to JetStream, is consumed by the
+  // WebSocket service's bridge in a different pod, is permission-filtered per connection, and
+  // arrives as a frame on a socket this test is holding open. Six processes.
+  //
+  // The socket does NOT go through the gateway — `fetch` cannot perform a protocol upgrade, so
+  // `/ws` is routed straight to the service (an ingress path rule in production, the NodePort in
+  // kind). That is why this reads a second base URL.
+  const token = await seedToken();
+  if (!token) {
+    console.log('    (no seed account in this environment — skipping the live-update path)');
+    return;
+  }
+
+  // The channel from the token's own claims, which is what a client does — the subscription has to
+  // exist BEFORE the write, so there is nothing to read it off an asset from yet.
+  const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+  assert.ok(claims.channelId, 'the access token must carry a channel');
+
+  const socket = new WebSocket(`${WS_BASE}/ws?token=${encodeURIComponent(token)}`);
+  const frames = [];
+  socket.addEventListener('message', (event) => frames.push(JSON.parse(String(event.data))));
+
+  try {
+    await new Promise((resolve, reject) => {
+      socket.addEventListener('open', resolve, { once: true });
+      socket.addEventListener('error', () => reject(new Error(`no socket at ${WS_BASE}/ws`)), {
+        once: true,
+      });
+      setTimeout(() => reject(new Error('socket did not open')), TIMEOUT).unref?.();
+    });
+
+    const pattern = `atlas.${claims.channelId}.asset.>`;
+    socket.send(JSON.stringify({ type: 'subscribe', pattern }));
+    await waitFor(() => frames.some((f) => f.type === 'subscribed' && f.subject === pattern));
+    assert.ok(
+      frames.some((f) => f.type === 'subscribed'),
+      `subscribe was not confirmed: ${JSON.stringify(frames)}`,
+    );
+
+    const created = await get('/api/v1/assets', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Smoke live-update clip',
+        mediaType: 'video',
+        fileType: 'mxf',
+        categoryId: 'cat-1',
+      }),
+    });
+    assert.equal(created.status, 201, `create failed: ${created.text}`);
+    const assetId = json(created).id;
+
+    // Generous, and deliberately so: the relay polls on an interval (1s by default) and JetStream
+    // delivery is asynchronous. A tight bound here would make this the flakiest test in the suite
+    // for no extra assurance — it either arrives or the path is broken.
+    const arrived = await waitFor(
+      () =>
+        frames.some(
+          (f) => f.type === 'event' && f.subject.startsWith(`atlas.${claims.channelId}.asset.`),
+        ),
+      30_000,
+    );
+    assert.ok(
+      arrived,
+      `no event frame arrived within 30s for asset ${assetId}: ${JSON.stringify(frames)}`,
+    );
+  } finally {
+    socket.close();
+  }
 });

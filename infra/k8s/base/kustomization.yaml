@@ -18,6 +18,7 @@ resources:
   # Services.
   - iam.yaml
   - mam.yaml
+  - websocket.yaml
   - api-gateway.yaml
 
 labels:
