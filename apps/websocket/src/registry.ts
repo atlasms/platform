@@ -130,6 +130,30 @@ export class ConnectionRegistry {
     return { dropped };
   }
 
+  /**
+   * Close every connection belonging to a user. Returns how many were closed.
+   *
+   * The escape hatch for "we can no longer say what this user may see" — a `permissions.changed`
+   * arrived and IAM cannot be reached for the new policy. The alternatives are both worse than a
+   * disconnect: keeping the connections open goes on delivering under grants that have just been
+   * announced stale, and applying an empty policy leaves the client attached but permanently deaf,
+   * with nothing to tell it to resubscribe once IAM returns. A closed socket is the one outcome
+   * the client already knows how to recover from.
+   */
+  disconnectUser(userId: string, reason: string): number {
+    let closed = 0;
+    for (const [id, entry] of [...this.#entries]) {
+      if (entry.conn.userId !== userId) continue;
+      // Removed FIRST: `close` may synchronously fire the socket's close handler, which calls
+      // back into `remove`, and iterating a map being mutated underneath is how one disconnect
+      // starts skipping the next one.
+      this.#entries.delete(id);
+      entry.conn.close?.(reason);
+      closed++;
+    }
+    return closed;
+  }
+
   stats(): { connections: number; subscriptions: number } {
     let subscriptions = 0;
     for (const e of this.#entries.values()) subscriptions += e.patterns.size;

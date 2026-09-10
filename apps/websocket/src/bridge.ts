@@ -24,6 +24,15 @@ export interface BridgeOptions {
   patterns?: string[];
   /** Called when a permissions.changed message needs a freshly compiled policy. */
   onPermissionsChanged?: (userId: string) => Promise<void> | void;
+  /**
+   * Called after each message is fanned out, with how many connections received it.
+   *
+   * The fan-out ratio and delivered-per-second that websocket.md §12 asks for are only observable
+   * here: the registry knows the count and throws it away, and the bridge is the one caller. A
+   * zero is worth recording too — it is the difference between "nothing is being published" and
+   * "everything is being published to nobody", which look identical on a delivery-only counter.
+   */
+  onDelivered?: (subject: string, count: number) => void;
 }
 
 export const DEFAULT_BRIDGE_PATTERNS = ['atlas.>', 'user.>'];
@@ -47,7 +56,8 @@ export function startBridge(options: BridgeOptions): void {
           const body = msg.body as { userId?: string } | undefined;
           if (body?.userId !== undefined) await options.onPermissionsChanged?.(body.userId);
         }
-        registry.publish(msg.subject, msg.body);
+        const delivered = registry.publish(msg.subject, msg.body);
+        options.onDelivered?.(msg.subject, delivered);
       };
 
       if (!options.tracer) return deliver();
