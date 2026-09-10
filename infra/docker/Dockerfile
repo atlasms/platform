@@ -42,6 +42,12 @@ COPY apps/walking-skeleton/package.json ./apps/walking-skeleton/
 # still ran, because every dependency it declares happened to be installed by another service. The
 # first dependency unique to a new service is what turns it into a startup crash.
 #
+# IT IS NOT THE ONLY MIRROR. `k8s:build` and `k8s:load` in the root package.json name every image
+# by hand as well, and the websocket service shipped a k8s manifest referencing `atlas/websocket:dev`
+# while both of those scripts still listed three services — so `npm run k8s:up` deployed a pod whose
+# image had never been built. That one at least fails loudly (ImagePullBackOff), but only for
+# whoever runs it first. Adding a service means touching this file AND both scripts.
+#
 # Studio and the spikes are deliberately absent. `workspaces` are globs, so a directory that is not
 # in the build context simply does not match — which is how Angular's dependency tree stays out of
 # a server image, and with it the whole dev toolchain (`npm ci --omit=dev` does the rest).
