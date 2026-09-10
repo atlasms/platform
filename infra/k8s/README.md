@@ -13,12 +13,23 @@ overlays/dev/        local kind cluster — NodePort, single replicas, local ima
 ```sh
 kind create cluster --config infra/k8s/kind-cluster.yaml
 npm run k8s:up            # build images, load them into the node, apply the overlay
-npm run smoke             # 14 checks against http://localhost:30080 (and ws://localhost:30081)
+npm run smoke             # 15 checks against http://localhost:30080 (and ws://localhost:30081)
 ```
 
 `npm run k8s:up` is `k8s:build` + `k8s:load` + `k8s:deploy`. Rebuild and reload after a code change:
 kind has no registry, so images are pushed onto the node directly and `imagePullPolicy: IfNotPresent`
 stops the kubelet chasing a tag that exists nowhere.
+
+> ⚠️ **`kubectl apply` alone will not pick up a rebuilt image.** The tag does not change and
+> `IfNotPresent` means the kubelet keeps what it has, so the old pod keeps running and you test
+> stale code while believing otherwise. `kubectl -n atlas rollout restart deployment/<name>` after
+> `k8s:load`, or delete the pod.
+
+**CI runs all of this** ([`smoke.yml`](../../.github/workflows/smoke.yml)) on every push to `main`
+and on any PR touching `infra/`, the npm scripts or a service `main.ts`. It uses these same
+scripts and this same cluster config on purpose: a bespoke build loop in CI could stay correct
+while the ones a developer runs rot, which is how #298 happened — `k8s:up` deployed a websocket
+image it had never built, and every unit test was green.
 
 ```sh
 kubectl get pods -n atlas
