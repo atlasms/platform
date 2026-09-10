@@ -13,11 +13,17 @@
   "workbench": {
     "panels": {
       "media": "الوسائط",
-      "schedule": "الجدول",
-      "ingest": "الاستيراد",
       "search": "البحث",
-      "dashboard": "لوحة التحكم",
-      "users": "المستخدمون"
+      "ingest": "الاستيراد",
+      "schedule": "الجدولة",
+      "newsroom": "غرفة الأخبار",
+      "inbox": "الوارد",
+      "workflows": "مسارات العمل",
+      "taxonomy": "الأشخاص والتصنيف",
+      "feeds": "الروافد والتكامل",
+      "admin": "الإدارة",
+      "logs": "السجلات والتحليلات",
+      "notBuilt": "لم يُبنَ بعد"
     },
     "activityBar": {
       "panels": "اللوحات"
@@ -66,7 +72,8 @@
       "rejected": "مرفوض",
       "accepted": "مقبول",
       "registered": "مسجل"
-    }
+    },
+    "uploadUnavailable": "يحتاج الرفع إلى خدمة الاستيراد (EP-15) وهي غير موجودة بعد."
   },
   "dashboard": {
     "title": "لوحة التحكم",

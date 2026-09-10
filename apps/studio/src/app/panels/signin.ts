@@ -52,7 +52,7 @@ import { LocaleService } from '../core/locale.service.ts';
       margin: 4rem auto;
     }
     .error {
-      color: var(--color-danger, #b3261e);
+      color: var(--color-danger);
     }
     button {
       margin-top: 0.5rem;

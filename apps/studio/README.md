@@ -20,7 +20,9 @@ exponential-backoff reconnect, re-subscribe on open. The `/ws` endpoint it talks
 yet — that server is EP-13.2's scope.
 **EP-11.5** — generated API types checked against the IAM and MAM OpenAPI contracts.
 **EP-11.6** — i18n/RTL: runtime locale files (en/ar), a `LocaleService` that flips `<html dir>`,
-and the design-token theme (light/dark via `prefers-color-scheme`).
+and the design-token theme (light/dark via `prefers-color-scheme`). See
+[i18n is RUNTIME, not Angular's build-time `$localize`](#i18n-is-runtime-not-angulars-build-time-localize)
+and [Every colour is a token, and every token is declared](#every-colour-is-a-token-and-every-token-is-declared).
 **EP-11.7** — `can()` integration: permission-driven rendering.
 **EP-20.1** — the Media panel: real recent/search/tag-filter reads from MAM.
 **EP-20.2** — the asset editor: real Basic-info reads and minimal PATCHes,
@@ -28,7 +30,8 @@ dirty-state tracking, independent `core`/`taxonomy`/`rights` field-group renderi
 rendition-readiness view. Per-file rows await the MAM FileRef projection (EP-17.8).
 **EP-20.3** — the Ingest panel: queue, quarantine accept/reject — **built but not routed**: RIM
 (EP-15) does not exist and the gateway has no `/api/v1/ingest` route, so the panel is
-`available: false` until the service lands.
+`available: false` until the service lands. Upload is the same story one level down: the button is
+rendered **disabled**, because EP-15.1's chunked-upload endpoint has nothing to POST to.
 **EP-20.4** — the Search panel: simple query against MAM search, results open in the asset editor.
 **EP-20.6** — the dashboard: an editor tab opened as the default landing view — system-state
 counts and what's-new against real MAM, live-refreshed. State counts page the channel with a
@@ -157,6 +160,67 @@ both pass is a build nobody can fix.
 
 It handles a deliberately narrow subset of JSON Schema and **throws** on anything else, rather than
 emitting `unknown` — a generator that quietly degrades puts the drift back one field at a time.
+
+**A file in `generated/` must be in the generator's `SPECS` list.** `rim.types.ts` shipped with the
+`GENERATED FROM … — DO NOT EDIT` banner on it while `SPECS` named only `iam.yaml` and `mam.yaml`, so
+`api:check` never looked at it — and it had already drifted: `channelId`, `source` and `sizeBytes`
+were typed **required** where `rim.yaml` leaves them optional. That is how the Ingest panel came to
+render `NaN GB` for a response the contract explicitly allows, with a green build and a banner
+telling the next reader not to touch the file. The banner is a promise; the list is what keeps it.
+Adding a service's client means adding its contract here in the same change.
+
+## i18n is RUNTIME, not Angular's build-time `$localize`
+
+`LocaleService` fetches `/locales/<locale>.json` and `t('a.b.c')` walks the dot path, so switching
+language is a signal write — no reload, no second bundle. Angular's own i18n is the opposite: an
+`i18n` block in `angular.json` compiles **one bundle per locale** from `$localize`-marked messages
+in XLIFF/XLB/ARB at build time.
+
+The two are unrelated, and `angular.json` briefly carried both. Its `i18n.locales.ar` pointed at
+`src/locales/ar.json` — the runtime translation map, which is not a translation file in any format
+Angular's loader accepts. It was inert only because nothing passes `--localize`; the first person to
+try would have got a build error from a file that looked deliberate. It is gone. What actually makes
+translations work is the **assets** entry that copies `src/locales` to `locales/` in the output:
+
+```jsonc
+{ "glob": "**/*", "input": "src/locales", "output": "locales" }
+```
+
+Without it, every `t()` call silently returns its own key — which is a UI full of `mediaPanel.search`
+rather than a visible failure. A new locale is a JSON file plus an entry in the status-bar selector.
+
+**Keys, not literals, for anything a user reads.** The activity bar rendered a hard-coded English
+panel name while `workbench.panels.*` sat unused in both locale files, so the one navigation control
+in the shell stayed English in Arabic. `PanelDefinition` carries a `titleKey`, never a `title`.
+
+**RTL is more than `dir`.** The workbench is a CSS grid and grid tracks run along the **inline**
+axis, so `dir="rtl"` moves the activity bar and side bar to the right of the screen. Anything that
+measures in physical pixels has to flip with it: the side-bar divider's drag arithmetic and arrow
+keys multiply by `locale.direction() === 'rtl' ? -1 : 1`, or the side bar shrinks when you drag it
+open. Prefer logical CSS properties (`inline-size`, `margin-inline-start`, `border-inline-end`); for
+the few that have no logical form — `box-shadow`, notably — add a `[dir='rtl']` rule.
+
+## Every colour is a token, and every token is declared
+
+Components read design tokens and never a literal colour, so a theme is a token set rather than a
+restyle ([studio-frontend.md §5](../../docs/architecture/studio-frontend.md#5-theming)). The set
+lives in [`src/styles.scss`](src/styles.scss), declared twice: `:root` for light and a `dark-tokens`
+mixin applied under both `prefers-color-scheme: dark` and an explicit `[data-theme='dark']`.
+
+**A token a component reads must exist in both palettes.** An undefined custom property is invalid
+at computed-value time, so `var(--nope)` does not fail — it quietly falls back to the inherited
+value. Three panels shipped reading fourteen tokens that were never declared (`--color-text-muted`,
+`--color-surface`, `--color-primary`, the whole status set), which made the ingest accept/reject
+buttons white-on-transparent and error text the same colour as body text. Lint, typecheck and the
+whole test suite were green throughout: CSS has no "no such token" error.
+
+Two rules that follow from the palette inverting between themes:
+
+- `--color-<status>` is a **foreground** and `--color-<status>-bg` is the tint it is legible on.
+  They are not interchangeable.
+- **Never fill a control with a status colour and write on it in `white`.** The light palette's
+  danger is dark and the dark palette's is bright, so one hard-coded foreground fails WCAG in one of
+  the two. Status buttons are outlined in `currentColor`.
 
 ## Toolchain divergence, on purpose
 

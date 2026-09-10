@@ -1,8 +1,11 @@
 /* Design tokens.
  *
  * Components read tokens only — never a hard-coded colour — so a new theme is a token set rather
- * than a restyle (studio-frontend.md §5). This is the minimum needed to render the shell; the full
- * system (high-contrast, per-tenant brand theming, RTL, the type scale) is EP-11.6.
+ * than a restyle (studio-frontend.md §5). EVERY token a component reads must be declared here in
+ * BOTH palettes: an undefined custom property is invalid at computed-value time, so `var(--x)`
+ * silently falls back to the inherited value rather than failing. That is how three panels shipped
+ * with invisible buttons and un-red errors — the build was green because CSS does not have a
+ * "no such token" error. High-contrast and per-tenant brand theming remain ahead.
  *
  * Themes resolve in two steps: follow the OS by default, and let an explicit `data-theme` on the
  * root win, so a user's choice beats `prefers-color-scheme` in both directions.
@@ -25,12 +28,28 @@
   --color-bg-activity: #f3f3f3;
   --color-bg-side: #f8f8f8;
   --color-bg-hover: #e8e8e8;
+  --color-bg-raised: #fafafa;
   --color-fg: #1f1f1f;
   --color-fg-muted: #6b6b6b;
   --color-border: #e0e0e0;
+  --color-border-hover: #c8c8c8;
   --color-accent: #0b5fa5;
+  --color-accent-bg: #e7f0f9;
   --color-fg-on-accent: #ffffff;
   --color-focus: #0b5fa5;
+
+  /* Status. A `<name>` is a FOREGROUND — text, an icon, a number — and `<name>-bg` is the tint it
+   * is legible on. They are not interchangeable: filling a button with the foreground and writing
+   * on it in white passes in light and fails WCAG in dark, because the dark foreground is the
+   * bright one. Status buttons are outlined in `currentColor`, never filled. */
+  --color-danger: #b3261e;
+  --color-danger-bg: #fdecea;
+  --color-warning: #8a5a00;
+  --color-warning-bg: #fdf3e2;
+  --color-success: #1e7a3c;
+  --color-success-bg: #e8f5ec;
+  --color-info: #0b5fa5;
+  --color-info-bg: #e7f0f9;
 
   color-scheme: light;
 }
@@ -40,12 +59,24 @@
   --color-bg-activity: #181818;
   --color-bg-side: #202020;
   --color-bg-hover: #2d2d2d;
+  --color-bg-raised: #252526;
   --color-fg: #e6e6e6;
   --color-fg-muted: #9a9a9a;
   --color-border: #2f2f2f;
+  --color-border-hover: #454545;
   --color-accent: #0e639c;
+  --color-accent-bg: #12324d;
   --color-fg-on-accent: #ffffff;
   --color-focus: #4daafc;
+
+  --color-danger: #f2837c;
+  --color-danger-bg: #3b1a18;
+  --color-warning: #e0b04a;
+  --color-warning-bg: #3a2d12;
+  --color-success: #6fcf8b;
+  --color-success-bg: #16301f;
+  --color-info: #4daafc;
+  --color-info-bg: #12324d;
 
   color-scheme: dark;
 }

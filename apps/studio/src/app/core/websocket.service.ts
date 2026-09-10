@@ -120,11 +120,20 @@ export class WebSocketService {
     return Promise.resolve({ ok: true });
   }
 
-  /** Unsubscribe from a pattern. */
+  /**
+   * Unsubscribe from a pattern. The mirror of `subscribe()`: the DESIRED set is updated whatever
+   * the socket is doing, and the frame goes out only if there is a socket to send it on.
+   *
+   * Returning early while disconnected — which is what this did — left the pattern in the desired
+   * set, so the next reconnect re-subscribed a panel that had already been destroyed, and the
+   * events came back to nobody. A subscription must not outlive the thing that asked for it just
+   * because the socket happened to be down when it let go.
+   */
   unsubscribe(pattern: string): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    if (!this.subscriptions.has(pattern)) return;
-    this.ws.send(JSON.stringify({ type: 'unsubscribe', pattern }));
+    if (!this.subscriptions.delete(pattern)) return;
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'unsubscribe', pattern }));
+    }
   }
 
   /** Check if currently subscribed to a pattern. */
@@ -178,10 +187,14 @@ export class WebSocketService {
 
     switch (frame.type) {
       case 'subscribed':
-        this.handleSubscribed(frame.subject!, true);
+        if (frame.subject !== undefined) this.handleSubscribed(frame.subject);
         break;
       case 'unsubscribed':
-        this.handleSubscribed(frame.subject!, false);
+        // An acknowledgement, not a refusal. Routing it through the subscribe path resolved a
+        // pending subscribe as "Subscription refused" and told `subscribed$` a confirmation had
+        // failed — for a frame that means the server did exactly what was asked. All that is left
+        // to do is make sure the desired set agrees, which it already will when we initiated it.
+        if (frame.subject !== undefined) this.subscriptions.delete(frame.subject);
         break;
       case 'event':
         if (frame.subject !== undefined) {
@@ -205,22 +218,15 @@ export class WebSocketService {
     }
   }
 
-  private handleSubscribed(pattern: string, ok: boolean): void {
+  /** A server confirmation that the pattern is now subscribed. Refusals arrive as `error`. */
+  private handleSubscribed(pattern: string): void {
     const pending = [...this.pending.entries()].find(([, v]) => v.pattern === pattern);
     if (pending) {
       const [id, { resolve }] = pending;
       this.pending.delete(id);
-      if (ok) {
-        resolve({ ok: true });
-      } else {
-        resolve({ ok: false, reason: 'Subscription refused' });
-      }
+      resolve({ ok: true });
     }
-    if (!ok) {
-      // Refused server-side — drop it from the desired set or every reconnect re-asks.
-      this.subscriptions.delete(pattern);
-    }
-    this.subscribed$.next({ pattern, ok });
+    this.subscribed$.next({ pattern, ok: true });
   }
 
   private handleError(message: string, subject?: string): void {
@@ -234,6 +240,10 @@ export class WebSocketService {
         this.pending.delete(id);
         resolve({ ok: false, reason: message });
       }
+      // A refusal is the ONLY thing that makes `subscribed$.ok` false. It used to be emitted from
+      // the `unsubscribed` branch instead, which meant the one stream a panel can watch to learn
+      // it was denied never fired on an actual denial.
+      this.subscribed$.next({ pattern: subject, ok: false, reason: message });
     }
   }
 

@@ -466,10 +466,10 @@ export class AssetEditor {
   }
 
   private handleAssetEvent(subject: string, payload: unknown): void {
-    // Subject format: atlas.<channelId>.asset.<action>
-    // Actions: created, updated, approved, rejected, expired, deleted, replaced, ready
-    const action = subject.split('.').pop();
-    if (!action) return;
+    // Subject format: atlas.<channelId>.asset.<action>. Unlike the media panel, the action does not
+    // matter here: this editor shows ONE asset, and every action that reaches it — updated,
+    // approved, rejected, expired, ready — is answered the same way, by refetching the record.
+    if (!subject.startsWith('atlas.')) return;
 
     const envelope = payload as {
       type: string;

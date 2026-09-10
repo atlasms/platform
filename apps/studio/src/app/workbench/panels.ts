@@ -9,7 +9,15 @@
  */
 export interface PanelDefinition {
   readonly id: string;
-  readonly title: string;
+  /**
+   * The locale key for the panel's name — `workbench.panels.<id>` — NOT the name itself.
+   *
+   * The activity bar renders this through `t()`, so the icon's tooltip and its screen-reader label
+   * are Arabic in Arabic. A literal English `title` here is what made them the one part of the
+   * shell that ignored EP-11.6, while `media-panel.ts` translated the very same name for its own
+   * heading. One panel, one key.
+   */
+  readonly titleKey: string;
   /** Single glyph; a real icon set is EP-11.6. */
   readonly icon: string;
   /** Seeing the panel at all requires this. Views inside gate themselves further. */
@@ -21,7 +29,7 @@ export interface PanelDefinition {
 export const PANELS: readonly PanelDefinition[] = [
   {
     id: 'media',
-    title: 'Media',
+    titleKey: 'workbench.panels.media',
     icon: '▤',
     permission: 'asset:read',
     route: '/media',
@@ -29,7 +37,7 @@ export const PANELS: readonly PanelDefinition[] = [
   },
   {
     id: 'search',
-    title: 'Search',
+    titleKey: 'workbench.panels.search',
     icon: '⌕',
     permission: 'asset:read',
     route: '/search',
@@ -37,7 +45,7 @@ export const PANELS: readonly PanelDefinition[] = [
   },
   {
     id: 'ingest',
-    title: 'Ingest',
+    titleKey: 'workbench.panels.ingest',
     icon: '⇥',
     permission: 'ingest:read',
     route: '/ingest',
@@ -48,7 +56,7 @@ export const PANELS: readonly PanelDefinition[] = [
   },
   {
     id: 'schedule',
-    title: 'Schedule',
+    titleKey: 'workbench.panels.schedule',
     icon: '▦',
     permission: 'schedule:read',
     route: '/schedule',
@@ -56,7 +64,7 @@ export const PANELS: readonly PanelDefinition[] = [
   },
   {
     id: 'newsroom',
-    title: 'Newsroom',
+    titleKey: 'workbench.panels.newsroom',
     icon: '✎',
     permission: 'story:read',
     route: '/newsroom',
@@ -64,7 +72,7 @@ export const PANELS: readonly PanelDefinition[] = [
   },
   {
     id: 'inbox',
-    title: 'Inbox',
+    titleKey: 'workbench.panels.inbox',
     icon: '✉',
     permission: 'task:read',
     route: '/inbox',
@@ -72,7 +80,7 @@ export const PANELS: readonly PanelDefinition[] = [
   },
   {
     id: 'workflows',
-    title: 'Workflows',
+    titleKey: 'workbench.panels.workflows',
     icon: '⇄',
     permission: 'workflow:read',
     route: '/workflows',
@@ -80,7 +88,7 @@ export const PANELS: readonly PanelDefinition[] = [
   },
   {
     id: 'taxonomy',
-    title: 'People & Taxonomy',
+    titleKey: 'workbench.panels.taxonomy',
     icon: '☰',
     permission: 'taxonomy:read',
     route: '/taxonomy',
@@ -88,7 +96,7 @@ export const PANELS: readonly PanelDefinition[] = [
   },
   {
     id: 'feeds',
-    title: 'Feeds & Integration',
+    titleKey: 'workbench.panels.feeds',
     icon: '⇅',
     permission: 'feed:read',
     route: '/feeds',
@@ -96,7 +104,7 @@ export const PANELS: readonly PanelDefinition[] = [
   },
   {
     id: 'admin',
-    title: 'Admin',
+    titleKey: 'workbench.panels.admin',
     icon: '⚙',
     permission: 'admin:read',
     route: '/admin',
@@ -104,7 +112,7 @@ export const PANELS: readonly PanelDefinition[] = [
   },
   {
     id: 'logs',
-    title: 'Logs & Analytics',
+    titleKey: 'workbench.panels.logs',
     icon: '◫',
     permission: 'audit:read',
     route: '/logs',

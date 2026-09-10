@@ -153,6 +153,16 @@ build version; shown once per user per version (a per-user "last-seen version" f
 - Implemented as **design tokens** (CSS custom properties): color, spacing, elevation, typography.
   Components read tokens only — never hard-coded colors — so a new theme is a token set, not a
   restyle. Honors `prefers-color-scheme` and **RTL** ([FR-PLat-2](../requirements/05-functional-requirements.md#platform)).
+- **Every token a component reads must be declared in every palette.** An undefined custom property
+  is invalid at computed-value time, so `var(--missing)` does not fail — it silently falls back to
+  the inherited value, and a component can ship unreadable with a green build. A token is part of
+  the theme contract; inventing one in a component is how a theme stops being a token set.
+- A `--color-<status>` token is a **foreground**; `--color-<status>-bg` is the tint it is legible
+  on. Because the palette inverts between light and dark, a control filled with a status color
+  cannot carry a fixed foreground — status controls are outlined in `currentColor`.
+- **RTL is a layout obligation, not just `dir`.** Grid and flex tracks follow the inline axis, so
+  the whole workbench mirrors; anything measured in physical pixels (a drag delta, an arrow-key
+  step, a `box-shadow` inset) must flip with it.
 
 ## 6. History & Diff
 
