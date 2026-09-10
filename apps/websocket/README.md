@@ -93,6 +93,15 @@ are **closed**: keeping them open would keep delivering under grants just announ
 applying an empty policy would leave the client attached but permanently deaf with nothing to prompt
 a resubscribe once IAM returns. A closed socket is the one outcome the client already recovers from.
 
+> ⚠️ **Nothing emits that event yet, so this path is dead in a real deployment.** It has three
+> consumers — the gateway's permVersion note, Studio's `if-can` directive, and this service — and no
+> producer: IAM is entirely in-memory (no persistence, therefore no outbox), so EP-10.6 is blocked
+> behind EP-10.4 and a data layer for IAM. The handling here is correct and tested against a
+> synthesised event; what is missing is upstream. Until it lands, a revoked grant reaches an open
+> socket **only** when the connection drops and the policy is re-resolved at the next upgrade, or
+> when the 30-second `PolicyClient` TTL expires and something else asks. Live revocation is designed
+> and built at this end, and not yet true end to end.
+
 ## What is deliberately missing
 
 `websocket.md` §4 also specifies `resume` and `progress` frames. `resume` replays the gap from a
