@@ -198,6 +198,21 @@ export function pgAssetStore(pool: PgPool): AssetStore {
       return rows.map((r) => r.data);
     },
 
+    async countByState(channelId) {
+      // The `state` COLUMN, not `data->>'state'`. Both give the same numbers; only one of them is
+      // an index-only scan of `assets_channel_idx (channel_id, state)`, and a counts endpoint that
+      // reads every row's jsonb is the thing it was built to avoid.
+      //
+      // COUNT(*) comes back from pg as a STRING — count is int8, and node-postgres refuses to
+      // narrow int8 to a JS number silently because it does not fit. Number() here rather than a
+      // type parser, so the coercion is visible at the one place it happens.
+      const { rows } = await pool.query<{ state: string; n: string }>(
+        'SELECT state, COUNT(*) AS n FROM assets WHERE channel_id = $1 GROUP BY state',
+        [channelId],
+      );
+      return Object.fromEntries(rows.map((r) => [r.state, Number(r.n)]));
+    },
+
     async extended(assetId) {
       const { rows } = await pool.query<{ data: Record<string, unknown> }>(
         'SELECT data FROM asset_extended WHERE asset_id = $1',

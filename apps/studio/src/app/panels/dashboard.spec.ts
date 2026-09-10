@@ -33,11 +33,20 @@ const asset = (id: string, state: Asset['state'], title = id): Asset => ({
 class FakeAssets {
   listCalls: ListOptions[] = [];
   lists: Subject<Page<Asset>>[] = [];
+  countsCalls = 0;
+  counts$: Subject<Record<string, number>>[] = [];
 
   list(options: ListOptions = {}) {
     this.listCalls.push(options);
     const subject = new Subject<Page<Asset>>();
     this.lists.push(subject);
+    return subject;
+  }
+
+  counts() {
+    this.countsCalls++;
+    const subject = new Subject<Record<string, number>>();
+    this.counts$.push(subject);
     return subject;
   }
 }
@@ -55,6 +64,7 @@ interface InternalDashboard {
   assets: () => Asset[];
   stateCounts: () => { state: Asset['state']; count: number; label: string }[];
   recentAssets: () => Asset[];
+  approximate: () => boolean;
   openAsset(asset: Asset): void;
 }
 
@@ -141,5 +151,66 @@ describe('Dashboard', () => {
       payload: { type: 'asset.created', channelId: 'ch99', payload: { assetId: 'a9' } },
     });
     expect(fake.listCalls).toHaveLength(1);
+  });
+
+  // --- the exact aggregate, and what happens when it is refused ---------------
+  //
+  // MAM grew a counts endpoint so this widget stops deriving a channel total from a capped page
+  // walk. It 403s for a reader whose grant is narrowed by category, state or ownership, because the
+  // aggregate cannot apply the per-asset check that listing does — so the page walk stays, as the
+  // fallback that is correct (if bounded) for exactly those callers.
+
+  it('the exact aggregate wins over the page tally when MAM will answer', () => {
+    const { component, fake } = setup();
+    // A page walk that would say ready=2 …
+    fake.lists[0]?.next({ items: [asset('a1', 'ready'), asset('a2', 'ready')] });
+    // … and an aggregate that knows about the rest of the channel.
+    fake.counts$[0]?.next({ ready: 2, approved: 4137 });
+
+    const count = (s: Asset['state']) => component.stateCounts().find((c) => c.state === s)?.count;
+    expect(count('approved')).toBe(4137);
+    expect(count('ready')).toBe(2);
+    expect(component.approximate()).toBe(false);
+  });
+
+  it('states with no assets are zero-filled HERE, not invented by the store', () => {
+    const { component, fake } = setup();
+    fake.lists[0]?.next({ items: [] });
+    fake.counts$[0]?.next({ approved: 3 });
+
+    // The store returns only states that have assets; which states a dashboard renders is the
+    // client's business, so every one of the eight still shows up.
+    expect(component.stateCounts()).toHaveLength(8);
+    expect(component.stateCounts().find((c) => c.state === 'created')?.count).toBe(0);
+  });
+
+  it('a refused aggregate falls back to the page tally and SAYS it is approximate', () => {
+    // The 403 a category-scoped reader gets. Their page tally is filtered and therefore right for
+    // them — just capped — so the widget keeps working rather than disappearing. What it must not do
+    // is present a possibly-partial number as a total, which is the bug it shipped with.
+    const { component, fake } = setup();
+    fake.lists[0]?.next({ items: [asset('a1', 'ready'), asset('a2', 'created')] });
+    fake.counts$[0]?.error(new Error('403 Forbidden'));
+
+    const count = (s: Asset['state']) => component.stateCounts().find((c) => c.state === s)?.count;
+    expect(count('ready')).toBe(1);
+    expect(count('created')).toBe(1);
+    expect(component.approximate()).toBe(true);
+  });
+
+  it('a live asset event refetches the aggregate, not only the pages', () => {
+    // Otherwise the "what's new" list moves while the numbers above it stay where they were, which
+    // reads as a rendering bug and is worse than not being live at all.
+    const { fake } = setup();
+    fake.lists[0]?.next({ items: [asset('a1', 'ready')] });
+    fake.counts$[0]?.next({ ready: 1 });
+    expect(fake.countsCalls).toBe(1);
+
+    TestBed.inject(WebSocketService).events$.next({
+      subject: 'atlas.ch12.asset.created',
+      payload: { type: 'asset.created', channelId: 'ch12', payload: { assetId: 'a9' } },
+    });
+
+    expect(fake.countsCalls).toBe(2);
   });
 });

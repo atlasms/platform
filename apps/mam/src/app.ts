@@ -246,6 +246,14 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     }),
   );
 
+  // Declared before `/assets/:id` for readability, though not for correctness: Fastify's radix
+  // router prefers a static segment over a parametric one regardless of registration order, so
+  // `counts` cannot be swallowed as an id. Relying on that silently would be the fragile part —
+  // hence a test that asks for the counts and asserts it is not answered with "asset not found".
+  app.get('/api/v1/assets/counts', async (req, reply) =>
+    handle(req, reply, async () => ({ counts: await options.service.counts(await callerOf(req)) })),
+  );
+
   app.get('/api/v1/assets/:id', async (req, reply) =>
     handle(req, reply, async () =>
       options.service.get(await callerOf(req), (req.params as { id: string }).id),

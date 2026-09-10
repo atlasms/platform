@@ -128,6 +128,52 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  test(`${name}: countByState counts the CHANNEL, not a page of it`, async () => {
+    // The bug this replaces: Studio's dashboard paged the catalogue to a 1000-asset cap and
+    // labelled the total "System State". A count derived from a page is a count of that page — it
+    // is right until a channel is big enough to matter, then quietly wrong.
+    await withFixture(async ({ store }) => {
+      await store.transaction(async (tx) => {
+        await tx.put(asset({ channelId: 'ch12', state: 'created' }));
+        await tx.put(asset({ channelId: 'ch12', state: 'created' }));
+        await tx.put(asset({ channelId: 'ch12', state: 'ready' }));
+      });
+
+      assert.deepEqual(await store.countByState('ch12'), { created: 2, ready: 1 });
+    });
+  });
+
+  test(`${name}: SECURITY — countByState is a tenant boundary`, async () => {
+    // An aggregate leaks more cheaply than a listing: it does not name a single asset, so it looks
+    // harmless, and "how much material does that broadcaster hold" is exactly the question a
+    // competitor would like answered.
+    await withFixture(async ({ store }) => {
+      await store.transaction(async (tx) => {
+        await tx.put(asset({ channelId: 'ch12', state: 'ready' }));
+        await tx.put(asset({ channelId: 'ch99', state: 'ready' }));
+        await tx.put(asset({ channelId: 'ch99', state: 'approved' }));
+      });
+
+      assert.deepEqual(await store.countByState('ch12'), { ready: 1 });
+      assert.deepEqual(await store.countByState('ch404'), {});
+    });
+  });
+
+  test(`${name}: countByState reports only states that HAVE assets`, async () => {
+    // Zero-filling is the caller's job — it knows which states it wants to render. A store that
+    // invented rows for empty states would be asserting something about the lifecycle it has no
+    // business knowing, and would have to be edited every time the lifecycle grew a state.
+    await withFixture(async ({ store }) => {
+      await store.transaction(async (tx) => {
+        await tx.put(asset({ channelId: 'ch12', state: 'approved' }));
+      });
+
+      const counts = await store.countByState('ch12');
+      assert.deepEqual(counts, { approved: 1 });
+      assert.equal(Object.keys(counts).includes('created'), false);
+    });
+  });
+
   test(`${name}: a commit persists the asset AND its event`, async () => {
     await withFixture(async ({ store, unsentCount }) => {
       const a = asset();
