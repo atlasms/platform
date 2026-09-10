@@ -307,14 +307,51 @@ test('the library has ZERO runtime dependencies and imports no Node built-ins', 
   };
   assert.equal(pkg.dependencies, undefined, 'reference must stay dependency-free (Studio imports it)');
 
-  for (const file of readdirSync(join(here, '..', 'src'))) {
-    const body = readFileSync(join(here, '..', 'src', file), 'utf8');
+  // Walks the import graph FROM `index.ts` rather than scanning the directory, and that is the
+  // stronger test rather than a concession. `@atlas/reference/seed` (EP-06.6) reads files, so it
+  // imports `node:fs` and could never pass a directory scan — but browser safety was never a claim
+  // about every file in `src/`, it is a claim about what Studio can reach by importing the package.
+  // Walking the graph says exactly that, and it still fails the moment anything pulls the seed
+  // loader into the main entry point, which a directory-wide exemption would have stopped noticing.
+  const srcDir = join(here, '..', 'src');
+  const reachable = new Set<string>();
+  const queue = ['index.ts'];
+
+  while (queue.length > 0) {
+    const file = queue.pop() as string;
+    if (reachable.has(file)) continue;
+    reachable.add(file);
+
+    const body = readFileSync(join(srcDir, file), 'utf8');
     for (const m of body.matchAll(/from\s+'([^']+)'/g)) {
       const spec = m[1] ?? '';
       assert.ok(
         spec.startsWith('./') || spec.startsWith('../'),
-        `${file} imports "${spec}" — reference must remain browser-safe`,
+        `${file} imports "${spec}" — everything reachable from index.ts must stay browser-safe`,
       );
+      queue.push(spec.replace(/^\.\//, ''));
     }
+  }
+
+  assert.ok(
+    !reachable.has('seed.ts'),
+    'seed.ts reads the filesystem: it must stay behind the @atlas/reference/seed subpath, never reachable from index.ts',
+  );
+
+  // And the subpath has to actually exist, or the Node-only half is simply unreachable.
+  const exports = (
+    JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')) as {
+      exports: Record<string, string>;
+    }
+  ).exports;
+  assert.equal(exports['./seed'], './src/seed.ts');
+
+  // Every file is still accounted for: reachable from index.ts, or a declared subpath entry.
+  const subpaths = new Set(Object.values(exports).map((p) => p.replace('./src/', '')));
+  for (const file of readdirSync(srcDir)) {
+    assert.ok(
+      reachable.has(file) || subpaths.has(file),
+      `${file} is neither reachable from index.ts nor a declared entry point — it is dead code, or an export someone forgot`,
+    );
   }
 });

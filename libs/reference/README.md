@@ -63,15 +63,48 @@ refresh **keeps the previous snapshot** — an unreachable config endpoint must 
 down, and an air-gapped site runs from stale local state
 ([FR-PLat-7](../../docs/requirements/05-functional-requirements.md#platform)).
 
-## Not implemented yet
+## Seed-as-code (EP-06.6)
 
-**EP-06.6, the seed loader.** It reads version-controlled seed files, which makes it Node-only —
-it cannot live in this browser-safe entry point. It belongs beside the migration runner in
-[`@atlas/data`](../data/), or behind a `@atlas/reference/seed` subpath export. Deliberately
-deferred rather than compromising the browser-safety guarantee.
+`@atlas/reference/seed` — a **separate entry point**, because it reads files and this one is
+browser-safe. That was the option this README already named, and it beat putting it in
+`@atlas/data`: the loader is almost entirely about descriptors and validation, which live here.
+
+```ts
+import { readSeedDirectory, applySeed } from '@atlas/reference/seed';
+
+const { entries, problems } = await readSeedDirectory('seed/reference');
+const result = await applySeed(registry, entries, existingRows, (rows) => store.put(rows));
+```
+
+A seed file is an array of `{ key, level?, scopeId?, value }`, or `{ "settings": [...] }`. **Keys
+are fully qualified** — `hsm.restore.concurrency`, not `restore.concurrency` — and that is
+load-bearing, not style. See below.
+
+**It never overwrites.** [§6](../../docs/architecture/configuration-and-reference-data.md#6-seed-as-code--environment-promotion)
+says import is "additive and idempotent … never a destructive replace", and that one sentence is
+most of the design. A row that exists with a different value is an operator's deliberate edit, made
+through the admin UI this whole subsystem exists to provide; a loader that restored defaults over it
+on every boot would be a factory reset that runs at each restart — at the moment nobody is watching.
+Those rows come back as `preserved`, so a boot log and the drift report of §6 have something to say.
+
+**Nothing is written if anything is invalid.** A seed file is reviewed and applied as a unit, and a
+partial apply is the worst available outcome: half the defaults present, no error state to notice,
+and a rerun reporting "unchanged" for exactly the half that landed.
+
+**Ambiguous keys are refused.** A stored `SettingRow` carries the **bare** key and `resolveSetting`
+matches on it, while the registry is keyed `area.key`. So if two areas both declare
+`restore.concurrency`, one row satisfies both descriptors and seeding either would silently set the
+other. The loader is the first thing that writes a row from a qualified name, which makes it where
+this becomes visible — and it refuses rather than picking one. Renaming one of the two is the fix;
+a `SettingRow` that recorded its area would be the deeper one.
+
+**No caller yet.** Nothing stores settings rows — there is no settings table in any service — so the
+loader is complete, tested, and unwired. It is deliberately shaped to be wired later: the writer is
+injected, so a service at boot and a CLI can share it, and `planSeed` is pure so `--dry-run` and the
+drift report come for free.
 
 ## Tests
 
 ```bash
-npx nx test @atlas/reference   # 17 tests
+npx nx test @atlas/reference   # 33 tests
 ```
