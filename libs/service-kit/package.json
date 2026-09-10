@@ -13,7 +13,7 @@
     "lint": "eslint src test"
   },
   "dependencies": {
-    "jose": "^6.2.10"
+    "jose": "^6.2.12"
   },
   "devDependencies": {
     "tsx": "^4.23.13"
