@@ -1,0 +1,25 @@
+# Reaches the WebSocket service from the host at ws://localhost:30081.
+#
+# DEV ONLY, and a different port rather than a path because there is no ingress here to do path
+# routing. Production puts `/ws` and `/api` on the SAME origin behind one ingress — the browser is
+# never meant to know these are two backends — so this port split exists purely because kind has no
+# ingress controller. Studio's dev proxy hides it again: `apps/studio/proxy.conf.json` forwards
+# `/ws` here with `ws: true`, so the app's own code sees one origin in both environments.
+#
+# kind's extraPortMappings already forwards 30081 to the host; it was mapped and unused until now.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: websocket-nodeport
+  labels:
+    app.kubernetes.io/name: websocket
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: websocket
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      nodePort: 30081

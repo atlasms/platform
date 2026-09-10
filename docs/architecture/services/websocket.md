@@ -121,7 +121,15 @@ next login.
 - **IAM** — token validation (cached JWKS) + effective-permission resolution + the
   `permissions.changed` stream.
 - **Redis** — presence, resume cursors, cross-node routing for horizontal scale.
-- **API Gateway** — may perform the upgrade auth before handing off.
+- **API Gateway** — **not on this path** (EP-13.2). The spec left this open ("may perform the
+  upgrade auth before handing off") and the decision went the other way: the gateway proxies with
+  `fetch`, which cannot perform a protocol upgrade, and the three arguments for routing around it
+  are that this service must validate the token at upgrade anyway (§10, so the gateway adds no
+  security here), that a stateless proxy tier would hold a second socket open for the life of every
+  connection, and that §8's per-node stickiness is easier when the ingress addresses pods directly.
+  An ingress path rule sends `/ws` here and everything else to the gateway, so the browser still
+  sees one origin. The cost: WebSocket connections are outside the gateway's rate limiting, which
+  makes §11's per-node connection cap load-bearing rather than optional.
 
 ## 8. Scaling & performance
 

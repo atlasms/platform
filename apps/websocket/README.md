@@ -16,6 +16,25 @@ did not exist since the day it was written.
 **Not built:** `resume` and the replay window, `progress` frames, Redis presence and cross-node
 routing — see [below](#what-is-deliberately-missing).
 
+## It does not sit behind the gateway
+
+The gateway proxies with `fetch`, which cannot perform a protocol upgrade — so `/ws` was never going
+to be another row in its routing table, and the choice was between teaching it to pipe raw sockets
+and routing around it. Routing around it won on three counts: this service **already** authenticates
+its own tokens (websocket.md §10 requires validation at upgrade, so the gateway would add no
+security to this path), a stateless proxy tier would hold a second socket open for the life of every
+connection, and §8 wants connections sticky per node, which is easier when the ingress addresses
+pods directly.
+
+In production that is **one ingress and one origin**: `/ws` here, everything else to the gateway.
+The browser never learns there are two backends. In kind there is no ingress controller, so the
+service gets NodePort 30081 and Studio's dev proxy forwards `/ws` to it with `"ws": true` — the
+application code sees one origin either way.
+
+The consequence worth stating: these connections do **not** pass through the gateway's rate limiting
+(EP-08.3). The per-node connection cap websocket.md §11 specifies is what should bound them, and it
+is not built.
+
 ## The protocol
 
 JSON frames over a single socket at `GET /ws` (Upgrade).
