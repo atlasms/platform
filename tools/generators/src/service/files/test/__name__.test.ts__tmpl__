@@ -1,0 +1,103 @@
+// The shape every Atlas service shares, asserted. These tests come with the scaffold and stay:
+// they are what "compliant" means, and a service that breaks one has drifted from the other four.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { isUlid, ulid } from '@atlas/contracts';
+import { HealthRegistry, type AccessRecord } from '@atlas/service-kit';
+import { build<%= className %>App, INTERNAL_HEADERS } from '../src/index.ts';
+
+async function harness(health = new HealthRegistry()) {
+  const logs: AccessRecord[] = [];
+  const errors: { correlationId: string; url: string }[] = [];
+  const app = await build<%= className %>App({
+    health,
+    onAccessLog: (r) => logs.push(r),
+    onError: (_err, ctx) => errors.push(ctx),
+  });
+  return { app, logs, errors };
+}
+
+test('health routes need no caller, and readiness reflects a critical failure', async () => {
+  const health = new HealthRegistry().register('iam', () => false, { critical: true });
+  const { app } = await harness(health);
+
+  assert.equal((await app.inject({ method: 'GET', url: '/healthz' })).statusCode, 200);
+  const ready = await app.inject({ method: 'GET', url: '/readyz' });
+  assert.equal(ready.statusCode, 503, 'a critical dependency down must fail readiness');
+  assert.equal(ready.json().status, 'not_ready');
+  await app.close();
+});
+
+test('/metrics is scrapeable and carries the golden signals for this service', async () => {
+  const { app } = await harness();
+  await app.inject({ method: 'GET', url: '/healthz' });
+  const res = await app.inject({ method: 'GET', url: '/metrics' });
+  assert.equal(res.statusCode, 200);
+  assert.match(res.body, /atlas_http_requests_total\{[^}]*service="<%= name %>"/);
+  await app.close();
+});
+
+test('a correlation id is a ULID, adopted only when the caller sent a well-formed one', async () => {
+  // Behind the gateway the id is not echoed (the gateway does that); it is observable in the
+  // access record every non-2xx produces, which is where a forged one would have landed.
+  const { app, logs } = await harness();
+  const url = '/api/v1/<%= name %>/whoami'; // 401 without a caller, so it is always logged
+
+  const mine = ulid();
+  await app.inject({ method: 'GET', url, headers: { [INTERNAL_HEADERS.correlation]: mine } });
+  assert.equal(logs[0]?.requestId, mine, 'a well-formed id is adopted');
+
+  const forged = 'not-a-ulid-' + 'x'.repeat(100);
+  await app.inject({ method: 'GET', url, headers: { [INTERNAL_HEADERS.correlation]: forged } });
+  assert.ok(isUlid(logs[1]?.requestId ?? ''), 'a malformed id is replaced with a minted ULID');
+  assert.notEqual(logs[1]?.requestId, forged);
+  await app.close();
+});
+
+test('an unauthenticated call is the platform problem document, and is access-logged', async () => {
+  const { app, logs } = await harness();
+  const res = await app.inject({ method: 'GET', url: '/api/v1/<%= name %>/whoami' });
+
+  assert.equal(res.statusCode, 401);
+  const problem = res.json<{ code: string; status: number; message: string; correlationId: string }>();
+  assert.equal(problem.code, 'UNAUTHORIZED');
+  assert.equal(problem.status, 401);
+  assert.ok(isUlid(problem.correlationId), 'every problem carries the request id');
+
+  // Non-2xx is always logged (the default policy), with the route TEMPLATE and the same id.
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0]?.status, 401);
+  assert.equal(logs[0]?.requestId, problem.correlationId);
+  assert.equal(logs[0]?.route, '/api/v1/<%= name %>/whoami');
+  await app.close();
+});
+
+test('the caller is whoever the gateway says, and nothing else', async () => {
+  const { app, logs } = await harness();
+  const res = await app.inject({
+    method: 'GET',
+    url: '/api/v1/<%= name %>/whoami',
+    headers: { [INTERNAL_HEADERS.user]: 'user-1', [INTERNAL_HEADERS.channel]: 'ch12' },
+  });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.json(), { service: '<%= name %>', userId: 'user-1', channelId: 'ch12' });
+  // A fast 200 is NOT logged by default — the golden signals already describe it (#245).
+  assert.equal(logs.length, 0);
+  await app.close();
+});
+
+test('a 5xx is logged where it is raised, with the correlation id, and stays opaque to the caller', async () => {
+  const { app, errors } = await harness();
+  app.get('/boom', async () => {
+    throw new Error('the database said something unrepeatable');
+  });
+  const res = await app.inject({ method: 'GET', url: '/boom' });
+  assert.equal(res.statusCode, 500);
+  const problem = res.json<{ code: string; message: string; correlationId: string }>();
+  assert.equal(problem.code, 'INTERNAL');
+  assert.equal(problem.message, 'Internal error', 'the caller never sees the internals');
+  assert.equal(errors.length, 1, 'but the operator does');
+  assert.equal(errors[0]?.correlationId, problem.correlationId);
+  await app.close();
+});

@@ -1,0 +1,19 @@
+{
+  "name": "@atlas/generators",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local Nx generators. `nx g @atlas/generators:service <name>` scaffolds a service that passes the repo's own bar on the first run — the edge conventions, the probes, the traps in AGENTS.md §6 — and wires it into the build, the images and the cluster, which is the list #298 fell out of.",
+  "generators": "./generators.json",
+  "scripts": {
+    "test": "node --no-warnings --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@nx/devkit": "23.2.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.13"
+  }
+}

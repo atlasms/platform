@@ -1,0 +1,9 @@
+{
+  "generators": {
+    "service": {
+      "factory": "./src/service/generator.ts",
+      "schema": "./src/service/schema.json",
+      "description": "Scaffold a compliant Atlas service (apps/<name>) and wire it into the build, images and cluster."
+    }
+  }
+}
