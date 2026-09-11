@@ -8,7 +8,7 @@
   "additionalProperties": false,
   "properties": {
     "connectorId": { "$ref": "../common.schema.json#/$defs/Ulid" },
-    "kind": { "enum": ["epg", "hbbtv", "social", "web"] },
+    "kind": { "$ref": "../common.schema.json#/$defs/PublishKind" },
     "subjectRef": { "$ref": "../common.schema.json#/$defs/EntityRef" },
     "destination": { "type": "string" },
     "receipt": { "type": "string", "description": "Provider-returned delivery receipt/id, when available." },

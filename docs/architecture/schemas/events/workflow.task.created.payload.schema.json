@@ -11,7 +11,7 @@
     "workflowInstanceId": { "$ref": "../common.schema.json#/$defs/Ulid" },
     "assignee": { "type": "string", "description": "User or group id." },
     "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
-    "kind": { "enum": ["approve", "edit", "review"] },
+    "kind": { "$ref": "../common.schema.json#/$defs/TaskKind" },
     "dueAt": { "type": "string", "format": "date-time" }
   }
 }

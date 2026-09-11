@@ -126,8 +126,22 @@ for (const spec of SPECS) {
     return m[1];
   };
 
+  // A shared enum is exported as a VALUE as well as a type (EP-02.5): `TierValues` is the array a
+  // dropdown iterates or an exhaustiveness guard checks against, and `Tier` is derived from it so
+  // the two cannot disagree. Only the shared `$defs` — they are the named Tier-0 enums the
+  // inventory points at; an inline property enum stays a type on its interface.
   const shared = Object.entries(common.$defs ?? {})
-    .map(([name, schema]) => renderNamed(name, schema, 'common.schema.json', resolveRef))
+    .map(([name, schema]) => {
+      const values = schema.enum;
+      if (Array.isArray(values) && values.every((v) => typeof v === 'string')) {
+        const doc = schema.description ? `/** ${schema.description} */\n` : '';
+        return (
+          `${doc}export const ${name}Values = [${values.map((v) => JSON.stringify(v)).join(', ')}] as const;\n` +
+          `export type ${name} = (typeof ${name}Values)[number];`
+        );
+      }
+      return renderNamed(name, schema, 'common.schema.json', resolveRef);
+    })
     .join('\n\n');
 
   const payloads = [];

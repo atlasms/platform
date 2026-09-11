@@ -33,6 +33,30 @@ ajv.addSchema(read(join(schemasDir, 'common.schema.json')));
 const envelopeSchema = read(join(schemasDir, 'envelope.schema.json'));
 export const validateEnvelopeShape = ajv.compile(envelopeSchema);
 
+// The domain contracts too — file, policy-rule, setting-descriptor, vocabulary-term, workflow-
+// definition. They are stored/served shapes rather than messages, so nothing validates against
+// them at runtime yet, which meant nothing COMPILED them either: a `$ref` to a shared `$def` that
+// did not exist would have sat there until the first consumer arrived. Compiling proves every ref
+// resolves and every keyword is one ajv understands. The validators are kept so a future
+// consumer has them, keyed by the file's stem.
+export const DOMAIN_SCHEMAS: string[] = [];
+const domainValidators = new Map<string, ValidateFunction>();
+for (const file of readdirSync(schemasDir).sort()) {
+  if (!file.endsWith('.schema.json')) continue;
+  if (file === 'common.schema.json' || file === 'envelope.schema.json') continue;
+  const name = file.slice(0, -'.schema.json'.length); // "setting-descriptor"
+  DOMAIN_SCHEMAS.push(name);
+  domainValidators.set(name, ajv.compile(read(join(schemasDir, file))));
+}
+
+/** Validate against a domain contract (not an event) — `validateDomain('setting-descriptor', d)`. */
+export function validateDomain(name: string, value: unknown): CheckResult {
+  const fn = domainValidators.get(name);
+  if (!fn)
+    return { valid: false, errors: [{ path: '/', message: `unknown domain schema "${name}"` }] };
+  return { valid: fn(value), errors: toErrors(fn) };
+}
+
 const SUFFIX = '.payload.schema.json';
 export const EVENT_TYPES: string[] = [];
 const payloadValidators = new Map<string, ValidateFunction>();

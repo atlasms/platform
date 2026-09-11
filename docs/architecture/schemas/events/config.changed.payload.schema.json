@@ -23,7 +23,7 @@
       "description": "Setting keys or entry ids affected. Omitted for a bulk change; consumers then refetch the whole area."
     },
     "scopeLevel": {
-      "enum": ["deployment", "channel", "category", "user"],
+      "$ref": "../common.schema.json#/$defs/SettingScope",
       "description": "Level the value was written at, for settings."
     },
     "scopeId": {

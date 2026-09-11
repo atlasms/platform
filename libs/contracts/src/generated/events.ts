@@ -13,11 +13,19 @@ export type Ulid = string;
 export type ChannelId = string;
 
 /** HSM storage tier. */
-export type Tier = 'online' | 'near-line' | 'offline';
+export const TierValues = ['online', 'near-line', 'offline'] as const;
+export type Tier = (typeof TierValues)[number];
 
 /** The kind of generated media version. */
-export type RenditionKind =
-  'original' | 'proxy' | 'broadcast' | 'thumbnail' | 'vtt-filmstrip' | 'hover-preview';
+export const RenditionKindValues = [
+  'original',
+  'proxy',
+  'broadcast',
+  'thumbnail',
+  'vtt-filmstrip',
+  'hover-preview',
+] as const;
+export type RenditionKind = (typeof RenditionKindValues)[number];
 
 export interface Checksum {
   algorithm: string;
@@ -61,7 +69,45 @@ export interface EntityRef {
 }
 
 /** Uniform severity for notifications, tasks and alerts. */
-export type Severity = 'info' | 'warning' | 'critical';
+export const SeverityValues = ['info', 'warning', 'critical'] as const;
+export type Severity = (typeof SeverityValues)[number];
+
+/** Kind of human-in-the-loop task. One definition: BMS declares it in a workflow, emits it in workflow.task.created, and Notifications re-emits it in task.created — three sites had two value sets (workflow.task.created could not express 'generic'). */
+export const TaskKindValues = ['approve', 'edit', 'review', 'generic'] as const;
+export type TaskKind = (typeof TaskKindValues)[number];
+
+/** Who a task is assigned to, or a message addressed to. */
+export const PrincipalKindValues = ['user', 'group'] as const;
+export type PrincipalKind = (typeof PrincipalKindValues)[number];
+
+/** IAM account state; a state machine with coded transitions (lockout, invitation). */
+export const UserStateValues = ['active', 'disabled', 'locked', 'invited'] as const;
+export type UserState = (typeof UserStateValues)[number];
+
+/** Levels a Tier-3 setting can be written at. Resolution is nearest-wins: code default -> deployment -> channel -> category -> user (design §2.5). */
+export const SettingScopeValues = ['deployment', 'channel', 'category', 'user'] as const;
+export type SettingScope = (typeof SettingScopeValues)[number];
+
+/** Which AI tier ran: online (interactive, bounded latency) or offline (batch). Not the HSM storage Tier. */
+export const AiTierValues = ['online', 'offline'] as const;
+export type AiTier = (typeof AiTierValues)[number];
+
+/** An enrichment task; each is its own model pipeline in the AI service. */
+export const AiTaskValues = [
+  'faces',
+  'objects',
+  'shots',
+  'scenes',
+  'stt',
+  'language-id',
+  'keywords',
+  'summary',
+] as const;
+export type AiTask = (typeof AiTaskValues)[number];
+
+/** An outbound publishing connector; each is its own integration. */
+export const PublishKindValues = ['epg', 'hbbtv', 'social', 'web'] as const;
+export type PublishKind = (typeof PublishKindValues)[number];
 
 // --- one payload per events/<type>.payload.schema.json ---
 
@@ -69,18 +115,14 @@ export type Severity = 'info' | 'warning' | 'critical';
 export interface AiEnrichmentCompletedPayload {
   assetId: Ulid;
   jobId?: Ulid;
-  tier?: 'online' | 'offline';
-  results: {
-    task: 'faces' | 'objects' | 'shots' | 'scenes' | 'stt' | 'language-id' | 'keywords' | 'summary';
-    output?: unknown;
-    confidence?: number;
-  }[];
+  tier?: AiTier;
+  results: { task: AiTask; output?: unknown; confidence?: number }[];
 }
 
 /** Emitted by AI Enrichment when an enrichment task fails. Off the critical path — consumed by Notifications and Logging; never blocks ingest or approval. */
 export interface AiEnrichmentFailedPayload {
   assetId: Ulid;
-  task: 'faces' | 'objects' | 'shots' | 'scenes' | 'stt' | 'language-id' | 'keywords' | 'summary';
+  task: AiTask;
   error: Error;
   at: string;
 }
@@ -89,7 +131,7 @@ export interface AiEnrichmentFailedPayload {
 export interface AiSuggestionRaisedPayload {
   assetId: Ulid;
   /** Which AI tier produced these. */
-  tier?: 'online' | 'offline';
+  tier?: AiTier;
   suggestions: {
     kind: 'person' | 'tag' | 'subject' | 'caption';
     value: string;
@@ -218,7 +260,7 @@ export interface ConfigChangedPayload {
   /** Setting keys or entry ids affected. Omitted for a bulk change; consumers then refetch the whole area. */
   keys?: string[];
   /** Level the value was written at, for settings. */
-  scopeLevel?: 'deployment' | 'channel' | 'category' | 'user';
+  scopeLevel?: SettingScope;
   /** Id of the scope instance (channelId, categoryId, userId) when scopeLevel is not `deployment`. */
   scopeId?: string;
   /** Monotonic version of the emitting area's snapshot after the change. */
@@ -343,7 +385,7 @@ export interface MessageSentPayload {
   /** Sender user id. */
   from: string;
   /** Recipients — users and/or groups. */
-  to: { kind: 'user' | 'group'; id: string }[];
+  to: { kind: PrincipalKind; id: string }[];
   /** Conversation thread, when part of one. */
   threadId?: Ulid;
   body: string;
@@ -402,7 +444,7 @@ export interface PlayoutExportCompletedPayload {
 /** Emitted by Integration/Feeds when an outbound publish/connector delivery succeeds (EPG, HbbTV, social, web). Consumed by Logging. */
 export interface PublishCompletedPayload {
   connectorId: Ulid;
-  kind: 'epg' | 'hbbtv' | 'social' | 'web';
+  kind: PublishKind;
   subjectRef: EntityRef;
   destination: string;
   /** Provider-returned delivery receipt/id, when available. */
@@ -413,7 +455,7 @@ export interface PublishCompletedPayload {
 /** Emitted by Integration/Feeds when an outbound publish/connector delivery fails. Consumed by Notifications (alert) and Logging. */
 export interface PublishFailedPayload {
   connectorId: Ulid;
-  kind: 'epg' | 'hbbtv' | 'social' | 'web';
+  kind: PublishKind;
   subjectRef: EntityRef;
   destination: string;
   error: Error;
@@ -507,8 +549,8 @@ export interface TaskCreatedPayload {
   id: Ulid;
   /** User id or group id. */
   assignee: string;
-  assigneeKind: 'user' | 'group';
-  kind: 'approve' | 'edit' | 'review' | 'generic';
+  assigneeKind: PrincipalKind;
+  kind: TaskKind;
   /** What the task is about (asset, workflow instance, story...). */
   subjectRef?: EntityRef;
   dueAt?: string;
@@ -595,7 +637,7 @@ export interface UserCreatedPayload {
   username: string;
   /** Display name. */
   name?: string;
-  state: 'active' | 'disabled' | 'locked' | 'invited';
+  state: UserState;
   createdBy?: string;
   createdAt: string;
 }
@@ -606,7 +648,7 @@ export interface UserUpdatedPayload {
   /** Field names that changed, e.g. ["state", "assignments"]. */
   changed: string[];
   /** New state, when state changed. */
-  state?: 'active' | 'disabled' | 'locked' | 'invited';
+  state?: UserState;
   at: string;
 }
 
@@ -647,7 +689,7 @@ export interface WorkflowTaskCreatedPayload {
   /** User or group id. */
   assignee: string;
   assetId?: Ulid;
-  kind?: 'approve' | 'edit' | 'review';
+  kind?: TaskKind;
   dueAt?: string;
 }
 
