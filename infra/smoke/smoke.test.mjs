@@ -89,6 +89,47 @@ test('smoke: the gateway is READY, meaning its dependencies answer', async () =>
   assert.equal(iam.ok, true, 'the gateway cannot reach IAM');
 });
 
+test('smoke: every PROXIED upstream answers through the gateway before anything depends on it', async () => {
+  // "Deployment Available" and "reachable through the Service" are two different moments. The
+  // workflow's `kubectl rollout status` returns at the first: the pod is Ready. The gateway's
+  // `fetch` needs the second: the endpoints controller has added the pod and kube-proxy has
+  // programmed it — a few hundred milliseconds to a couple of seconds later. In between, a request
+  // to that Service is refused, and the gateway reports it as `502 upstream "mam" unreachable`.
+  //
+  // That window is exactly where this suite's first three MAM-bound requests landed on `main`
+  // (MAM listening at :10.995, the suite's first request at :11.978), on a commit that changed
+  // nothing deployable — three 502s, then every later MAM test green. Pods: 0 restarts.
+  //
+  // The gateway's own readiness (above) is IAM only, on purpose: MAM being down must not make the
+  // gateway refuse traffic it can still serve. So the gate for "MAM is reachable through the
+  // gateway" has to be here, and it has to be here rather than only in the workflow because
+  // `npm run smoke` after `k8s:up` has the same race on a laptop.
+  const token = await seedToken();
+  if (!token) return;
+
+  // One probe per proxied upstream. IAM is proven by /readyz and by the login above; the socket
+  // service is its own origin and is proven by the EP-13.2 test. Adding a routed service means
+  // adding its cheapest authenticated GET here.
+  const upstreams = [['mam', '/api/v1/assets?limit=1']];
+  const budgetMs = Number(process.env.ATLAS_SMOKE_UPSTREAM_BUDGET_MS ?? 30_000);
+
+  for (const [name, path] of upstreams) {
+    const deadline = Date.now() + budgetMs;
+    let last;
+    for (;;) {
+      last = await get(path, { headers: { authorization: `Bearer ${token}` } });
+      if (last.status !== 502) break;
+      if (Date.now() > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.notEqual(
+      last.status,
+      502,
+      `upstream "${name}" never became reachable through the gateway within ${budgetMs}ms: ${last.text}`,
+    );
+  }
+});
+
 test('smoke: a request through the gateway reaches IAM in another pod', async () => {
   // Deliberately wrong credentials: this asserts the PATH works, not that a password does. A 401
   // from IAM's own error taxonomy proves the request crossed the service boundary — a routing or
