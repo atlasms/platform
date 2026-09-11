@@ -65,7 +65,7 @@ for (const spec of SPECS) {
   });
 
   if (check) {
-    let existing = '';
+    let existing;
     try {
       existing = readFileSync(target, 'utf8');
     } catch {
