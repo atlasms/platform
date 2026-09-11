@@ -9,7 +9,15 @@
 // Steps 3 and 4 sharing a transaction is the whole reason the outbox exists: the state change and
 // the announcement commit together, or neither does.
 
-import { buildEnvelope, subjectFor, ulid, validatePayload, type Envelope } from '@atlas/contracts';
+import {
+  buildEnvelope,
+  subjectFor,
+  ulid,
+  validatePayload,
+  type Envelope,
+  type EventPayloads,
+} from '@atlas/contracts';
+import { delta, type Delta } from './audit.ts';
 import { can, canEnforce, type EffectivePolicy } from '@atlas/policy';
 import {
   Conflict,
@@ -322,6 +330,7 @@ export class MamService {
     await this.commit(
       caller,
       asset,
+      undefined,
       'asset.created',
       {
         assetId: asset.id,
@@ -369,6 +378,7 @@ export class MamService {
     await this.commit(
       caller,
       updated,
+      existing,
       'asset.updated',
       { assetId: updated.id, changedFields, source: 'user' },
       // `title` and `description` are indexed, so this path must reindex. Tags and the extended
@@ -423,14 +433,16 @@ export class MamService {
 
     const eventType = eventFor(action);
     if (eventType === undefined) {
-      // An internal step with no contract event still commits, just without announcing itself.
-      await this.options.store.transaction(async (tx) => tx.put(updated));
+      // An internal step with no contract event still commits — and is still audited. It used to
+      // commit with a bare `tx.put`, which is a mutation nothing could ever account for.
+      await this.commitWith(caller, updated, existing, { action: `asset.${action}` });
       return updated;
     }
 
     await this.commit(
       caller,
       updated,
+      existing,
       eventType,
       this.payloadFor(caller, eventType, updated, options),
     );
@@ -446,9 +458,11 @@ export class MamService {
     const updated: Asset = {
       ...existing,
       hasRenditions: true,
+      // A mutation, so a revision — every other write bumps it, and the audit record is keyed on it.
+      version: existing.version + 1,
       updatedAt: this.now().toISOString(),
     };
-    await this.options.store.transaction(async (tx) => tx.put(updated));
+    await this.commitWith(caller, updated, existing, { action: 'asset.attachRenditions' });
     return updated;
   }
 
@@ -530,8 +544,13 @@ export class MamService {
     await this.commitWith(
       caller,
       updated,
-      'asset.updated',
-      { assetId: updated.id, changedFields, source: 'user' },
+      asset,
+      {
+        type: 'asset.updated',
+        payload: { assetId: updated.id, changedFields, source: 'user' },
+        // The document is in its own table: the record diff sees only the version bump.
+        delta: { extended: { before: current, after: merged } },
+      },
       async (tx) => tx.putExtended(id, asset.channelId, merged),
       // The MERGED document, not the stored one — a value written by this very call has to be
       // findable the moment it commits, and `sourcesFor` would read the version it replaces.
@@ -636,14 +655,22 @@ export class MamService {
       updatedAt: this.now().toISOString(),
     };
 
+    // Read BEFORE the transaction — on Postgres a read inside it would not see the uncommitted
+    // write anyway, and this is the prior state the audit delta needs.
+    const previousLabels = (await this.options.store.tagsOf(id)).map((t) => t.label);
+
     let resolved: Tag[] = [];
     await this.commitWith(
       caller,
       updated,
-      'asset.updated',
-      // `['tags']`, not a field-level list of what was added and removed. The contract's
-      // `changedFields` names FIELDS, and the delta belongs in the audit event EP-19.2 defines.
-      { assetId: updated.id, changedFields: ['tags'], source: 'user' },
+      asset,
+      {
+        type: 'asset.updated',
+        // `['tags']`, not a field-level list of what was added and removed. The contract's
+        // `changedFields` names FIELDS; the before/after list is in the audit event (EP-19.2).
+        payload: { assetId: updated.id, changedFields: ['tags'], source: 'user' },
+        delta: { tags: { before: previousLabels, after: candidates.map((c) => c.label) } },
+      },
       async (tx) => {
         resolved = await tx.setTags(id, asset.channelId, candidates);
         for (const tag of resolved) {
@@ -869,15 +896,16 @@ export class MamService {
     for (const group of groups) this.authorize(caller, permission, asset, group);
   }
 
-  /** Write the record and its event in ONE transaction. */
+  /** Write the record, its event and its audit delta in ONE transaction. */
   private async commit(
     caller: Caller,
     asset: Asset,
+    before: Asset | undefined,
     eventType: string,
     payload: Record<string, unknown>,
     search?: SearchSources,
   ): Promise<void> {
-    return this.commitWith(caller, asset, eventType, payload, undefined, search);
+    return this.commitWith(caller, asset, before, { type: eventType, payload }, undefined, search);
   }
 
   /**
@@ -889,12 +917,35 @@ export class MamService {
   private async commitWith(
     caller: Caller,
     asset: Asset,
-    eventType: string,
-    payload: Record<string, unknown>,
+    before: Asset | undefined,
+    // The domain event, when the mutation has one to announce; or just the name of the operation,
+    // for a mutation that does not (an internal lifecycle step, a rendition attach). Either way
+    // the audit record is written — AGENTS.md §5.6: every mutating action, with a delta.
+    event: ({ type: string; payload: Record<string, unknown> } | { action: string }) & {
+      /**
+       * Changes the record diff cannot see. `extended` and `tags` live in their own tables, so a
+       * write to either changes nothing on the Asset row but `version` — the caller, which holds
+       * both states, supplies the field-level entry itself.
+       */
+      delta?: Delta;
+    },
     also?: (tx: AssetTx) => Promise<void>,
     search?: SearchSources,
   ): Promise<void> {
-    const record = this.eventRecord(caller, asset.channelId, eventType, payload);
+    const domain =
+      'type' in event
+        ? this.eventRecord(caller, asset.channelId, event.type, event.payload)
+        : undefined;
+    // EP-19.2. In the SAME transaction as the row and the domain event: an audit record that could
+    // commit without its change, or a change without its record, is the dual-write drift the outbox
+    // exists to prevent, and it is worse here because the record is what compliance reads.
+    const audit = this.auditRecord(
+      caller,
+      asset,
+      before,
+      'type' in event ? event.type : event.action,
+      event.delta,
+    );
     // Computed BEFORE the transaction opens, from what is about to be written rather than from
     // what is stored — the whole point is that a tag or a document being changed by this very call
     // has to be findable the moment it commits. Paths that change no searchable text pass nothing,
@@ -908,8 +959,43 @@ export class MamService {
       await tx.put(asset);
       await also?.(tx);
       if (terms) await tx.indexTerms(asset.id, asset.channelId, terms);
-      await tx.enqueue(record);
+      // Domain event first, audit second: the relay publishes in outbox order, and a consumer that
+      // reacts to the change should see the change before the record of it.
+      if (domain) await tx.enqueue(domain);
+      await tx.enqueue(audit);
     });
+  }
+
+  /**
+   * The `audit.recorded` event for one mutation (EP-19.2).
+   *
+   * `revision` is the asset's own `version`: it is bumped on every write, so it is exactly the
+   * monotonic per-entity counter the contract asks for, and the sink's history aligns with the
+   * number a client already sees on the record. `actor` and `correlationId` ride on the envelope,
+   * as they do for every event.
+   */
+  private auditRecord(
+    caller: Caller,
+    asset: Asset,
+    before: Asset | undefined,
+    action: string,
+    sideTables: Delta = {},
+  ): { id: string; message: { id: string; subject: string; body: Envelope } } {
+    const payload: EventPayloads['audit.recorded'] = {
+      entityType: 'asset',
+      entityId: asset.id,
+      revision: asset.version,
+      action,
+      origin: { service: 'mam' },
+      delta: {
+        ...delta(
+          before as unknown as Record<string, unknown> | undefined,
+          asset as unknown as Record<string, unknown>,
+        ),
+        ...sideTables,
+      },
+    };
+    return this.eventRecord(caller, asset.channelId, 'audit.recorded', payload);
   }
 
   /**
@@ -927,7 +1013,9 @@ export class MamService {
     caller: Caller,
     channelId: string,
     eventType: string,
-    payload: Record<string, unknown>,
+    // `object`, not `Record<string, unknown>`: a generated payload type (EventPayloads[...]) is an
+    // interface, and an interface has no implicit index signature. Same reasoning as buildEnvelope.
+    payload: object,
   ): { id: string; message: { id: string; subject: string; body: Envelope } } {
     const check = validatePayload(eventType, payload);
     if (!check.valid) {
@@ -939,7 +1027,8 @@ export class MamService {
     const envelope: Envelope = buildEnvelope({
       type: eventType,
       channelId,
-      payload,
+      // Validated against its schema two lines up, so the widening is earned rather than assumed.
+      payload: payload as Record<string, unknown>,
       actor: { kind: 'user', id: caller.userId },
       ...defined({ correlationId: caller.correlationId }),
     });

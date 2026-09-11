@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/audit.recorded.payload.schema.json",
+  "title": "audit.recorded payload",
+  "description": "Emitted by the OWNING service with every mutation, in the same transaction as the change — alongside the domain event when there is one, alone when there is not (an internal lifecycle step, a rendition attach). Carries the field-level before/after delta the change-history viewer reads (logging-analytics.md §6.4; FR-AUD-1..5); the owning service produces it at write time because only it holds the prior state. `actor` and `correlationId` are on the envelope, not here. Consumed by Logging.",
+  "type": "object",
+  "required": ["entityType", "entityId", "revision", "action", "origin", "delta"],
+  "additionalProperties": false,
+  "properties": {
+    "entityType": { "type": "string", "description": "The owning service's noun for what changed: asset, field-schema, schedule, … The sink keys history on (entityType, entityId)." },
+    "entityId": { "type": "string", "description": "The entity's id in its owning service — a ULID for most entities, a name for keyed ones such as a field schema." },
+    "revision": { "type": "integer", "minimum": 1, "description": "Monotonic per entity, +1 per mutation. Aligns with the entity's own version counter where it has one (an asset's `version`)." },
+    "action": { "type": "string", "description": "The domain event this audits (asset.updated), or for a mutation that announces nothing, the operation itself (asset.attachRenditions)." },
+    "origin": {
+      "type": "object",
+      "required": ["service"],
+      "additionalProperties": false,
+      "properties": {
+        "service": { "type": "string", "description": "The service that made the change and produced this record." }
+      }
+    },
+    "delta": {
+      "type": "object",
+      "description": "Field name → { before, after }. A created entity has only `after`s; a removed field only a `before`. Values are the field's whole value — a JSON diff at field granularity, which is what the diff viewer renders. Fields that change on every write (updatedAt, version) are excluded: version IS `revision`.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "before": {},
+          "after": {}
+        }
+      }
+    }
+  }
+}

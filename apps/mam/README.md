@@ -347,3 +347,25 @@ That validation earned its keep immediately — the contracts require more than 
 approval names its **approver**, a rejection states its **reason**, an expiry records **when**.
 Those are the events a compliance record is reconstructed from, and _"asset 42 was rejected"_ with
 no author and no cause is not a record of anything. Rejecting without a reason is now a 422.
+
+### Every mutation is audited (EP-19.2)
+
+Alongside the domain event — or alone, for a mutation that announces nothing — every write emits
+[`audit.recorded`](../../docs/architecture/schemas/events/audit.recorded.payload.schema.json):
+`{ entityType: 'asset', entityId, revision, action, origin: { service: 'mam' }, delta }`, where
+`delta` is the **field-level before → after** computed here, at write time, because only this
+service holds the prior state. `revision` is the asset's `version`, which every write bumps. It
+goes into the **same transaction** as the row and the domain event; a test fails the audit write
+mid-transaction and asserts the row and the domain event roll back with it.
+
+Three things worth knowing:
+
+- `commitWith` is the one funnel. It takes `before`, and either a domain event or just an action
+  name. `attachRenditions` and the internal `startProcessing` step used to commit with a bare
+  `tx.put` — mutations nothing could account for. They now go through it too.
+- **A record diff cannot see the side tables.** `extended` and `tags` live in their own tables, so
+  diffing two `Asset` rows shows only the version bump. Those callers supply the entry themselves
+  (`delta: { tags: { before, after } }`) — if you add a side table, you add its entry.
+- **It is not fanned out to sockets.** The websocket service maps `atlas.<ch>.audit.*` to
+  `audit:read`, which no role grants, so eligibility fails closed. Deliberate: the delta carries
+  whole field values, including groups a reader may not hold. The sink (EP-19.1) is the consumer.

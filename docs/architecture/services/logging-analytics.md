@@ -113,7 +113,9 @@ projection Logging builds from the audit stream ([FR-AUD](../../requirements/05-
   revision, actor, at, origin (service/action/correlationId), delta }`, where `delta` is a
   **field-level before→after** (a JSON-diff for structured fields; a text delta for long text). The
   owning service produces it at write time (it knows the prior state) — the [envelope](../schemas/envelope.schema.json)
-  already carries `actor`/`correlationId`; the `delta` rides in the audit payload.
+  already carries `actor`/`correlationId`; the `delta` rides in the audit payload — the
+  [`audit.recorded`](../schemas/events/audit.recorded.payload.schema.json) event, emitted in the
+  owning service's write transaction (EP-19.2; MAM does).
 - **Projection.** Logging appends each to a **per-entity history** keyed by `(entityType, entityId,
   revision)` — an append-only, ordered change log. Snapshots may be materialized every _k_ revisions
   so a full state is cheap to reconstruct.
