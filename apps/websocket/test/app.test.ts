@@ -9,6 +9,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { isUlid, ulid } from '@atlas/contracts';
 import { compile, type EffectivePolicy } from '@atlas/policy';
 import { generateTestKey, type TestKey } from '@atlas/service-kit';
 import { buildWebsocketApp, ConnectionRegistry, type ConnectionRecord } from '../src/index.ts';
@@ -79,6 +80,35 @@ const nextFrame = (socket: { once: (e: string, cb: (data: unknown) => void) => v
     socket.once('message', (data) => resolve(JSON.parse(String(data)) as Record<string, unknown>));
   });
 
+test('a correlation id is a ULID, adopted only when the client sent a well-formed one', async () => {
+  // This service is reached WITHOUT the gateway in front — its own NodePort in dev, its own
+  // ingress path in production — so `x-correlation-id` is client input here, exactly as it is at
+  // the gateway (#306). It used `randomUUID()` (not a ULID, so it broke the envelope contract the
+  // moment it was written into one) and adopted any string a client sent.
+  const { app } = await harness();
+
+  const minted = await app.inject({ method: 'GET', url: '/healthz' });
+  assert.ok(isUlid(minted.headers['x-correlation-id'] as string), 'minted ids are ULIDs');
+
+  const mine = ulid();
+  const adopted = await app.inject({
+    method: 'GET',
+    url: '/healthz',
+    headers: { 'x-correlation-id': mine },
+  });
+  assert.equal(adopted.headers['x-correlation-id'], mine, 'a well-formed id is adopted');
+
+  const forged = await app.inject({
+    method: 'GET',
+    url: '/healthz',
+    headers: { 'x-correlation-id': 'not-a-ulid-' + 'x'.repeat(100) },
+  });
+  const issued = forged.headers['x-correlation-id'] as string;
+  assert.ok(isUlid(issued) && !issued.startsWith('not-a-ulid'), 'a malformed id is replaced');
+
+  await app.close();
+});
+
 test('an upgrade without a token is refused as HTTP 401, not as a closed socket', async () => {
   const { app } = await harness();
 
@@ -87,7 +117,16 @@ test('an upgrade without a token is refused as HTTP 401, not as a closed socket'
   // reconnect loop would back off against a permanent failure forever.
   const response = await app.inject({ method: 'GET', url: '/ws' });
   assert.equal(response.statusCode, 401);
-  assert.match(response.json<{ error: string }>().error, /access token/);
+  assert.match(response.json<{ message: string }>().message, /access token/);
+
+  // And it is the PLATFORM's problem document, not a private shape. This service sent
+  // `{ error }` while IAM and MAM sent `{ code, status, message, correlationId }`; a client that
+  // handled theirs could not handle this one's.
+  const problem = response.json<{ code: string; status: number; correlationId: string }>();
+  assert.equal(problem.code, 'UNAUTHORIZED');
+  assert.equal(problem.status, 401);
+  assert.ok(isUlid(problem.correlationId), 'the body carries the ULID the response header does');
+  assert.equal(problem.correlationId, response.headers['x-correlation-id']);
 
   await app.close();
 });
@@ -112,7 +151,7 @@ test('a valid token without a channel claim is refused — nothing here is chann
 
   const response = await app.inject({ method: 'GET', url: `/ws?token=${noChannel}` });
   assert.equal(response.statusCode, 401);
-  assert.match(response.json<{ error: string }>().error, /subject or channel/);
+  assert.match(response.json<{ message: string }>().message, /subject or channel/);
 
   await app.close();
 });
@@ -125,7 +164,7 @@ test('FAILS CLOSED: an unresolvable policy refuses the connection', async () => 
 
   const response = await app.inject({ method: 'GET', url: `/ws?token=${await token(key)}` });
   assert.equal(response.statusCode, 401);
-  assert.match(response.json<{ error: string }>().error, /permissions/);
+  assert.match(response.json<{ message: string }>().message, /permissions/);
   assert.deepEqual(
     log.map((r) => r.event),
     ['refused'],
@@ -415,7 +454,7 @@ test('the node-wide cap refuses with 503, and only once it is actually reached',
   });
   // 503, not 429 — the client did nothing wrong, and retrying is the right response.
   assert.equal(refused.statusCode, 503);
-  assert.match(refused.json<{ error: string }>().error, /capacity/);
+  assert.match(refused.json<{ message: string }>().message, /capacity/);
 
   // And it frees up again, rather than latching.
   a.terminate();
@@ -450,7 +489,7 @@ test('the per-user cap stops ONE account consuming the whole node', async () => 
 
   const refused = await app.inject({ method: 'GET', url: `/ws?token=${await token(key)}` });
   assert.equal(refused.statusCode, 429);
-  assert.match(refused.json<{ error: string }>().error, /too many open connections/);
+  assert.match(refused.json<{ message: string }>().message, /too many open connections/);
 
   // Another user is unaffected — the node has capacity, and this cap is per principal.
   const theirs = await app.injectWS(`/ws?token=${await token(key, { sub: 'user-2' })}`);

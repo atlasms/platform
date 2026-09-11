@@ -11,14 +11,19 @@
 // would believe it had caught up on the gap. It is refused as an unknown frame until there is a
 // buffer behind it.
 
-import { randomUUID } from 'node:crypto';
 import websocketPlugin from '@fastify/websocket';
-import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import { randomUUID } from 'node:crypto';
+import { isUlid, ulid } from '@atlas/contracts';
 import type { EffectivePolicy } from '@atlas/policy';
 import {
   goldenSignals,
   HealthRegistry,
   MetricRegistry,
+  AppError,
+  runWithContext,
+  toProblem,
+  TooManyRequests,
   Unauthorized,
   verifyJwt,
   type Claims,
@@ -112,6 +117,19 @@ function tokenOf(req: FastifyRequest): string | undefined {
   return typeof query?.token === 'string' && query.token !== '' ? query.token : undefined;
 }
 
+/**
+ * Refuse an upgrade with the platform's problem document.
+ *
+ * These refusals cannot go through `setErrorHandler`: a thrown error inside `@fastify/websocket`'s
+ * preValidation closes the socket rather than answering the HTTP request, and a closed socket is
+ * exactly what websocket.md §10 says a bad token must NOT look like. So they are sent directly —
+ * and were sent as a private `{ error }` shape while every other service sent `toProblem`'s.
+ */
+function refuse(reply: FastifyReply, req: FastifyRequest, err: AppError): FastifyReply {
+  const problem = toProblem(err, req.correlationId);
+  return reply.code(problem.status).send(problem);
+}
+
 export async function buildWebsocketApp(options: WebsocketAppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const health = options.health ?? new HealthRegistry();
@@ -137,14 +155,27 @@ export async function buildWebsocketApp(options: WebsocketAppOptions): Promise<F
 
   await app.register(websocketPlugin);
 
-  app.addHook('onRequest', async (req) => {
-    req.correlationId =
-      typeof req.headers['x-correlation-id'] === 'string'
-        ? req.headers['x-correlation-id']
-        : randomUUID();
+  app.addHook('onRequest', (req, _reply, done) => {
+    // A ULID, adopted from the client only when well-formed — the same intake as the gateway
+    // (#306) and the rule the envelope contract states. This was `randomUUID()`, which is not a
+    // ULID, and it adopted any string the client sent; unlike MAM and IAM this service is reached
+    // WITHOUT the gateway in front (its own NodePort / ingress path), so that header is input here.
+    const incoming = req.headers['x-correlation-id'];
+    req.correlationId = typeof incoming === 'string' && isUlid(incoming) ? incoming : ulid();
     req.startedAt = Date.now();
     req.inFlight = true;
     signals.enter();
+    // Ambient, so a log line from any hook or handler carries the id without being passed one —
+    // the service-kit logger reads it. The other three services do this; this one did not.
+    runWithContext({ correlationId: req.correlationId }, () => done());
+  });
+
+  // Echoed, as the gateway echoes it: this service is an edge too, and the id a client is handed
+  // back is what it quotes when it reports a problem. IAM and MAM do not echo because they sit
+  // behind the gateway, which does it for them.
+  app.addHook('onSend', (req, reply, payload, done) => {
+    void reply.header('x-correlation-id', req.correlationId);
+    done(null, payload);
   });
 
   app.addHook('onResponse', async (req, reply) => {
@@ -184,13 +215,17 @@ export async function buildWebsocketApp(options: WebsocketAppOptions): Promise<F
   };
 
   app.setErrorHandler((err: unknown, req, reply) => {
-    const status = (err as { status?: number }).status ?? 500;
+    // The platform's problem document — `{ code, status, message, correlationId }` — mapped by the
+    // one function every service uses. This sent a private `{ error }` shape: a client that
+    // handled IAM's and MAM's refusals could not handle this service's.
+    const problem = toProblem(err, req.correlationId);
     // Logged HERE, where it is raised, with the correlation id the caller was given. A 500 is
     // deliberately opaque to the caller, which makes it invisible to the operator too unless the
     // service says so itself.
-    if (status >= 500) options.onError?.(err, { correlationId: req.correlationId, url: req.url });
-    const message = status >= 500 ? 'Internal error' : ((err as Error).message ?? 'Error');
-    return reply.code(status).send({ error: message });
+    if (problem.status >= 500) {
+      options.onError?.(err, { correlationId: req.correlationId, url: req.url });
+    }
+    return reply.code(problem.status).send(problem);
   });
 
   app.get('/metrics', async (_req, reply) =>
@@ -230,14 +265,14 @@ export async function buildWebsocketApp(options: WebsocketAppOptions): Promise<F
           });
         } catch {
           refusals.inc({ service: 'websocket', reason: 'token' });
-          return reply.code(401).send({ error: 'invalid or missing access token' });
+          return refuse(reply, req, new Unauthorized('invalid or missing access token'));
         }
 
         // Both are required, and neither is defaulted. A connection without a channel cannot be
         // channel-scoped, and every subject on this platform is channel-scoped.
         if (typeof claims.sub !== 'string' || typeof claims.channelId !== 'string') {
           refusals.inc({ service: 'websocket', reason: 'claims' });
-          return reply.code(401).send({ error: 'token carries no subject or channel' });
+          return refuse(reply, req, new Unauthorized('token carries no subject or channel'));
         }
 
         // Capacity is checked AFTER the token (so the refusal names a real user in the log) and
@@ -254,7 +289,12 @@ export async function buildWebsocketApp(options: WebsocketAppOptions): Promise<F
           // 503, not 429: the client did nothing wrong and retrying elsewhere (another replica, or
           // this one later) is the right response. 429 would tell them to slow down, which is
           // advice for a different problem.
-          return reply.code(503).send({ error: 'service at connection capacity' });
+          // INTERNAL with a 503, the gateway's own precedent for a non-500 server-side status.
+          return refuse(
+            reply,
+            req,
+            new AppError('INTERNAL', 503, 'service at connection capacity'),
+          );
         }
 
         const perUser = options.maxConnectionsPerUser ?? DEFAULT_MAX_PER_USER;
@@ -266,7 +306,7 @@ export async function buildWebsocketApp(options: WebsocketAppOptions): Promise<F
             userId: claims.sub,
             reason: `already holds ${perUser} connections`,
           });
-          return reply.code(429).send({ error: 'too many open connections for this user' });
+          return refuse(reply, req, new TooManyRequests('too many open connections for this user'));
         }
 
         const policy = await options.policyFor(claims.sub);
@@ -281,7 +321,7 @@ export async function buildWebsocketApp(options: WebsocketAppOptions): Promise<F
             userId: claims.sub,
             reason: 'no policy',
           });
-          return reply.code(401).send({ error: 'could not establish permissions' });
+          return refuse(reply, req, new Unauthorized('could not establish permissions'));
         }
 
         req.claims = claims;

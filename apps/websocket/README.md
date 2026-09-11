@@ -75,6 +75,14 @@ shape — upgrade first, then close with a status code — is worse: the browser
 socket with no body, so the client cannot tell "your token expired" from "the service is down", and
 Studio's backoff loop would retry a permanent auth failure forever.
 
+That body is the **platform's problem document** — `{ code, status, message, correlationId }` from
+`toProblem`, the same shape IAM and MAM send — and the response carries `x-correlation-id`. Both
+are recent: this service sent a private `{ error }` shape, minted `randomUUID()` (not a ULID, so it
+broke the envelope contract the moment it was written into one), and adopted any `x-correlation-id`
+a client sent. Unlike IAM and MAM it is reached **without the gateway in front** — its own NodePort
+in dev, its own ingress path in production — so that header is client input here, and it gets the
+gateway's rule: a well-formed ULID is adopted, anything else is replaced.
+
 The connection also **fails closed on policy**. If IAM cannot say what the caller may see, the
 upgrade is refused rather than admitted with no rules — `can()` is deliberately lenient, so a
 rule-less policy meeting an incomplete context reads as _any_. An IAM outage must cost connections,
