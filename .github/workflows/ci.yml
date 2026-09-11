@@ -127,6 +127,12 @@ jobs:
       - name: Project graph is complete (consumer fanout)
         run: npm run graph:check
 
+      # Every `enum` in the schemas is a Tier-0 decision — code branches on it — and each is recorded
+      # with its reason in docs/architecture/schemas/tier0-enums.json. An enum that is not there is
+      # either a new behaviour or a list an operator should own, and only a person can say which.
+      - name: Tier-0 enums are inventoried and defined once
+        run: npm run tier0:check
+
       # `scripts/` is not an Nx project, so `nx affected -t lint` never sees it — its eslint block
       # existed from the start and nothing ran it. These scripts are CI's own checks; they get linted.
       - name: Scripts lint

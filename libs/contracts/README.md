@@ -58,6 +58,28 @@ websocket bridge read `userId` off the envelope rather than off `envelope.payloa
 Not generated: the envelope itself. `Envelope` is hand-written in `envelope.ts` because it is
 generic over its payload, which JSON Schema cannot express.
 
+## Tier-0 enums as values (EP-02.5)
+
+Every shared enum in `common.schema.json#/$defs` is exported as an array **and** a type derived
+from it, so a dropdown, a seed, or an exhaustiveness guard uses the contract rather than a copy:
+
+```ts
+import { TierValues, type Tier, TaskKindValues } from '@atlas/contracts';
+TierValues; // ['online', 'near-line', 'offline'] as const — IS the schema's enum (a test pins it)
+const t: Tier = 'near-line';
+```
+
+Which enums exist, and why each one is behaviour rather than data an operator should manage, is
+[`docs/architecture/schemas/tier0-enums.json`](../../docs/architecture/schemas/tier0-enums.json);
+`npm run tier0:check` holds the schemas to it.
+
+## Domain contracts
+
+`validateDomain('setting-descriptor', value)` — the five stored/served shapes (`file`,
+`policy-rule`, `setting-descriptor`, `vocabulary-term`, `workflow-definition`) are compiled at
+load like the events are. Nothing validated against them at runtime, so until EP-02.5 nothing
+compiled them either, and a `$ref` in one of them could have been wrong until its first consumer.
+
 ## Run
 
 From the workspace root (this is an Nx project — `@atlas/contracts`):

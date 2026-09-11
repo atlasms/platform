@@ -87,6 +87,34 @@
     "Severity": {
       "enum": ["info", "warning", "critical"],
       "description": "Uniform severity for notifications, tasks and alerts."
+    },
+    "TaskKind": {
+      "enum": ["approve", "edit", "review", "generic"],
+      "description": "Kind of human-in-the-loop task. One definition: BMS declares it in a workflow, emits it in workflow.task.created, and Notifications re-emits it in task.created — three sites had two value sets (workflow.task.created could not express 'generic')."
+    },
+    "PrincipalKind": {
+      "enum": ["user", "group"],
+      "description": "Who a task is assigned to, or a message addressed to."
+    },
+    "UserState": {
+      "enum": ["active", "disabled", "locked", "invited"],
+      "description": "IAM account state; a state machine with coded transitions (lockout, invitation)."
+    },
+    "SettingScope": {
+      "enum": ["deployment", "channel", "category", "user"],
+      "description": "Levels a Tier-3 setting can be written at. Resolution is nearest-wins: code default -> deployment -> channel -> category -> user (design §2.5)."
+    },
+    "AiTier": {
+      "enum": ["online", "offline"],
+      "description": "Which AI tier ran: online (interactive, bounded latency) or offline (batch). Not the HSM storage Tier."
+    },
+    "AiTask": {
+      "enum": ["faces", "objects", "shots", "scenes", "stt", "language-id", "keywords", "summary"],
+      "description": "An enrichment task; each is its own model pipeline in the AI service."
+    },
+    "PublishKind": {
+      "enum": ["epg", "hbbtv", "social", "web"],
+      "description": "An outbound publishing connector; each is its own integration."
     }
   }
 }

@@ -8,7 +8,7 @@
   "additionalProperties": false,
   "properties": {
     "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
-    "task": { "enum": ["faces", "objects", "shots", "scenes", "stt", "language-id", "keywords", "summary"] },
+    "task": { "$ref": "../common.schema.json#/$defs/AiTask" },
     "error": { "$ref": "../common.schema.json#/$defs/Error" },
     "at": { "type": "string", "format": "date-time" }
   }

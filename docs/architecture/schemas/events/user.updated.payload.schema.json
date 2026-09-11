@@ -9,7 +9,7 @@
   "properties": {
     "userId": { "$ref": "../common.schema.json#/$defs/Ulid" },
     "changed": { "type": "array", "items": { "type": "string" }, "description": "Field names that changed, e.g. [\"state\", \"assignments\"]." },
-    "state": { "enum": ["active", "disabled", "locked", "invited"], "description": "New state, when state changed." },
+    "state": { "$ref": "../common.schema.json#/$defs/UserState", "description": "New state, when state changed." },
     "at": { "type": "string", "format": "date-time" }
   }
 }

@@ -39,8 +39,8 @@
       "description": "True when there is no meaningful default and the deployment must supply a value."
     },
     "scope": {
-      "enum": ["deployment", "channel", "category", "user"],
-      "description": "The DEEPEST level allowed to set this key. Resolution is nearest-wins: code default -> deployment -> channel -> category -> user (design §2.5)."
+      "$ref": "common.schema.json#/$defs/SettingScope",
+      "description": "The DEEPEST level allowed to set this key."
     },
     "min": { "type": "number", "description": "Inclusive lower bound for int/number." },
     "max": { "type": "number", "description": "Inclusive upper bound for int/number." },

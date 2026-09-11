@@ -17,7 +17,7 @@
         "type": "object",
         "required": ["kind", "id"],
         "additionalProperties": false,
-        "properties": { "kind": { "enum": ["user", "group"] }, "id": { "type": "string" } }
+        "properties": { "kind": { "$ref": "../common.schema.json#/$defs/PrincipalKind" }, "id": { "type": "string" } }
       }
     },
     "threadId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "Conversation thread, when part of one." },

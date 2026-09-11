@@ -69,6 +69,16 @@ These stay exactly where they are today. Inventoried from the current schemas:
 contract. That is the point — [contracts-first](../roadmap/16-system-implementation-plan.md) with
 `additionalProperties: false` and generated TypeScript only works if these are stable.
 
+**The table above is illustrative; the inventory is
+[`schemas/tier0-enums.json`](schemas/tier0-enums.json)** — every `enum` in every schema, by JSON
+pointer, with the reason code branches on it (39 today). `npm run tier0:check` (CI, every PR)
+fails on an enum that is not inventoried, on a stale entry, and on the same value set defined
+twice — a Tier-0 enum has **one** definition, a `$def` in `common.schema.json`, and every site
+`$ref`s it. Before the check, "task kind" was defined three times with two value sets:
+`workflow.task.created` could not express a `generic` human task that the workflow definition
+allowed. Adding an enum therefore means answering the question at the top of this document in
+writing; if the honest answer is "no, an operator should manage this list", it is not an enum.
+
 > **Corollary — never `enum` a Tier 1/2 list in a JSON Schema.** If classifications were an
 > `enum`, every admin edit would be a contract change, a regenerated type, and a redeploy.
 > Use `{ "type": "string", "x-atlas-vocabulary": "classification" }` and validate against the

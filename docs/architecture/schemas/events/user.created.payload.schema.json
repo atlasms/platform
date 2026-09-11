@@ -10,7 +10,7 @@
     "userId": { "$ref": "../common.schema.json#/$defs/Ulid" },
     "username": { "type": "string" },
     "name": { "type": "string", "description": "Display name." },
-    "state": { "enum": ["active", "disabled", "locked", "invited"] },
+    "state": { "$ref": "../common.schema.json#/$defs/UserState" },
     "createdBy": { "type": "string" },
     "createdAt": { "type": "string", "format": "date-time" }
   }

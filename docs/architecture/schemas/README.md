@@ -13,7 +13,8 @@
 ```
 schemas/
   envelope.schema.json        # the wrapper every message shares
-  common.schema.json          # reusable $defs (Ulid, Checksum, Tier, Rendition, …)
+  common.schema.json          # reusable $defs (Ulid, Checksum, Tier, Rendition, …) — and every shared Tier-0 enum
+  tier0-enums.json            # every enum in these schemas, with why code branches on it (npm run tier0:check)
   workflow-definition.schema.json   # domain contract (not an event): the BMS workflow graph
   events/
     <domain>.<entity>.<action>.payload.schema.json   # one payload contract per event

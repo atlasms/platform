@@ -205,7 +205,7 @@
       "description": "BPMN User Task. Assigns work to a person/role; the flow waits for completion.",
       "required": ["taskType", "assignee"],
       "properties": {
-        "taskType": { "enum": ["approve", "review", "edit", "generic"] },
+        "taskType": { "$ref": "common.schema.json#/$defs/TaskKind" },
         "assignee": {
           "type": "object",
           "additionalProperties": false,
