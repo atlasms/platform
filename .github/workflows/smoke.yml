@@ -100,6 +100,10 @@ jobs:
           kubectl -n atlas rollout status statefulset/postgres --timeout=180s
           kubectl -n atlas rollout status statefulset/nats --timeout=180s
 
+      # Available, not yet necessarily reachable: `rollout status` returns when the pod is Ready,
+      # and kube-proxy programs its endpoint a moment later. The suite's third test waits for each
+      # proxied upstream to actually answer through the gateway, so that gap is its problem to
+      # absorb, not a flake here.
       - name: Wait for the services
         run: |
           for d in iam mam websocket api-gateway; do

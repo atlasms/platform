@@ -13,7 +13,7 @@ overlays/dev/        local kind cluster — NodePort, single replicas, local ima
 ```sh
 kind create cluster --config infra/k8s/kind-cluster.yaml
 npm run k8s:up            # build images, load them into the node, apply the overlay
-npm run smoke             # 15 checks against http://localhost:30080 (and ws://localhost:30081)
+npm run smoke             # 16 checks against http://localhost:30080 (and ws://localhost:30081)
 ```
 
 `npm run k8s:up` is `k8s:build` + `k8s:load` + `k8s:deploy`. Rebuild and reload after a code change:
@@ -24,6 +24,12 @@ stops the kubelet chasing a tag that exists nowhere.
 > `IfNotPresent` means the kubelet keeps what it has, so the old pod keeps running and you test
 > stale code while believing otherwise. `kubectl -n atlas rollout restart deployment/<name>` after
 > `k8s:load`, or delete the pod.
+
+> ⚠️ **`rollout status` returning is not "reachable through the Service".** The pod is Ready a few
+> hundred milliseconds to a couple of seconds before kube-proxy has programmed its endpoint, and a
+> request through the gateway in that window is `502 upstream "mam" unreachable`. The smoke suite
+> gates on it (third test, 30 s budget) rather than the workflow, because `npm run smoke` straight
+> after `k8s:up` has the same race on a laptop.
 
 **CI runs all of this** ([`smoke.yml`](../../.github/workflows/smoke.yml)) on every push to `main`
 and on any PR touching `infra/`, the npm scripts or a service `main.ts`. It uses these same
