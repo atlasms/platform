@@ -67,8 +67,9 @@ services trust the established identity without re-parsing the JWT.
 
 Mostly synchronous, but it participates in two async concerns:
 
-- **Emits** `gateway.access.logged` (batched) to [Logging](logging-analytics.md) — or ships
-  access logs directly to the log pipeline; and `alert.raised` conditions (e.g. auth failure
+- **Emits** `gateway.access.logged` — **via the log pipeline**, as one structured line per
+  request (the payload schema is the contract for that line, and the gateway's tests validate a
+  real record against it), not on the domain bus; and `alert.raised` conditions (e.g. auth failure
   spikes) via metrics, not the domain bus.
 - **Consumes** `permissions.changed` (from [IAM](iam.md)) to invalidate the permission-version
   cache, and service-registry/health signals to update routing.

@@ -4,7 +4,7 @@
 // Spec: docs/architecture/services/api-gateway.md
 
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { ulid } from '@atlas/contracts';
+import { isUlid, ulid } from '@atlas/contracts';
 import {
   goldenSignals,
   isTraceable,
@@ -52,6 +52,8 @@ export interface AccessLogRecord {
   status: number;
   userId?: string;
   latencyMs: number;
+  /** W3C trace id when the request was traced — what links this line to its trace (EP-12.3). */
+  traceId?: string;
   at: string;
 }
 
@@ -197,8 +199,15 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
 
   // --- correlation: issue or adopt, for every request including failures ------------------
   app.addHook('onRequest', (req, _reply, done) => {
+    // Adopted only when it is a well-formed ULID; anything else is replaced with a minted one.
+    // This header is INPUT — the one internal header a client can set — and it was adopted
+    // verbatim: any length, any bytes, straight into every service's log line for the request,
+    // the outbox headers, and the audit record whose contract says it is a ULID. Studio never
+    // sends one, so the only thing validation refuses is something forged. A caller that wants
+    // to correlate its own calls mints a ULID; the doc's "the gateway ORIGINATES the correlation
+    // id" (§2, §12) is what this restores for everyone else.
     const incoming = req.headers[INTERNAL_HEADERS.correlation];
-    const correlationId = typeof incoming === 'string' && incoming ? incoming : ulid();
+    const correlationId = typeof incoming === 'string' && isUlid(incoming) ? incoming : ulid();
     req.correlationId = correlationId;
     req.startedAt = Date.now();
     req.inFlight = true;
@@ -271,6 +280,9 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
       status: reply.statusCode,
       ...(req.claims?.sub !== undefined ? { userId: req.claims.sub } : {}),
       latencyMs: Date.now() - req.startedAt,
+      // Readable after `end()` — it is the span's identity, not its state. Same as every other
+      // service's line (#245), so logs↔traces links work at the edge too.
+      ...(req.span ? { traceId: req.span.traceId } : {}),
       at: new Date().toISOString(),
     });
 

@@ -2,18 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas.example/schemas/events/gateway.access.logged.payload.schema.json",
   "title": "gateway.access.logged payload",
-  "description": "Access record for a request through the API Gateway. High-volume: normally shipped via the log pipeline (not the broadcast bus) and MAY be sampled; defined here so the audit sink has one shape. Consumed by Logging & Analytics.",
+  "description": "The API Gateway's access record: one per request at the edge, so every request appears exactly once. High-volume, so it ships via the log pipeline (structured log line -> Loki), NOT the broadcast bus, and is defined here so the audit sink and the gateway agree on one shape - the gateway's tests validate a real record against this schema. Inner-service access lines (#245) are a different, per-hop record and are not this event. Consumed by Logging & Analytics.",
   "type": "object",
   "required": ["requestId", "method", "path", "status", "at"],
   "additionalProperties": false,
   "properties": {
     "requestId": { "$ref": "../common.schema.json#/$defs/Ulid" },
     "method": { "type": "string", "examples": ["GET", "POST"] },
-    "path": { "type": "string" },
+    "path": { "type": "string", "description": "What the client asked for, verbatim. The edge is the one place the raw path is worth keeping." },
+    "route": { "type": "string", "description": "The matched routing-table prefix, when the request matched one - bounded, so it aggregates. Absent on an unroutable request." },
     "status": { "type": "integer", "minimum": 100, "maximum": 599 },
     "userId": { "type": "string", "description": "Authenticated subject, when present." },
     "ip": { "type": "string" },
     "latencyMs": { "type": "number", "minimum": 0 },
+    "traceId": { "type": "string", "pattern": "^[0-9a-f]{32}$", "description": "W3C trace id, when the request was traced. What links this line to its trace." },
     "at": { "type": "string", "format": "date-time" }
   }
 }

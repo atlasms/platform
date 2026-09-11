@@ -11,13 +11,13 @@ plan: [api-gateway-plan.md](../../docs/roadmap/services/api-gateway-plan.md).
 The gateway verifies the token **locally against the JWKS** — it never calls IAM per request — then
 forwards an internal header set:
 
-| Header                 | Meaning                                    |
-| ---------------------- | ------------------------------------------ |
-| `x-atlas-user`         | authenticated subject                      |
-| `x-atlas-channel`      | channel scope from the token               |
-| `x-atlas-scopes`       | space-separated permissions                |
-| `x-atlas-perm-version` | permission version the token was issued at |
-| `x-correlation-id`     | issued if absent, **adopted** if present   |
+| Header                 | Meaning                                            |
+| ---------------------- | -------------------------------------------------- |
+| `x-atlas-user`         | authenticated subject                              |
+| `x-atlas-channel`      | channel scope from the token                       |
+| `x-atlas-scopes`       | space-separated permissions                        |
+| `x-atlas-perm-version` | permission version the token was issued at         |
+| `x-correlation-id`     | **adopted** if a well-formed ULID, else **issued** |
 
 `authorization` is deliberately **not** forwarded. Re-parsing the JWT in every service would be
 duplicated trust and a second place to get verification wrong. A test pins this.
@@ -130,6 +130,15 @@ for it.
 - **Body over the cap** → `413 PAYLOAD_TOO_LARGE`.
 - **Every response** — including 401/404/429 — carries a correlation id and produces an access-log
   record. An unroutable request is still traceable.
+- **The access record IS the `gateway.access.logged` contract** (EP-08.6). It ships as a structured
+  log line (→ Loki), not on the bus — the schema says so — and a test validates a real record from
+  each of the three shapes the hook emits (404 / 401 / proxied) against the loaded schema. It did
+  not validate before: #245 added `route`, the schema had `additionalProperties: false`, and every
+  proxied request failed its own contract with nothing comparing them.
+- **`x-correlation-id` is the one internal header a client can set, so it is INPUT.** It used to
+  be adopted verbatim — any length, any bytes, straight into every service's log line. Now only a
+  well-formed ULID is adopted; anything else is replaced. Studio sends none, so nothing legitimate
+  changes; a caller that wants to correlate its own calls mints a ULID.
 
 ## Tests
 
