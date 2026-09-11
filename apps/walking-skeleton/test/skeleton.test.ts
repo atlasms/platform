@@ -107,27 +107,32 @@ test('EP-13.3: ONE correlation id threads gateway -> service -> broker -> socket
   const studio = studioClient(s, 'user-1');
   const token = await s.tokenFor('user-1');
 
+  // A ULID, because that is what the gateway adopts (EP-08.6). This used to be `'trace-me'`,
+  // and the gateway used to take it — any string a client sent, straight into every log line
+  // for the request. A well-formed id is still adopted, so the property under test is unchanged:
+  // the id the CALLER chose is the one that threads all the way through.
+  const mine = ulid();
   const res = await s.gateway.inject({
     method: 'POST',
     url: '/api/v1/assets',
     headers: {
       authorization: `Bearer ${token}`,
       'content-type': 'application/json',
-      'x-correlation-id': 'trace-me',
+      'x-correlation-id': mine,
     },
     payload: { title: 'Traceable' },
   });
 
   assert.equal(res.statusCode, 201);
   // The gateway echoes the id it established (here, adopted from the caller).
-  assert.equal(res.headers['x-correlation-id'], 'trace-me');
+  assert.equal(res.headers['x-correlation-id'], mine);
 
   await s.settle();
 
   // The SAME id survives the async hop — which is what makes a single trace possible across
   // the sync request and the event that followed it.
   const envelope = studio.events()[0]?.payload as Envelope;
-  assert.equal(envelope.correlationId, 'trace-me');
+  assert.equal(envelope.correlationId, mine);
 });
 
 test('the outbox is atomic: a rejected request leaves neither row nor event', async () => {

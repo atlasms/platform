@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateTestKey, HealthRegistry } from '@atlas/service-kit';
-import { isUlid } from '@atlas/contracts';
+import { isUlid, ulid, validatePayload } from '@atlas/contracts';
 import { buildGateway, INTERNAL_HEADERS, matchRoute, type AccessLogRecord } from '../src/index.ts';
 
 // Headless throughout: app.inject() means no ports, no sockets, no flakiness.
@@ -183,15 +183,40 @@ test('a correlation id is issued when absent and echoed back', async () => {
   assert.equal(seen[0]?.headers[INTERNAL_HEADERS.correlation], echoed, 'same id goes upstream');
 });
 
-test('an inbound correlation id is adopted, not replaced', async () => {
+test('a well-formed inbound correlation id is adopted, not replaced', async () => {
   const { app, seen } = await gatewayWith();
+  const mine = ulid();
   const res = await app.inject({
     method: 'POST',
     url: '/auth/login',
-    headers: { [INTERNAL_HEADERS.correlation]: 'corr-from-studio' },
+    headers: { [INTERNAL_HEADERS.correlation]: mine },
   });
-  assert.equal(res.headers[INTERNAL_HEADERS.correlation], 'corr-from-studio');
-  assert.equal(seen[0]?.headers[INTERNAL_HEADERS.correlation], 'corr-from-studio');
+  assert.equal(res.headers[INTERNAL_HEADERS.correlation], mine);
+  assert.equal(seen[0]?.headers[INTERNAL_HEADERS.correlation], mine);
+});
+
+test('a MALFORMED inbound correlation id is replaced, not adopted', async () => {
+  // This header is the one internal header a client can set, and it used to be adopted verbatim
+  // — this very test pinned `'corr-from-studio'` as the expected value. That put any string a
+  // caller chose into every service's log line for the request, into the outbox headers, and
+  // into an audit record whose contract says ULID. Nothing legitimate sends a non-ULID: Studio
+  // sends none at all.
+  const { app, seen, logs } = await gatewayWith();
+  const forged = 'corr-from-studio-' + 'x'.repeat(200);
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    headers: { [INTERNAL_HEADERS.correlation]: forged },
+  });
+  const issued = res.headers[INTERNAL_HEADERS.correlation] as string;
+  assert.ok(isUlid(issued), 'the response carries a minted ULID');
+  assert.notEqual(issued, forged);
+  assert.equal(
+    seen[0]?.headers[INTERNAL_HEADERS.correlation],
+    issued,
+    'and the upstream sees the same one',
+  );
+  assert.equal(logs[0]?.requestId, issued, 'as does the access record');
 });
 
 test('even a 404 carries a correlation id — an unroutable request is still traceable', async () => {
@@ -221,8 +246,39 @@ test('every response is logged, including failures, with the subject when known'
   );
   assert.equal(logs[0]?.userId, undefined);
   assert.equal(logs[2]?.userId, 'user-42');
-  assert.ok(logs.every((l) => isUlid(l.requestId) || l.requestId.length > 0));
+  // Was `isUlid(...) || l.requestId.length > 0` — vacuous, and a tell that a non-ULID had once
+  // been adopted and the assertion loosened around it rather than the intake fixed.
+  assert.ok(logs.every((l) => isUlid(l.requestId)));
   assert.ok(logs.every((l) => typeof l.latencyMs === 'number' && l.latencyMs >= 0));
+});
+
+test('CONTRACT: every access record validates against gateway.access.logged', async () => {
+  // The schema exists "so the audit sink has one shape" — and the gateway's line did not have it.
+  // #245 added `route` to the record; the schema has `additionalProperties: false`; so every
+  // PROXIED request — the normal case — failed its own contract, and the only line that passed
+  // was an unroutable 404. Nothing compared them. This does, against the loaded schema, for the
+  // three shapes the hook can emit.
+  const { app, key, logs } = await gatewayWith();
+
+  await app.inject({ method: 'GET', url: '/nope' }); // 404: no route, no user
+  await app.inject({ method: 'GET', url: '/api/v1/assets' }); // 401: route, no user
+  const token = await key.sign({ sub: 'user-42' });
+  await app.inject({
+    method: 'GET',
+    url: '/api/v1/assets',
+    headers: { authorization: `Bearer ${token}` },
+  }); // 200: route and user
+
+  assert.equal(logs.length, 3);
+  for (const record of logs) {
+    const result = validatePayload('gateway.access.logged', record);
+    assert.equal(
+      result.valid,
+      true,
+      `${record.method} ${record.path} -> ${record.status}: ${JSON.stringify(result.errors)}`,
+    );
+  }
+  assert.equal(logs[2]?.route, '/api/v1/assets', 'the proxied line carries its route');
 });
 
 // --- health ---------------------------------------------------------------
