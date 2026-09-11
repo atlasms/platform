@@ -46,7 +46,7 @@ function gh(args, { allowFail = false } = {}) {
   } catch (e) {
     if (allowFail) return null;
     const msg = (e.stderr || e.stdout || e.message).toString().trim();
-    throw new Error(`gh ${args.slice(0, 3).join(' ')} failed:\n${msg}`);
+    throw new Error(`gh ${args.slice(0, 3).join(' ')} failed:\n${msg}`, { cause: e });
   }
 }
 function graphql(query, vars = {}) {

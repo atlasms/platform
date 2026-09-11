@@ -119,6 +119,18 @@ jobs:
       - name: API types match the contracts
         run: npm run api:check
 
+      # Also unconditional, and it must come BEFORE `affected`: the property under test is that the
+      # graph `affected` walks is complete. A relative cross-package import or an undeclared
+      # `@atlas/*` dependency drops an edge silently — and the project that lost it is then exactly
+      # the one an affected-only run would skip.
+      - name: Project graph is complete (consumer fanout)
+        run: npm run graph:check
+
+      # `scripts/` is not an Nx project, so `nx affected -t lint` never sees it — its eslint block
+      # existed from the start and nothing ran it. These scripts are CI's own checks; they get linted.
+      - name: Scripts lint
+        run: npm run lint:scripts
+
       # --- PR: only what this change affects -------------------------------
       - name: Affected (lint, typecheck, test)
         if: github.event_name == 'pull_request'
