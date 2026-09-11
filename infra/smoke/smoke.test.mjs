@@ -433,7 +433,12 @@ test('smoke: EP-19.1 — a write is in the audit history, with its delta, throug
   const created = await get('/api/v1/assets', {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ title: 'Audited clip' }),
+    body: JSON.stringify({
+      title: 'Audited clip',
+      mediaType: 'video',
+      fileType: 'mxf',
+      categoryId: 'cat-1',
+    }),
   });
   assert.equal(created.status, 201, `create failed: ${created.text}`);
   const asset = json(created);
