@@ -233,7 +233,11 @@ Studio is the one project that **emits**, and it ships its own toolchain:
 - **TypeScript 6.0** (Angular 22 requires it) while the libraries are on **5.9**. npm keeps it
   nested under `apps/studio/node_modules`. Do not try to unify them — the libraries' `tsc` is
   unaffected.
-- **vitest**, not `node:test`, because component tests need a DOM.
+- **vitest**, not `node:test`, because component tests need a DOM. **All spec files share that
+  DOM**: the builder defaults `isolate: false`, so `localStorage` carries between files, and
+  `EditorStore` persists the workspace there. `src/test-setup.ts` clears storage before every test
+  — the leak it closes passed on every PR and failed on `main`, depending on which files shared a
+  worker.
 - **Its own `tsconfig.json`**, not `tsconfig.base.json`: Angular needs `module: preserve` and its
   own compiler options. The workspace's _strictness_ is reproduced explicitly there instead, so
   Studio is held to the same bar.
