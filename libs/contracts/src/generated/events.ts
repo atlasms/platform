@@ -235,6 +235,21 @@ export interface AssetUpdatedPayload {
   source?: 'user' | 'ai' | 'technical';
 }
 
+/** Emitted by the OWNING service with every mutation, in the same transaction as the change — alongside the domain event when there is one, alone when there is not (an internal lifecycle step, a rendition attach). Carries the field-level before/after delta the change-history viewer reads (logging-analytics.md §6.4; FR-AUD-1..5); the owning service produces it at write time because only it holds the prior state. `actor` and `correlationId` are on the envelope, not here. Consumed by Logging. */
+export interface AuditRecordedPayload {
+  /** The owning service's noun for what changed: asset, field-schema, schedule, … The sink keys history on (entityType, entityId). */
+  entityType: string;
+  /** The entity's id in its owning service — a ULID for most entities, a name for keyed ones such as a field schema. */
+  entityId: string;
+  /** Monotonic per entity, +1 per mutation. Aligns with the entity's own version counter where it has one (an asset's `version`). */
+  revision: number;
+  /** The domain event this audits (asset.updated), or for a mutation that announces nothing, the operation itself (asset.attachRenditions). */
+  action: string;
+  origin: { service: string };
+  /** Field name → { before, after }. A created entity has only `after`s; a removed field only a `before`. Values are the field's whole value — a JSON diff at field granularity, which is what the diff viewer renders. Fields that change on every write (updatedAt, version) are excluded: version IS `revision`. */
+  delta: Record<string, { before?: unknown; after?: unknown }>;
+}
+
 /** Emitted by HSM when an integrity check fails. Raises an alert (Notifications, Logging). */
 export interface ChecksumMismatchPayload {
   assetId: Ulid;
@@ -707,6 +722,7 @@ export interface EventPayloads {
   'asset.rejected': AssetRejectedPayload;
   'asset.replaced': AssetReplacedPayload;
   'asset.updated': AssetUpdatedPayload;
+  'audit.recorded': AuditRecordedPayload;
   'checksum.mismatch': ChecksumMismatchPayload;
   'checksum.verified': ChecksumVerifiedPayload;
   'config.changed': ConfigChangedPayload;

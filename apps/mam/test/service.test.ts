@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validatePayload, type Envelope } from '@atlas/contracts';
+import { validatePayload, type Envelope, type EventPayloads } from '@atlas/contracts';
 import { SqliteOutboxStore } from '@atlas/data';
 import { InMemoryBroker, OutboxRelay } from '@atlas/messaging';
 import { compile } from '@atlas/policy';
@@ -121,7 +121,8 @@ test('a no-op update changes nothing and emits nothing', async () => {
   const events = await drain();
   assert.deepEqual(
     events.map((e) => e.type),
-    ['asset.created'],
+    ['asset.created', 'audit.recorded'],
+    'creation is announced and audited; the no-op is neither',
   );
 });
 
@@ -187,9 +188,144 @@ test('the full happy path: created → processing → ready → approved', async
 
   const events = await drain();
   assert.deepEqual(
-    events.map((e) => e.type),
+    events.filter((e) => e.type !== 'audit.recorded').map((e) => e.type),
     ['asset.created', 'asset.ready', 'asset.approved'],
   );
+  // EP-19.2: EVERY mutation leaves an audit record — including attachRenditions and the internal
+  // startProcessing step, which used to commit with a bare put that nothing could account for.
+  const audits = events
+    .filter((e) => e.type === 'audit.recorded')
+    .map((e) => e.payload as unknown as EventPayloads['audit.recorded']);
+  assert.deepEqual(
+    audits.map((a) => [a.action, a.revision]),
+    [
+      ['asset.created', 1],
+      ['asset.attachRenditions', 2],
+      ['asset.startProcessing', 3],
+      ['asset.ready', 4],
+      ['asset.approved', 5],
+    ],
+    'one record per mutation, revision aligned with the asset version',
+  );
+  // Domain event first, then its audit — the relay publishes in outbox order.
+  assert.equal(events[0]?.type, 'asset.created');
+  assert.equal(events[1]?.type, 'audit.recorded');
+});
+
+/** The most recent audit record the relay has published — `drain()` is cumulative. */
+const lastAudit = (events: Envelope[]): EventPayloads['audit.recorded'] => {
+  const audits = events.filter((e) => e.type === 'audit.recorded');
+  const last = audits[audits.length - 1];
+  assert.ok(last, 'no audit record was published');
+  return last.payload as unknown as EventPayloads['audit.recorded'];
+};
+
+test('EP-19.2: the audit record carries the field-level before/after, at write time', async () => {
+  const { service, caller, drain } = harness();
+  const created = await service.create(caller(), {
+    ...NEW_ASSET,
+    title: 'First',
+    categoryId: 'cat-1', // markReady's metadata gate, later in the test
+  });
+
+  // A creation: every field is an `after`, nothing is a `before`.
+  let audit = lastAudit(await drain());
+  assert.equal(audit.entityType, 'asset');
+  assert.equal(audit.entityId, created.id);
+  assert.equal(audit.action, 'asset.created');
+  assert.equal(audit.revision, 1);
+  assert.deepEqual(audit.origin, { service: 'mam' });
+  assert.deepEqual(audit.delta['title'], { after: 'First' });
+  assert.deepEqual(audit.delta['id'], { after: created.id });
+  assert.ok(
+    Object.values(audit.delta).every((d) => d.before === undefined),
+    'no befores at birth',
+  );
+
+  // A metadata change: only the fields that changed, with both sides.
+  await service.update(caller(), created.id, { title: 'Second' });
+  audit = lastAudit(await drain());
+  assert.equal(audit.action, 'asset.updated');
+  assert.equal(audit.revision, 2);
+  // Checked BEFORE the deepEqual, which narrows `delta` to exactly that shape.
+  const keys = Object.keys(audit.delta);
+  assert.ok(!keys.includes('updatedAt'), 'always-changing fields are not noise in a diff');
+  assert.ok(!keys.includes('version'), 'version IS revision, on the record');
+  assert.deepEqual(audit.delta, { title: { before: 'First', after: 'Second' } });
+
+  // A lifecycle transition: the state, and what the transition set.
+  await service.attachRenditions(caller(), created.id);
+  await service.transition(caller(), created.id, 'startProcessing');
+  await service.transition(caller(), created.id, 'markReady');
+  await service.transition(caller(), created.id, 'approve', {
+    expiresAt: '2027-01-01T00:00:00.000Z',
+  });
+  audit = lastAudit(await drain());
+  assert.equal(audit.action, 'asset.approved');
+  assert.equal(audit.revision, 6);
+  assert.deepEqual(audit.delta, {
+    state: { before: 'ready', after: 'approved' },
+    expiresAt: { after: '2027-01-01T00:00:00.000Z' },
+  });
+});
+
+test('EP-19.2: side-table changes — the tag list — are in the delta', async () => {
+  // `tags` (and `extended`) do not live on the Asset row, so a record diff would show only the
+  // version bump. The caller holds both states and supplies the entry; this pins that it does.
+  const { service, caller, drain } = harness();
+  const asset = await service.create(caller(), NEW_ASSET);
+
+  await service.setTags(caller(), asset.id, ['sport', 'live']);
+  assert.deepEqual(lastAudit(await drain()).delta['tags'], {
+    before: [],
+    after: ['live', 'sport'],
+  });
+
+  await service.setTags(caller(), asset.id, ['live']);
+  assert.deepEqual(lastAudit(await drain()).delta['tags'], {
+    before: ['live', 'sport'],
+    after: ['live'],
+  });
+});
+
+test('EP-19.2: the audit record commits WITH the change, or neither does', async () => {
+  // The dual of the outbox guarantee, and it matters more here: the record is what compliance
+  // reads. If writing the audit record fails INSIDE the unit of work, the row and the domain event
+  // must roll back with it — a change without its record is the one outcome this exists to prevent.
+  const { service, caller, drain, store } = harness();
+  const asset = await service.create(caller(), NEW_ASSET);
+  const published = (await drain()).length; // cumulative: creation's two events
+
+  // Fail the SECOND enqueue of the next transaction — the audit record, which follows the domain
+  // event — by wrapping the store's unit of work.
+  const real = store.transaction.bind(store);
+  let enqueues = 0;
+  (store as { transaction: typeof store.transaction }).transaction = (fn) =>
+    real(async (tx) =>
+      fn(
+        new Proxy(tx, {
+          get: (target, key, receiver) =>
+            key === 'enqueue'
+              ? async (record: Parameters<typeof tx.enqueue>[0]) => {
+                  if (++enqueues === 2) throw new Error('audit write failed');
+                  return target.enqueue(record);
+                }
+              : Reflect.get(target, key, receiver),
+        }),
+      ),
+    );
+
+  await assert.rejects(
+    service.update(caller(), asset.id, { title: 'Changed' }),
+    /audit write failed/,
+  );
+  assert.equal(enqueues, 2, 'the domain event was written first, then the audit failed');
+
+  (store as { transaction: typeof store.transaction }).transaction = real;
+  assert.equal((await drain()).length, published, 'the domain event rolled back with the record');
+  const after = await service.get(caller(), asset.id);
+  assert.equal(after.title, NEW_ASSET.title, 'and so did the change');
+  assert.equal(after.version, 1);
 });
 
 test('EVERY emitted payload validates against its shipped schema', async () => {
@@ -275,7 +411,7 @@ test('an illegal transition is a 409 and changes nothing', async () => {
   assert.equal((await store.get(asset.id))?.state, 'created');
   assert.deepEqual(
     (await drain()).map((e) => e.type),
-    ['asset.created'],
+    ['asset.created', 'audit.recorded'],
   );
 });
 

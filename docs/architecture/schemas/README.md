@@ -123,6 +123,7 @@ schemas/
 | `ai.enrichment.failed` | AI | [ai.enrichment.failed](events/ai.enrichment.failed.payload.schema.json) |
 | `alert.raised` | Logging | [alert.raised](events/alert.raised.payload.schema.json) |
 | `gateway.access.logged` | API Gateway | [gateway.access.logged](events/gateway.access.logged.payload.schema.json) |
+| `audit.recorded` | **every owning service** | [audit.recorded](events/audit.recorded.payload.schema.json) — the field-level before/after delta of a mutation, in the same transaction as the change (EP-19.2; AGENTS.md §5.6) |
 
 > Every event named in a [service spec](../services/) now has a payload schema here. New events
 > follow the same envelope + payload pattern and are added to this table when introduced.
