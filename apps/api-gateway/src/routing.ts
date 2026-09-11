@@ -55,4 +55,7 @@ export const defaultRoutes: RoutingTable = [
   { service: 'hsm', origin: 'http://hsm:3000', prefix: '/api/v1/files' },
   { service: 'mts', origin: 'http://mts:3000', prefix: '/api/v1/jobs' },
   { service: 'scheduling', origin: 'http://scheduling:3000', prefix: '/api/v1/schedules' },
+  // EP-19: the audit sink's read surface. `/history` exists (19.1); `/logs` is 19.3.
+  { service: 'logging', origin: 'http://logging:3000', prefix: '/api/v1/history' },
+  { service: 'logging', origin: 'http://logging:3000', prefix: '/api/v1/logs' },
 ];

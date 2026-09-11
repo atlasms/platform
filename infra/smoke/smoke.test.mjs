@@ -110,7 +110,10 @@ test('smoke: every PROXIED upstream answers through the gateway before anything 
   // One probe per proxied upstream. IAM is proven by /readyz and by the login above; the socket
   // service is its own origin and is proven by the EP-13.2 test. Adding a routed service means
   // adding its cheapest authenticated GET here.
-  const upstreams = [['mam', '/api/v1/assets?limit=1']];
+  const upstreams = [
+    ['mam', '/api/v1/assets?limit=1'],
+    ['logging', '/api/v1/history/asset/01H000000000000000000000'],
+  ];
   const budgetMs = Number(process.env.ATLAS_SMOKE_UPSTREAM_BUDGET_MS ?? 30_000);
 
   for (const [name, path] of upstreams) {
@@ -417,6 +420,43 @@ test('smoke: EP-13.2 — a write becomes a live update on a real socket', async 
   } finally {
     socket.close();
   }
+});
+
+test('smoke: EP-19.1 — a write is in the audit history, with its delta, through the whole spine', async () => {
+  // The longest path in the platform, asserted on a live cluster: gateway → MAM → Postgres →
+  // outbox → relay → JetStream → the sink → Postgres → gateway → this read. Every hop is async
+  // past the outbox, so this polls; the budget is generous because it is the relay's tick plus
+  // the sink's consumer, not because any of it should be slow.
+  const token = await seedToken();
+  if (!token) return;
+
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Audited clip' }),
+  });
+  assert.equal(created.status, 201, `create failed: ${created.text}`);
+  const asset = json(created);
+
+  const deadline = Date.now() + 20_000;
+  let history;
+  for (;;) {
+    const res = await get(`/api/v1/history/asset/${asset.id}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 200, `history read failed: ${res.text}`);
+    history = json(res);
+    if (history.revisions.length >= 1 || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  assert.equal(history.entityId, asset.id);
+  assert.ok(history.revisions.length >= 1, 'the creation never reached the audit sink');
+  const first = history.revisions[0];
+  assert.equal(first.revision, 1);
+  assert.equal(first.action, 'asset.created');
+  assert.deepEqual(first.delta.title, { after: 'Audited clip' }, 'the delta carries the value');
+  assert.ok(first.messageId, 'and links back to the envelope in the log');
 });
 
 test('smoke: the state-counts aggregate answers, and is not read as an asset id', async () => {

@@ -84,8 +84,10 @@ if (seedUser && seedPassword) {
     userId: user.id,
     rule: {
       id: 'seed-grant',
-      description: 'dev bootstrap: full asset lifecycle within the seeded channel',
-      permissions: ['asset:read', 'asset:write', 'asset:approve', 'taxonomy:read'],
+      description: 'dev bootstrap: full asset lifecycle within the seeded channel, and its history',
+      // `logs:read` so the smoke suite can read the audit history of what it wrote (EP-19.1) —
+      // the one check that proves gateway → MAM → outbox → broker → sink → Postgres end to end.
+      permissions: ['asset:read', 'asset:write', 'asset:approve', 'taxonomy:read', 'logs:read'],
       scope: { channelIds: [channelId] },
     },
   });
