@@ -14,3 +14,6 @@ export {
   type Envelope,
   type BuildEnvelopeInput,
 } from './envelope.ts';
+// EP-02.3 — every event payload as a type, generated from the same schemas the validators load.
+// `EventPayloads['asset.created']` is the payload of that event; `EventType` is the closed set.
+export type * from './generated/events.ts';
