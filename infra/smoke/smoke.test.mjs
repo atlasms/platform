@@ -249,10 +249,13 @@ test('smoke: a correlation id survives the gateway → MAM hop', async () => {
   const token = await seedToken();
   if (!token) return;
 
+  // A ULID, because that is what the gateway adopts (EP-08.6) — a literal, since this file
+  // deliberately imports nothing from the code it tests.
+  const mine = '01SM0KEMAMTRACE00000000000';
   const res = await get('/api/v1/assets/01H000000000000000000000', {
-    headers: { authorization: `Bearer ${token}`, 'x-correlation-id': 'smoke-mam-trace' },
+    headers: { authorization: `Bearer ${token}`, 'x-correlation-id': mine },
   });
-  assert.equal(json(res).correlationId, 'smoke-mam-trace');
+  assert.equal(json(res).correlationId, mine);
 });
 
 test('smoke: every response carries a correlation id', async () => {
@@ -260,10 +263,19 @@ test('smoke: every response carries a correlation id', async () => {
   const id = res.headers.get('x-correlation-id');
   assert.ok(id, 'no x-correlation-id header');
 
-  // An id supplied by the caller must be adopted, not replaced — that is what lets a trace span a
-  // client, the gateway and every service behind it.
-  const supplied = await get('/healthz', { headers: { 'x-correlation-id': 'smoke-trace-1' } });
-  assert.equal(supplied.headers.get('x-correlation-id'), 'smoke-trace-1');
+  // A well-formed id supplied by the caller must be adopted, not replaced — that is what lets a
+  // trace span a client, the gateway and every service behind it.
+  const mine = '01SM0KETRACE00000000000001';
+  const supplied = await get('/healthz', { headers: { 'x-correlation-id': mine } });
+  assert.equal(supplied.headers.get('x-correlation-id'), mine);
+
+  // And a MALFORMED one must be replaced, not adopted (EP-08.6): this is the one internal header a
+  // client can set, and it lands in every service's log line. Asserted here, against the deployed
+  // gateway, because it is an edge property and the edge is what a smoke test is for.
+  const forged = await get('/healthz', { headers: { 'x-correlation-id': 'smoke-trace-1' } });
+  const issued = forged.headers.get('x-correlation-id');
+  assert.ok(issued && issued !== 'smoke-trace-1', `a malformed id was adopted: ${issued}`);
+  assert.match(issued, /^[0-9A-HJKMNP-TV-Z]{26}$/, 'the replacement is a ULID');
 });
 
 test('smoke: an unrouted path is a clean problem document, not a stack trace', async () => {
