@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { InMemoryBroker } from '@atlas/messaging';
+import { buildEnvelope, type EventPayloads } from '@atlas/contracts';
 import { compile, type EffectivePolicy } from '@atlas/policy';
 import {
   ConnectionRegistry,
@@ -254,10 +255,19 @@ test('the bridge asks for a fresh policy on permissions.changed, then re-checks'
   reg.subscribe('c1', 'atlas.ch12.schedule.>');
   assert.equal(reg.subscriptionsOf('c1').length, 1);
 
+  // What IAM will actually put on the bus: an ENVELOPE, with the payload inside it — the shape
+  // every producer on this platform emits through `buildEnvelope`. This test used to publish the
+  // bare payload `{ userId }` as the body, and the bridge read `body.userId` — so the test passed
+  // and the bridge would never have fired against a real message. `EventPayloads` is what makes
+  // the wrong level a compile error rather than an `undefined` at runtime.
+  const payload: EventPayloads['permissions.changed'] = {
+    userId: 'user-1',
+    permVersion: 2,
+  };
   await broker.publish({
     id: 'm2',
     subject: 'atlas.ch12.permissions.changed',
-    body: { userId: 'user-1' },
+    body: buildEnvelope({ type: 'permissions.changed', channelId: 'ch12', payload }),
   });
 
   assert.deepEqual(reg.subscriptionsOf('c1'), [], 'revoked subscription dropped by the bridge');

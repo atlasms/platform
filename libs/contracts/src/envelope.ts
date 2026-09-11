@@ -23,10 +23,14 @@ export interface BuildEnvelopeInput<P> {
   schemaVersion?: number;
 }
 
-/** Build a fully-formed envelope (fresh messageId + occurredAt). Does not validate; call validateMessage. */
-export function buildEnvelope<P extends Record<string, unknown>>(
-  input: BuildEnvelopeInput<P>,
-): Envelope<P> {
+/**
+ * Build a fully-formed envelope (fresh messageId + occurredAt). Does not validate; call validateMessage.
+ *
+ * `P extends object`, not `Record<string, unknown>`: the generated payload types (EP-02.3) are
+ * interfaces, and an interface has no implicit index signature, so the stricter bound refused the
+ * very types this envelope exists to carry.
+ */
+export function buildEnvelope<P extends object>(input: BuildEnvelopeInput<P>): Envelope<P> {
   return {
     messageId: ulid(),
     type: input.type,
@@ -41,7 +45,7 @@ export function buildEnvelope<P extends Record<string, unknown>>(
 }
 
 /** A caused-by envelope: threads correlationId (or opens one) and sets causationId to the cause. */
-export function follow<P extends Record<string, unknown>>(
+export function follow<P extends object>(
   cause: Envelope,
   input: BuildEnvelopeInput<P>,
 ): Envelope<P> {

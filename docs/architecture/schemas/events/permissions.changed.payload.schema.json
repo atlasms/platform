@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas.example/schemas/events/permissions.changed.payload.schema.json",
   "title": "permissions.changed payload",
-  "description": "Emitted by IAM when a user's effective permissions change; bumps permissionVersion so gateway/WebSocket re-check (FR-IAM-8).",
+  "description": "Emitted by IAM when a user's effective permissions change; bumps permVersion so gateway/WebSocket re-check (FR-IAM-8).",
   "type": "object",
-  "required": ["userId", "permissionVersion"],
+  "required": ["userId", "permVersion"],
   "additionalProperties": false,
   "properties": {
     "userId": { "$ref": "../common.schema.json#/$defs/Ulid" },
-    "permissionVersion": { "type": "integer", "minimum": 1 }
+    "permVersion": { "type": "integer", "minimum": 1 }
   }
 }

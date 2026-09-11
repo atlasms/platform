@@ -4,6 +4,7 @@
 // this ship and be tested now while the real broker choice is still open (EP-03.0 spike): swapping
 // the in-memory broker for NATS/RabbitMQ changes nothing here.
 
+import type { Envelope, EventPayloads } from '@atlas/contracts';
 import type { Broker, Message } from '@atlas/messaging';
 import type { Tracer } from '@atlas/service-kit';
 import type { ConnectionRegistry } from './registry.ts';
@@ -53,8 +54,14 @@ export function startBridge(options: BridgeOptions): void {
         // A revoked grant must stop the stream without waiting for a reconnect, so this is
         // handled ahead of ordinary fan-out.
         if (msg.subject.endsWith('.permissions.changed')) {
-          const body = msg.body as { userId?: string } | undefined;
-          if (body?.userId !== undefined) await options.onPermissionsChanged?.(body.userId);
+          // The body is the ENVELOPE; the user id is in its payload. This read `body.userId` —
+          // one level too high — and its test published a bare `{ userId }` so it passed. Against
+          // what IAM will actually emit through `buildEnvelope`, `userId` was `undefined` and
+          // this never fired: live revocation was dead for a second reason nobody knew about.
+          // The generated `EventPayloads` type is what makes the level visible here.
+          const envelope = msg.body as Envelope<EventPayloads['permissions.changed']> | undefined;
+          const userId = envelope?.payload?.userId;
+          if (userId !== undefined) await options.onPermissionsChanged?.(userId);
         }
         const delivered = registry.publish(msg.subject, msg.body);
         options.onDelivered?.(msg.subject, delivered);
