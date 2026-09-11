@@ -1,0 +1,8 @@
+// The service's public surface — what a test imports, and what `main.ts` wires.
+export {
+  build<%= className %>App,
+  callerOf,
+  INTERNAL_HEADERS,
+  type Caller,
+  type <%= className %>AppOptions,
+} from './app.ts';

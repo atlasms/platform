@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/schema",
+  "$id": "AtlasService",
+  "title": "Scaffold an Atlas service",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Service name, kebab-case (e.g. `scheduling`, `audit-log`). Becomes apps/<name>, @atlas/<name>, the image atlas/<name>:dev and the k8s Deployment/Service.",
+      "$default": { "$source": "argv", "index": 0 },
+      "x-prompt": "Service name (kebab-case)?",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+    },
+    "db": {
+      "type": "boolean",
+      "description": "Owns Postgres tables: a pool, migrations that wait for the database within a budget, a readiness check on it, and a transactional outbox store.",
+      "default": false
+    },
+    "broker": {
+      "type": "boolean",
+      "description": "Talks to JetStream: a NatsBroker that retries rather than crash-loops. With --db, also the outbox relay that publishes what the service commits.",
+      "default": false
+    },
+    "description": {
+      "type": "string",
+      "description": "One sentence for package.json and the README. What the service owns.",
+      "default": ""
+    }
+  },
+  "required": ["name"]
+}

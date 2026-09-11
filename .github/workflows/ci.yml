@@ -148,6 +148,18 @@ jobs:
         if: github.event_name == 'push'
         run: npx nx run-many -t lint typecheck test
 
+      # EP-04.9. The generator's own tests run above against a virtual tree; this is the other
+      # half: run it for REAL, then hold what it wrote to the same lint, strict typecheck and tests
+      # every service is held to. A scaffold that only passes the generator's tests is a template,
+      # not a service — and the template is the thing most likely to rot, because nothing else
+      # imports it. Last in the job so nothing needs cleaning up; no install is needed because a
+      # new workspace package's dependencies are already hoisted.
+      - name: Generated service passes the bar
+        run: |
+          npx nx g @atlas/generators:service scaffold-ci --db --broker --description "CI proof."
+          npx nx run-many -t lint typecheck test -p @atlas/scaffold-ci
+          node --check apps/scaffold-ci/src/main.ts
+
   # Conventional commits (EP-01.6). Deliberately NOT in the required-checks list: a
   # non-conforming subject is a real problem but not a broken build, and blocking a merge on
   # it would mean rewriting history to fix a typo. Visible on the PR is the right weight.

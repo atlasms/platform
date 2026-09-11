@@ -1,0 +1,27 @@
+{
+  "name": "@atlas/<%= name %>",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "<%= description %>",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --no-warnings --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@atlas/contracts": "*",<% if (db) { %>
+    "@atlas/data": "*",
+    "@atlas/data-pg": "*",<% } %><% if (broker) { %>
+    "@atlas/messaging": "*",
+    "@atlas/messaging-nats": "*",<% } %>
+    "@atlas/service-kit": "*",
+    "fastify": "^5.12.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.13"
+  }
+}
