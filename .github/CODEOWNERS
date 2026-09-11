@@ -1,8 +1,12 @@
 # Code owners — who must review what.
 #
-# NOTE: this file only *requests* reviewers today. It is only ENFORCED once branch
-# protection is available (see .github/rulesets/README.md — blocked on a GitHub plan
-# upgrade, not on engineering).
+# NOTE: this file only *requests* reviewers today, by choice rather than by limitation.
+# The ruleset on `main` (.github/rulesets/main.json) is active — PR required, CI green,
+# no force-push, no deletion — but `require_code_owner_review` is off and the approval
+# count is 0, because there is one engineer and GitHub does not count self-approval:
+# requiring an owner's review would make every PR unmergeable. Turn both on the day a
+# second engineer arrives (.github/rulesets/README.md says how), and the paths below
+# become enforced rather than advisory.
 
 # Default: the whole repo.
 *                                   @faridv
