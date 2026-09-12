@@ -15,6 +15,10 @@ import {
   Unauthorized,
   Forbidden,
   createLogger,
+  PROBLEM_CONTENT_TYPE,
+  PROBLEM_TITLES,
+  problemOf,
+  type ErrorCode,
 } from '../src/index.ts';
 
 test('loadConfig coerces types and applies defaults', () => {
@@ -49,19 +53,38 @@ test('loadConfig fails fast with all problems', () => {
   }
 });
 
-test('error taxonomy maps to a consistent problem', () => {
-  const p = toProblem(new NotFound('asset X'), 'corr-1');
+test('error taxonomy maps to ONE problem document — RFC 9457, with the platform keys kept', () => {
+  const p = toProblem(new NotFound('asset X'), '01ARZ3NDEKTSV4RRFFQ69G5FAV');
   // `details` is OMITTED, not set to undefined, when there is none (exactOptionalPropertyTypes).
-  // Identical on the wire — JSON.stringify drops undefined — but a cleaner problem+JSON body.
   assert.deepEqual(p, {
-    code: 'NOT_FOUND',
+    // RFC 9457 members — derived, so they cannot disagree with the platform's
+    type: 'https://atlas.example/problems/not_found',
+    title: 'Not found',
     status: 404,
+    detail: 'asset X',
+    instance: 'urn:atlas:correlation:01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    // the platform's, which every client and every test keys on
+    code: 'NOT_FOUND',
     message: 'asset X',
-    correlationId: 'corr-1',
+    correlationId: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
   });
   assert.equal('details' in p, false);
-  assert.equal(toProblem(new Error('raw')).code, 'INTERNAL'); // unknown -> 500
+
+  // Unknown -> 500, opaque, and still a complete document.
+  const internal = toProblem(new Error('raw'));
+  assert.equal(internal.code, 'INTERNAL');
+  assert.equal(internal.title, 'Internal error');
+  assert.equal(internal.detail, 'Internal error', 'the raw message never reaches the caller');
+  assert.equal('instance' in internal, false, 'no correlation id, no instance');
   assert.ok(new NotFound() instanceof AppError);
+
+  // Every code has a title and a type; a new code without them is a compile error, but pin it.
+  for (const code of Object.keys(PROBLEM_TITLES) as ErrorCode[]) {
+    const doc = problemOf({ code, status: 400, message: 'm' });
+    assert.equal(doc.type, `https://atlas.example/problems/${code.toLowerCase()}`);
+    assert.ok(doc.title.length > 0);
+  }
+  assert.equal(PROBLEM_CONTENT_TYPE, 'application/problem+json');
 });
 
 test('correlation context threads through async work', async () => {

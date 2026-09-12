@@ -252,8 +252,9 @@ test('SECURITY: a locked account is indistinguishable from a wrong password', as
 
   assert.equal(locked.statusCode, unknown.statusCode);
   assert.deepEqual(
-    { ...(locked.json() as Record<string, unknown>), correlationId: null },
-    { ...(unknown.json() as Record<string, unknown>), correlationId: null },
+    // `instance` is the correlation id as a URN (RFC 9457) — the same per-request field, masked twice.
+    { ...(locked.json() as Record<string, unknown>), correlationId: null, instance: null },
+    { ...(unknown.json() as Record<string, unknown>), correlationId: null, instance: null },
     'same status, same problem document — nothing distinguishes the two',
   );
 });

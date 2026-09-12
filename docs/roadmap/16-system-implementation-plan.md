@@ -237,7 +237,7 @@ Every service adheres to these (enforced by `service-kit` + CI):
   ([Architecture §4](../architecture/02-system-architecture.md#4-tenancy-and-multi-channel)).
 - **Idempotency:** consumers key on `messageId`/entity id; transitions are conditional; redelivery is a
   no-op.
-- **Errors:** shared error taxonomy → consistent HTTP problem+JSON and event failure semantics.
+- **Errors:** shared error taxonomy → one problem document, RFC 9457 as `application/problem+json` with the platform's `code`/`message` kept (EP-04.6), and event failure semantics.
 - **Observability:** RED metrics per endpoint, event lag/DLQ metrics per consumer, traces threaded by
   `correlationId`, structured audit logs to [Logging](services/logging-analytics-plan.md).
 - **Config:** validated at boot; no deploy needed to change vocabularies/policies where the spec says so.

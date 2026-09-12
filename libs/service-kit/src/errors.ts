@@ -1,5 +1,12 @@
 // A small error taxonomy shared by every service. Domain code throws these; the HTTP edge maps
-// them to a consistent problem+JSON body, and event consumers use the same codes.
+// them to ONE problem document — RFC 9457 (Problem Details for HTTP APIs), served as
+// `application/problem+json` — and event consumers use the same codes.
+//
+// The document is RFC 9457 ADDITIVELY (EP-04.6, #72). `type`, `title`, `status`, `detail` and
+// `instance` are the RFC's members; `code`, `message` and `correlationId` predate them and stay,
+// because every client, every test and every smoke assertion on this platform reads `code` as the
+// machine key — a closed enum is a better one than a URI — and `message` as the text. The RFC
+// members are derived from them, so the two views cannot disagree.
 export type ErrorCode =
   | 'VALIDATION'
   | 'UNAUTHORIZED'
@@ -10,12 +17,70 @@ export type ErrorCode =
   | 'RATE_LIMITED'
   | 'INTERNAL';
 
+/** The media type every problem document is served as (RFC 9457 §3). */
+export const PROBLEM_CONTENT_TYPE = 'application/problem+json';
+
+/**
+ * `type` is a URI that identifies the problem KIND — one per `ErrorCode`, stable, and a client may
+ * key on it. It is not required to resolve; RFC 9457 §3.1.1 says so. The host is the platform's
+ * documentation namespace, the same one the JSON Schemas' `$id`s use.
+ */
+export const PROBLEM_TYPE_BASE = 'https://atlas.example/problems/';
+
+/** RFC 9457 `title`: a short, human-readable summary of the problem type — the same for every occurrence. */
+export const PROBLEM_TITLES: Record<ErrorCode, string> = {
+  VALIDATION: 'Request is not valid',
+  UNAUTHORIZED: 'Authentication required',
+  FORBIDDEN: 'Not permitted',
+  NOT_FOUND: 'Not found',
+  CONFLICT: 'Conflicts with current state',
+  PAYLOAD_TOO_LARGE: 'Payload too large',
+  RATE_LIMITED: 'Too many requests',
+  INTERNAL: 'Internal error',
+};
+
 export interface Problem {
+  /** RFC 9457 §3.1.1 — a URI for the problem type; `PROBLEM_TYPE_BASE + code.toLowerCase()`. */
+  type: string;
+  /** RFC 9457 §3.1.2 — the type's summary; constant per `code`. */
+  title: string;
+  /** RFC 9457 §3.1.3 — the HTTP status, repeated here for a client that has lost the response line. */
+  status: number;
+  /** RFC 9457 §3.1.4 — this occurrence's explanation; always equal to `message`. */
+  detail: string;
+  /** RFC 9457 §3.1.5 — this occurrence's identifier; a URN over the correlation id, when there is one. */
+  instance?: string;
+  /** The platform's machine key. A closed enum; the thing a client switches on. */
+  code: ErrorCode;
+  /** The platform's text. Always equal to `detail`. */
+  message: string;
+  details?: unknown;
+  correlationId?: string;
+}
+
+/** Build the document from its platform half. Exported so a responder that is not an AppError can use it. */
+export function problemOf(input: {
   code: ErrorCode;
   status: number;
   message: string;
   details?: unknown;
   correlationId?: string;
+}): Problem {
+  return {
+    type: PROBLEM_TYPE_BASE + input.code.toLowerCase(),
+    title: PROBLEM_TITLES[input.code],
+    status: input.status,
+    detail: input.message,
+    ...(input.correlationId !== undefined
+      ? { instance: `urn:atlas:correlation:${input.correlationId}` }
+      : {}),
+    code: input.code,
+    message: input.message,
+    // Optional keys are OMITTED rather than set to undefined (exactOptionalPropertyTypes). That is
+    // also the shape we want on the wire: no null-ish noise in the document.
+    ...(input.details !== undefined ? { details: input.details } : {}),
+    ...(input.correlationId !== undefined ? { correlationId: input.correlationId } : {}),
+  };
 }
 
 export class AppError extends Error {
@@ -35,15 +100,13 @@ export class AppError extends Error {
     this.name = new.target.name;
   }
   toProblem(correlationId?: string): Problem {
-    // Optional keys are OMITTED rather than set to undefined (exactOptionalPropertyTypes).
-    // That is also the shape we want on the wire: no null-ish noise in problem+JSON.
-    return {
+    return problemOf({
       code: this.code,
       status: this.status,
       message: this.message,
       ...(this.details !== undefined ? { details: this.details } : {}),
       ...(correlationId !== undefined ? { correlationId } : {}),
-    };
+    });
   }
 }
 
@@ -102,10 +165,10 @@ export class Internal extends AppError {
 /** Normalize any thrown value to a Problem — the single mapping the HTTP edge uses. */
 export function toProblem(err: unknown, correlationId?: string): Problem {
   if (err instanceof AppError) return err.toProblem(correlationId);
-  return {
+  return problemOf({
     code: 'INTERNAL',
     status: 500,
     message: 'Internal error',
     ...(correlationId !== undefined ? { correlationId } : {}),
-  };
+  });
 }

@@ -174,15 +174,27 @@ components:
         resourceType: { type: string }
         scope: { type: string, description: 'channel/department/resource selector' }
     Error:
+      description: >-
+        RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept:
+        `code` is the machine key (a closed enum — VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND,
+        CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, INTERNAL), `message` the text. The RFC members are
+        derived from them: `type` is https://atlas.example/problems/<code>, `title` is constant per
+        code, `detail` equals `message`, `instance` is urn:atlas:correlation:<correlationId>.
       type: object
-      required: [code, message]
+      required: [type, title, status, detail, code, message]
       properties:
-        code: { type: string }
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        detail: { type: string }
+        instance: { type: string, format: uri }
+        code: { type: string, enum: [VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, INTERNAL] }
         message: { type: string }
+        details: {}
         correlationId: { type: string }
   responses:
     Error:
       description: Error response
       content:
-        application/json:
+        application/problem+json:
           schema: { $ref: '#/components/schemas/Error' }

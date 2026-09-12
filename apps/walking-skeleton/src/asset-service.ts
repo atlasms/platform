@@ -13,6 +13,7 @@ import {
   isTraceable,
   Unauthorized,
   runWithContext,
+  PROBLEM_CONTENT_TYPE,
   toProblem,
   type Span,
   type Tracer,
@@ -146,7 +147,7 @@ export function buildAssetService(options: AssetServiceOptions): AssetService {
       return reply.code(201).send(asset);
     } catch (err) {
       const problem = toProblem(err, req.correlationId);
-      return reply.code(problem.status).send(problem);
+      return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
     }
   });
 

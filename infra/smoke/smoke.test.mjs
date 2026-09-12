@@ -338,6 +338,14 @@ test('smoke: an unrouted path is a clean problem document, not a stack trace', a
   assert.equal(body.code, 'NOT_FOUND');
   assert.ok(body.correlationId, 'even a 404 must be traceable');
   assert.doesNotMatch(res.text, /\s+at\s+.*\(/, 'a stack trace must never reach a client');
+
+  // RFC 9457 (EP-04.6), on the deployed gateway: the problem media type, and the RFC members
+  // derived from the platform's keys so a client may switch on either.
+  assert.match(res.headers.get('content-type') ?? '', /^application\/problem\+json/);
+  assert.equal(body.type, 'https://atlas.example/problems/not_found');
+  assert.equal(body.status, 404);
+  assert.equal(body.detail, body.message);
+  assert.equal(body.instance, `urn:atlas:correlation:${body.correlationId}`);
 });
 
 test('smoke: /metrics is scrapeable and reports golden signals', async () => {

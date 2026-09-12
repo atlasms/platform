@@ -15,6 +15,7 @@ import {
   runWithContext,
   shouldLogAccess,
   serveSnapshot,
+  PROBLEM_CONTENT_TYPE,
   toProblem,
   Unauthorized,
   ValidationError,
@@ -208,7 +209,7 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
           url: req.url,
         });
       }
-      return reply.code(problem.status).send(problem);
+      return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
     }
   };
 

@@ -94,9 +94,14 @@ test('a 5xx is logged where it is raised, with the correlation id, and stays opa
   });
   const res = await app.inject({ method: 'GET', url: '/boom' });
   assert.equal(res.statusCode, 500);
-  const problem = res.json<{ code: string; message: string; correlationId: string }>();
+  // RFC 9457 (EP-04.6): the problem media type, the RFC members, and the platform keys kept.
+  assert.match(res.headers['content-type'] as string, /^application\/problem\+json/);
+  const problem = res.json<{ type: string; title: string; detail: string; code: string; message: string; correlationId: string }>();
+  assert.equal(problem.type, 'https://atlas.example/problems/internal');
+  assert.equal(problem.title, 'Internal error');
   assert.equal(problem.code, 'INTERNAL');
   assert.equal(problem.message, 'Internal error', 'the caller never sees the internals');
+  assert.equal(problem.detail, problem.message);
   assert.equal(errors.length, 1, 'but the operator does');
   assert.equal(errors[0]?.correlationId, problem.correlationId);
   await app.close();
