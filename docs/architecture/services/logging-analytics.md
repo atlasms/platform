@@ -191,6 +191,12 @@ policy (audit never sampled); PII-field tagging.
   store; a TSDB (Prometheus/VictoriaMetrics) for metrics; object storage for cold. Hash-chain
   audit records per channel for tamper-evidence. Push aggregations down to the engines; keep the
   Node layer thin.
+- **As built (EP-19.1):** Fastify, and the hot store is **Postgres behind an `AuditStore` port**
+  with a `node:sqlite` test double, both held to one conformance suite — the MAM precedent, because
+  OpenSearch is [EP-07.4](../../roadmap/21-epic-breakdown.md) and not yet in the data plane. The
+  port and the suite are the contract; OpenSearch is an adapter when it arrives. The hash chain is
+  per channel over the canonical record, append-only is a database trigger, and idempotent ingest
+  is the seen-mark in the append's own transaction ([`apps/logging`](../../../apps/logging/README.md)).
 
 ## 14. Open questions / future
 

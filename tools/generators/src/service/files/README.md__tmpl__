@@ -19,9 +19,10 @@ npm run k8s:up                          # builds atlas/<%= name %>:dev and deplo
 kubectl -n atlas logs deployment/<%= name %> -f
 ```
 
-Reachable inside the cluster as `http://<%= name %>:3000`. To route it through the gateway, add a row to
-the routing table in `apps/api-gateway/src/routing.ts` — and, once it is proxied, a probe for it in
-the smoke suite's upstream gate (`infra/smoke/smoke.test.mjs`).
+Reachable inside the cluster as `http://<%= name %>:3000`. To route it through the gateway: an origin in
+its config and a row in its table, **both in `apps/api-gateway/src/main.ts`** (not `routing.ts` — that
+is a test fixture), the env in `infra/k8s/base/api-gateway.yaml`, and once it is proxied a probe in the
+smoke suite's upstream gate (`infra/smoke/smoke.test.mjs`).
 
 ## Configuration
 

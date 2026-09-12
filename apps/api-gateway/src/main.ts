@@ -17,6 +17,7 @@ const config = loadConfig({
   audience: { env: 'ATLAS_AUDIENCE', type: 'string', default: 'atlas' },
   iamOrigin: { env: 'ATLAS_IAM_ORIGIN', type: 'string', default: 'http://iam:3000' },
   mamOrigin: { env: 'ATLAS_MAM_ORIGIN', type: 'string', default: 'http://mam:3000' },
+  loggingOrigin: { env: 'ATLAS_LOGGING_ORIGIN', type: 'string', default: 'http://logging:3000' },
   jwksPath: { env: 'ATLAS_JWKS_PATH', type: 'string', default: '/.well-known/jwks.json' },
   // EP-08.3. api-gateway.md §11 makes these per-deployment configuration; the defaults live in
   // app.ts and are sized for a facility behind one NAT rather than for one browser.
@@ -59,7 +60,15 @@ const routes: RoutingTable = [
   // MAM. The gateway adds no domain endpoints of its own — it verifies the token, forwards the
   // established identity as internal headers, and MAM re-authorizes with its own resource context.
   { service: 'mam', origin: config.mamOrigin, prefix: '/api/v1/assets' },
+  // Logging (EP-19): the audit history read surface; `/logs` is 19.3.
+  { service: 'logging', origin: config.loggingOrigin, prefix: '/api/v1/history' },
+  { service: 'logging', origin: config.loggingOrigin, prefix: '/api/v1/logs' },
 ];
+
+// ⚠️ THIS is the production routing table — not `defaultRoutes` in routing.ts, which is the test
+// fixture `buildGateway` falls back to and lists services that do not exist yet. A route added
+// there and not here is a route the deployed gateway has never heard of: the smoke suite's
+// upstream gate fails fast on the gateway's own "no route" 404 for exactly that reason.
 
 const health = new HealthRegistry().register(
   'iam',

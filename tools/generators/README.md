@@ -52,8 +52,10 @@ The six tests that come with the scaffold are the definition of "compliant". The
    route; add it to `SPECS` in `scripts/generate-api-types.mjs` when Studio needs a client.
 2. Every table carries `channel_id`; every write goes out through the outbox (`--db --broker`
    gives you the store and the relay).
-3. To route through the gateway: a row in `apps/api-gateway/src/routing.ts`, then a probe in the
-   smoke suite's upstream gate — `rollout status` returning is not "reachable through the Service".
+3. To route through the gateway: an origin in the gateway's config and a row in its table — **both in
+   `apps/api-gateway/src/main.ts`** (`routing.ts`'s `defaultRoutes` is a test fixture that lists services
+   which do not exist; a row there alone is a route the deployed gateway has never heard of) — the env
+   in `infra/k8s/base/api-gateway.yaml`, then a probe in the smoke suite's upstream gate.
 4. `npm run k8s:up` builds and deploys it with the rest. `kubectl -n atlas rollout restart
 deployment/<name>` after a rebuild — `IfNotPresent` keeps the old pod otherwise.
 

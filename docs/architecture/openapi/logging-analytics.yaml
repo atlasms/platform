@@ -36,6 +36,23 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
       responses:
         '200': { description: Results, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LogRecord' } } } } }
+  /history/{entityType}/{id}:
+    get:
+      operationId: getHistory
+      tags: [logs]
+      summary: The revision timeline of one entity (design §6.4; scope logs:read AND <entityType>:read)
+      description: >-
+        Projected from the owning service's `audit.recorded` events, one entry per revision, with the
+        field-level before/after delta the diff viewer renders. Channel-scoped to the caller. The
+        history of an unknown entity is an EMPTY timeline, not a 404 — a 404 would confirm to anyone
+        who may read the channel that no such entity ever existed there.
+      parameters:
+        - { name: entityType, in: path, required: true, schema: { type: string }, example: asset }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: The timeline, content: { application/json: { schema: { $ref: '#/components/schemas/History' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /metrics:
     get:
       operationId: getMetrics
@@ -74,6 +91,30 @@ components:
         resourceType: { type: string }
         resourceId: { type: string }
         correlationId: { type: string }
+    HistoryEntry:
+      type: object
+      required: [revision, action, at, delta, messageId]
+      properties:
+        revision: { type: integer, minimum: 1, description: Monotonic per entity; an asset's `version`. }
+        action: { type: string, description: The domain event audited, or the operation for a silent mutation. }
+        actorKind: { type: string, enum: [service, user] }
+        actorId: { type: string }
+        at: { type: string, format: date-time }
+        correlationId: { type: string }
+        delta:
+          type: object
+          description: Field name -> { before?, after? }. Whole values; a creation has only afters.
+          additionalProperties:
+            type: object
+            properties: { before: {}, after: {} }
+        messageId: { type: string, description: The envelope in the audit log this revision came from. }
+    History:
+      type: object
+      required: [entityType, entityId, revisions]
+      properties:
+        entityType: { type: string }
+        entityId: { type: string }
+        revisions: { type: array, items: { $ref: '#/components/schemas/HistoryEntry' } }
     Error:
       type: object
       required: [code, message]

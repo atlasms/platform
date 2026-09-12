@@ -43,6 +43,12 @@ export function matchRoute(table: RoutingTable, path: string): RouteTarget | und
 }
 
 /** The default table for the services that exist so far. Config, not a constant, in deployment. */
+/**
+ * The table `buildGateway` uses when none is given — TESTS, and the walking skeleton. It is NOT the
+ * production table: `main.ts` builds that from config origins, and only for services that exist.
+ * The entries here for services that do not (hsm, mts, scheduling) are the routing plan, exercised
+ * by tests. Adding a real service means main.ts; this list is for the tests that need it.
+ */
 export const defaultRoutes: RoutingTable = [
   { service: 'iam', origin: 'http://iam:3000', prefix: '/auth', public: true },
   { service: 'iam', origin: 'http://iam:3000', prefix: '/.well-known/jwks.json', public: true },
@@ -55,4 +61,7 @@ export const defaultRoutes: RoutingTable = [
   { service: 'hsm', origin: 'http://hsm:3000', prefix: '/api/v1/files' },
   { service: 'mts', origin: 'http://mts:3000', prefix: '/api/v1/jobs' },
   { service: 'scheduling', origin: 'http://scheduling:3000', prefix: '/api/v1/schedules' },
+  // EP-19: the audit sink's read surface. `/history` exists (19.1); `/logs` is 19.3.
+  { service: 'logging', origin: 'http://logging:3000', prefix: '/api/v1/history' },
+  { service: 'logging', origin: 'http://logging:3000', prefix: '/api/v1/logs' },
 ];
