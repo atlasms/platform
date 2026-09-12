@@ -2,6 +2,7 @@
 
 import type { Migration } from '@atlas/data';
 import { PgSeenStore, seenMigration, withTransaction, type PgPool } from '@atlas/data-pg';
+import { browseClauses } from './store.ts';
 import type { AuditEvent, AuditStore, AuditTx, ChainHead, HistoryEntry } from './store.ts';
 
 export const pgMigrations: Migration[] = [
@@ -189,6 +190,14 @@ export function pgAuditStore(pool: PgPool): AuditStore {
       const { rows } = await pool.query<EventRow>(
         'SELECT * FROM audit_events WHERE channel_id = $1 ORDER BY seq',
         [channelId],
+      );
+      return rows.map(toEvent);
+    },
+    async browse(channelId, filter) {
+      const { where, params } = browseClauses(channelId, filter, (i) => `$${i}`);
+      const { rows } = await pool.query<EventRow>(
+        `SELECT * FROM audit_events WHERE ${where} ORDER BY seq DESC LIMIT $${params.length + 1}`,
+        [...params, filter.limit],
       );
       return rows.map(toEvent);
     },

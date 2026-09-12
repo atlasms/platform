@@ -52,10 +52,58 @@ export interface ChainHead {
   hash: string;
 }
 
+/**
+ * A page of the log (EP-19.3). Keyset on `seq`, newest first: `before` is the seq of the last row
+ * the caller has seen, and the next page is everything older. Stable under concurrent appends,
+ * which an offset is not — and the log is appended to constantly.
+ */
+export interface LogFilter {
+  /** Exact event types. Empty or absent means all. */
+  types?: string[];
+  correlationId?: string;
+  actorId?: string;
+  /** `occurredAt` bounds, ISO date-time, inclusive. */
+  from?: string;
+  to?: string;
+  /** Rows with `seq` strictly below this. Absent means from the newest. */
+  before?: number;
+  limit: number;
+}
+
+/**
+ * The WHERE clause a browse needs, in either dialect: `placeholder` is `?` for sqlite or a function
+ * of the 1-based index for Postgres. Both adapters build the same clause from the same filter, so a
+ * filter that means one thing on the test double cannot mean another in production.
+ */
+export function browseClauses(
+  channelId: string,
+  filter: LogFilter,
+  placeholder: '?' | ((i: number) => string),
+): { where: string; params: unknown[] } {
+  const params: unknown[] = [];
+  const p = (value: unknown): string => {
+    params.push(value);
+    return placeholder === '?' ? '?' : placeholder(params.length);
+  };
+  const clauses = [`channel_id = ${p(channelId)}`];
+  if (filter.types && filter.types.length > 0) {
+    clauses.push(`type IN (${filter.types.map((t) => p(t)).join(', ')})`);
+  }
+  if (filter.correlationId !== undefined)
+    clauses.push(`correlation_id = ${p(filter.correlationId)}`);
+  if (filter.actorId !== undefined) clauses.push(`actor_id = ${p(filter.actorId)}`);
+  if (filter.from !== undefined) clauses.push(`occurred_at >= ${p(filter.from)}`);
+  if (filter.to !== undefined) clauses.push(`occurred_at <= ${p(filter.to)}`);
+  if (filter.before !== undefined) clauses.push(`seq < ${p(filter.before)}`);
+  return { where: clauses.join(' AND '), params };
+}
+
 export interface AuditStore {
   /** The unit of work. Everything a consumer does for one message happens inside ONE of these. */
   transaction<T>(fn: (tx: AuditTx) => Promise<T>): Promise<T>;
   history(channelId: string, entityType: string, entityId: string): Promise<HistoryEntry[]>;
+  /** Up to `limit` rows of one channel's log, newest first, matching every given filter. */
+  browse(channelId: string, filter: LogFilter): Promise<AuditEvent[]>;
   /** Every record in a channel, in chain order — what `verifyChain` walks. */
   chain(channelId: string): Promise<AuditEvent[]>;
   count(): Promise<{ events: number; history: number }>;

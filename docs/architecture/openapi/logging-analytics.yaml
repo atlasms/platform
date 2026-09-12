@@ -21,21 +21,40 @@ paths:
     get:
       operationId: browseLogs
       tags: [logs]
-      summary: Browse logs (permission-filtered, FR-LOG-2)
+      summary: Browse the audit log (permission-filtered, FR-LOG-2; scope logs:read)
+      description: >-
+        One page of the caller's channel's audit log, newest first. `logs:read` is the door; each
+        entry is then shown only if the caller holds the permission IT requires — `<domain>:read`
+        for an event under `atlas.<ch>.<domain>.…`, the entity's read permission for an
+        `audit.recorded` delta. The same rule the WebSocket service applies to live delivery.
+        Filtering happens after the read, so a page can come back thin with `nextCursor` still
+        present; that is normal, not the end of the log. Keyset on `seq`: pass `nextCursor` back as
+        `before`.
       parameters:
+        - { name: type, in: query, description: Event type(s), comma-separated., schema: { type: string } }
+        - { name: correlationId, in: query, schema: { type: string } }
+        - { name: actorId, in: query, schema: { type: string } }
         - { name: from, in: query, schema: { type: string, format: date-time } }
         - { name: to, in: query, schema: { type: string, format: date-time } }
-        - { name: correlationId, in: query, schema: { type: string } }
+        - { name: before, in: query, description: The `nextCursor` of the previous page., schema: { type: integer, minimum: 0 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
-        '200': { description: Log records, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LogRecord' } } } } }
+        '200': { description: One page, content: { application/json: { schema: { $ref: '#/components/schemas/AuditPage' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /logs/query:
     post:
       operationId: queryLogs
       tags: [logs]
-      summary: Structured/faceted log query (scope logs:read)
-      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      summary: The same browse, with the filter as JSON (scope logs:read)
+      description: One engine behind both; this form is where a LIST of types fits.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LogQuery' } } } }
       responses:
-        '200': { description: Results, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LogRecord' } } } } }
+        '200': { description: One page, content: { application/json: { schema: { $ref: '#/components/schemas/AuditPage' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /history/{entityType}/{id}:
     get:
       operationId: getHistory
@@ -79,7 +98,43 @@ components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   schemas:
+    LogQuery:
+      type: object
+      additionalProperties: false
+      properties:
+        types: { type: array, items: { type: string } }
+        correlationId: { type: string }
+        actorId: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        before: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    AuditEvent:
+      type: object
+      description: One envelope as appended to the log — the record itself, and its place in the channel's hash chain.
+      required: [messageId, channelId, seq, type, occurredAt, payload, prevHash, hash]
+      properties:
+        messageId: { type: string }
+        channelId: { type: string }
+        seq: { type: integer, minimum: 1, description: Position in the channel's chain; the browse cursor. }
+        type: { type: string }
+        occurredAt: { type: string, format: date-time }
+        actorKind: { type: string, enum: [service, user] }
+        actorId: { type: string }
+        correlationId: { type: string }
+        payload: {}
+        prevHash: { type: string }
+        hash: { type: string }
+    AuditPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AuditEvent' } }
+        nextCursor: { type: integer, description: Present when there may be more; pass back as `before`. Absent means the log ran out. }
     LogRecord:
+      description: >-
+        A structured LOG LINE from a service — not yet ingested; the sink consumes EVENTS (AuditEvent
+        above). Kept as the shape log ingestion will normalise to (design §3 LogRecord).
       type: object
       required: [at, service]
       properties:

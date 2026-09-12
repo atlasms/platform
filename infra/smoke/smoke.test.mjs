@@ -472,6 +472,49 @@ test('smoke: EP-19.1 — a write is in the audit history, with its delta, throug
   assert.ok(first.messageId, 'and links back to the envelope in the log');
 });
 
+test('smoke: EP-19.3 — the audit log browse finds a write by its correlation id', async () => {
+  // The request view: everything one request caused, read back from the log. The create carries
+  // its correlation id on the response; MAM wrote it into both envelopes — the domain event and
+  // the audit record — and the browse filters on it. Permission-filtered: the seed user holds
+  // asset:read, so both are visible.
+  const token = await seedToken();
+  if (!token) return;
+
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      title: 'Browsed clip',
+      mediaType: 'video',
+      fileType: 'mxf',
+      categoryId: 'cat-1',
+    }),
+  });
+  assert.equal(created.status, 201, `create failed: ${created.text}`);
+  const correlationId = created.headers.get('x-correlation-id');
+  assert.ok(correlationId, 'the create carries its correlation id');
+
+  const deadline = Date.now() + 20_000;
+  let page;
+  for (;;) {
+    const res = await get(`/api/v1/logs?correlationId=${encodeURIComponent(correlationId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 200, `browse failed: ${res.text}`);
+    page = json(res);
+    if (page.items.length >= 2 || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  const types = page.items.map((e) => e.type).sort();
+  assert.deepEqual(types, ['asset.created', 'audit.recorded'], 'both envelopes the request caused');
+  assert.ok(page.items.every((e) => e.correlationId === correlationId));
+  assert.ok(
+    page.items.every((e) => typeof e.hash === 'string' && e.hash.length === 64),
+    'each is a link in the chain',
+  );
+});
+
 test('smoke: the state-counts aggregate answers, and is not read as an asset id', async () => {
   // Two things no unit test covers. The gateway routes `/api/v1/assets` by PREFIX, so this reaches
   // MAM only if that still holds for a deeper path; and `/assets/counts` must resolve to the static

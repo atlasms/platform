@@ -6,7 +6,13 @@ import assert from 'node:assert/strict';
 import { buildEnvelope, isUlid, ulid, type EventPayloads } from '@atlas/contracts';
 import { compile, type EffectivePolicy, type Rule } from '@atlas/policy';
 import { HealthRegistry, type AccessRecord } from '@atlas/service-kit';
-import { buildLoggingApp, INTERNAL_HEADERS, ingest, sqliteAuditStore } from '../src/index.ts';
+import {
+  buildLoggingApp,
+  INTERNAL_HEADERS,
+  ingest,
+  requiredPermission,
+  sqliteAuditStore,
+} from '../src/index.ts';
 
 const CH = 'ch12';
 
@@ -206,4 +212,191 @@ test('SECURITY: BOTH logs:read and read on the entity are required — either al
     assert.equal(res.json<{ code: string }>().code, 'FORBIDDEN');
     await app.close();
   }
+});
+
+// --- GET /logs and POST /logs/query (EP-19.3) ------------------------------------------------------------
+
+/** Put a plain domain event into the store, the way the sink would. */
+async function event(
+  store: ReturnType<typeof sqliteAuditStore>,
+  type: string,
+  opts: {
+    actorId?: string;
+    correlationId?: string;
+    channelId?: string;
+    payload?: Record<string, unknown>;
+  } = {},
+) {
+  const channelId = opts.channelId ?? CH;
+  const envelope = buildEnvelope({
+    type,
+    channelId,
+    payload: opts.payload ?? { n: 1 },
+    actor: { kind: 'user', id: opts.actorId ?? 'u' },
+    ...(opts.correlationId ? { correlationId: opts.correlationId } : {}),
+  });
+  await ingest(store, {
+    id: envelope.messageId,
+    subject: `atlas.${channelId}.${type}`,
+    body: envelope,
+  });
+  return envelope.messageId;
+}
+
+test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENTITY read', () => {
+  const base = {
+    messageId: 'm',
+    channelId: CH,
+    occurredAt: 'now',
+    seq: 1,
+    prevHash: '',
+    hash: '',
+    payload: {},
+  };
+  assert.equal(requiredPermission({ ...base, type: 'asset.created' }), 'asset:read');
+  assert.equal(requiredPermission({ ...base, type: 'permissions.changed' }), 'permissions:read');
+  assert.equal(
+    requiredPermission({ ...base, type: 'audit.recorded', payload: { entityType: 'schedule' } }),
+    'schedule:read',
+  );
+  // The websocket service maps the same subject to the same permission — one rule, two places.
+  assert.equal(
+    requiredPermission({ ...base, type: 'audit.recorded', payload: null }),
+    'audit:read',
+  );
+});
+
+test('logs: permission-FILTERED — some entries visible to some users, all retained', async () => {
+  // FR-LOG-2. A reader with logs:read and asset:read sees asset events and asset deltas, and does
+  // NOT see the user or permission events in the same channel — which are still in the log.
+  const { app, store, caller } = await harness({ permissions: ['logs:read', 'asset:read'] });
+  await event(store, 'asset.created');
+  await event(store, 'user.created');
+  await event(store, 'permissions.changed');
+  await recorded(store, ulid(), 1); // audit.recorded for an asset → asset:read
+  await event(store, 'asset.updated');
+
+  const res = await app.inject({ method: 'GET', url: '/api/v1/logs', headers: caller });
+  assert.equal(res.statusCode, 200);
+  const body = res.json<{ items: { type: string; seq: number }[]; nextCursor?: number }>();
+  assert.deepEqual(
+    body.items.map((e) => e.type),
+    ['asset.updated', 'audit.recorded', 'asset.created'],
+    'newest first, and only what this caller may read',
+  );
+  assert.equal(body.nextCursor, undefined, 'the store page was not full: the log ran out');
+  assert.equal((await store.count()).events, 5, 'everything is still retained');
+  await app.close();
+});
+
+test('logs: a thin page keeps its cursor, and the cursor advances per row CONSIDERED', async () => {
+  // Five rows, limit 2, and the caller may see only asset events: page 1 considers [5, 4] and
+  // returns what is visible of them; its cursor is 4 regardless — so page 2 starts at 3, not at
+  // the last visible row, and no row is re-scanned or skipped.
+  const { app, store, caller } = await harness({ permissions: ['logs:read', 'asset:read'] });
+  await event(store, 'asset.created'); // 1
+  await event(store, 'user.created'); // 2
+  await event(store, 'user.created'); // 3
+  await event(store, 'user.created'); // 4
+  await event(store, 'asset.updated'); // 5
+
+  const p1 = (
+    await app.inject({ method: 'GET', url: '/api/v1/logs?limit=2', headers: caller })
+  ).json<{
+    items: { seq: number }[];
+    nextCursor?: number;
+  }>();
+  assert.deepEqual(
+    p1.items.map((e) => e.seq),
+    [5],
+    'thin: 4 was considered and was not visible',
+  );
+  assert.equal(p1.nextCursor, 4, 'but the cursor moved past it');
+
+  const p2 = (
+    await app.inject({
+      method: 'GET',
+      url: `/api/v1/logs?limit=2&before=${p1.nextCursor}`,
+      headers: caller,
+    })
+  ).json<{ items: { seq: number }[]; nextCursor?: number }>();
+  assert.deepEqual(p2.items, [], 'a page with nothing visible is still a page');
+  assert.equal(p2.nextCursor, 2);
+
+  const p3 = (
+    await app.inject({
+      method: 'GET',
+      url: `/api/v1/logs?limit=2&before=${p2.nextCursor}`,
+      headers: caller,
+    })
+  ).json<{ items: { seq: number }[]; nextCursor?: number }>();
+  assert.deepEqual(
+    p3.items.map((e) => e.seq),
+    [1],
+  );
+  assert.equal(p3.nextCursor, undefined, 'short store page: the end');
+  await app.close();
+});
+
+test('logs: filters — by correlation id (the request view), by type, and as a JSON query', async () => {
+  const { app, store, caller } = await harness({ permissions: ['logs:read', 'asset:read'] });
+  const corr = ulid();
+  await event(store, 'asset.created', { correlationId: corr });
+  await event(store, 'asset.updated', { correlationId: corr });
+  await event(store, 'asset.updated');
+
+  const byCorr = (
+    await app.inject({ method: 'GET', url: `/api/v1/logs?correlationId=${corr}`, headers: caller })
+  ).json<{ items: { type: string }[] }>();
+  assert.deepEqual(
+    byCorr.items.map((e) => e.type),
+    ['asset.updated', 'asset.created'],
+  );
+
+  const byType = (
+    await app.inject({ method: 'GET', url: '/api/v1/logs?type=asset.created', headers: caller })
+  ).json<{ items: { type: string }[] }>();
+  assert.deepEqual(
+    byType.items.map((e) => e.type),
+    ['asset.created'],
+  );
+
+  const query = await app.inject({
+    method: 'POST',
+    url: '/api/v1/logs/query',
+    headers: { ...caller, 'content-type': 'application/json' },
+    payload: { types: ['asset.updated'], correlationId: corr, limit: 10 },
+  });
+  assert.equal(query.statusCode, 200);
+  assert.deepEqual(
+    query.json<{ items: { type: string }[] }>().items.map((e) => e.type),
+    ['asset.updated'],
+  );
+  await app.close();
+});
+
+test('logs: a bad filter is a 422 problem, not a 500', async () => {
+  const { app, caller } = await harness();
+  const res = await app.inject({ method: 'GET', url: '/api/v1/logs?before=abc', headers: caller });
+  assert.equal(res.statusCode, 422);
+  assert.equal(res.json<{ code: string }>().code, 'VALIDATION');
+  await app.close();
+});
+
+test('SECURITY: logs need logs:read — asset:read alone is 403, and another channel sees nothing', async () => {
+  const { app, store, caller } = await harness({ permissions: ['asset:read'] });
+  await event(store, 'asset.created');
+  const res = await app.inject({ method: 'GET', url: '/api/v1/logs', headers: caller });
+  assert.equal(res.statusCode, 403);
+  await app.close();
+
+  const other = await harness();
+  await event(other.store, 'asset.created', { channelId: 'ch12' });
+  const cross = await other.app.inject({
+    method: 'GET',
+    url: '/api/v1/logs',
+    headers: { [INTERNAL_HEADERS.user]: 'user-1', [INTERNAL_HEADERS.channel]: 'ch99' },
+  });
+  assert.deepEqual(cross.json<{ items: unknown[] }>().items, []);
+  await other.app.close();
 });
