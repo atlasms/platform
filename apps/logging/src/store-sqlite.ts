@@ -9,6 +9,7 @@ import {
   type Db,
 } from '@atlas/data';
 import type { Migration } from '@atlas/data';
+import { browseClauses } from './store.ts';
 import type { AuditEvent, AuditStore, AuditTx, ChainHead, HistoryEntry } from './store.ts';
 
 export const sqliteMigrations: Migration[] = [
@@ -190,6 +191,13 @@ export function sqliteAuditStore(path = ':memory:'): AuditStore & { db: Db } {
       const rows = db
         .prepare('SELECT * FROM audit_events WHERE channel_id = ? ORDER BY seq')
         .all(channelId) as unknown as EventRow[];
+      return rows.map(toEvent);
+    },
+    async browse(channelId, filter) {
+      const { where, params } = browseClauses(channelId, filter, '?');
+      const rows = db
+        .prepare(`SELECT * FROM audit_events WHERE ${where} ORDER BY seq DESC LIMIT ?`)
+        .all(...(params as (string | number)[]), filter.limit) as unknown as EventRow[];
       return rows.map(toEvent);
     },
     async count() {

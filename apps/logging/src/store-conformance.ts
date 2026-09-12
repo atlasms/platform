@@ -164,6 +164,88 @@ export function auditStoreConformance(name: string, harness: AuditStoreHarness):
     });
   });
 
+  test(`[${name}] browse: newest first, keyset on seq, and every filter narrows`, async () => {
+    await withStore(async (store) => {
+      const corr = ulid();
+      const at = (offsetMs: number) => new Date(1_700_000_000_000 + offsetMs).toISOString();
+      const put = async (
+        type: string,
+        actorId: string,
+        correlationId: string | undefined,
+        occurredAt: string,
+      ) => {
+        const envelope = buildEnvelope({
+          type,
+          channelId: CH,
+          payload: { n: 1 },
+          actor: { kind: 'user', id: actorId },
+          ...(correlationId ? { correlationId } : {}),
+        });
+        (envelope as { occurredAt: string }).occurredAt = occurredAt;
+        await ingest(store, {
+          id: envelope.messageId,
+          subject: `atlas.${CH}.${type}`,
+          body: envelope,
+        });
+      };
+      await put('asset.created', 'alice', corr, at(0)); // seq 1
+      await put('asset.updated', 'alice', corr, at(1_000)); // seq 2
+      await put('user.created', 'bob', undefined, at(2_000)); // seq 3
+      await put('asset.updated', 'bob', undefined, at(3_000)); // seq 4
+      await ingest(store, domainMessage('asset.created', 'ch99')); // another channel, never seen
+
+      const all = await store.browse(CH, { limit: 10 });
+      assert.deepEqual(
+        all.map((e) => e.seq),
+        [4, 3, 2, 1],
+        'newest first, one channel only',
+      );
+
+      const page1 = await store.browse(CH, { limit: 2 });
+      assert.deepEqual(
+        page1.map((e) => e.seq),
+        [4, 3],
+      );
+      const page2 = await store.browse(CH, { limit: 2, before: 3 });
+      assert.deepEqual(
+        page2.map((e) => e.seq),
+        [2, 1],
+        'keyset: strictly older than the cursor',
+      );
+
+      assert.deepEqual(
+        (await store.browse(CH, { limit: 10, types: ['asset.updated'] })).map((e) => e.seq),
+        [4, 2],
+      );
+      assert.deepEqual(
+        (await store.browse(CH, { limit: 10, types: ['user.created', 'asset.created'] })).map(
+          (e) => e.seq,
+        ),
+        [3, 1],
+      );
+      assert.deepEqual(
+        (await store.browse(CH, { limit: 10, correlationId: corr })).map((e) => e.seq),
+        [2, 1],
+      );
+      assert.deepEqual(
+        (await store.browse(CH, { limit: 10, actorId: 'bob' })).map((e) => e.seq),
+        [4, 3],
+      );
+      assert.deepEqual(
+        (await store.browse(CH, { limit: 10, from: at(1_000), to: at(2_000) })).map((e) => e.seq),
+        [3, 2],
+        'inclusive bounds',
+      );
+      assert.deepEqual(
+        (await store.browse(CH, { limit: 10, types: ['asset.updated'], actorId: 'alice' })).map(
+          (e) => e.seq,
+        ),
+        [2],
+        'filters combine',
+      );
+    });
+  });
+
   test(`[${name}] a message that is not an envelope is refused, and appends nothing`, async () => {
     await withStore(async (store) => {
       await assert.rejects(

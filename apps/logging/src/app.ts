@@ -10,7 +10,8 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { isUlid, ulid } from '@atlas/contracts';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
-import type { AuditStore } from './store.ts';
+import type { AuditStore, LogFilter } from './store.ts';
+import { visible } from './visibility.ts';
 import {
   accessRecord,
   Forbidden,
@@ -22,6 +23,7 @@ import {
   shouldLogAccess,
   toProblem,
   Unauthorized,
+  ValidationError,
   type AccessLogPolicy,
   type AccessRecord,
   type Span,
@@ -238,6 +240,91 @@ export async function buildLoggingApp(options: LoggingAppOptions): Promise<Fasti
       const entries = await options.store.history(caller.channelId, entityType, id);
       return { entityType, entityId: id, revisions: entries };
     },
+  );
+
+  // --- the log browse (EP-19.3) ----------------------------------------------------------------------
+  //
+  // `GET /logs` takes its filter from the query string; `POST /logs/query` takes the same filter
+  // as JSON, which is where a list of types fits. One engine behind both.
+
+  const MAX_LIMIT = 200;
+  const DEFAULT_LIMIT = 50;
+
+  const parseFilter = (raw: Record<string, unknown>): LogFilter => {
+    const str = (k: string): string | undefined => {
+      const v = raw[k];
+      if (v === undefined || v === null || v === '') return undefined;
+      if (typeof v !== 'string') throw new ValidationError(`${k} must be a string`);
+      return v;
+    };
+    const num = (k: string): number | undefined => {
+      const v = raw[k];
+      if (v === undefined || v === null || v === '') return undefined;
+      const n = typeof v === 'number' ? v : Number(v);
+      if (!Number.isInteger(n) || n < 0)
+        throw new ValidationError(`${k} must be a non-negative integer`);
+      return n;
+    };
+    const types = (() => {
+      const v = raw['types'] ?? raw['type'];
+      if (v === undefined || v === null || v === '') return undefined;
+      const list = Array.isArray(v) ? v : typeof v === 'string' ? v.split(',') : [v];
+      if (!list.every((t) => typeof t === 'string' && t.length > 0)) {
+        throw new ValidationError('types must be event type names');
+      }
+      return list as string[];
+    })();
+    const limit = Math.min(num('limit') ?? DEFAULT_LIMIT, MAX_LIMIT);
+    if (limit < 1) throw new ValidationError('limit must be at least 1');
+    const correlationId = str('correlationId');
+    const actorId = str('actorId');
+    const from = str('from');
+    const to = str('to');
+    const before = num('before');
+    return {
+      ...(types ? { types } : {}),
+      ...(correlationId !== undefined ? { correlationId } : {}),
+      ...(actorId !== undefined ? { actorId } : {}),
+      ...(from !== undefined ? { from } : {}),
+      ...(to !== undefined ? { to } : {}),
+      ...(before !== undefined ? { before } : {}),
+      limit,
+    };
+  };
+
+  /**
+   * One page of the caller's channel's log, permission-filtered.
+   *
+   * `logs:read` is the door; each entry is then checked against the permission IT requires (see
+   * visibility.ts), strictly. Filtering happens after the read, so a page can come back thin with
+   * a cursor still present — that is normal, not the end of the log. The cursor advances per row
+   * CONSIDERED, not per row returned: advancing only on visible rows would re-scan filtered ones
+   * forever, and advancing past what was read would skip rows the loop never reached.
+   */
+  const browse = async (
+    headers: Record<string, string | string[] | undefined>,
+    filter: LogFilter,
+  ) => {
+    const caller = callerOf(headers);
+    const policy = await options.policyFor(caller.userId);
+    if (!policy) throw new Unauthorized('no policy for subject');
+    const door = canEnforce(policy, 'logs:read', { channelId: caller.channelId });
+    if (!door.allowed) throw new Forbidden(door.reason ?? 'missing logs:read');
+
+    const page = await options.store.browse(caller.channelId, filter);
+    const items = page.filter((e) => visible(policy, caller.channelId, e));
+    const last = page[page.length - 1];
+    // A cursor only when the store's page was full: a short page means the log ran out.
+    const nextCursor = page.length === filter.limit && last ? last.seq : undefined;
+    return { items, ...(nextCursor !== undefined ? { nextCursor } : {}) };
+  };
+
+  app.get<{ Querystring: Record<string, unknown> }>('/api/v1/logs', async (req) =>
+    browse(req.headers, parseFilter(req.query)),
+  );
+
+  app.post<{ Body: Record<string, unknown> | null }>('/api/v1/logs/query', async (req) =>
+    browse(req.headers, parseFilter(req.body ?? {})),
   );
 
   return app;

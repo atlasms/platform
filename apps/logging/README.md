@@ -67,6 +67,31 @@ the production table; `routing.ts`'s `defaultRoutes` is a test fixture); the smo
 reachable and then asserts the whole spine: **a write through the gateway appears in its own audit
 history, with its delta, on a live cluster.**
 
+## The log browse (EP-19.3)
+
+`GET /api/v1/logs` (filter in the query string) and `POST /api/v1/logs/query` (the same filter as
+JSON, which is where a list of types fits) — one engine behind both. One page of the caller's
+channel's log, **newest first**, keyset on `seq`: pass `nextCursor` back as `before`.
+
+**Permission-filtered, all retained** (FR-LOG-2). `logs:read` is the door; each entry is then
+shown only if the caller holds the permission _it_ requires — `<domain>:read` for an event under
+`atlas.<ch>.<domain>.…`, the **entity's** read permission for an `audit.recorded` delta. This is the
+websocket service's eligibility rule, on purpose: what you may receive live and what you may read
+back are the same question, and answering it two ways would let one drift wider. The websocket
+service's `mayReceive` and this service's `visible` are the two places; `requiredPermission` is
+tested against both conventions.
+
+Filtering happens **after** the read, so a page can come back thin — even empty — with a cursor
+still present. That is normal, not the end of the log. The cursor advances per row _considered_,
+not per row returned: advancing only on visible rows would re-scan filtered ones forever, and
+advancing past what was read would skip rows the loop never reached (MAM's listing has the same
+rule and the same reason). A test walks three pages through a log where the caller may see one
+row in five.
+
+Filters: `type` (comma-separated) / `types`, `correlationId` — the **request view**, everything one
+request caused, which the smoke suite proves on a live cluster — `actorId`, `from`/`to`, `before`,
+`limit` (max 200). A malformed filter is a 422 problem document.
+
 ## Not fanned out
 
 `audit.recorded` is **not** delivered to WebSocket subscribers: the websocket service maps
@@ -76,7 +101,6 @@ the consumer.
 
 ## Not yet
 
-- **19.3** `GET /logs` and `POST /logs/query` — the log browse surface with visibility rules.
 - **19.4** retention and cold-storage tiering.
 - `user.>` (private per-user streams) is not sunk by default. Adding it is one pattern; deciding it
   is a privacy question.
