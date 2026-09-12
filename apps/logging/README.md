@@ -62,7 +62,8 @@ read what it used to say, and whoever may read assets is not thereby an auditor.
 unknown entity is an **empty** timeline, not a 404 — a 404 would confirm to anyone who may read the
 channel that no such entity ever existed there.
 
-Routed through the gateway (`/api/v1/history`, `/api/v1/logs`); the smoke suite gates on it being
+Routed through the gateway (`/api/v1/history`, `/api/v1/logs` — in `apps/api-gateway/src/main.ts`,
+the production table; `routing.ts`'s `defaultRoutes` is a test fixture); the smoke suite gates on it being
 reachable and then asserts the whole spine: **a write through the gateway appears in its own audit
 history, with its delta, on a live cluster.**
 

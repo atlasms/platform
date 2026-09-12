@@ -121,6 +121,14 @@ test('smoke: every PROXIED upstream answers through the gateway before anything 
     let last;
     for (;;) {
       last = await get(path, { headers: { authorization: `Bearer ${token}` } });
+      // The gateway's OWN 404 — no route — is not the upstream answering, and no amount of waiting
+      // changes it. Fail now and say what to do: EP-19.1 spent a run discovering that
+      // apps/api-gateway/src/routing.ts is a fixture and main.ts is the table.
+      if (last.status === 404 && /no route/.test(last.text)) {
+        assert.fail(
+          `the gateway has no route for ${path} — the production table is apps/api-gateway/src/main.ts, not routing.ts: ${last.text}`,
+        );
+      }
       if (last.status !== 502) break;
       if (Date.now() > deadline) break;
       await new Promise((resolve) => setTimeout(resolve, 250));
