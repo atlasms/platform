@@ -78,7 +78,12 @@ npm install && npm test   # 57 tests
 ## Tests prove
 
 - `loadConfig` coerces number/boolean, applies defaults, and **fails fast with all problems** (422);
-- the error taxonomy maps to a consistent problem+status; unknown errors become `INTERNAL`/500;
+- the error taxonomy maps to ONE problem document — **RFC 9457**, served as `application/problem+json`
+  (EP-04.6) — with the platform's keys kept: `code` (a closed enum, the thing a client switches on)
+  and `message`, plus the RFC's `type` (`https://atlas.example/problems/<code>`), `title`, `status`,
+  `detail` (= `message`) and `instance` (`urn:atlas:correlation:<id>`), all derived so the two views
+  cannot disagree. Every responder sends `reply.code(p.status).type(PROBLEM_CONTENT_TYPE).send(p)`;
+  unknown errors become `INTERNAL`/500 with the raw message withheld;
 - `correlationId` **threads through async** work and clears outside the context;
 - readiness stays `ready` on a **non-critical** failure and flips on a **critical** one;
 - JWT **verifies against a JWKS** and enforces permissions; **expired / wrong-key / tampered** tokens

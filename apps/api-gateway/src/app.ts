@@ -9,11 +9,12 @@ import {
   goldenSignals,
   isTraceable,
   HealthRegistry,
-  Internal,
   MetricRegistry,
   PayloadTooLarge,
   runWithContext,
   serveSnapshot,
+  AppError,
+  PROBLEM_CONTENT_TYPE,
   toProblem,
   NotFound,
   TooManyRequests,
@@ -180,7 +181,7 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
     );
     // Seconds, and at least 1: `Retry-After: 0` is an invitation to spin.
     void reply.header('retry-after', String(Math.max(1, Math.ceil(decision.retryAfterMs / 1000))));
-    void reply.code(problem.status).send(problem);
+    void reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
     return true;
   };
 
@@ -335,7 +336,7 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
         });
       } catch (err) {
         const problem = toProblem(err, req.correlationId);
-        return reply.code(problem.status).send(problem);
+        return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
       }
 
       const headers: Record<string, string> = {
@@ -363,8 +364,10 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
           // 503, not a partial snapshot. See ReferenceUnavailable — a client cannot tell an
           // incomplete snapshot from a complete one, but it can tell a failure, and its own client
           // keeps the last good one. Failing hands the situation to the component equipped for it.
-          const problem = toProblem(new Internal(err.message), req.correlationId);
-          return reply.code(503).send({ ...problem, status: 503 });
+          // INTERNAL with a 503: the same document, built with its real status so `type`, `title`
+          // and `status` agree — a spread over a 500 would carry a 500 in the body of a 503.
+          const problem = toProblem(new AppError('INTERNAL', 503, err.message), req.correlationId);
+          return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
         }
         throw err;
       }
@@ -380,7 +383,7 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
       // A real AppError, not a hand-rolled shape: toProblem only maps the taxonomy, so a plain
       // object would silently come back as INTERNAL/500.
       const problem = toProblem(new NotFound(`no route for ${path}`), req.correlationId);
-      return reply.code(problem.status).send(problem);
+      return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
     }
 
     // ADDRESS limit first, BEFORE authentication. After would mean an unlimited supply of requests
@@ -430,7 +433,7 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
         }
       } catch (err) {
         const problem = toProblem(err, req.correlationId);
-        return reply.code(problem.status).send(problem);
+        return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
       }
 
       req.claims = claims;
@@ -479,12 +482,11 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
       return reply.send(body);
     } catch {
       // An unreachable upstream is a gateway problem, not a mystery 500 from Fastify.
-      return reply.code(502).send({
-        code: 'INTERNAL',
-        status: 502,
-        message: `upstream "${route.service}" unreachable`,
-        correlationId: req.correlationId,
-      });
+      const problem = toProblem(
+        new AppError('INTERNAL', 502, `upstream "${route.service}" unreachable`),
+        req.correlationId,
+      );
+      return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
     }
   });
 
@@ -498,7 +500,7 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
         ? new PayloadTooLarge()
         : err;
     const problem = toProblem(mapped, req.correlationId);
-    void reply.code(problem.status).send(problem);
+    void reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
   });
 
   return app;

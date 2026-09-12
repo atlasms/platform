@@ -219,6 +219,32 @@ test('a MALFORMED inbound correlation id is replaced, not adopted', async () => 
   assert.equal(logs[0]?.requestId, issued, 'as does the access record');
 });
 
+test('EP-04.6: every problem is RFC 9457 — application/problem+json, with the platform keys kept', async () => {
+  // The three shapes the gateway itself produces: its own 401, its own 404, and a 502 when the
+  // upstream is unreachable. Each is one document, served as the problem media type, with the
+  // RFC members derived from the platform ones so a client may key on either.
+  const { app } = await gatewayWith();
+  for (const [url, status, code] of [
+    ['/api/v1/assets', 401, 'UNAUTHORIZED'],
+    ['/nope', 404, 'NOT_FOUND'],
+  ] as const) {
+    const res = await app.inject({ method: 'GET', url });
+    assert.equal(res.statusCode, status);
+    assert.match(res.headers['content-type'] as string, /^application\/problem\+json/);
+    const p = res.json<Record<string, unknown>>();
+    assert.equal(p['type'], `https://atlas.example/problems/${code.toLowerCase()}`);
+    assert.equal(typeof p['title'], 'string');
+    assert.equal(p['status'], status);
+    assert.equal(p['detail'], p['message'], 'detail IS message');
+    assert.equal(
+      p['instance'],
+      `urn:atlas:correlation:${p['correlationId']}`,
+      'instance IS the correlation id',
+    );
+    assert.equal(p['code'], code);
+  }
+});
+
 test('even a 404 carries a correlation id — an unroutable request is still traceable', async () => {
   const { app } = await gatewayWith();
   const res = await app.inject({ method: 'GET', url: '/nope' });

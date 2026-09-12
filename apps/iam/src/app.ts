@@ -10,6 +10,7 @@ import {
   Unauthorized,
   runWithContext,
   shouldLogAccess,
+  PROBLEM_CONTENT_TYPE,
   toProblem,
   type AccessLogPolicy,
   type AccessRecord,
@@ -174,7 +175,7 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
     const { username, password } = (req.body ?? {}) as Credentials;
     if (typeof username !== 'string' || typeof password !== 'string') {
       const p = toProblem(new Unauthorized('invalid username or password'), req.correlationId);
-      return reply.code(p.status).send(p);
+      return reply.code(p.status).type(PROBLEM_CONTENT_TYPE).send(p);
     }
     const forwarded = req.headers['x-forwarded-for'];
     const ua = req.headers['user-agent'];
@@ -188,7 +189,7 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
       });
     } catch (err) {
       const p = toProblem(err, req.correlationId);
-      return reply.code(p.status).send(p);
+      return reply.code(p.status).type(PROBLEM_CONTENT_TYPE).send(p);
     }
   });
 
@@ -196,13 +197,13 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
     const { refreshToken } = (req.body ?? {}) as RefreshBody;
     if (typeof refreshToken !== 'string') {
       const p = toProblem(new Unauthorized('refreshToken is required'), req.correlationId);
-      return reply.code(p.status).send(p);
+      return reply.code(p.status).type(PROBLEM_CONTENT_TYPE).send(p);
     }
     try {
       return await service.refresh(refreshToken);
     } catch (err) {
       const p = toProblem(err, req.correlationId);
-      return reply.code(p.status).send(p);
+      return reply.code(p.status).type(PROBLEM_CONTENT_TYPE).send(p);
     }
   });
 
@@ -220,7 +221,7 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
     const userId = req.headers['x-atlas-user'];
     if (typeof userId !== 'string') {
       const p = toProblem(new Unauthorized('no authenticated subject'), req.correlationId);
-      return reply.code(p.status).send(p);
+      return reply.code(p.status).type(PROBLEM_CONTENT_TYPE).send(p);
     }
     try {
       const policy = service.effectivePolicy(userId);
@@ -229,13 +230,13 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
       return policy;
     } catch (err) {
       const p = toProblem(err, req.correlationId);
-      return reply.code(p.status).send(p);
+      return reply.code(p.status).type(PROBLEM_CONTENT_TYPE).send(p);
     }
   });
 
   app.setErrorHandler((err, req, reply) => {
     const p = toProblem(err, req.correlationId);
-    void reply.code(p.status).send(p);
+    void reply.code(p.status).type(PROBLEM_CONTENT_TYPE).send(p);
   });
 
   return app;

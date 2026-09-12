@@ -21,6 +21,7 @@ import {
   MetricRegistry,
   runWithContext,
   shouldLogAccess,
+  PROBLEM_CONTENT_TYPE,
   toProblem,
   Unauthorized,
   ValidationError,
@@ -189,7 +190,7 @@ export async function buildLoggingApp(options: LoggingAppOptions): Promise<Fasti
     if (problem.status >= 500) {
       options.onError?.(err, { correlationId: req.correlationId, url: req.url });
     }
-    return reply.code(problem.status).send(problem);
+    return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
   });
 
   // --- probes and the scraper -----------------------------------------------------------------------

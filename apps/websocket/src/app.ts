@@ -22,6 +22,7 @@ import {
   MetricRegistry,
   AppError,
   runWithContext,
+  PROBLEM_CONTENT_TYPE,
   toProblem,
   TooManyRequests,
   Unauthorized,
@@ -127,7 +128,7 @@ function tokenOf(req: FastifyRequest): string | undefined {
  */
 function refuse(reply: FastifyReply, req: FastifyRequest, err: AppError): FastifyReply {
   const problem = toProblem(err, req.correlationId);
-  return reply.code(problem.status).send(problem);
+  return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
 }
 
 export async function buildWebsocketApp(options: WebsocketAppOptions): Promise<FastifyInstance> {
@@ -225,7 +226,7 @@ export async function buildWebsocketApp(options: WebsocketAppOptions): Promise<F
     if (problem.status >= 500) {
       options.onError?.(err, { correlationId: req.correlationId, url: req.url });
     }
-    return reply.code(problem.status).send(problem);
+    return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
   });
 
   app.get('/metrics', async (_req, reply) =>
