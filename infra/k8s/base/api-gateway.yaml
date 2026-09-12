@@ -45,6 +45,8 @@ spec:
               value: http://mam:3000
             - name: ATLAS_LOGGING_ORIGIN
               value: http://logging:3000
+            - name: ATLAS_SCHEDULING_ORIGIN
+              value: http://scheduling:3000
             - name: ATLAS_ISSUER
               value: atlas-iam
             - name: ATLAS_AUDIENCE

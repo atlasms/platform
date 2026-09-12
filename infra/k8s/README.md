@@ -13,7 +13,7 @@ overlays/dev/        local kind cluster — NodePort, single replicas, local ima
 ```sh
 kind create cluster --config infra/k8s/kind-cluster.yaml
 npm run k8s:up            # build images, load them into the node, apply the overlay
-npm run smoke             # 18 checks against http://localhost:30080 (and ws://localhost:30081)
+npm run smoke             # 19 checks against http://localhost:30080 (and ws://localhost:30081)
 ```
 
 `npm run k8s:up` is `k8s:build` + `k8s:load` + `k8s:deploy`. Rebuild and reload after a code change:

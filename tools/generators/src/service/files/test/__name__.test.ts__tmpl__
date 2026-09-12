@@ -18,6 +18,19 @@ async function harness(health = new HealthRegistry()) {
   return { app, logs, errors };
 }
 
+test('an EMPTY body with a JSON content type is not an error', async () => {
+  // Fastify's default parser refuses it, which turned every body-less request a client sent with
+  // `content-type: application/json` into a 500. The scaffold's parser treats it as no body.
+  const { app } = await harness();
+  const res = await app.inject({
+    method: 'GET',
+    url: '/healthz',
+    headers: { 'content-type': 'application/json' },
+  });
+  assert.equal(res.statusCode, 200);
+  await app.close();
+});
+
 test('health routes need no caller, and readiness reflects a critical failure', async () => {
   const health = new HealthRegistry().register('iam', () => false, { critical: true });
   const { app } = await harness(health);

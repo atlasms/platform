@@ -1,0 +1,28 @@
+{
+  "name": "@atlas/scheduling",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The program table per channel: the reel \u2014 ordered items with materialized starts, fixed anchors, one-level live sub-schedules \u2014 and the send-to-air hand-off (v1).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --no-warnings --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@atlas/contracts": "*",
+    "@atlas/data": "*",
+    "@atlas/data-pg": "*",
+    "@atlas/messaging": "*",
+    "@atlas/messaging-nats": "*",
+    "@atlas/policy": "*",
+    "@atlas/service-kit": "*",
+    "fastify": "^5.12.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.13"
+  }
+}

@@ -20,6 +20,7 @@ resources:
   - mam.yaml
   - websocket.yaml
   - api-gateway.yaml
+  - scheduling.yaml
   - logging.yaml
 
 labels:

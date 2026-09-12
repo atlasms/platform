@@ -169,6 +169,15 @@ rule); rights-window sources; validation strictness; which serializer plug-in is
   `xmlbuilder2`/`fast-xml-parser`. Round-trip GUID/timecode fidelity per the format spec.
 - Keep the serializer pure/deterministic and unit-tested against real Cinegy samples.
 
+## 13a. As built (EP-18 v0)
+
+`apps/scheduling` — Fastify, not NestJS, like every other service here. The reel model is
+data-model §3 to the field; the OpenAPI stub's `ScheduleItem` had been a placeholder and is
+rewritten. The write path is thin as §3.4 says: a save with an overlap is stored, and a test says
+so. `PUT /schedules/{id}/items` is the editor's save (the whole reel, as given); items are indexed
+columns with `start`/`end` materialized (§3.6). Every write emits `schedule.updated` and an
+`audit.recorded` delta in one transaction. v1 (validation, the guard, MCRList, send-to-air) is EP-31.
+
 ## 14. Open questions / future
 
 - Additional serializers (other playout vendors) and a conformance test suite per format.
