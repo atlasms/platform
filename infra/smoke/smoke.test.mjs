@@ -549,7 +549,8 @@ test('smoke: EP-18 — a program table is written thinly, read back in reel orde
 
   const t0 = Date.parse(`${day}T06:00:00.000Z`);
   const at = (min) => new Date(t0 + min * 60_000).toISOString();
-  const media = () => '01H000000000000000000000';
+  // A ULID literal (26 Crockford chars): the reel checks the shape, not that MAM knows the id.
+  const media = () => '01H00000000000000000000000';
   const saved = await get(`/api/v1/schedules/${schedule.id}/items`, {
     method: 'PUT',
     headers,
