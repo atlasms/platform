@@ -25,6 +25,12 @@ stops the kubelet chasing a tag that exists nowhere.
 > stale code while believing otherwise. `kubectl -n atlas rollout restart deployment/<name>` after
 > `k8s:load`, or delete the pod.
 
+> ⚠️ **OpenSearch is a ~1 GB image the node pulls from Docker Hub on first use** — `k8s:load`
+> only pushes the images this repo builds, and `kind load docker-image` refuses this one under
+> Docker Desktop's containerd image store (`ctr: content digest … not found`). The first
+> `opensearch-0` start is a pull; `rollout status statefulset/opensearch --timeout=300s` covers it.
+> An air-gapped bundle ships the image and loads it with `kind load image-archive`.
+
 > ⚠️ **`rollout status` returning is not "reachable through the Service".** The pod is Ready a few
 > hundred milliseconds to a couple of seconds before kube-proxy has programmed its endpoint, and a
 > request through the gateway in that window is `502 upstream "mam" unreachable`. The smoke suite

@@ -66,6 +66,23 @@ jobs:
           --health-interval 3s
           --health-timeout 3s
           --health-retries 20
+      # The hot index (EP-07.4), for the same reason: `apps/logging` runs its browse conformance
+      # against the real engine, and libs/data-opensearch its client tests. Single-node, no
+      # security plugin, a 512 MB heap — the dev topology, pinned to the same tag as the manifests.
+      opensearch:
+        image: opensearchproject/opensearch:2.19.3
+        env:
+          discovery.type: single-node
+          DISABLE_SECURITY_PLUGIN: "true"
+          DISABLE_INSTALL_DEMO_CONFIG: "true"
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -sf http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 40
 
     env:
       # Read by apps/mam/test/store-pg.test.ts and libs/data-pg/test/pg.test.ts. Both FAIL rather
@@ -73,6 +90,7 @@ jobs:
       # never quietly return the build to doubles-only.
       ATLAS_PG_URL: postgres://atlas:atlas@localhost:5432/atlas
       ATLAS_NATS_URL: nats://localhost:4222
+      ATLAS_OPENSEARCH_URL: http://localhost:9200
 
     steps:
       - name: Checkout

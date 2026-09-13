@@ -15,6 +15,7 @@ export type ErrorCode =
   | 'CONFLICT'
   | 'PAYLOAD_TOO_LARGE'
   | 'RATE_LIMITED'
+  | 'UNAVAILABLE'
   | 'INTERNAL';
 
 /** The media type every problem document is served as (RFC 9457 §3). */
@@ -36,6 +37,7 @@ export const PROBLEM_TITLES: Record<ErrorCode, string> = {
   CONFLICT: 'Conflicts with current state',
   PAYLOAD_TOO_LARGE: 'Payload too large',
   RATE_LIMITED: 'Too many requests',
+  UNAVAILABLE: 'Temporarily unavailable',
   INTERNAL: 'Internal error',
 };
 
@@ -153,6 +155,18 @@ export class PayloadTooLarge extends AppError {
 export class TooManyRequests extends AppError {
   constructor(m = 'Too many requests', d?: unknown) {
     super('RATE_LIMITED', 429, m, d);
+  }
+}
+
+/**
+ * A dependency this request needs is down — the hot index, say — and the request itself is fine:
+ * retry it later. Distinct from INTERNAL because a 500 says "the server broke" and gets logged as
+ * such, while this is an outage the health registry already reports; and distinct on the wire so
+ * a client can back off rather than surface an error.
+ */
+export class Unavailable extends AppError {
+  constructor(m = 'Temporarily unavailable') {
+    super('UNAVAILABLE', 503, m);
   }
 }
 

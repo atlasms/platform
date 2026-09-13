@@ -197,6 +197,12 @@ policy (audit never sampled); PII-field tagging.
   port and the suite are the contract; OpenSearch is an adapter when it arrives. The hash chain is
   per channel over the canonical record, append-only is a database trigger, and idempotent ingest
   is the seen-mark in the append's own transaction ([`apps/logging`](../../../apps/logging/README.md)).
+- **As built (EP-07.4):** OpenSearch is in the data plane, as the **hot index and only that** —
+  [ADR-0005](../../adr/0005-audit-log-storage.md). Postgres stays the audit log (the trigger, the
+  chain and the transactional seen-mark do not survive a search engine); a projector copies committed
+  rows into the index in chain order, keyed by `messageId`, resuming from the index's own per-channel
+  `max(seq)`; the browse reads the index when configured. Eventually consistent by one projector
+  interval; `503` when the engine is away, ready regardless.
 
 ## 14. Open questions / future
 

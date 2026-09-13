@@ -133,7 +133,9 @@ export function pgAuditStore(pool: PgPool): AuditStore {
               [channelId],
             );
             const row = rows[0];
-            return row ? ({ seq: Number(row.seq), hash: row.hash } satisfies ChainHead) : undefined;
+            return row
+              ? ({ channelId, seq: Number(row.seq), hash: row.hash } satisfies ChainHead)
+              : undefined;
           },
           async append(e) {
             await client.query(
@@ -198,6 +200,23 @@ export function pgAuditStore(pool: PgPool): AuditStore {
       const { rows } = await pool.query<EventRow>(
         `SELECT * FROM audit_events WHERE ${where} ORDER BY seq DESC LIMIT $${params.length + 1}`,
         [...params, filter.limit],
+      );
+      return rows.map(toEvent);
+    },
+    async heads() {
+      // One row per channel off the (channel_id, seq) unique index. Fine at a channel count in
+      // the tens or hundreds, which is a broadcaster; a channels table is the change if that stops
+      // being true.
+      const { rows } = await pool.query<{ channel_id: string; seq: string; hash: string }>(
+        `SELECT DISTINCT ON (channel_id) channel_id, seq, hash FROM audit_events
+           ORDER BY channel_id, seq DESC`,
+      );
+      return rows.map((r) => ({ channelId: r.channel_id, seq: Number(r.seq), hash: r.hash }));
+    },
+    async chainSince(channelId, afterSeq, limit) {
+      const { rows } = await pool.query<EventRow>(
+        'SELECT * FROM audit_events WHERE channel_id = $1 AND seq > $2 ORDER BY seq LIMIT $3',
+        [channelId, afterSeq, limit],
       );
       return rows.map(toEvent);
     },

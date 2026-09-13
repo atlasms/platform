@@ -7,6 +7,7 @@
 // This file is the only one that reads the environment or touches real infrastructure. Everything
 // it wires is injected into `buildLoggingApp`, so the tests never see any of it.
 
+import { openSearch, searchHealthy } from '@atlas/data-opensearch';
 import { migrate, openPool } from '@atlas/data-pg';
 import { NatsBroker } from '@atlas/messaging-nats';
 import { PolicyClient } from '@atlas/policy/client';
@@ -17,7 +18,16 @@ import {
   loadConfig,
   MetricRegistry,
 } from '@atlas/service-kit';
-import { buildLoggingApp, pgAuditStore, pgMigrations, startSink } from './index.ts';
+import {
+  buildLoggingApp,
+  DEFAULT_AUDIT_INDEX,
+  openSearchAuditIndex,
+  pgAuditStore,
+  pgMigrations,
+  startProjector,
+  startSink,
+  type LogBrowser,
+} from './index.ts';
 
 const config = loadConfig({
   port: { env: 'PORT', type: 'number', default: 3000 },
@@ -30,6 +40,12 @@ const config = loadConfig({
   },
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
   policyTtlMs: { env: 'ATLAS_POLICY_TTL_MS', type: 'number', default: 30_000 },
+  // EP-07.4. Empty means no index: the browse is answered by Postgres, which is correct and slower
+  // as the log grows. Set, and the projector copies the log into OpenSearch and the browse reads
+  // there; the log itself never leaves Postgres.
+  opensearchUrl: { env: 'ATLAS_OPENSEARCH_URL', type: 'string', default: '' },
+  auditIndex: { env: 'ATLAS_AUDIT_INDEX', type: 'string', default: DEFAULT_AUDIT_INDEX },
+  projectorIntervalMs: { env: 'ATLAS_PROJECTOR_INTERVAL_MS', type: 'number', default: 1_000 },
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
   // still propagates, so a site without a collector pays only the cost of an id.
   otlpEndpoint: { env: 'ATLAS_OTLP_ENDPOINT', type: 'string', default: '' },
@@ -99,6 +115,52 @@ const health = new HealthRegistry()
 const store = pgAuditStore(pool);
 const policies = new PolicyClient({ origin: config.iamOrigin, ttlMs: config.policyTtlMs });
 
+// --- the hot index (EP-07.4) ------------------------------------------------------------------------
+//
+// NOT critical to readiness: the history and the ingest run on Postgres regardless, and a browse
+// while the engine is away is a 503 the caller can retry — not a reason to take the service out
+// of rotation. The check is still registered so /readyz REPORTS it and an operator sees it.
+
+const search = config.opensearchUrl !== '' ? openSearch({ node: config.opensearchUrl }) : undefined;
+const index = search ? openSearchAuditIndex(search, { index: config.auditIndex }) : undefined;
+if (search) health.register('opensearch', () => searchHealthy(search));
+const browser: LogBrowser = index ?? store;
+
+const indexed = metrics.counter({
+  name: 'atlas_audit_events_indexed_total',
+  help: 'Audit records copied into the hot index by the projector.',
+  labelNames: ['service'],
+});
+const projectorErrors = metrics.counter({
+  name: 'atlas_audit_projector_errors_total',
+  help: 'Projector ticks that failed; the next tick retries from the index.',
+  labelNames: ['service'],
+});
+const lag = metrics.gauge({
+  name: 'atlas_audit_index_lag_records',
+  help: 'Records the log has that the hot index does not, as of the last projector tick.',
+  labelNames: ['service'],
+});
+
+const projector = index
+  ? startProjector({
+      store,
+      index,
+      intervalMs: config.projectorIntervalMs,
+      onIndexed: (count) => {
+        indexed.inc({ service: 'logging' }, count);
+      },
+      onError: (err) => {
+        projectorErrors.inc({ service: 'logging' });
+        log.warn('projector tick failed', { error: (err as Error).message });
+      },
+    })
+  : undefined;
+if (projector) {
+  setInterval(() => lag.set({ service: 'logging' }, projector.lag()), 5_000).unref();
+  log.info('audit projector started', { index: config.auditIndex });
+}
+
 const sunk = metrics.counter({
   name: 'atlas_audit_events_appended_total',
   help: 'Envelopes appended to the audit log.',
@@ -117,6 +179,7 @@ const refused = metrics.counter({
 
 const app = await buildLoggingApp({
   store,
+  browser,
   policyFor: (userId) => policies.policyFor(userId),
   health,
   metrics,
@@ -181,11 +244,13 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     log.info(`${signal} received, draining`);
     if (retryTimer) clearTimeout(retryTimer);
+    projector?.stop();
     void app
       .close()
       // After Fastify closes, so spans for in-flight requests make the final batch.
       .then(() => tracer.shutdown())
       .then(() => broker?.close())
+      .then(() => search?.close())
       .then(() => pool.end())
       .then(() => process.exit(0))
       .catch(() => process.exit(1));
