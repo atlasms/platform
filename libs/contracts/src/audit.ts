@@ -1,6 +1,8 @@
 // EP-19.2 — the field-level delta every mutation carries in its `audit.recorded` event.
 //
-// Produced HERE, at write time, because only the owning service holds the prior state: by the time
+// In @atlas/contracts because it builds a contract payload and every owning service needs it —
+// MAM first, Scheduling second. Produced by the OWNING service at write time, because only it holds
+// the prior state: by the time
 // a consumer sees `asset.updated` the old value is gone. The sink (Logging, EP-19.1) appends these
 // to a per-entity history and the diff viewer renders them; it never asks MAM what changed.
 //
@@ -10,7 +12,7 @@
 // description) are a later refinement the contract already allows, since `before`/`after` are
 // unconstrained.
 
-import type { EventPayloads } from '@atlas/contracts';
+import type { EventPayloads } from './generated/events.ts';
 
 export type Delta = EventPayloads['audit.recorded']['delta'];
 

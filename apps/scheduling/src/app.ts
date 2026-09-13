@@ -1,14 +1,22 @@
-// The <%= className %> service's HTTP surface.
+// The Scheduling service's HTTP surface.
 //
-// `build<%= className %>App` builds the Fastify app with everything injected — no globals, no
+// `buildSchedulingApp` builds the Fastify app with everything injected — no globals, no
 // environment — so a test constructs one in memory and drives it with `app.inject()`. `main.ts` is
 // the only place that reads config and talks to real infrastructure.
 //
 // What is here is the shape every Atlas service shares (generated from it, and kept to it by the
 // same tests). What a service DOES goes in `service.ts` and its routes below the marker.
 
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { isUlid, ulid } from '@atlas/contracts';
+import type { EffectivePolicy } from '@atlas/policy';
+import {
+  parseCreateSchedule,
+  parseItemInput,
+  parseUpdateSchedule,
+  type ScheduleItemInput,
+} from './schedule.ts';
+import type { SchedulingService, Caller as ServiceCaller } from './service.ts';
 import {
   accessRecord,
   goldenSignals,
@@ -18,15 +26,23 @@ import {
   runWithContext,
   shouldLogAccess,
   PROBLEM_CONTENT_TYPE,
+  NotFound,
   toProblem,
   Unauthorized,
+  ValidationError,
   type AccessLogPolicy,
   type AccessRecord,
   type Span,
   type Tracer,
 } from '@atlas/service-kit';
 
-export interface <%= className %>AppOptions {
+export interface SchedulingAppOptions {
+  service: SchedulingService;
+  /**
+   * Resolves the caller's compiled policy — `PolicyClient` from `@atlas/policy/client` against IAM
+   * in production, a stub in tests. Fails closed: `undefined` is a 401, never an empty policy.
+   */
+  policyFor: (userId: string) => Promise<EffectivePolicy | undefined> | EffectivePolicy | undefined;
   /** Liveness and readiness. `main.ts` registers the real dependency checks. */
   health?: HealthRegistry;
   /** Shared with `main.ts` so every counter lands in one /metrics exposition. */
@@ -66,18 +82,18 @@ export function callerOf(headers: Record<string, string | string[] | undefined>)
   const userId = headers[INTERNAL_HEADERS.user];
   const channelId = headers[INTERNAL_HEADERS.channel];
   if (typeof userId !== 'string' || typeof channelId !== 'string') {
-    throw new Unauthorized('no authenticated caller — requests reach this service through the gateway');
+    throw new Unauthorized(
+      'no authenticated caller — requests reach this service through the gateway',
+    );
   }
   return { userId, channelId };
 }
 
-export async function build<%= className %>App(
-  options: <%= className %>AppOptions = {},
-): Promise<FastifyInstance> {
+export async function buildSchedulingApp(options: SchedulingAppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const health = options.health ?? new HealthRegistry();
   const metrics = options.metrics ?? new MetricRegistry();
-  const signals = goldenSignals(metrics, '<%= name %>');
+  const signals = goldenSignals(metrics, 'scheduling');
 
   // An EMPTY body with a JSON content type is `undefined`, not an error. Fastify's default parser
   // refuses it (FST_ERR_CTP_EMPTY_JSON_BODY), which turned every `DELETE` and every body-less
@@ -210,16 +226,125 @@ export async function build<%= className %>App(
 
   // --- routes ------------------------------------------------------------------------------------------
   //
-  // Contracts first (AGENTS.md §5.1): the OpenAPI stub in docs/architecture/openapi/<%= name %>.yaml
+  // Contracts first (AGENTS.md §5.1): the OpenAPI stub in docs/architecture/openapi/scheduling.yaml
   // is written BEFORE or WITH the route, and `npm run api:types` projects it for Studio. Every
   // handler `return await`s its work inside the try (a returned promise settles after the catch is
   // out of scope, so its rejection would escape the problem document — AGENTS.md §6).
 
-  /** Who the gateway says is calling. The first thing a real route does. */
-  app.get('/api/v1/<%= name %>/whoami', async (req) => {
+  // --- the program table (EP-18 v0) ------------------------------------------------------------------
+  //
+  // The gateway authenticated; this service authorizes, with the caller's compiled policy and the
+  // full resource context. Every handler `return await`s inside the try: a returned promise settles
+  // after the catch is out of scope, and its rejection would escape the problem document.
+
+  const withCaller = async (req: FastifyRequest): Promise<ServiceCaller> => {
     const caller = callerOf(req.headers);
-    return { service: '<%= name %>', ...caller };
-  });
+    const policy = await options.policyFor(caller.userId);
+    // "We could not determine your permissions" must never degrade into "you have none, carry on".
+    if (!policy) throw new Unauthorized('no policy for subject');
+    return { ...caller, policy, correlationId: req.correlationId };
+  };
+
+  const handle = async (
+    req: FastifyRequest,
+    reply: FastifyReply,
+    status: number,
+    fn: (caller: ServiceCaller) => Promise<unknown>,
+  ): Promise<unknown> => {
+    try {
+      const result = await fn(await withCaller(req));
+      return status === 204 ? reply.code(204).send() : reply.code(status).send(result);
+    } catch (err) {
+      const problem = toProblem(err, req.correlationId);
+      if (problem.status >= 500) {
+        options.onError?.(err, { correlationId: req.correlationId, url: req.url });
+      }
+      return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
+    }
+  };
+
+  const { service } = options;
+  type Q = Record<string, string | undefined>;
+  type P = { id: string; itemId: string };
+
+  app.get<{ Querystring: Q }>('/api/v1/schedules', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      service.list(caller, {
+        ...(req.query['broadcastDate'] !== undefined
+          ? { broadcastDate: req.query['broadcastDate'] }
+          : {}),
+        ...(req.query['after'] !== undefined ? { after: req.query['after'] } : {}),
+        ...(req.query['limit'] !== undefined ? { limit: Number(req.query['limit']) } : {}),
+      }),
+    ),
+  );
+
+  app.post('/api/v1/schedules', (req, reply) =>
+    handle(req, reply, 201, (caller) => service.create(caller, parseCreateSchedule(req.body))),
+  );
+
+  app.get<{ Params: P }>('/api/v1/schedules/:id', (req, reply) =>
+    handle(req, reply, 200, async (caller) => {
+      const schedule = await service.get(caller, req.params.id);
+      const items = await service.items(caller, req.params.id);
+      return { ...schedule, items };
+    }),
+  );
+
+  app.patch<{ Params: P }>('/api/v1/schedules/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      service.update(caller, req.params.id, parseUpdateSchedule(req.body)),
+    ),
+  );
+
+  app.get<{ Params: P }>('/api/v1/schedules/:id/items', (req, reply) =>
+    handle(req, reply, 200, (caller) => service.items(caller, req.params.id)),
+  );
+
+  // The editor's save: the whole reel, as given (the thin write path — §3.4, §3.6).
+  app.put<{ Params: P }>('/api/v1/schedules/:id/items', (req, reply) =>
+    handle(req, reply, 200, (caller) => {
+      if (!Array.isArray(req.body)) throw new ValidationError('body must be an array of items');
+      const inputs: ScheduleItemInput[] = req.body.map((item, i) =>
+        parseItemInput(item, `items[${i}]: `),
+      );
+      return service.replaceItems(caller, req.params.id, inputs);
+    }),
+  );
+
+  app.post<{ Params: P }>('/api/v1/schedules/:id/items', (req, reply) =>
+    handle(req, reply, 201, (caller) =>
+      service.addItem(caller, req.params.id, parseItemInput(req.body)),
+    ),
+  );
+
+  app.patch<{ Params: P }>('/api/v1/schedules/:id/items/:itemId', (req, reply) =>
+    handle(req, reply, 200, async (caller) => {
+      // A patch is a partial item: validate the fields that are present by parsing them over the
+      // current row, so every rule that applies to a whole item applies to the merged one.
+      const current = (await service.items(caller, req.params.id)).find(
+        (i) => i.id === req.params.itemId,
+      );
+      if (!current) throw new NotFound(`item ${req.params.itemId}`);
+      if (typeof req.body !== 'object' || req.body === null || Array.isArray(req.body)) {
+        throw new ValidationError('body must be an object');
+      }
+      const { end: _end, id: _id, scheduleId: _s, ...base } = current;
+      void _end;
+      void _id;
+      void _s;
+      const merged = parseItemInput({ ...base, ...(req.body as Record<string, unknown>) });
+      const { id: _mid, ...patch } = merged;
+      void _mid;
+      return service.updateItem(caller, req.params.id, req.params.itemId, patch);
+    }),
+  );
+
+  app.delete<{ Params: P }>('/api/v1/schedules/:id/items/:itemId', (req, reply) =>
+    handle(req, reply, 204, (caller) =>
+      service.removeItem(caller, req.params.id, req.params.itemId),
+    ),
+  );
 
   return app;
 }

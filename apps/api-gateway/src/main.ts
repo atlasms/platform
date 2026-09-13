@@ -18,6 +18,11 @@ const config = loadConfig({
   iamOrigin: { env: 'ATLAS_IAM_ORIGIN', type: 'string', default: 'http://iam:3000' },
   mamOrigin: { env: 'ATLAS_MAM_ORIGIN', type: 'string', default: 'http://mam:3000' },
   loggingOrigin: { env: 'ATLAS_LOGGING_ORIGIN', type: 'string', default: 'http://logging:3000' },
+  schedulingOrigin: {
+    env: 'ATLAS_SCHEDULING_ORIGIN',
+    type: 'string',
+    default: 'http://scheduling:3000',
+  },
   jwksPath: { env: 'ATLAS_JWKS_PATH', type: 'string', default: '/.well-known/jwks.json' },
   // EP-08.3. api-gateway.md §11 makes these per-deployment configuration; the defaults live in
   // app.ts and are sized for a facility behind one NAT rather than for one browser.
@@ -63,6 +68,8 @@ const routes: RoutingTable = [
   // Logging (EP-19): the audit history read surface; `/logs` is 19.3.
   { service: 'logging', origin: config.loggingOrigin, prefix: '/api/v1/history' },
   { service: 'logging', origin: config.loggingOrigin, prefix: '/api/v1/logs' },
+  // Scheduling (EP-18): the program table.
+  { service: 'scheduling', origin: config.schedulingOrigin, prefix: '/api/v1/schedules' },
 ];
 
 // ⚠️ THIS is the production routing table — not `defaultRoutes` in routing.ts, which is the test

@@ -113,6 +113,7 @@ test('smoke: every PROXIED upstream answers through the gateway before anything 
   const upstreams = [
     ['mam', '/api/v1/assets?limit=1'],
     ['logging', '/api/v1/history/asset/01H000000000000000000000'],
+    ['scheduling', '/api/v1/schedules?limit=1'],
   ];
   const budgetMs = Number(process.env.ATLAS_SMOKE_UPSTREAM_BUDGET_MS ?? 30_000);
 
@@ -521,6 +522,85 @@ test('smoke: EP-19.3 — the audit log browse finds a write by its correlation i
     page.items.every((e) => typeof e.hash === 'string' && e.hash.length === 64),
     'each is a link in the chain',
   );
+});
+
+test('smoke: EP-18 — a program table is written thinly, read back in reel order, and audited', async () => {
+  // Scheduling on a live cluster: create the day, save a reel through the thin write path — with
+  // an overlap the backend must NOT refuse (data-model §3.4) — read it back in reel order through
+  // the gateway, and find the writes in the audit history the sink projected from
+  // audit.recorded. Three services, one spine.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+  // A unique broadcast day per run: one schedule per channel per day, and the cluster may not be
+  // fresh when this runs locally.
+  const day = new Date(Date.now() + Math.floor(Math.random() * 365) * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  const created = await get('/api/v1/schedules', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ broadcastDate: day, timezone: 'Europe/London', notes: 'smoke' }),
+  });
+  assert.equal(created.status, 201, `create failed: ${created.text}`);
+  const schedule = json(created);
+  assert.equal(schedule.state, 'draft');
+
+  const t0 = Date.parse(`${day}T06:00:00.000Z`);
+  const at = (min) => new Date(t0 + min * 60_000).toISOString();
+  // A ULID literal (26 Crockford chars): the reel checks the shape, not that MAM knows the id.
+  const media = () => '01H00000000000000000000000';
+  const saved = await get(`/api/v1/schedules/${schedule.id}/items`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify([
+      {
+        seq: 0,
+        start: at(0),
+        durationSec: 1800,
+        itemType: 'title',
+        fixed: true,
+        description: 'opening',
+      },
+      { seq: 1, start: at(30), durationSec: 1800, itemType: 'media', mediaId: media() },
+      { seq: 2, start: at(50), durationSec: 600, itemType: 'media', mediaId: media() }, // overlaps seq 1
+      { seq: 3, start: at(60), durationSec: 3600, itemType: 'live', description: 'studio' },
+    ]),
+  });
+  assert.equal(saved.status, 200, `reel save failed: ${saved.text}`);
+  const reel = json(saved);
+  assert.deepEqual(
+    reel.map((i) => i.seq),
+    [0, 1, 2, 3],
+    'the overlap was stored, not refused',
+  );
+  assert.equal(reel[0].end, at(30), 'end is computed by the service');
+
+  const read = await get(`/api/v1/schedules/${schedule.id}`, { headers });
+  assert.equal(read.status, 200);
+  assert.equal(json(read).items.length, 4);
+  assert.equal(json(read).version, 2, 'a reel write bumps the schedule version');
+
+  // And the audit: two revisions (create, reel), projected by the sink, read through the gateway.
+  const deadline = Date.now() + 20_000;
+  let history;
+  for (;;) {
+    const res = await get(`/api/v1/history/schedule/${schedule.id}`, { headers });
+    assert.equal(res.status, 200, `history read failed: ${res.text}`);
+    history = json(res);
+    if (history.revisions.length >= 2 || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.deepEqual(
+    history.revisions.map((r) => [r.revision, r.action]),
+    [
+      [1, 'schedule.created'],
+      [2, 'schedule.updated'],
+    ],
+    'the sink saw both writes',
+  );
+  assert.ok(history.revisions[1].delta.items, 'the reel change rode in the delta');
 });
 
 test('smoke: the state-counts aggregate answers, and is not read as an asset id', async () => {

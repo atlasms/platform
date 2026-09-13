@@ -14,10 +14,11 @@ import {
   subjectFor,
   ulid,
   validatePayload,
+  delta,
+  type Delta,
   type Envelope,
   type EventPayloads,
 } from '@atlas/contracts';
-import { delta, type Delta } from './audit.ts';
 import { can, canEnforce, type EffectivePolicy } from '@atlas/policy';
 import {
   Conflict,

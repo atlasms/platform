@@ -3,8 +3,8 @@ info:
   title: Atlas Scheduling API
   version: 0.1.0
   description: >-
-    Stub contract for Scheduling — program tables, validation, send-to-air, and export profiles.
-    See ../services/scheduling.md.
+    Scheduling — program tables (v0, EP-18: the reel model and its CRUD), validation, send-to-air
+    and export profiles (v1). See ../services/scheduling.md and data-model.md §3.
 servers:
   - url: https://{host}/api/v1
     variables:
@@ -19,32 +19,99 @@ paths:
     get:
       operationId: listSchedules
       tags: [schedules]
-      summary: List program tables (scope schedule:read)
+      summary: The channel's program tables (scope schedule:read)
+      description: Channel-scoped to the caller. Newest broadcast day first; keyset on id.
+      parameters:
+        - { name: broadcastDate, in: query, description: One day only., schema: { type: string, format: date } }
+        - { name: after, in: query, description: The `nextCursor` of the previous page., schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
-        '200': { description: Schedules, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Schedule' } } } } }
+        '200': { description: One page, content: { application/json: { schema: { $ref: '#/components/schemas/SchedulePage' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
     post:
       operationId: createSchedule
       tags: [schedules]
-      summary: Create a program table (scope schedule:write)
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Schedule' } } } }
+      summary: Create a program table for a broadcast day (scope schedule:write)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateSchedule' } } } }
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Schedule' } } } }
+        '409': { description: A schedule for that channel and broadcast day already exists., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { $ref: '#/components/responses/Error' }
+  /schedules/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getSchedule
+      tags: [schedules]
+      summary: A program table with its reel (scope schedule:read)
+      responses:
+        '200': { description: The schedule and its items, in reel order, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleWithItems' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: updateSchedule
+      tags: [schedules]
+      summary: Change the header — timezone, notes (scope schedule:write)
+      description: State is not writable here; it moves through validate and send-to-air (v1).
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateSchedule' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Schedule' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /schedules/{id}/items:
     parameters:
       - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
     get:
       operationId: listScheduleItems
       tags: [schedules]
-      summary: List items in a schedule
+      summary: The reel, in order (scope schedule:read)
       responses:
-        '200': { description: Items, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScheduleItem' } } } } }
+        '200': { description: Items ordered by seq, sub-schedule items after their parent, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScheduleItem' } } } } }
+    put:
+      operationId: replaceScheduleItems
+      tags: [schedules]
+      summary: Replace the whole reel — the editor's save (scope schedule:write)
+      description: >-
+        The THIN write path (data-model §3.4/§3.6): the items are persisted as given, with the
+        `start`s the editor computed. No overlap or gap is refused here; `POST /validate` reports
+        them on demand. What IS enforced: every item belongs to this schedule and channel; `seq` is
+        unique per reel and per sub-reel; a `live` item has no media; a sub-schedule is exactly one
+        level deep; a non-live item has a `mediaId`. Ids are kept where given so history survives a
+        save, minted where absent.
+      requestBody: { required: true, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScheduleItemInput' } } } } }
+      responses:
+        '200': { description: The reel as stored, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScheduleItem' } } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
     post:
       operationId: addScheduleItem
       tags: [schedules]
-      summary: Add/replace items (scope schedule:write)
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleItem' } } } }
+      summary: Append one item (scope schedule:write)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleItemInput' } } } }
       responses:
-        '201': { description: Added }
+        '201': { description: Added, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleItem' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /schedules/{id}/items/{itemId}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      - { name: itemId, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    patch:
+      operationId: updateScheduleItem
+      tags: [schedules]
+      summary: Change one item (scope schedule:write)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleItemPatch' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleItem' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: removeScheduleItem
+      tags: [schedules]
+      summary: Remove one item, and its sub-schedule if it has one (scope schedule:write)
+      responses:
+        '204': { description: Removed }
+        '404': { $ref: '#/components/responses/Error' }
   /schedules/{id}/validate:
     post:
       operationId: validateSchedule
@@ -76,29 +143,148 @@ components:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   schemas:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    ItemType:
+      type: string
+      description: Tier 0 — the playout treats each differently; a `live` item has no media and may carry a sub-schedule.
+      enum: [media, live, title, filler, break]
+    Timecode:
+      type: string
+      description: 'HH:MM:SS:FF — the playout applies it (data-model §3.3).'
+      pattern: '^\\d{2}:\\d{2}:\\d{2}:\\d{2}$'
     Schedule:
       type: object
-      required: [channelId]
+      description: The header of one channel's program table for one broadcast day (data-model §3.1).
+      required: [id, channelId, broadcastDate, timezone, state, version, createdAt, updatedAt]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
         channelId: { type: string }
-        timezone: { type: string }
+        broadcastDate: { type: string, format: date, description: 'The channel-local broadcast day; its boundary need not be midnight.' }
+        timezone: { type: string, description: 'IANA zone the broadcast day is expressed in.', example: Europe/London }
         state: { type: string, enum: [draft, validated, sending, sent, failed] }
+        notes: { type: string }
+        version: { type: integer, minimum: 1, description: Bumped on every write to the header OR the reel; the audit revision. }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateSchedule:
+      type: object
+      required: [broadcastDate, timezone]
+      additionalProperties: false
+      properties:
+        broadcastDate: { type: string, format: date }
+        timezone: { type: string }
+        notes: { type: string }
+    UpdateSchedule:
+      type: object
+      additionalProperties: false
+      properties:
+        timezone: { type: string }
+        notes: { type: string }
     ScheduleItem:
       type: object
-      required: [assetId, startTc]
+      description: >-
+        One row of the reel (data-model §3.2). `start` is MATERIALIZED — the editor computes it and
+        the backend stores it (§3.6); `end` is computed from start + duration for range queries.
+        `parentItemId` places the item inside a live item's sub-schedule, one level deep (§3.5).
+      required: [id, scheduleId, seq, start, durationSec, end, fixed, itemType, repeat, featured, description]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
-        assetId: { $ref: '#/components/schemas/Ulid' }
+        scheduleId: { $ref: '#/components/schemas/Ulid' }
+        parentItemId: { $ref: '#/components/schemas/Ulid' }
+        seq: { type: integer, minimum: 0, description: Order within the reel, or within the parent's sub-reel. }
+        start: { type: string, format: date-time, description: Materialized; locked when `fixed`. }
+        durationSec: { type: number, minimum: 0 }
+        end: { type: string, format: date-time, description: Computed by the service — start + duration. Read-only. }
+        fixed: { type: boolean, description: A time-locked anchor — its start does not reflow (§3.4). }
+        itemType: { $ref: '#/components/schemas/ItemType' }
+        mediaId: { $ref: '#/components/schemas/Ulid' }
         renditionKind: { type: string }
-        startTc: { type: string, description: 'HH:MM:SS:FF' }
-        durationSec: { type: number }
-        order: { type: integer }
-    Error:
+        mediaIn: { $ref: '#/components/schemas/Timecode' }
+        mediaOut: { $ref: '#/components/schemas/Timecode' }
+        mediaTitle: { type: string, description: Defaults from the media; overridable for on-air display. }
+        categoryId: { type: string }
+        categoryTitle: { type: string, description: Defaults from the category; overridable. }
+        episode: { type: integer, minimum: 0 }
+        description: { type: string, description: Control-room notes. }
+        repeat: { type: boolean, description: A rebroadcast of a past item. }
+        featured: { type: boolean, description: Marked important for the control room. }
+    ScheduleItemInput:
       type: object
-      required: [code, message]
-      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+      description: An item as the editor sends it. `id` optional (kept if given, minted if not); `end` never — it is computed.
+      required: [seq, start, durationSec, itemType]
+      additionalProperties: false
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        parentItemId: { $ref: '#/components/schemas/Ulid' }
+        seq: { type: integer, minimum: 0 }
+        start: { type: string, format: date-time }
+        durationSec: { type: number, minimum: 0 }
+        fixed: { type: boolean, default: false }
+        itemType: { $ref: '#/components/schemas/ItemType' }
+        mediaId: { $ref: '#/components/schemas/Ulid' }
+        renditionKind: { type: string }
+        mediaIn: { $ref: '#/components/schemas/Timecode' }
+        mediaOut: { $ref: '#/components/schemas/Timecode' }
+        mediaTitle: { type: string }
+        categoryId: { type: string }
+        categoryTitle: { type: string }
+        episode: { type: integer, minimum: 0 }
+        description: { type: string, default: '' }
+        repeat: { type: boolean, default: false }
+        featured: { type: boolean, default: false }
+    ScheduleItemPatch:
+      type: object
+      description: Any subset of the writable fields.
+      additionalProperties: false
+      properties:
+        parentItemId: { $ref: '#/components/schemas/Ulid' }
+        seq: { type: integer, minimum: 0 }
+        start: { type: string, format: date-time }
+        durationSec: { type: number, minimum: 0 }
+        fixed: { type: boolean }
+        itemType: { $ref: '#/components/schemas/ItemType' }
+        mediaId: { $ref: '#/components/schemas/Ulid' }
+        renditionKind: { type: string }
+        mediaIn: { $ref: '#/components/schemas/Timecode' }
+        mediaOut: { $ref: '#/components/schemas/Timecode' }
+        mediaTitle: { type: string }
+        categoryId: { type: string }
+        categoryTitle: { type: string }
+        episode: { type: integer, minimum: 0 }
+        description: { type: string }
+        repeat: { type: boolean }
+        featured: { type: boolean }
+    ScheduleWithItems:
+      allOf:
+        - $ref: '#/components/schemas/Schedule'
+        - type: object
+          required: [items]
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/ScheduleItem' } }
+    SchedulePage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Schedule' } }
+        nextCursor: { $ref: '#/components/schemas/Ulid' }
+    Error:
+      description: >-
+        RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept:
+        `code` is the machine key (a closed enum), `message` the text. `type` is
+        https://atlas.example/problems/<code>, `title` constant per code, `detail` equals `message`,
+        `instance` is urn:atlas:correlation:<correlationId>.
+      type: object
+      required: [type, title, status, detail, code, message]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        detail: { type: string }
+        instance: { type: string, format: uri }
+        code: { type: string, enum: [VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, INTERNAL] }
+        message: { type: string }
+        details: {}
+        correlationId: { type: string }
   responses:
     Error:
       description: Error response
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } }

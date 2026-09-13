@@ -87,7 +87,16 @@ if (seedUser && seedPassword) {
       description: 'dev bootstrap: full asset lifecycle within the seeded channel, and its history',
       // `logs:read` so the smoke suite can read the audit history of what it wrote (EP-19.1) —
       // the one check that proves gateway → MAM → outbox → broker → sink → Postgres end to end.
-      permissions: ['asset:read', 'asset:write', 'asset:approve', 'taxonomy:read', 'logs:read'],
+      permissions: [
+        'asset:read',
+        'asset:write',
+        'asset:approve',
+        'taxonomy:read',
+        'logs:read',
+        // EP-18: the program table, so the smoke suite can write a reel and read it back.
+        'schedule:read',
+        'schedule:write',
+      ],
       scope: { channelIds: [channelId] },
     },
   });
