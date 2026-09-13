@@ -10,7 +10,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { isUlid, ulid } from '@atlas/contracts';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
-import type { AuditStore, LogFilter } from './store.ts';
+import type { AuditStore, LogBrowser, LogFilter } from './store.ts';
 import { visible } from './visibility.ts';
 import {
   accessRecord,
@@ -33,6 +33,12 @@ import {
 
 export interface LoggingAppOptions {
   store: AuditStore;
+  /**
+   * Where `GET /logs` reads (EP-07.4): the OpenSearch index when the deployment has one, the
+   * store itself otherwise. The history and the ingest always use the store — they are the
+   * system of record's business. Both browsers pass the same conformance cases.
+   */
+  browser?: LogBrowser;
   /**
    * Resolves the caller's compiled policy — `PolicyClient` from `@atlas/policy/client` against IAM
    * in production, a stub in tests. Fails closed: `undefined` is a 401, never an empty policy.
@@ -250,6 +256,7 @@ export async function buildLoggingApp(options: LoggingAppOptions): Promise<Fasti
 
   const MAX_LIMIT = 200;
   const DEFAULT_LIMIT = 50;
+  const browser: LogBrowser = options.browser ?? options.store;
 
   const parseFilter = (raw: Record<string, unknown>): LogFilter => {
     const str = (k: string): string | undefined => {
@@ -312,7 +319,7 @@ export async function buildLoggingApp(options: LoggingAppOptions): Promise<Fasti
     const door = canEnforce(policy, 'logs:read', { channelId: caller.channelId });
     if (!door.allowed) throw new Forbidden(door.reason ?? 'missing logs:read');
 
-    const page = await options.store.browse(caller.channelId, filter);
+    const page = await browser.browse(caller.channelId, filter);
     const items = page.filter((e) => visible(policy, caller.channelId, e));
     const last = page[page.length - 1];
     // A cursor only when the store's page was full: a short page means the log ran out.

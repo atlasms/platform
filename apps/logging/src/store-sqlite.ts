@@ -131,8 +131,8 @@ export function sqliteAuditStore(path = ':memory:'): AuditStore & { db: Db } {
         .prepare(
           'SELECT seq, hash FROM audit_events WHERE channel_id = ? ORDER BY seq DESC LIMIT 1',
         )
-        .get(channelId) as ChainHead | undefined;
-      return row;
+        .get(channelId) as { seq: number; hash: string } | undefined;
+      return row ? ({ channelId, seq: row.seq, hash: row.hash } satisfies ChainHead) : undefined;
     },
     async append(e) {
       db.prepare(
@@ -198,6 +198,23 @@ export function sqliteAuditStore(path = ':memory:'): AuditStore & { db: Db } {
       const rows = db
         .prepare(`SELECT * FROM audit_events WHERE ${where} ORDER BY seq DESC LIMIT ?`)
         .all(...(params as (string | number)[]), filter.limit) as unknown as EventRow[];
+      return rows.map(toEvent);
+    },
+    async heads() {
+      const rows = db
+        .prepare(
+          `SELECT e.channel_id, e.seq, e.hash FROM audit_events e
+             JOIN (SELECT channel_id, max(seq) seq FROM audit_events GROUP BY channel_id) h
+               ON h.channel_id = e.channel_id AND h.seq = e.seq
+           ORDER BY e.channel_id`,
+        )
+        .all() as unknown as { channel_id: string; seq: number; hash: string }[];
+      return rows.map((r) => ({ channelId: r.channel_id, seq: r.seq, hash: r.hash }));
+    },
+    async chainSince(channelId, afterSeq, limit) {
+      const rows = db
+        .prepare('SELECT * FROM audit_events WHERE channel_id = ? AND seq > ? ORDER BY seq LIMIT ?')
+        .all(channelId, afterSeq, limit) as unknown as EventRow[];
       return rows.map(toEvent);
     },
     async count() {

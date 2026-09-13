@@ -1,0 +1,119 @@
+# OpenSearch — the hot query index (EP-07.4,
+# [logging-analytics.md §7](../../../docs/architecture/services/logging-analytics.md)).
+#
+# NOT a system of record. Postgres holds the audit log (append-only, hash-chained); this holds a
+# projection of it that the logging service's projector rebuilds from the log whenever the index is
+# missing. Losing this volume loses nothing — the next projector tick starts copying again — which
+# is why a single node with no replicas is acceptable here where it never would be for Postgres.
+# In-cluster for the same reason Postgres is: the platform installs air-gapped (FR-PLat-7).
+#
+# A StatefulSet all the same: the index is large and rebuilding it from a long log takes time, so
+# its storage should survive a pod restart even though it may be thrown away.
+#
+# Single-node mode disables the bootstrap checks, so this runs on a kind node without host sysctl
+# changes; a production cluster wants `vm.max_map_count=262144` on every node regardless. The
+# security plugin is off: the service is reachable only inside the namespace, and TLS between pods
+# is the mesh's job (ADR-0002), not each datastore's.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: opensearch
+  labels:
+    app.kubernetes.io/name: opensearch
+    app.kubernetes.io/part-of: atlas
+spec:
+  serviceName: opensearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opensearch
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opensearch
+        app.kubernetes.io/part-of: atlas
+    spec:
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: opensearch
+          # The same tag as .github/workflows/ci.yml and infra/docker-compose.dev.yml.
+          image: opensearchproject/opensearch:2.19.3
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9200
+          env:
+            - name: discovery.type
+              value: single-node
+            - name: DISABLE_SECURITY_PLUGIN
+              value: "true"
+            - name: DISABLE_INSTALL_DEMO_CONFIG
+              value: "true"
+            # Half the container's memory limit, as the JVM guidance says; the rest is page cache,
+            # which is what makes a search engine fast.
+            - name: OPENSEARCH_JAVA_OPTS
+              value: -Xms512m -Xmx512m
+            - name: bootstrap.memory_lock
+              value: "false"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 200m
+              memory: 768Mi
+            limits:
+              memory: 1200Mi
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/opensearch/data
+          # The JVM takes tens of seconds to come up; the probes give it a minute and a half
+          # before calling it wedged. Readiness is the cluster answering at all — yellow is the
+          # steady state of a single node.
+          startupProbe:
+            httpGet:
+              path: /_cluster/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          livenessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: http
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: http
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch
+  labels:
+    app.kubernetes.io/name: opensearch
+    app.kubernetes.io/part-of: atlas
+spec:
+  selector:
+    app.kubernetes.io/name: opensearch
+  ports:
+    - name: http
+      port: 9200
+      targetPort: http

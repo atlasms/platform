@@ -99,6 +99,8 @@ jobs:
         run: |
           kubectl -n atlas rollout status statefulset/postgres --timeout=180s
           kubectl -n atlas rollout status statefulset/nats --timeout=180s
+          # The JVM, plus a ~1 GB image the node pulls on first use: the longest wait here.
+          kubectl -n atlas rollout status statefulset/opensearch --timeout=300s
 
       # Available, not yet necessarily reachable: `rollout status` returns when the pod is Ready,
       # and kube-proxy programs its endpoint a moment later. The suite's third test waits for each
@@ -130,6 +132,9 @@ jobs:
             kubectl -n atlas logs "deployment/$d" --tail=100 --all-containers || true
             echo "::endgroup::"
           done
+          echo "::group::logs opensearch"
+          kubectl -n atlas logs statefulset/opensearch --tail=60 || true
+          echo "::endgroup::"
           echo "::group::describe not-running pods"
           kubectl -n atlas get pods --no-headers \
             | awk '$3 != "Running" {print $1}' \

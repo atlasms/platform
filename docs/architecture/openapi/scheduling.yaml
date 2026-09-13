@@ -280,7 +280,7 @@ components:
         status: { type: integer, minimum: 100, maximum: 599 }
         detail: { type: string }
         instance: { type: string, format: uri }
-        code: { type: string, enum: [VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, INTERNAL] }
+        code: { type: string, enum: [VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, UNAVAILABLE, INTERNAL] }
         message: { type: string }
         details: {}
         correlationId: { type: string }

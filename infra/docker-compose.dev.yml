@@ -49,6 +49,26 @@ services:
       timeout: 3s
       retries: 20
 
+  # --- OpenSearch: the hot query index (EP-07.4) -----------------------------
+  # A derived view of Postgres, never a system of record — see infra/k8s/base/opensearch.yaml.
+  opensearch:
+    image: opensearchproject/opensearch:2.19.3
+    container_name: atlas-opensearch
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "59200:9200"
+    volumes:
+      - osdata:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
   # --- RabbitMQ: broker candidate B ------------------------------------------
   rabbitmq:
     image: rabbitmq:4-management-alpine
@@ -70,4 +90,5 @@ services:
 volumes:
   pgdata:
   natsdata:
+  osdata:
   rabbitdata:

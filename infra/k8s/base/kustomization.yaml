@@ -15,6 +15,7 @@ resources:
   # Data plane first, so reading this file top-down matches the dependency order.
   - postgres.yaml
   - nats.yaml
+  - opensearch.yaml
   # Services.
   - iam.yaml
   - mam.yaml

@@ -45,11 +45,38 @@ unit of work:
 | History projected, in revision order | two revisions in, two out, channel-scoped, deep-linked by `messageId`                              |
 | Atomic                               | a payload failing its schema rolls back the record **and the claim** — the redelivery is processed |
 
-> ⚠️ **The design's hot store is OpenSearch** (EP-07.4, open). This is the MAM precedent instead: a
-> Postgres adapter behind the port, so the port and the suite are the contract and OpenSearch is an
-> adapter when it arrives. Two consumers appending to one channel at once collide on
-> `UNIQUE (channel_id, seq)`; the loser rolls back, its claim with it, and is redelivered to append at
-> the next seq. Optimistic, and correct — and with one replica in dev, never exercised.
+Two consumers appending to one channel at once collide on `UNIQUE (channel_id, seq)`; the loser
+rolls back, its claim with it, and is redelivered to append at the next seq. Optimistic, and
+correct — and with one replica in dev, never exercised.
+
+## The hot index (EP-07.4): OpenSearch holds a copy, Postgres holds the log
+
+[ADR-0005](../../docs/adr/0005-audit-log-storage.md). The design's _"search index (hot)"_ is
+real, and it is **not** the audit store: nothing above — the trigger, the chain, the seen-mark in
+the append's transaction — survives a move into a search engine, which can enforce none of it. So
+the index is a **derived view**. `projector.ts` copies committed rows into it in chain order,
+every document keyed by `messageId` so a re-index is an overwrite; `GET /logs` reads the index
+when `ATLAS_OPENSEARCH_URL` is set and Postgres otherwise; the history and the ingest always read
+and write Postgres.
+
+**No checkpoint table.** The index _is_ the checkpoint: per channel, the highest `seq` it holds is
+where the next copy starts, and `seq` is gapless per channel with N+1 computed from a committed N,
+so a cursor on it cannot skip a row (a global serial could — a later id may commit first). Delete
+the index and the next tick rebuilds it from the log; nothing else has to be reset. A dropped index
+is an operation, not an incident, and a mapping change is a new index.
+
+The read is **eventually consistent** — the projector's interval (1 s, `ATLAS_PROJECTOR_INTERVAL_MS`)
+plus the bulk refresh. With the engine away the service stays ready (Postgres is what it needs) and a
+browse is a `503 UNAVAILABLE`: retryable, and not a 500, so a dependency's outage is neither logged
+as a crash nor shown to a user as one. `/readyz` reports `opensearch` without gating on it.
+
+`browseConformance` runs the browse cases (newest first, keyset, every filter) against **both**
+readers — the store reading its own log, and the index after a projector tick — so a filter cannot
+mean one thing on the record and another on the index. The projector's own properties (resume from
+the index after a restart, rebuild after a drop, retry after a failed bulk, no overlapping ticks)
+have their own tests against an in-memory index; the real-engine round trip runs in CI against an
+OpenSearch service, like Postgres. Metrics: `atlas_audit_events_indexed_total`,
+`atlas_audit_projector_errors_total`, `atlas_audit_index_lag_records`.
 
 ## The read surface
 

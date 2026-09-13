@@ -17,6 +17,7 @@ export {
   type AuditTx,
   type ChainHead,
   type HistoryEntry,
+  type LogBrowser,
   type LogFilter,
 } from './store.ts';
 export { requiredPermission, visible } from './visibility.ts';
@@ -29,4 +30,16 @@ export {
   type Outcome,
   type SinkOptions,
 } from './sink.ts';
-export { auditStoreConformance, type AuditStoreHarness } from './store-conformance.ts';
+export {
+  auditStoreConformance,
+  browseConformance,
+  type AuditStoreHarness,
+  type BrowseHarness,
+} from './store-conformance.ts';
+export {
+  openSearchAuditIndex,
+  AUDIT_INDEX_MAPPINGS,
+  DEFAULT_AUDIT_INDEX,
+  type AuditIndex,
+} from './index-opensearch.ts';
+export { startProjector, type Projector, type ProjectorOptions } from './projector.ts';

@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { buildEnvelope, ulid, type EventPayloads } from '@atlas/contracts';
 import type { Message } from '@atlas/messaging';
 import { ingest } from './sink.ts';
-import { verifyChain, type AuditStore } from './store.ts';
+import { verifyChain, type AuditStore, type LogBrowser } from './store.ts';
 
 export interface AuditStoreHarness {
   /** A clean store; `cleanup` drops whatever it created. */
@@ -164,8 +164,102 @@ export function auditStoreConformance(name: string, harness: AuditStoreHarness):
     });
   });
 
-  test(`[${name}] browse: newest first, keyset on seq, and every filter narrows`, async () => {
+  // The browse cases, with the store reading its own log. The OpenSearch index runs the same
+  // cases with the store writing and the index reading (index-opensearch.test.ts).
+  browseConformance(name, {
+    make: async () => {
+      const { store, cleanup } = await harness.make();
+      return {
+        store,
+        browser: store,
+        cleanup: async () => {
+          await cleanup?.();
+          await store.close().catch(() => undefined);
+        },
+      };
+    },
+  });
+
+  test(`[${name}] heads and chainSince: what the projector reads is gapless, per channel`, async () => {
     await withStore(async (store) => {
+      assert.deepEqual(await store.heads(), [], 'no channels, no heads');
+      for (let i = 0; i < 5; i++) await ingest(store, domainMessage('asset.created'));
+      await ingest(store, domainMessage('asset.created', 'ch99'));
+
+      const heads = await store.heads();
+      assert.deepEqual(
+        heads.map((h) => [h.channelId, h.seq]),
+        [
+          [CH, 5],
+          ['ch99', 1],
+        ],
+      );
+      const chain = await store.chain(CH);
+      assert.equal(heads[0]?.hash, chain[4]?.hash, 'the head is the last link');
+
+      const slice = await store.chainSince(CH, 2, 2);
+      assert.deepEqual(
+        slice.map((e) => e.seq),
+        [3, 4],
+        'strictly after the cursor, in chain order, bounded',
+      );
+      assert.deepEqual(
+        (await store.chainSince(CH, 4, 100)).map((e) => e.seq),
+        [5],
+      );
+      assert.deepEqual(await store.chainSince(CH, 5, 100), [], 'caught up');
+      assert.ok(
+        (await store.chainSince('ch99', 0, 100)).every((e) => e.channelId === 'ch99'),
+        'a channel sees only its own chain',
+      );
+    });
+  });
+
+  test(`[${name}] a message that is not an envelope is refused, and appends nothing`, async () => {
+    await withStore(async (store) => {
+      await assert.rejects(
+        ingest(store, {
+          id: ulid(),
+          subject: `atlas.${CH}.asset.created`,
+          body: { userId: 'bare payload' },
+        }),
+        /is not an envelope/,
+      );
+      assert.deepEqual(await store.count(), { events: 0, history: 0 });
+    });
+  });
+}
+
+// --- the browse, from either side ------------------------------------------------------------------
+
+export interface BrowseHarness {
+  /**
+   * A store to write through, a browser to read from — the same object for a store adapter; a
+   * store plus its index for OpenSearch — and, when the two are not one, how to make the reader
+   * catch up with the writer before the assertions (a projector tick).
+   */
+  make: () => Promise<{
+    store: AuditStore;
+    browser: LogBrowser;
+    sync?: () => Promise<void>;
+    cleanup?: () => Promise<void>;
+  }>;
+}
+
+export function browseConformance(name: string, harness: BrowseHarness): void {
+  async function withBrowser(
+    fn: (store: AuditStore, browser: LogBrowser, sync: () => Promise<void>) => Promise<void>,
+  ): Promise<void> {
+    const { store, browser, sync, cleanup } = await harness.make();
+    try {
+      await fn(store, browser, sync ?? (async () => undefined));
+    } finally {
+      await cleanup?.();
+    }
+  }
+
+  test(`[${name}] browse: newest first, keyset on seq, and every filter narrows`, async () => {
+    await withBrowser(async (store, browser, sync) => {
       const corr = ulid();
       const at = (offsetMs: number) => new Date(1_700_000_000_000 + offsetMs).toISOString();
       const put = async (
@@ -193,20 +287,21 @@ export function auditStoreConformance(name: string, harness: AuditStoreHarness):
       await put('user.created', 'bob', undefined, at(2_000)); // seq 3
       await put('asset.updated', 'bob', undefined, at(3_000)); // seq 4
       await ingest(store, domainMessage('asset.created', 'ch99')); // another channel, never seen
+      await sync();
 
-      const all = await store.browse(CH, { limit: 10 });
+      const all = await browser.browse(CH, { limit: 10 });
       assert.deepEqual(
         all.map((e) => e.seq),
         [4, 3, 2, 1],
         'newest first, one channel only',
       );
 
-      const page1 = await store.browse(CH, { limit: 2 });
+      const page1 = await browser.browse(CH, { limit: 2 });
       assert.deepEqual(
         page1.map((e) => e.seq),
         [4, 3],
       );
-      const page2 = await store.browse(CH, { limit: 2, before: 3 });
+      const page2 = await browser.browse(CH, { limit: 2, before: 3 });
       assert.deepEqual(
         page2.map((e) => e.seq),
         [2, 1],
@@ -214,49 +309,35 @@ export function auditStoreConformance(name: string, harness: AuditStoreHarness):
       );
 
       assert.deepEqual(
-        (await store.browse(CH, { limit: 10, types: ['asset.updated'] })).map((e) => e.seq),
+        (await browser.browse(CH, { limit: 10, types: ['asset.updated'] })).map((e) => e.seq),
         [4, 2],
       );
       assert.deepEqual(
-        (await store.browse(CH, { limit: 10, types: ['user.created', 'asset.created'] })).map(
+        (await browser.browse(CH, { limit: 10, types: ['user.created', 'asset.created'] })).map(
           (e) => e.seq,
         ),
         [3, 1],
       );
       assert.deepEqual(
-        (await store.browse(CH, { limit: 10, correlationId: corr })).map((e) => e.seq),
+        (await browser.browse(CH, { limit: 10, correlationId: corr })).map((e) => e.seq),
         [2, 1],
       );
       assert.deepEqual(
-        (await store.browse(CH, { limit: 10, actorId: 'bob' })).map((e) => e.seq),
+        (await browser.browse(CH, { limit: 10, actorId: 'bob' })).map((e) => e.seq),
         [4, 3],
       );
       assert.deepEqual(
-        (await store.browse(CH, { limit: 10, from: at(1_000), to: at(2_000) })).map((e) => e.seq),
+        (await browser.browse(CH, { limit: 10, from: at(1_000), to: at(2_000) })).map((e) => e.seq),
         [3, 2],
         'inclusive bounds',
       );
       assert.deepEqual(
-        (await store.browse(CH, { limit: 10, types: ['asset.updated'], actorId: 'alice' })).map(
+        (await browser.browse(CH, { limit: 10, types: ['asset.updated'], actorId: 'alice' })).map(
           (e) => e.seq,
         ),
         [2],
         'filters combine',
       );
-    });
-  });
-
-  test(`[${name}] a message that is not an envelope is refused, and appends nothing`, async () => {
-    await withStore(async (store) => {
-      await assert.rejects(
-        ingest(store, {
-          id: ulid(),
-          subject: `atlas.${CH}.asset.created`,
-          body: { userId: 'bare payload' },
-        }),
-        /is not an envelope/,
-      );
-      assert.deepEqual(await store.count(), { events: 0, history: 0 });
     });
   });
 }

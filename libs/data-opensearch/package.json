@@ -1,0 +1,21 @@
+{
+  "name": "@atlas/data-opensearch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenSearch client for the hot query indexes: a connection factory, a readiness check and an idempotent index bootstrap. The system of record is Postgres (@atlas/data-pg); an index here is a derived view that can be rebuilt from it.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --no-warnings --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@opensearch-project/opensearch": "^3.6.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.13"
+  }
+}

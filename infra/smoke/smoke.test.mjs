@@ -503,14 +503,19 @@ test('smoke: EP-19.3 — the audit log browse finds a write by its correlation i
   const correlationId = created.headers.get('x-correlation-id');
   assert.ok(correlationId, 'the create carries its correlation id');
 
+  // In the cluster this browse is answered by the OpenSearch index (EP-07.4): the sink appends to
+  // Postgres, the projector copies the row into the index on its next tick, and only then does
+  // the page show it. So this proves the projector end to end, not just the sink. A 503 is the
+  // index saying "not yet" — retryable by definition — and is polled through like an empty page;
+  // any other failure is a failure.
   const deadline = Date.now() + 20_000;
   let page;
   for (;;) {
     const res = await get(`/api/v1/logs?correlationId=${encodeURIComponent(correlationId)}`, {
       headers: { authorization: `Bearer ${token}` },
     });
-    assert.equal(res.status, 200, `browse failed: ${res.text}`);
-    page = json(res);
+    if (res.status !== 503) assert.equal(res.status, 200, `browse failed: ${res.text}`);
+    page = res.status === 200 ? json(res) : { items: [] };
     if (page.items.length >= 2 || Date.now() > deadline) break;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }

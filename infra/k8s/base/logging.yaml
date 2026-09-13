@@ -45,6 +45,10 @@ spec:
               value: http://iam:3000
             - name: ATLAS_NATS_URL
               value: nats://nats:4222
+            # The hot index (EP-07.4). Unset it and the browse is answered by Postgres instead —
+            # correct, and slower as the log grows. Nothing else changes.
+            - name: ATLAS_OPENSEARCH_URL
+              value: http://opensearch:9200
             - name: PGUSER
               valueFrom:
                 secretKeyRef:

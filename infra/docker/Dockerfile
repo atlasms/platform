@@ -14,43 +14,41 @@
 
 ARG SERVICE
 
+# ---- manifests: every workspace package.json, and nothing else ------------
+#
+# Manifests before source: dependencies change far less often than code, and `npm ci` is the
+# expensive layer. BuildKit keys a `COPY --from` on the CONTENT it copies, so as long as no
+# package.json changed, the install layer below is reused whatever the source did.
+#
+# Derived from the tree, not listed by hand. This used to be a hand-maintained list of `COPY
+# <pkg>/package.json` lines — a manual mirror of the workspace layout — and it failed the quiet
+# way such lists do: mam was missing for two releases and its image still ran, because every
+# dependency it declared happened to be installed by another service; logging and scheduling were
+# missing too. The first dependency unique to one service turned that into a startup crash
+# (`Cannot find package '@atlas/data-opensearch'`, EP-07.4). A list you must remember to extend
+# fails when you forget; a tree you must remember to PRUNE only bloats when you forget.
+FROM node:24-alpine AS manifests
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY libs ./libs
+COPY apps ./apps
+# Studio is the one exclusion: `workspaces` are globs, and a directory that is not present simply
+# does not match — which is how Angular's dependency tree, and with it the whole dev toolchain,
+# stays out of every server image. Spikes and tools are never copied at all.
+RUN rm -rf apps/studio \
+ && find libs apps -mindepth 2 -maxdepth 2 ! -name package.json -exec rm -rf {} + \
+ && find libs apps -maxdepth 1 -type f -delete
+
 # ---- dependencies + source --------------------------------------------------
 FROM node:24-alpine AS deps
 ARG SERVICE
 WORKDIR /app
 
-# Manifests before source: dependencies change far less often than code, and this is the expensive
-# layer to rebuild.
-COPY package.json package-lock.json ./
-COPY libs/contracts/package.json ./libs/contracts/
-COPY libs/data/package.json ./libs/data/
-COPY libs/data-pg/package.json ./libs/data-pg/
-COPY libs/messaging/package.json ./libs/messaging/
-COPY libs/messaging-nats/package.json ./libs/messaging-nats/
-COPY libs/policy/package.json ./libs/policy/
-COPY libs/reference/package.json ./libs/reference/
-COPY libs/service-kit/package.json ./libs/service-kit/
-COPY apps/api-gateway/package.json ./apps/api-gateway/
-COPY apps/iam/package.json ./apps/iam/
-COPY apps/mam/package.json ./apps/mam/
-COPY apps/websocket/package.json ./apps/websocket/
-COPY apps/walking-skeleton/package.json ./apps/walking-skeleton/
+COPY --from=manifests /app /app
 
-# ⚠️ THIS LIST IS A MANUAL MIRROR OF THE WORKSPACE LAYOUT. Add a service to `apps/` and it must be
-# added here too, or `npm ci` never learns about that workspace and its dependencies are simply not
-# installed. That failure is quiet: mam was missing from this list for two releases and its image
-# still ran, because every dependency it declares happened to be installed by another service. The
-# first dependency unique to a new service is what turns it into a startup crash.
-#
-# IT IS NOT THE ONLY MIRROR. `k8s:build` and `k8s:load` in the root package.json name every image
-# by hand as well, and the websocket service shipped a k8s manifest referencing `atlas/websocket:dev`
-# while both of those scripts still listed three services — so `npm run k8s:up` deployed a pod whose
-# image had never been built. That one at least fails loudly (ImagePullBackOff), but only for
-# whoever runs it first. Adding a service means touching this file AND both scripts.
-#
-# Studio and the spikes are deliberately absent. `workspaces` are globs, so a directory that is not
-# in the build context simply does not match — which is how Angular's dependency tree stays out of
-# a server image, and with it the whole dev toolchain (`npm ci --omit=dev` does the rest).
+# `k8s:build` and `k8s:load` in the root package.json still name every image by hand, and the
+# generator (`nx g service`) extends them; the websocket service once shipped a manifest for an
+# image those scripts had never built. That one at least fails loudly (ImagePullBackOff).
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 # Source goes into THIS stage so the runtime can copy /app whole. Copying only the root

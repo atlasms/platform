@@ -48,6 +48,7 @@ export interface HistoryEntry {
 
 /** The last link of a channel's chain, or nothing when the channel has no records yet. */
 export interface ChainHead {
+  channelId: string;
   seq: number;
   hash: string;
 }
@@ -98,14 +99,31 @@ export function browseClauses(
   return { where: clauses.join(' AND '), params };
 }
 
-export interface AuditStore {
+/**
+ * The read side of the browse (EP-19.3). The store answers it from the log itself; the OpenSearch
+ * index (EP-07.4) answers it from the projection. Same filter, same order, same page — one
+ * conformance suite runs the browse cases against both, so a filter cannot mean one thing on the
+ * system of record and another on the index.
+ */
+export interface LogBrowser {
+  /** Up to `limit` rows of one channel's log, newest first, matching every given filter. */
+  browse(channelId: string, filter: LogFilter): Promise<AuditEvent[]>;
+}
+
+export interface AuditStore extends LogBrowser {
   /** The unit of work. Everything a consumer does for one message happens inside ONE of these. */
   transaction<T>(fn: (tx: AuditTx) => Promise<T>): Promise<T>;
   history(channelId: string, entityType: string, entityId: string): Promise<HistoryEntry[]>;
-  /** Up to `limit` rows of one channel's log, newest first, matching every given filter. */
-  browse(channelId: string, filter: LogFilter): Promise<AuditEvent[]>;
   /** Every record in a channel, in chain order — what `verifyChain` walks. */
   chain(channelId: string): Promise<AuditEvent[]>;
+  /**
+   * What the projector reads (EP-07.4): the last seq of every channel, and a channel's records
+   * strictly after a seq, in chain order. `seq` is gapless per channel and committed in order —
+   * N+1 is computed from a committed N — so a cursor on it cannot skip a row, which a global
+   * serial could (a later id may commit first).
+   */
+  heads(): Promise<ChainHead[]>;
+  chainSince(channelId: string, afterSeq: number, limit: number): Promise<AuditEvent[]>;
   count(): Promise<{ events: number; history: number }>;
   close(): Promise<void>;
 }
