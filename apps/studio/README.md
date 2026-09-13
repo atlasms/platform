@@ -43,7 +43,11 @@ counts and what's-new against real MAM, live-refreshed. State counts page the ch
 **EP-20.9** — live updates: panels and the asset editor subscribe to `atlas.<channel>.asset.>`
 and reconcile by refetch; a live event never clobbers a dirty form.
 
-**Not built:** Schedule and later editor types remain placeholders until their owning services
+**EP-20.5** — the schedule editor v0: the Schedule panel (pick a broadcast day, open or create
+its program table) and the reel editor tab — add, move, resize, remove, and one save. See
+[The schedule editor owns reel correctness](#the-schedule-editor-owns-reel-correctness-ep-205).
+
+**Not built:** Newsroom and later editor types remain placeholders until their owning services
 exist.
 
 ## Signing in
@@ -104,6 +108,36 @@ deliberately not persisted** — unsaved edits do not survive a reload, so resto
 marked dirty would promise changes that are gone. Restored data is validated rather than trusted:
 localStorage is user-writable and survives deploys, and booting into a crash because someone edited
 devtools is not acceptable.
+
+## The schedule editor owns reel correctness (EP-20.5)
+
+The scheduling service's write path is **thin** — it stores the starts it is given and refuses
+nothing about their arrangement ([data-model §3.4](../../docs/architecture/data-model.md),
+FR-SCH-9) — so the arrangement is decided here, in
+[`editors/reel.model.ts`](src/app/editors/reel.model.ts): plain data and pure functions, like the
+editor area's model, tested without rendering anything (18 cases). Three rules:
+
+1. **Reflow.** A non-fixed item starts where the previous one ends; a `fixed` item is a time-locked
+   anchor whose start is what the user typed, and the items after it flow from it. Add, move,
+   resize or remove, and every start after the change is recomputed up to the next anchor.
+2. **Overlaps are refused at save.** Reflow cannot create one between non-fixed items, but an anchor
+   can sit inside the item before it. The row is marked, the message says how many, and **Save is
+   disabled** until the user shortens, moves or unfixes.
+3. **Gaps are flagged, never blocked.** Dead air before an anchor is legitimate; a dashed row says
+   how much.
+
+A live item's sub-schedule travels with it — move or remove the live item and its children move or
+go, shifted by exactly what the parent moved. Editing _inside_ a sub-schedule is v1.
+
+**One save.** `PUT /schedules/{id}/items` with the whole reel: `seq` is the row's position, ids are
+kept for rows that had them and minted by the service for rows that did not; `end` is never sent
+(the service computes it). The stored reel comes back and replaces the rows, so the tab shows
+exactly what the next reader gets. A failed save keeps the edits and the dirty dot. Times are
+entered and shown as **wall clock in the schedule's zone**, converted with `Intl` (offset measured
+twice, so a DST boundary is right); the browser's zone never enters into it.
+
+Live updates: `atlas.<channel>.schedule.>`, reconciled by refetch — and never while the reel is
+dirty, the EP-20.9 rule.
 
 ## Authorization: Studio decides what to SHOW
 
