@@ -1,6 +1,7 @@
 import { CdkDrag, CdkDropList, CdkDropListGroup, type CdkDragDrop } from '@angular/cdk/drag-drop';
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { AssetEditor } from '../editors/asset-editor.ts';
+import { ScheduleEditor } from '../editors/schedule-editor.ts';
 import { Dashboard } from '../panels/dashboard.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { EditorStore } from './editor.store.ts';
@@ -16,7 +17,7 @@ import { EditorStore } from './editor.store.ts';
 @Component({
   selector: 'atlas-editor-area',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CdkDrag, CdkDropList, CdkDropListGroup, AssetEditor, Dashboard],
+  imports: [CdkDrag, CdkDropList, CdkDropListGroup, AssetEditor, Dashboard, ScheduleEditor],
   template: `
     @if (store.isEmpty()) {
       <div class="empty-state">
@@ -87,6 +88,9 @@ import { EditorStore } from './editor.store.ts';
                     }
                     @case ('dashboard') {
                       <atlas-dashboard />
+                    }
+                    @case ('schedule') {
+                      <atlas-schedule-editor [scheduleId]="tab.resourceId" [tabId]="tab.id" />
                     }
                     @default {
                       <h2>{{ tab.title }}</h2>

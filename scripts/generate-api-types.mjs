@@ -41,6 +41,12 @@ const SPECS = [
   { file: 'iam.yaml', out: 'iam.types.ts', ops: 'iam.operations.ts', title: 'IAM' },
   { file: 'mam.yaml', out: 'mam.types.ts', ops: 'mam.operations.ts', title: 'MAM' },
   { file: 'rim.yaml', out: 'rim.types.ts', ops: 'rim.operations.ts', title: 'RIM' },
+  {
+    file: 'scheduling.yaml',
+    out: 'scheduling.types.ts',
+    ops: 'scheduling.operations.ts',
+    title: 'Scheduling',
+  },
 ];
 
 const METHODS = ['get', 'post', 'put', 'patch', 'delete'];
@@ -317,6 +323,14 @@ function tsType(schema, where, resolveRef = openApiRef) {
   if (!schema || typeof schema !== 'object') fail(where, 'not a schema object');
 
   if (schema.$ref) return resolveRef(schema.$ref, where);
+
+  // `allOf` is an intersection — the one composition keyword whose TypeScript projection is exact.
+  // `oneOf`/`anyOf` stay unsupported: a discriminated union needs the discriminator named, and a
+  // bare union of objects is not what a JSON Schema `anyOf` means.
+  if (Array.isArray(schema.allOf)) {
+    if (schema.allOf.length === 0) fail(where, 'empty allOf');
+    return schema.allOf.map((s, i) => tsType(s, `${where}.allOf[${i}]`, resolveRef)).join(' & ');
+  }
 
   const nullable = schema.nullable === true ? ' | null' : '';
 

@@ -24,6 +24,11 @@ export const routes: Routes = [
     canMatch: [requirePermission('asset:read')],
     loadComponent: () => import('./panels/search-panel.ts').then((m) => m.SearchPanel),
   },
+  {
+    path: 'schedule',
+    canMatch: [requirePermission('schedule:read')],
+    loadComponent: () => import('./panels/schedule-panel.ts').then((m) => m.SchedulePanel),
+  },
   // No /ingest route: the panel exists (EP-20.3) but RIM (EP-15) does not, so the panel is
   // `available: false` in panels.ts and unrouted, like every other not-yet-backed panel.
   {

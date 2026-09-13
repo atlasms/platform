@@ -60,7 +60,7 @@ export const PANELS: readonly PanelDefinition[] = [
     icon: '▦',
     permission: 'schedule:read',
     route: '/schedule',
-    available: false,
+    available: true,
   },
   {
     id: 'newsroom',

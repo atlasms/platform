@@ -29,6 +29,7 @@ class FakeLocale {
     const ar: Record<string, string> = {
       'workbench.panels.media': 'الوسائط',
       'workbench.panels.schedule': 'الجدولة',
+      'workbench.panels.newsroom': 'غرفة الأخبار',
       'workbench.panels.notBuilt': 'لم يُبنَ بعد',
     };
     return this.dir() === 'rtl' ? (ar[key] ?? key) : key;
@@ -175,9 +176,10 @@ describe('Workbench', () => {
       locale.dir.set('rtl');
       fixture.detectChanges();
 
-      const schedule = PANELS.find((p) => p.id === 'schedule')!;
-      expect(schedule.available).toBe(false);
-      expect(component.panelTitle(schedule)).toBe('الجدولة — لم يُبنَ بعد');
+      // Newsroom, since the schedule panel this used to point at is built now (EP-20.5).
+      const newsroom = PANELS.find((p) => p.id === 'newsroom')!;
+      expect(newsroom.available).toBe(false);
+      expect(component.panelTitle(newsroom)).toBe('غرفة الأخبار — لم يُبنَ بعد');
     });
 
     it('every panel names a key both locale files actually carry', async () => {
