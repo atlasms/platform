@@ -137,11 +137,11 @@ Panels are permission-matched with `canMatch`, not `canActivate`: a route the us
 never matches, so the router falls through to the catch-all rather than navigating then bouncing —
 and the panel's chunk is never fetched.
 
-## API types come from the contract (EP-11.5)
+## API types AND URLs come from the contract (EP-11.5, EP-02.4)
 
-`src/app/core/generated/*.types.ts` is generated from `docs/architecture/openapi/*.yaml` and checked
-in, so a type change shows up as a reviewable diff in a pull request rather than materialising
-during a build.
+`src/app/core/generated/*.types.ts` and `*.operations.ts` are generated from
+`docs/architecture/openapi/*.yaml` and checked in, so a type or path change shows up as a reviewable
+diff in a pull request rather than materialising during a build.
 
 ```sh
 npm run api:types    # regenerate
@@ -153,6 +153,30 @@ while [FR-IAM-14](../../docs/requirements/05-functional-requirements.md#iam), th
 `x-atlas-perm-version` header and every line of code called it `permVersion` — and the contract
 omitted `expiresIn` entirely. Nothing had ever compared the two, because until now the OpenAPI stubs
 were documentation only: referenced in comments, parsed by nothing. The contract was corrected.
+
+**No service spells a URL (EP-02.4).** `*.operations.ts` is the operations table — for every
+`operationId`, the verb, the path _as the gateway serves it_ and the names of its path parameters:
+
+```ts
+this.api.call(ops.getAsset, { params: { id } }).as<Asset>();
+this.api.call(ops.listAssets, { query: { limit, cursor } }).as<Page<Asset>>();
+```
+
+`ApiClient` (`core/api-client.ts`) builds the request from the entry, so a service cannot spell a
+path the contract does not have, cannot use the wrong verb, and cannot forget a path parameter:
+`{ id }` is **required by the type** when the path has `{id}` and refused when it does not, and the
+value is percent-encoded on the way in. Rename a path in the contract, regenerate, and every caller
+stops compiling — that is the loop `api:check` closes. The response type stays with the caller
+(`.as<T>()`, two steps because TypeScript infers all type arguments or none): the stubs declare
+responses unevenly, and a generated return type that is `unknown` half the time teaches callers to
+cast.
+
+Generating the table found a second round of drift. `iam.yaml` put `/auth/*` and the JWKS under
+`/api/v1` — nothing on the platform served them there; the gateway's public route, the smoke suite
+and this app all use the root — and said the login body was `{ login, password }` where IAM reads
+`username`. `mam.yaml` had `POST /field-schemas` where MAM serves `PUT`, and no
+`/assets/{id}/extended` at all. The contracts were corrected; a path item's own `servers` is how
+OpenAPI records "at the root", and the generator reads it.
 
 `api:check` is a **separate CI step**, not part of `nx test`. Nx skips unaffected projects, and
 editing `docs/architecture/openapi/*.yaml` touches no project — so the one change that can cause

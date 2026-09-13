@@ -1,8 +1,10 @@
 import { inject, Injectable, signal } from '@angular/core';
-import { HttpClient, HttpContext, HttpContextToken } from '@angular/common/http';
+import { HttpContext, HttpContextToken } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import type { CompileInput } from '@atlas/policy';
-import { API_BASE_URL, type TokenPair } from './api.ts';
+import type { TokenPair } from './api.ts';
+import { ApiClient } from './api-client.ts';
+import { IamOperations as ops } from './generated/iam.operations.ts';
 import { SessionStore } from './session.store.ts';
 
 /**
@@ -39,8 +41,7 @@ export const skipAuth = (): HttpContext => new HttpContext().set(SKIP_AUTH, true
  */
 @Injectable({ providedIn: 'root' })
 export class AuthService {
-  private readonly http = inject(HttpClient);
-  private readonly base = inject(API_BASE_URL);
+  private readonly api = inject(ApiClient);
   private readonly session = inject(SessionStore);
 
   private accessToken: string | null = null;
@@ -59,11 +60,9 @@ export class AuthService {
     this.busy.set(true);
     try {
       const pair = await firstValueFrom(
-        this.http.post<TokenPair>(
-          `${this.base}/auth/login`,
-          { username, password },
-          { context: skipAuth() },
-        ),
+        this.api
+          .call(ops.login, { body: { username, password }, context: skipAuth() })
+          .as<TokenPair>(),
       );
       this.accessToken = pair.accessToken;
       this.refreshToken = pair.refreshToken;
@@ -95,11 +94,9 @@ export class AuthService {
     if (token === null) return null;
     try {
       const pair = await firstValueFrom(
-        this.http.post<TokenPair>(
-          `${this.base}/auth/refresh`,
-          { refreshToken: token },
-          { context: skipAuth() },
-        ),
+        this.api
+          .call(ops.refresh, { body: { refreshToken: token }, context: skipAuth() })
+          .as<TokenPair>(),
       );
       this.accessToken = pair.accessToken;
       this.refreshToken = pair.refreshToken;
@@ -121,7 +118,7 @@ export class AuthService {
    */
   private async loadSession(): Promise<void> {
     const policy = await firstValueFrom(
-      this.http.get<CompileInput>(`${this.base}/api/v1/users/me/effective-permissions`),
+      this.api.call(ops.getEffectivePermissions, { params: { id: 'me' } }).as<CompileInput>(),
     );
     const claims = readClaims(this.accessToken);
     this.session.signIn({
@@ -140,11 +137,9 @@ export class AuthService {
     if (token === null) return;
     try {
       await firstValueFrom(
-        this.http.post(
-          `${this.base}/auth/logout`,
-          { refreshToken: token },
-          { context: skipAuth() },
-        ),
+        this.api
+          .call(ops.logout, { body: { refreshToken: token }, context: skipAuth() })
+          .as<void>(),
       );
     } catch {
       // Local state is already cleared. A failed server-side revocation must not leave the browser
