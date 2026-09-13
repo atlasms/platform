@@ -15,9 +15,11 @@ const PASSWORD = 'correct horse battery';
 async function iam(over: { now?: () => number; refreshTokenTtlMs?: number } = {}) {
   const keyRing = await KeyRing.create('k1');
   const service = new IamService({ keyRing, issuer: 'atlas-iam', audience: 'atlas', ...over });
-  seedStarterRoles(service.store.roles);
+  await seedStarterRoles(service.store);
   const user = await service.createUser({ username: 'jo', password: PASSWORD, channelId: 'ch12' });
-  service.store.assignments.push({ userId: user.id, roleId: 'editor' });
+  await service.store.transaction((tx) =>
+    tx.putAssignment({ id: 'a-editor', userId: user.id, roleId: 'editor' }),
+  );
   const app = buildIamApp({ service, keyRing });
   return { keyRing, service, user, app };
 }
@@ -163,10 +165,14 @@ test('login attempts are counted by outcome, not lumped into one failure count',
 test('a non-active account is counted under its own state', async () => {
   // The outcome IS the user state here, so the label set cannot drift from UserState.
   const { service, user, app } = await iam();
-  user.state = 'locked';
+  const setState = (state: 'locked' | 'disabled') =>
+    service.store.transaction(async (tx) =>
+      tx.putUser({ ...(await service.store.user(user.id))!, state }),
+    );
+  await setState('locked');
   await assert.rejects(service.login('jo', PASSWORD));
 
-  user.state = 'disabled';
+  await setState('disabled');
   await assert.rejects(service.login('jo', PASSWORD));
 
   const body = await scrape(app);

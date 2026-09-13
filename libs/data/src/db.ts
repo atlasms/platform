@@ -31,19 +31,39 @@ export function withTransaction<T>(db: Db, fn: (db: Db) => T): T {
  * outbox atomicity) is therefore specified against this shape, so one conformance suite can hold
  * both `node:sqlite` and `pg` to the same rules.
  *
- * CAUTION: `DatabaseSync` is a single connection with no statement queue, so anything else that
- * touches `db` while this is awaiting joins THIS transaction. Await only work belonging to the
- * unit of work — never an unrelated I/O call — or use the synchronous `withTransaction`, which
- * makes that mistake impossible.
+ * `DatabaseSync` is ONE connection with no statement queue, so two of these in flight at once
+ * would interleave — the second `BEGIN` lands inside the first transaction and sqlite refuses it.
+ * They are serialized per connection here, which is what one connection means: a second
+ * transaction waits for the first to commit or roll back, then runs against its result. That is
+ * also what makes the double honest about a race the production store resolves with row locks —
+ * two callers claiming one refresh token both run, in order, and the second finds it claimed.
+ *
+ * CAUTION still: a read on `db` outside any transaction while one is awaiting sees its
+ * uncommitted state. Await only work belonging to the unit of work.
  */
 export async function withTransactionAsync<T>(db: Db, fn: (db: Db) => Promise<T> | T): Promise<T> {
-  db.exec('BEGIN');
+  const previous = queues.get(db) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const mine = new Promise<void>((resolve) => (release = resolve));
+  queues.set(
+    db,
+    previous.then(() => mine),
+  );
+  await previous;
   try {
-    const result = await fn(db);
-    db.exec('COMMIT');
-    return result;
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
+    db.exec('BEGIN');
+    try {
+      const result = await fn(db);
+      db.exec('COMMIT');
+      return result;
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+  } finally {
+    release();
   }
 }
+
+/** The tail of each connection's transaction queue. */
+const queues = new WeakMap<Db, Promise<void>>();

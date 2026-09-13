@@ -176,6 +176,15 @@ key rotation schedule; lockout/backoff thresholds; whether explicit-deny
   cache, Prisma/`pg` for the relational store.
 - Publish JWKS with cache headers; keep two active keys during rotation.
 - No CPU-bound work → no native escape hatch.
+- **As built (EP-10.4):** Fastify, not NestJS, like every service here; `jose` and argon2id as
+  planned; **Postgres behind an `IamStore` port** with a `node:sqlite` double and one conformance
+  suite ([`apps/iam`](../../../apps/iam/)). No Redis: the compiled policy is cached by its
+  consumers against `permVersion`, and the token family lives in Postgres with a unique index on
+  the token hash. Rotation is an atomic claim (`UPDATE … WHERE revoked_at IS NULL`, counted), which
+  is what makes a concurrent replay a detected reuse rather than a second valid session. Roles and
+  groups are stored documents keyed by id — a group references roles by id, so editing a role edits
+  it everywhere. `channel_id` is nullable on roles and groups: NULL is platform-wide (the starter
+  roles), the exception to the every-row rule, recorded here.
 
 ## 14. Open questions / future
 

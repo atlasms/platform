@@ -48,6 +48,20 @@ spec:
               value: atlas-iam
             - name: ATLAS_AUDIENCE
               value: atlas
+            # EP-10.4: identity persists in Postgres — users, credentials, sessions, grants —
+            # wired the way every other service's store is.
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            - name: ATLAS_PG_URL
+              value: postgres://$(PGUSER):$(PGPASSWORD)@postgres:5432/atlas
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
