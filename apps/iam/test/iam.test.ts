@@ -16,13 +16,15 @@ import {
 async function iam(over: { now?: () => number; refreshTokenTtlMs?: number } = {}) {
   const keyRing = await KeyRing.create('k1');
   const service = new IamService({ keyRing, issuer: 'atlas-iam', audience: 'atlas', ...over });
-  seedStarterRoles(service.store.roles);
+  await seedStarterRoles(service.store);
   const user = await service.createUser({
     username: 'jo',
     password: 'correct horse battery',
     channelId: 'ch12',
   });
-  service.store.assignments.push({ userId: user.id, roleId: 'editor' });
+  await service.store.transaction((tx) =>
+    tx.putAssignment({ id: 'a-editor', userId: user.id, roleId: 'editor' }),
+  );
   return { keyRing, service, user };
 }
 
@@ -93,13 +95,13 @@ test('SECURITY: an unknown user and a wrong password are indistinguishable', asy
 
 test('a disabled account cannot log in, and the reason is audited but not returned', async () => {
   const { service, user } = await iam();
-  user.state = 'disabled';
+  await service.store.transaction((tx) => tx.putUser({ ...user, state: 'disabled' }));
 
   await assert.rejects(
     service.login('jo', 'correct horse battery'),
     /invalid username or password/,
   );
-  const ev = service.store.loginEvents.at(-1)!;
+  const ev = (await service.store.loginEvents({ username: 'jo' }))[0]!;
   assert.equal(ev.result, 'failure');
   assert.match(ev.reason ?? '', /account is disabled/);
 });
@@ -190,14 +192,12 @@ test('the JWKS contains public halves only', async () => {
 // --- EP-10.5 effective policy ---------------------------------------------
 test('effective policy is the union of user, role and group grants', async () => {
   const { service, user } = await iam();
-  service.store.groups.set('g-approvers', {
-    id: 'g-approvers',
-    name: 'Approvers',
-    roles: [service.store.roles.get('approver')!],
+  await service.store.transaction(async (tx) => {
+    await tx.putGroup({ id: 'g-approvers', name: 'Approvers', roleIds: ['approver'] });
+    await tx.putMembership({ userId: user.id, groupId: 'g-approvers' });
   });
-  service.store.memberships.push({ userId: user.id, groupId: 'g-approvers' });
 
-  const policy = service.effectivePolicy(user.id);
+  const policy = await service.effectivePolicy(user.id);
   assert.equal(policy.subjectId, user.id);
   assert.equal(can(policy, 'asset:write', { fieldGroup: 'core' }).allowed, true); // via editor role
   assert.equal(can(policy, 'asset:approve').allowed, true); // via group
@@ -211,7 +211,7 @@ test('bumping permVersion is what makes revocation land within a token TTL', asy
   const before = await service.login('jo', 'correct horse battery');
   assert.equal(before.permVersion, 1);
 
-  assert.equal(service.bumpPermVersion(user.id), 2);
+  assert.equal(await service.bumpPermVersion(user.id), 2);
   const after = await service.login('jo', 'correct horse battery');
   assert.equal(after.permVersion, 2);
   // The edge refuses anything below the current version; the old token is now stale.
@@ -220,18 +220,18 @@ test('bumping permVersion is what makes revocation land within a token TTL', asy
 // --- EP-10.7 starter roles ------------------------------------------------
 test('starter roles seed idempotently and keep send-to-air separate', async () => {
   const { service } = await iam();
-  const added = seedStarterRoles(service.store.roles); // already seeded in the fixture
+  const added = await seedStarterRoles(service.store); // already seeded in the fixture
   assert.equal(added, 0, 're-seeding must not duplicate');
-  assert.equal(service.store.roles.size, STARTER_ROLES.length);
+  assert.equal((await service.store.roles()).length, STARTER_ROLES.length);
 
   // schedule:send is deliberately NOT part of Scheduler — putting media to air deserves its own
   // audited grant rather than arriving as a side effect of schedule editing.
-  const scheduler = service.store.roles.get('scheduler')!;
+  const scheduler = (await service.store.role('scheduler'))!;
   const perms = scheduler.rules.flatMap((r) => r.permissions);
   assert.ok(perms.includes('schedule:write'));
   assert.equal(perms.includes('schedule:send'), false);
   assert.ok(
-    service.store.roles.get('send-to-air')!.rules[0]?.permissions.includes('schedule:send'),
+    (await service.store.role('send-to-air'))!.rules[0]?.permissions.includes('schedule:send'),
   );
 });
 
@@ -243,7 +243,8 @@ test('every login attempt is recorded with ip and outcome', async () => {
   await assert.rejects(service.login('jo', 'nope', { ip: '10.0.0.9' }));
   await assert.rejects(service.login('ghost', 'nope', { ip: '10.0.0.9' }));
 
-  const events = service.store.loginEvents;
+  // Newest first from the store; oldest first is how the attempts happened.
+  const events = (await service.store.loginEvents()).reverse();
   assert.equal(events.length, 3);
   assert.deepEqual(
     events.map((e) => e.result),
@@ -252,8 +253,9 @@ test('every login attempt is recorded with ip and outcome', async () => {
   assert.equal(events[0]?.ip, '10.0.0.5');
   assert.equal(events[0]?.userAgent, 'Studio/1.0');
   assert.equal(events[2]?.userId, undefined, 'an unknown username has no user id to record');
-  assert.equal(user.lastIp, '10.0.0.5');
-  assert.ok(user.lastLogin);
+  const stored = (await service.store.user(user.id))!;
+  assert.equal(stored.lastIp, '10.0.0.5');
+  assert.ok(stored.lastLogin);
 });
 
 // --- HTTP surface ---------------------------------------------------------

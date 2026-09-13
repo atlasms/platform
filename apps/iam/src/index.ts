@@ -34,16 +34,18 @@ export {
 } from './passwords.ts';
 export { STARTER_ROLES, seedStarterRoles } from './roles.ts';
 export {
-  createStore,
-  findByUsername,
-  familyOf,
   type IamStore,
+  type IamTx,
   type User,
   type UserState,
   type Credential,
   type RefreshTokenRecord,
   type LoginEvent,
   type Group,
+  type StoredRole,
   type Membership,
   type Assignment,
 } from './store.ts';
+export { sqliteIamStore, sqliteMigrations } from './store-sqlite.ts';
+export { pgIamStore, pgMigrations } from './store-pg.ts';
+export { iamStoreConformance, type IamStoreHarness } from './store-conformance.ts';

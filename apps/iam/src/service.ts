@@ -16,17 +16,12 @@ import {
 } from './lockout.ts';
 import { hashPassword, needsRehash, verifyPassword } from './passwords.ts';
 import { hashRefreshToken, mintRefreshToken, signAccessToken, type KeyRing } from './tokens.ts';
-import {
-  createStore,
-  familyOf,
-  findByUsername,
-  type IamStore,
-  type LoginEvent,
-  type User,
-} from './store.ts';
+import { sqliteIamStore } from './store-sqlite.ts';
+import type { IamStore, IamTx, LoginEvent, User } from './store.ts';
 
 export interface IamOptions {
   keyRing: KeyRing;
+  /** `pgIamStore` in production; omitted, an in-memory sqlite double — tests and the walking skeleton. */
   store?: IamStore;
   issuer?: string;
   audience?: string;
@@ -69,7 +64,7 @@ export class IamService {
   #now: () => number;
 
   constructor(options: IamOptions) {
-    this.store = options.store ?? createStore();
+    this.store = options.store ?? sqliteIamStore();
     this.metrics = options.metrics ?? new MetricRegistry();
     this.#signals = authSignals(this.metrics);
     this.#lockout = { ...DEFAULT_LOCKOUT, ...options.lockout };
@@ -101,16 +96,14 @@ export class IamService {
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),
     };
-    this.store.users.set(user.id, user);
-
-    if (input.password !== undefined) {
-      this.store.credentials.set(user.id, {
-        userId: user.id,
-        hash: await hashPassword(input.password),
-        updatedAt: now,
-      });
-      user.lastPasswordChange = now;
-    }
+    // The hash is computed before the transaction: argon2 takes ~100 ms and a connection should
+    // not be held for it.
+    const hash = input.password !== undefined ? await hashPassword(input.password) : undefined;
+    if (hash !== undefined) user.lastPasswordChange = now;
+    await this.store.transaction(async (tx) => {
+      await tx.putUser(user); // a taken username is a Conflict, decided by the store
+      if (hash !== undefined) await tx.putCredential({ userId: user.id, hash, updatedAt: now });
+    });
     return user;
   }
 
@@ -127,19 +120,21 @@ export class IamService {
     // The outcome is passed in at each call site rather than parsed back out of `reason`: `reason`
     // is prose for a human reading the audit trail, `outcome` is a closed label set (#205). Deriving
     // one from the other would make an edit to the wording silently fork a time series.
-    const fail = (
+    const fail = async (
       outcome: LoginOutcome,
       reason: string,
       user?: User,
       result: LoginEvent['result'] = 'failure',
-    ): never => {
+    ): Promise<never> => {
       this.#signals.login(outcome);
-      this.#audit({ username, result, reason, ctx, ...(user ? { userId: user.id } : {}) });
+      await this.store.transaction((tx) =>
+        this.#audit(tx, { username, result, reason, ctx, ...(user ? { userId: user.id } : {}) }),
+      );
       throw new Unauthorized('invalid username or password');
     };
 
-    const user = findByUsername(this.store, username);
-    const cred = user ? this.store.credentials.get(user.id) : undefined;
+    const user = await this.store.userByUsername(username);
+    const cred = user ? await this.store.credential(user.id) : undefined;
 
     // ONE argon2 verification on every path, before any branch — including the ones that will
     // refuse for a reason that has nothing to do with the password.
@@ -153,7 +148,8 @@ export class IamService {
     if (!user) return fail('unknown_user', 'unknown username');
 
     // An automatic lock lifts itself. Checked BEFORE the state test, so the very next attempt after
-    // the window is an ordinary login rather than needing an operator (#240).
+    // the window is an ordinary login rather than needing an operator (#240). The lift is written
+    // with whatever this attempt decides, in the one transaction below.
     if (lockExpired(user, this.#now())) clearLock(user);
 
     if (user.state !== 'active') {
@@ -170,15 +166,24 @@ export class IamService {
     if (!cred) return fail('no_credential', 'no password credential (SSO-only user)', user);
 
     if (!passwordOk) {
-      this.#recordFailure(user);
-      return fail('bad_password', 'bad password', user);
+      // The run and the event, together: a crash between them would either lose a failure the
+      // policy should count or record a lock the user record does not show.
+      this.#signals.login('bad_password');
+      await this.store.transaction(async (tx) => {
+        await this.#recordFailure(tx, user);
+        await this.#audit(tx, {
+          username,
+          userId: user.id,
+          result: 'failure',
+          reason: 'bad password',
+          ctx,
+        });
+      });
+      throw new Unauthorized('invalid username or password');
     }
 
     // Opportunistic upgrade: the only moment the plaintext is available.
-    if (needsRehash(cred.hash)) {
-      cred.hash = await hashPassword(password);
-      cred.updatedAt = new Date(this.#now()).toISOString();
-    }
+    const rehash = needsRehash(cred.hash) ? await hashPassword(password) : undefined;
 
     const now = new Date(this.#now()).toISOString();
     user.lastLogin = now;
@@ -187,9 +192,17 @@ export class IamService {
     // must not leave the account one mistake from a lock a week later.
     clearFailures(user);
     this.#signals.login('success');
-    this.#audit({ username, userId: user.id, result: 'success', ctx });
 
-    return this.#issue(user, ulid());
+    // One unit of work: the user record (lock lift, run cleared, last login), the rehash, the
+    // event, and the refresh token the pair is minted against.
+    return this.store.transaction(async (tx) => {
+      await tx.putUser(user);
+      if (rehash !== undefined) {
+        await tx.putCredential({ userId: user.id, hash: rehash, updatedAt: now });
+      }
+      await this.#audit(tx, { username, userId: user.id, result: 'success', ctx });
+      return this.#issue(tx, user, ulid());
+    });
   }
 
   /**
@@ -201,44 +214,54 @@ export class IamService {
    */
   async refresh(refreshToken: string): Promise<TokenPair> {
     const hash = hashRefreshToken(refreshToken);
-    const record = [...this.store.refreshTokens.values()].find((r) => r.tokenHash === hash);
+    const record = await this.store.refreshTokenByHash(hash);
 
     if (!record) {
       this.#signals.refresh('unknown_token');
       throw new Unauthorized('invalid refresh token');
     }
 
-    if (record.revokedAt !== undefined) {
-      // Breach signal: revoke the whole family, not just this token.
+    // Breach signal: revoke the whole family, not just this token. Counted by the store, so the
+    // metric reports tokens this event actually killed — a second replay of the same token revokes
+    // nothing and must not look like a second breach.
+    const revokeFamily = async (): Promise<never> => {
       const at = new Date(this.#now()).toISOString();
-      let sessions = 0;
-      for (const sibling of familyOf(this.store, record.familyId)) {
-        // Counted rather than `??=` so the metric reports tokens this event actually killed. A
-        // second replay of the same token revokes nothing and must not look like a second breach.
-        if (sibling.revokedAt === undefined) {
-          sibling.revokedAt = at;
-          sessions += 1;
-        }
-      }
+      const family = await this.store.family(record.familyId);
+      const sessions = await this.store.transaction((tx) =>
+        tx.revokeTokens(
+          family.map((r) => r.id),
+          at,
+        ),
+      );
       this.#signals.refresh('reuse_detected');
       this.#signals.revoked('reuse', sessions);
       throw new Unauthorized('refresh token reuse detected; session family revoked');
-    }
+    };
+
+    if (record.revokedAt !== undefined) return revokeFamily();
 
     if (Date.parse(record.expiresAt) <= this.#now()) {
       this.#signals.refresh('expired');
       throw new Unauthorized('refresh token expired');
     }
 
-    const user = this.store.users.get(record.userId);
+    const user = await this.store.user(record.userId);
     if (!user || user.state !== 'active') {
       this.#signals.refresh('inactive_account');
       throw new Unauthorized('account is not active');
     }
 
-    record.revokedAt = new Date(this.#now()).toISOString();
+    // Claim the token by revoking it, and let the database count. Two concurrent refreshes with
+    // the same token both read it unrevoked above; only one UPDATE lands, and the other sees 0 —
+    // which is a reuse, and is handled as one.
+    const pair = await this.store.transaction(async (tx) => {
+      const claimed = await tx.revokeTokens([record.id], new Date(this.#now()).toISOString());
+      if (claimed === 0) return undefined;
+      return this.#issue(tx, user, record.familyId, record.id);
+    });
+    if (pair === undefined) return revokeFamily();
     this.#signals.refresh('success');
-    return this.#issue(user, record.familyId, record.id);
+    return pair;
   }
 
   /**
@@ -247,31 +270,31 @@ export class IamService {
    * The escape hatch the time bound is not: an operator must be able to give someone their account
    * back now, and must be able to clear a lock they set themselves for cause.
    */
-  unlock(userId: string): User {
-    const user = this.store.users.get(userId);
+  async unlock(userId: string): Promise<User> {
+    const user = await this.store.user(userId);
     if (!user) throw new Unauthorized('unknown user');
     clearLock(user);
+    await this.store.transaction((tx) => tx.putUser(user));
     return user;
   }
 
   /** Revoke one session, or every session for the user. */
-  logout(refreshToken: string, options: { allSessions?: boolean } = {}): void {
+  async logout(refreshToken: string, options: { allSessions?: boolean } = {}): Promise<void> {
     const hash = hashRefreshToken(refreshToken);
-    const record = [...this.store.refreshTokens.values()].find((r) => r.tokenHash === hash);
+    const record = await this.store.refreshTokenByHash(hash);
     if (!record) return; // idempotent: logging out twice is not an error
 
     const at = new Date(this.#now()).toISOString();
     const targets = options.allSessions
-      ? [...this.store.refreshTokens.values()].filter((r) => r.userId === record.userId)
-      : familyOf(this.store, record.familyId);
+      ? await this.store.userTokens(record.userId)
+      : await this.store.family(record.familyId);
 
-    let sessions = 0;
-    for (const r of targets) {
-      if (r.revokedAt === undefined) {
-        r.revokedAt = at;
-        sessions += 1;
-      }
-    }
+    const sessions = await this.store.transaction((tx) =>
+      tx.revokeTokens(
+        targets.map((r) => r.id),
+        at,
+      ),
+    );
     // Logging out twice is idempotent, so the second call revokes nothing and records nothing.
     this.#signals.revoked('logout', sessions);
   }
@@ -282,33 +305,41 @@ export class IamService {
    * The compiled effective policy: the union of the user's own rules and all their groups'
    * rules, flattened through roles. Compiled once per `permVersion`, not per request.
    */
-  effectivePolicy(userId: string): EffectivePolicy {
-    const user = this.store.users.get(userId);
+  async effectivePolicy(userId: string): Promise<EffectivePolicy> {
+    const user = await this.store.user(userId);
     if (!user) throw new Unauthorized('unknown user');
+    return this.#compile(user);
+  }
 
+  async #compile(user: User): Promise<EffectivePolicy> {
+    const roleById = new Map((await this.store.roles()).map((r) => [r.id, r]));
     const rules: Rule[] = [];
     const roles: Role[] = [];
-    for (const a of this.store.assignments.filter((x) => x.userId === userId)) {
+    for (const a of await this.store.assignments(user.id)) {
       if (a.rule) rules.push(a.rule);
       if (a.roleId) {
-        const role = this.store.roles.get(a.roleId);
+        const role = roleById.get(a.roleId);
         if (role) roles.push(role);
       }
     }
 
-    const groups = this.store.memberships
-      .filter((m) => m.userId === userId)
-      .map((m) => this.store.groups.get(m.groupId))
-      .filter((g): g is NonNullable<typeof g> => g !== undefined)
-      .map((g) => ({
+    const groups: { id: string; rules?: Rule[]; roles?: Role[] }[] = [];
+    for (const m of await this.store.memberships(user.id)) {
+      const g = await this.store.group(m.groupId);
+      if (!g) continue;
+      const groupRoles = (g.roleIds ?? [])
+        .map((id) => roleById.get(id))
+        .filter((r): r is NonNullable<typeof r> => r !== undefined);
+      groups.push({
         id: g.id,
         ...(g.rules ? { rules: g.rules } : {}),
-        ...(g.roles ? { roles: g.roles } : {}),
-      }));
+        ...(groupRoles.length > 0 ? { roles: groupRoles } : {}),
+      });
+    }
 
     const started = performance.now();
     const policy = compile({
-      subjectId: userId,
+      subjectId: user.id,
       permVersion: user.permVersion,
       rules,
       roles,
@@ -322,17 +353,18 @@ export class IamService {
    * Bump the user's permission version. Any access token issued before this is refused at the
    * edge, so revocation lands within one access-token TTL rather than waiting for expiry.
    */
-  bumpPermVersion(userId: string): number {
-    const user = this.store.users.get(userId);
+  async bumpPermVersion(userId: string): Promise<number> {
+    const user = await this.store.user(userId);
     if (!user) throw new Unauthorized('unknown user');
     user.permVersion += 1;
+    await this.store.transaction((tx) => tx.putUser(user));
     return user.permVersion;
   }
 
   // --- internals -----------------------------------------------------------
 
-  async #issue(user: User, familyId: string, rotatedFrom?: string): Promise<TokenPair> {
-    const policy = this.effectivePolicy(user.id);
+  async #issue(tx: IamTx, user: User, familyId: string, rotatedFrom?: string): Promise<TokenPair> {
+    const policy = await this.#compile(user);
     const permissions = [...new Set(policy.rules.flatMap((r) => r.permissions))].sort();
 
     const accessToken = await signAccessToken(this.#ring, {
@@ -347,7 +379,7 @@ export class IamService {
 
     const refreshToken = mintRefreshToken();
     const id = ulid();
-    this.store.refreshTokens.set(id, {
+    await tx.putRefreshToken({
       id,
       userId: user.id,
       tokenHash: hashRefreshToken(refreshToken),
@@ -377,17 +409,20 @@ export class IamService {
    * lock applies from the NEXT attempt. Reporting it as `locked` would make the two counters
    * double-count one event and would tell the attacker precisely which guess closed the door.
    */
-  #recordFailure(user: User): void {
+  async #recordFailure(tx: IamTx, user: User): Promise<void> {
     const now = this.#now();
     const next = nextFailure(user, now, this.#lockout);
     user.failedAttempts = next.failedAttempts;
     user.firstFailedAt = next.firstFailedAt;
+    if (next.locked) {
+      user.state = 'locked';
+      user.lockedUntil = new Date(now + this.#lockout.durationMs).toISOString();
+    }
+    await tx.putUser(user);
     if (!next.locked) return;
 
-    user.state = 'locked';
-    user.lockedUntil = new Date(now + this.#lockout.durationMs).toISOString();
     this.#signals.lockedOut();
-    this.#audit({
+    await this.#audit(tx, {
       username: user.username,
       userId: user.id,
       result: 'locked',
@@ -396,14 +431,17 @@ export class IamService {
     });
   }
 
-  #audit(input: {
-    username: string;
-    userId?: string;
-    result: LoginEvent['result'];
-    reason?: string;
-    ctx: LoginContext;
-  }): void {
-    this.store.loginEvents.push({
+  #audit(
+    tx: IamTx,
+    input: {
+      username: string;
+      userId?: string;
+      result: LoginEvent['result'];
+      reason?: string;
+      ctx: LoginContext;
+    },
+  ): Promise<void> {
+    return tx.appendLoginEvent({
       id: ulid(),
       username: input.username,
       at: new Date(this.#now()).toISOString(),

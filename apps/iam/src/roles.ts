@@ -2,6 +2,7 @@
 // Operators clone and adjust these; they are a starting point, not a fixed set.
 
 import type { Role, Rule } from '@atlas/policy';
+import type { IamStore } from './store.ts';
 
 const r = (id: string, permissions: string[]): Rule => ({ id, permissions });
 
@@ -78,13 +79,17 @@ export const STARTER_ROLES: Role[] = [
 ];
 
 /** Idempotent: re-seeding an existing deployment must not duplicate or overwrite edits. */
-export function seedStarterRoles(roles: Map<string, Role>): number {
-  let added = 0;
-  for (const role of STARTER_ROLES) {
-    if (!roles.has(role.id)) {
-      roles.set(role.id, role);
-      added++;
-    }
-  }
-  return added;
+/**
+ * Register the starter roles that are not there yet. Idempotent — it runs on every start, and a
+ * store that persists (EP-10.4) already has them after the first — and it never overwrites: an
+ * operator who narrowed `editor` keeps their version.
+ */
+export async function seedStarterRoles(store: IamStore): Promise<number> {
+  const present = new Set((await store.roles()).map((r) => r.id));
+  const missing = STARTER_ROLES.filter((r) => !present.has(r.id));
+  if (missing.length === 0) return 0;
+  await store.transaction(async (tx) => {
+    for (const role of missing) await tx.putRole(role);
+  });
+  return missing.length;
 }

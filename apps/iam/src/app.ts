@@ -210,7 +210,9 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
   app.post('/auth/logout', async (req, reply) => {
     const { refreshToken, allSessions } = (req.body ?? {}) as RefreshBody;
     if (typeof refreshToken === 'string') {
-      service.logout(refreshToken, { ...(allSessions === true ? { allSessions: true } : {}) });
+      await service.logout(refreshToken, {
+        ...(allSessions === true ? { allSessions: true } : {}),
+      });
     }
     // Always 204: telling a caller whether the token existed is an oracle.
     return reply.code(204).send();
@@ -224,7 +226,7 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
       return reply.code(p.status).type(PROBLEM_CONTENT_TYPE).send(p);
     }
     try {
-      const policy = service.effectivePolicy(userId);
+      const policy = await service.effectivePolicy(userId);
       // Cached against permVersion by every consumer, so it must be revalidatable.
       void reply.header('etag', `W/"pv-${policy.permVersion}"`);
       return policy;

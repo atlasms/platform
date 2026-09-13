@@ -36,6 +36,12 @@ async function iam(lockout: Partial<LockoutPolicy> = FAST) {
   return {
     service,
     user,
+    // The store persists (EP-10.4): the record the fixture holds is a copy, so read it back.
+    fresh: async () => (await service.store.user(user.id))!,
+    setState: (state: User['state']) =>
+      service.store.transaction(async (tx) =>
+        tx.putUser({ ...(await service.store.user(user.id))!, state }),
+      ),
     app: buildIamApp({ service, keyRing }),
     advance: (ms: number) => {
       clock += ms;
@@ -144,11 +150,11 @@ test('the shipped default is not aggressive enough to train bad habits', () => {
 // =============================================================================
 
 test('SECURITY: repeated wrong passwords lock the account', async () => {
-  const { service, user } = await iam();
+  const { service, fresh } = await iam();
   await wrong(service, FAST.threshold);
 
-  assert.equal(user.state, 'locked');
-  assert.equal(user.lockedUntil, iso(START + FAST.durationMs));
+  assert.equal((await fresh()).state, 'locked');
+  assert.equal((await fresh()).lockedUntil, iso(START + FAST.durationMs));
 
   // And the correct password no longer works — which is the entire point.
   await assert.rejects(service.login('jo', PASSWORD), /invalid username or password/);
@@ -167,46 +173,50 @@ test('SECURITY: the lock survives the RIGHT password and lifts on time', async (
 });
 
 test('a success ends the run — near-misses do not accumulate across a lifetime', async () => {
-  const { service, user } = await iam();
+  const { service, fresh } = await iam();
   await wrong(service, FAST.threshold - 1);
-  assert.equal(user.failedAttempts, FAST.threshold - 1);
+  assert.equal((await fresh()).failedAttempts, FAST.threshold - 1);
 
   await service.login('jo', PASSWORD);
-  assert.equal(user.failedAttempts, undefined, 'the run is over');
+  assert.equal((await fresh()).failedAttempts, undefined, 'the run is over');
 
   // Proof it really reset: another full-threshold-minus-one run still does not lock.
   await wrong(service, FAST.threshold - 1);
-  assert.equal(user.state, 'active');
+  assert.equal((await fresh()).state, 'active');
 });
 
 test('failures spread beyond the window never reach the threshold', async () => {
-  const { service, user, advance } = await iam();
+  const { service, fresh, advance } = await iam();
   for (let i = 0; i < FAST.threshold * 2; i += 1) {
     await assert.rejects(service.login('jo', 'wrong'));
     advance(FAST.windowMs + 1);
   }
-  assert.equal(user.state, 'active', 'a slow trickle is a forgetful user, not an attack');
-  assert.equal(user.failedAttempts, 1, 'each failure started its own run');
+  assert.equal(
+    (await fresh()).state,
+    'active',
+    'a slow trickle is a forgetful user, not an attack',
+  );
+  assert.equal((await fresh()).failedAttempts, 1, 'each failure started its own run');
 });
 
 test('an operator can unlock immediately, including an administrative lock', async () => {
-  const { service, user } = await iam();
+  const { service, user, fresh, setState } = await iam();
   await wrong(service, FAST.threshold);
-  assert.equal(user.state, 'locked');
+  assert.equal((await fresh()).state, 'locked');
 
-  service.unlock(user.id);
+  await service.unlock(user.id);
   assert.ok(await service.login('jo', PASSWORD), 'back in without waiting out the clock');
 
   // An administrative lock has no expiry, so unlock() is the ONLY way out of it.
-  user.state = 'locked';
-  assert.equal(lockExpired(user, START + 10 ** 9), false);
-  service.unlock(user.id);
-  assert.equal(user.state, 'active');
+  await setState('locked');
+  assert.equal(lockExpired(await fresh(), START + 10 ** 9), false);
+  await service.unlock(user.id);
+  assert.equal((await fresh()).state, 'active');
 });
 
 test('unlocking an unknown user is refused, not silently ignored', async () => {
   const { service } = await iam();
-  assert.throws(() => service.unlock('nobody'), /unknown user/);
+  await assert.rejects(service.unlock('nobody'), /unknown user/);
 });
 
 test('SECURITY: an unknown username cannot be locked, so it cannot consume memory', async () => {
@@ -217,7 +227,7 @@ test('SECURITY: an unknown username cannot be locked, so it cannot consume memor
   for (let i = 0; i < 20; i += 1) {
     await assert.rejects(service.login(`ghost-${i}`, 'wrong'));
   }
-  assert.equal(service.store.users.size, 1, 'no phantom records were created');
+  assert.equal((await service.store.users()).length, 1, 'no phantom records were created');
 });
 
 test('SECURITY: locking one account does not lock another', async () => {
@@ -263,7 +273,7 @@ test('SECURITY: a refused non-active account costs the same argon2 work as a wro
   // The leak lockout would have made exploitable. Refusing on state used to return in microseconds
   // while a wrong password cost ~100ms, so timing alone said "this account exists and is not
   // active" — and an attacker who can CAUSE the lock could use it to confirm a username.
-  const { service, user } = await iam();
+  const { service, setState } = await iam();
 
   const time = async (fn: () => Promise<unknown>): Promise<number> => {
     const started = performance.now();
@@ -272,9 +282,9 @@ test('SECURITY: a refused non-active account costs the same argon2 work as a wro
   };
 
   const badPassword = await time(() => service.login('jo', 'wrong'));
-  user.state = 'disabled';
+  await setState('disabled');
   const refusedState = await time(() => service.login('jo', PASSWORD));
-  user.state = 'active';
+  await setState('active');
   const unknownUser = await time(() => service.login('nobody', PASSWORD));
 
   // A generous bound: this asserts the argon2 verification HAPPENED on each path, not that the
@@ -311,7 +321,7 @@ test('the lock transition is audited', async () => {
   const { service, user } = await iam();
   await wrong(service, FAST.threshold);
 
-  const locked = service.store.loginEvents.filter((e) => e.result === 'locked');
+  const locked = (await service.store.loginEvents()).filter((e) => e.result === 'locked');
   assert.equal(locked.length, 1, 'the transition itself, not just the refusals after it');
   assert.equal(locked[0]?.userId, user.id);
   assert.match(locked[0]?.reason ?? '', /consecutive failures/);

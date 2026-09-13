@@ -1,7 +1,13 @@
-// In-memory stores behind narrow interfaces. The relational implementation lands with the data
-// plane (EP-07.4); everything above this file is written against the interfaces, so swapping the
-// backing store is not a rewrite of the auth logic.
+// The identity store: a port with two adapters — node:sqlite for tests, Postgres in production —
+// held to one conformance suite (store-conformance.ts), the shape every service here uses.
+//
+// IAM was in-memory Maps until EP-10.4, "until the data plane lands". It landed; and a store that
+// forgets every user, grant and session on restart is not one an admin API can be built on. The
+// port is narrow on purpose: the service reads by key and writes whole records inside ONE unit of
+// work per operation, so the login path — verify, rehash, record the event, mint the token — is
+// atomic on Postgres exactly as it was on a single-threaded Map.
 
+import type { OutboxRecord } from '@atlas/messaging';
 import type { Rule, Role } from '@atlas/policy';
 
 export type UserState = 'active' | 'disabled' | 'locked' | 'invited';
@@ -65,50 +71,93 @@ export interface Membership {
   groupId: string;
 }
 
+/**
+ * A group: a named set of users that share rules and roles (authorization-model.md §3). Roles are
+ * held BY ID — a role edited once is edited for every group that carries it, which is what a
+ * named bundle is for. `channelId` absent means platform-wide.
+ */
 export interface Group {
   id: string;
+  channelId?: string;
   name: string;
+  description?: string;
   rules?: Rule[];
-  roles?: Role[];
+  roleIds?: string[];
 }
 
+/** A role as stored: the policy library's `Role`, plus where it belongs. */
+export interface StoredRole extends Role {
+  channelId?: string;
+  description?: string;
+}
+
+/** One grant to one user: a role by id, OR a rule inline. Addressable, so it can be revoked. */
 export interface Assignment {
+  id: string;
   userId: string;
   roleId?: string;
   rule?: Rule;
 }
 
-/** Everything IAM persists. One interface so the relational swap is mechanical. */
 export interface IamStore {
-  users: Map<string, User>;
-  credentials: Map<string, Credential>;
-  refreshTokens: Map<string, RefreshTokenRecord>;
-  loginEvents: LoginEvent[];
-  groups: Map<string, Group>;
-  memberships: Membership[];
-  roles: Map<string, Role>;
-  assignments: Assignment[];
+  /** The unit of work. Every mutation the service makes for one operation happens inside ONE. */
+  transaction<T>(fn: (tx: IamTx) => Promise<T>): Promise<T>;
+
+  user(id: string): Promise<User | undefined>;
+  userByUsername(username: string): Promise<User | undefined>;
+  /** A page of users, by id; `channelId` narrows. */
+  users(options?: { channelId?: string; after?: string; limit?: number }): Promise<User[]>;
+  credential(userId: string): Promise<Credential | undefined>;
+
+  refreshTokenByHash(tokenHash: string): Promise<RefreshTokenRecord | undefined>;
+  /** Every record in one family — what reuse revokes. */
+  family(familyId: string): Promise<RefreshTokenRecord[]>;
+  /** Every record a user holds — what "sign out everywhere" revokes. */
+  userTokens(userId: string): Promise<RefreshTokenRecord[]>;
+
+  /** Newest first. */
+  loginEvents(options?: {
+    userId?: string;
+    username?: string;
+    limit?: number;
+  }): Promise<LoginEvent[]>;
+
+  group(id: string): Promise<Group | undefined>;
+  groups(options?: { channelId?: string }): Promise<Group[]>;
+  memberships(userId: string): Promise<Membership[]>;
+  members(groupId: string): Promise<Membership[]>;
+  role(id: string): Promise<StoredRole | undefined>;
+  roles(options?: { channelId?: string }): Promise<StoredRole[]>;
+  assignments(userId: string): Promise<Assignment[]>;
+
+  close(): Promise<void>;
 }
 
-export function createStore(): IamStore {
-  return {
-    users: new Map(),
-    credentials: new Map(),
-    refreshTokens: new Map(),
-    loginEvents: [],
-    groups: new Map(),
-    memberships: [],
-    roles: new Map(),
-    assignments: [],
-  };
-}
+export interface IamTx {
+  /** Insert or replace, whole record. A username already taken by ANOTHER user is a Conflict. */
+  putUser(user: User): Promise<void>;
+  deleteUser(id: string): Promise<void>;
+  putCredential(credential: Credential): Promise<void>;
+  putRefreshToken(record: RefreshTokenRecord): Promise<void>;
+  /**
+   * Revoke the tokens that are not yet revoked, and say how many that was. The count is the
+   * point: two callers racing to rotate the same token both see it unrevoked, and only the one the
+   * database lets through gets 1 — the other gets 0 and must treat that as a reuse. A read-then-
+   * write in application code cannot make that promise; a single UPDATE … WHERE revoked_at IS NULL
+   * can.
+   */
+  revokeTokens(ids: string[], at: string): Promise<number>;
+  appendLoginEvent(event: LoginEvent): Promise<void>;
 
-export function findByUsername(store: IamStore, username: string): User | undefined {
-  for (const u of store.users.values()) if (u.username === username) return u;
-  return undefined;
-}
+  putGroup(group: Group): Promise<void>;
+  deleteGroup(id: string): Promise<void>;
+  putMembership(membership: Membership): Promise<void>;
+  deleteMembership(membership: Membership): Promise<void>;
+  putRole(role: StoredRole): Promise<void>;
+  deleteRole(id: string): Promise<void>;
+  putAssignment(assignment: Assignment): Promise<void>;
+  deleteAssignment(id: string): Promise<void>;
 
-/** All refresh-token records in one family — used to revoke on reuse. */
-export function familyOf(store: IamStore, familyId: string): RefreshTokenRecord[] {
-  return [...store.refreshTokens.values()].filter((r) => r.familyId === familyId);
+  /** The outbox, in this transaction (EP-10.6): `permissions.changed` rides out with the grant. */
+  enqueue(record: OutboxRecord): Promise<void>;
 }

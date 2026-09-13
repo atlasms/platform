@@ -14,6 +14,9 @@
   },
   "dependencies": {
     "@atlas/contracts": "*",
+    "@atlas/data": "*",
+    "@atlas/data-pg": "*",
+    "@atlas/messaging": "*",
     "@atlas/policy": "*",
     "@atlas/service-kit": "*",
     "fastify": "^5.12.3",
