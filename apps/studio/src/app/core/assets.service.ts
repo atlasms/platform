@@ -1,15 +1,17 @@
-import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { map } from 'rxjs';
-import { API_BASE_URL } from './api.ts';
+import { ApiClient } from './api-client.ts';
 import type { Asset, Tag, UpdateAssetInput } from './generated/mam.types.ts';
+import { MamOperations as ops } from './generated/mam.operations.ts';
 
 /**
  * MAM reads, through the gateway (EP-20.1).
  *
  * Types come from `generated/` — projected from `docs/architecture/openapi/mam.yaml` — so this file
  * cannot quietly disagree with the contract about what an asset is. That is the whole point of
- * EP-11.5; hand-written interfaces here would put the drift straight back.
+ * EP-11.5; hand-written interfaces here would put the drift straight back. The URLs come from the
+ * same place (EP-02.4): each call names an operation, and the path, verb and parameters are the
+ * contract's.
  */
 
 /** A page of results. `nextCursor` absent means the channel is exhausted. */
@@ -32,26 +34,22 @@ export interface ListOptions {
 
 @Injectable({ providedIn: 'root' })
 export class AssetsService {
-  private readonly http = inject(HttpClient);
-  private readonly base = inject(API_BASE_URL);
+  private readonly api = inject(ApiClient);
 
   /** One page of the channel's catalogue. Identity and tenant come from the token, not from here. */
   list(options: ListOptions = {}) {
-    let params = new HttpParams();
-    if (options.limit !== undefined) params = params.set('limit', options.limit);
-    if (options.cursor !== undefined) params = params.set('cursor', options.cursor);
-    if (options.order !== undefined) params = params.set('order', options.order);
-    return this.http.get<Page<Asset>>(`${this.base}/api/v1/assets`, { params });
+    // Spread, because an interface has no implicit index signature and `Query` needs one.
+    return this.api.call(ops.listAssets, { query: { ...options } }).as<Page<Asset>>();
   }
 
   /** One complete core record for an editor tab. */
   get(id: string) {
-    return this.http.get<Asset>(`${this.base}/api/v1/assets/${encodeURIComponent(id)}`);
+    return this.api.call(ops.getAsset, { params: { id } }).as<Asset>();
   }
 
   /** Save only changed, user-editable core fields; MAM remains the authorization boundary. */
   update(id: string, patch: UpdateAssetInput) {
-    return this.http.patch<Asset>(`${this.base}/api/v1/assets/${encodeURIComponent(id)}`, patch);
+    return this.api.call(ops.updateAsset, { params: { id }, body: patch }).as<Asset>();
   }
 
   /**
@@ -61,13 +59,12 @@ export class AssetsService {
    * contain `/`, `?` or `#`, each of which would silently truncate or reroute a hand-built URL.
    */
   search(q: string, limit?: number) {
-    let params = new HttpParams().set('q', q);
-    if (limit !== undefined) params = params.set('limit', limit);
     // MAM's search contract is a bounded bare array (there is no search cursor yet). Normalize it
     // to the panel's page shape here so browse and search have one UI-facing interface without
     // lying about the wire response. A fake returning `{ items }` hid this mismatch in EP-20.1.
-    return this.http
-      .get<Asset[]>(`${this.base}/api/v1/search`, { params })
+    return this.api
+      .call(ops.simpleSearch, { query: { q, limit } })
+      .as<Asset[]>()
       .pipe(map((items) => ({ items })));
   }
 
@@ -81,13 +78,14 @@ export class AssetsService {
    * instead, which is filtered and therefore right for them — see the dashboard.
    */
   counts() {
-    return this.http
-      .get<{ counts: Record<string, number> }>(`${this.base}/api/v1/assets/counts`)
+    return this.api
+      .call(ops.getAssetStateCounts)
+      .as<{ counts: Record<string, number> }>()
       .pipe(map((body) => body.counts));
   }
 
   /** The channel's tag vocabulary — what the filter list offers. */
   tags() {
-    return this.http.get<Tag[]>(`${this.base}/api/v1/tags`);
+    return this.api.call(ops.listTags).as<Tag[]>();
   }
 }

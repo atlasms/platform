@@ -1,5 +1,6 @@
-// Generates Studio's API types from the OpenAPI contracts (EP-11.5), and every event payload type
-// from the JSON Schemas in docs/architecture/schemas (EP-02.3).
+// Generates Studio's API types from the OpenAPI contracts (EP-11.5), the OPERATIONS table each
+// Studio client builds its requests from (EP-02.4), and every event payload type from the JSON
+// Schemas in docs/architecture/schemas (EP-02.3).
 //
 //   node scripts/generate-api-types.mjs           # write
 //   node scripts/generate-api-types.mjs --check   # fail if the checked-in output is stale
@@ -37,10 +38,12 @@ const OUT_DIR = join(ROOT, 'apps/studio/src/app/core/generated');
  * were typed required, which is how `formatSize(job.sizeBytes)` came to render "NaN GB" against a
  * response the contract explicitly allows. The banner is a promise; this list is what keeps it. */
 const SPECS = [
-  { file: 'iam.yaml', out: 'iam.types.ts', title: 'IAM' },
-  { file: 'mam.yaml', out: 'mam.types.ts', title: 'MAM' },
-  { file: 'rim.yaml', out: 'rim.types.ts', title: 'RIM' },
+  { file: 'iam.yaml', out: 'iam.types.ts', ops: 'iam.operations.ts', title: 'IAM' },
+  { file: 'mam.yaml', out: 'mam.types.ts', ops: 'mam.operations.ts', title: 'MAM' },
+  { file: 'rim.yaml', out: 'rim.types.ts', ops: 'rim.operations.ts', title: 'RIM' },
 ];
+
+const METHODS = ['get', 'post', 'put', 'patch', 'delete'];
 
 /**
  * The event payloads (EP-02.3): one interface per `events/<type>.payload.schema.json`, the shared
@@ -104,6 +107,20 @@ for (const spec of SPECS) {
     name: spec.out,
     source: spec.file,
     summary: `${Object.keys(schemas).length} schemas`,
+  });
+
+  // The operations table (EP-02.4): one entry per operationId — method, the path AS THE GATEWAY
+  // SERVES IT, and the names of its path parameters. Studio's `ApiClient` builds every request
+  // from this, so a client cannot spell a path the contract does not have.
+  //
+  // Not a generated client with a method per operation: the stubs declare responses unevenly, so
+  // half the return types would be `unknown`, and a client that is right half the time teaches
+  // callers to cast. The table is the part that is right ALL the time.
+  const operations = renderOperations(doc, spec.file);
+  await emit(join(OUT_DIR, spec.ops), `${header(spec)}\n${operations.body}\n`, {
+    name: spec.ops,
+    source: spec.file,
+    summary: `${operations.count} operations`,
   });
 }
 
@@ -192,6 +209,69 @@ if (check) {
     process.exit(1);
   }
   console.log('generated API types are up to date');
+}
+
+/**
+ * The prefix a server URL puts in front of every path: `https://{host}/api/v1` → `/api/v1`. Not
+ * `new URL()` — `{host}` is a template variable, and a URL parser rejects it as a hostname.
+ *
+ * A path item may override the document's servers, and IAM's does: `/auth/*` and the JWKS are
+ * served at the ROOT, where the gateway's public route and RFC 8615 respectively put them. The
+ * contract records that per path so this table says what the wire does.
+ */
+function prefixOf(servers, where) {
+  const url = servers?.[0]?.url;
+  if (typeof url !== 'string') fail(where, 'no servers[0].url to take the path prefix from');
+  const m = /^[a-z][a-z0-9+.-]*:\/\/[^/]+(\/.*)?$/i.exec(url);
+  if (!m) fail(where, `cannot read a path prefix from server url ${url}`);
+  return (m[1] ?? '').replace(/\/+$/, '');
+}
+
+/** `export const MamOperations = { getAsset: { method: 'GET', path: '/api/v1/assets/{id}', params: ['id'] }, … }`. */
+function renderOperations(doc, file) {
+  const name = file.replace(/\.yaml$/, '').replace(/(^|-)([a-z])/g, (_, __, c) => c.toUpperCase());
+  const seen = new Map();
+  const lines = [];
+  for (const [path, item] of Object.entries(doc.paths ?? {})) {
+    const prefix = prefixOf(item.servers ?? doc.servers, `${file}#paths${path}`);
+    const params = [...path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]);
+    const declared = (op) =>
+      [...(item.parameters ?? []), ...(op.parameters ?? [])]
+        .filter((p) => p?.in === 'path')
+        .map((p) => p.name);
+    for (const method of METHODS) {
+      const op = item[method];
+      if (!op) continue;
+      const where = `${file}#paths${path}.${method}`;
+      // Every operation is addressed by its id, so an id that is missing or reused is a contract
+      // that cannot be projected — fail rather than invent a name from the path.
+      if (typeof op.operationId !== 'string' || !/^[a-zA-Z_$][\w$]*$/.test(op.operationId)) {
+        fail(where, `operationId must be an identifier, got ${JSON.stringify(op.operationId)}`);
+      }
+      if (seen.has(op.operationId)) {
+        fail(where, `operationId ${op.operationId} already used by ${seen.get(op.operationId)}`);
+      }
+      seen.set(op.operationId, where);
+      const missing = params.filter((p) => !declared(op).includes(p));
+      if (missing.length > 0) fail(where, `path params not declared: ${missing.join(', ')}`);
+      const summary = op.summary ? `  /** ${op.summary.replace(/\*\//g, '* /')} */\n` : '';
+      lines.push(
+        `${summary}  ${op.operationId}: { method: '${method.toUpperCase()}', path: '${prefix}${path}', params: [${params.map((p) => `'${p}'`).join(', ')}] },`,
+      );
+    }
+  }
+  const body = [
+    `/**`,
+    ` * Every operation in ${file}: method, the path as the gateway serves it, and its path`,
+    ` * parameters. Studio's \`ApiClient\` builds each request from one of these entries.`,
+    ` */`,
+    `export const ${name}Operations = {`,
+    ...lines,
+    `} as const;`,
+    ``,
+    `export type ${name}Operation = keyof typeof ${name}Operations;`,
+  ].join('\n');
+  return { body, count: seen.size };
 }
 
 function header(spec) {

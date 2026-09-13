@@ -213,7 +213,15 @@ paths:
               schema: { type: object, required: [indexed], properties: { indexed: { type: integer } } }
   /field-schemas:
     get: { operationId: listFieldSchemas, tags: [admin], summary: List custom field schemas, responses: { '200': { description: Schemas } } }
-    post: { operationId: createFieldSchema, tags: [admin], summary: Define type/category custom fields (scope metadata:admin), responses: { '201': { description: Created } } }
+    # PUT, not POST: a schema is addressed by its scope (type + category) and the body is the whole
+    # definition, so writing it again is idempotent — which is what MAM serves.
+    put: { operationId: putFieldSchema, tags: [admin], summary: Define or replace the custom fields of a type/category scope (scope taxonomy:admin), responses: { '200': { description: Stored } } }
+  /assets/{id}/extended:
+    parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
+    # The extensible metadata is read and written on its own (EP-17.2): governed by its field
+    # schema, authorized on its own, and unbounded in size — so a catalogue listing never carries it.
+    get: { operationId: getAssetExtended, tags: [assets], summary: The asset's extended values with the field definitions that govern them (scope asset:read), responses: { '200': { description: Extended values, fields and orphaned keys } } }
+    patch: { operationId: updateAssetExtended, tags: [assets], summary: Merge extended values; each is validated against its field definition (scope asset:write), responses: { '200': { description: The extended values after the merge }, '4XX': { $ref: '#/components/responses/Error' } } }
   /assets/{id}/tags:
     parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
     get:

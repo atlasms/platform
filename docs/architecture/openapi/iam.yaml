@@ -18,6 +18,11 @@ tags:
   - name: admin
 paths:
   /auth/login:
+    # Served at the ROOT, not under /api/v1: the gateway's public route is `/auth`, and the browser,
+    # the smoke suite and every service that verifies a token call it there. A path-level `servers`
+    # is how OpenAPI records that, and the generated operations table (EP-02.4) reads it — before
+    # this, the document said `/api/v1/auth/login` and nothing on the platform served it.
+    servers: [{ url: 'https://{host}', variables: { host: { default: atlas.example } } }]
     post:
       operationId: login
       tags: [auth]
@@ -29,14 +34,17 @@ paths:
           application/json:
             schema:
               type: object
-              required: [login, password]
+              # `username`: what IAM reads and Studio sends. This said `login` while
+              # both ends said `username` — the same kind of lie `permVersion` was.
+              required: [username, password]
               properties:
-                login: { type: string }
+                username: { type: string }
                 password: { type: string, format: password }
       responses:
         '200': { description: Tokens, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }
         '401': { $ref: '#/components/responses/Error' }
   /auth/refresh:
+    servers: [{ url: 'https://{host}', variables: { host: { default: atlas.example } } }]
     post:
       operationId: refresh
       tags: [auth]
@@ -51,13 +59,30 @@ paths:
         '200': { description: Tokens, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }
         '401': { $ref: '#/components/responses/Error' }
   /auth/logout:
+    servers: [{ url: 'https://{host}', variables: { host: { default: atlas.example } } }]
     post:
       operationId: logout
       tags: [auth]
       summary: Revoke the refresh-token family
+      description: >-
+        Always 204, whether or not the token existed — telling a caller which is an oracle.
+        `allSessions` revokes every family the subject holds.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+                allSessions: { type: boolean, default: false }
       responses:
         '204': { description: Logged out }
   /.well-known/jwks.json:
+    # RFC 8615: well-known URIs live at the origin root, never under an API prefix.
+    servers: [{ url: 'https://{host}', variables: { host: { default: atlas.example } } }]
     get:
       operationId: getJwks
       tags: [auth]
@@ -127,7 +152,9 @@ paths:
         '204': { description: Removed }
   /users/{id}/effective-permissions:
     parameters:
-      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      # `me` is the caller — the subject the gateway established — and is the only form IAM serves
+      # today; Studio loads its session from it.
+      - { name: id, in: path, required: true, description: 'A user ULID, or `me` for the caller', schema: { type: string } }
     get:
       operationId: getEffectivePermissions
       tags: [admin]
