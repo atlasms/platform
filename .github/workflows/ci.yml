@@ -151,6 +151,10 @@ jobs:
       - name: Tier-0 enums are inventoried and defined once
         run: npm run tier0:check
 
+      # EP-07.6: one owner per table, both adapters define it, channel_id or a written reason.
+      - name: Tables are owned, doubled, and channel-scoped (or say why not)
+        run: npm run schema:check
+
       # `scripts/` is not an Nx project, so `nx affected -t lint` never sees it — its eslint block
       # existed from the start and nothing ran it. These scripts are CI's own checks; they get linted.
       - name: Scripts lint
@@ -213,3 +217,9 @@ jobs:
             echo "Expected: <type>(<scope>): <subject>   e.g. feat(EP-04.1): lift service-kit into libs/"
             exit 1
           fi
+
+      # EP-02.6: a change to @atlas/contracts' surface — its exports or the schemas it loads —
+      # names itself in libs/contracts/CHANGELOG.md, or the version that ships it cannot say what
+      # it carries. Needs a base to diff against, so it lives with the other pull-request-only check.
+      - name: Contract changes are in the changelog
+        run: node scripts/check-changelog.mjs --base "origin/${{ github.base_ref }}"

@@ -38,6 +38,9 @@ const config = loadConfig({
     type: 'string',
     default: 'postgres://atlas:atlas@postgres:5432/atlas',
   },
+  // The service's OWN Postgres schema (EP-07.6): the database is shared infrastructure, the
+  // tables are not — four services in `public` were four relays draining one `outbox`.
+  pgSchema: { env: 'ATLAS_PG_SCHEMA', type: 'string', default: 'logging' },
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
   policyTtlMs: { env: 'ATLAS_POLICY_TTL_MS', type: 'number', default: 30_000 },
   // EP-07.4. Empty means no index: the browse is answered by Postgres, which is correct and slower
@@ -62,7 +65,7 @@ const tracer = createTracer({
 
 const metrics = new MetricRegistry();
 
-const pool = openPool({ connectionString: config.databaseUrl });
+const pool = openPool({ connectionString: config.databaseUrl, schema: config.pgSchema });
 
 /**
  * Wait for the database, within a budget.

@@ -37,6 +37,9 @@ const config = loadConfig({
     type: 'string',
     default: 'postgres://atlas:atlas@postgres:5432/atlas',
   },
+  // The service's OWN Postgres schema (EP-07.6): the database is shared infrastructure, the
+  // tables are not — four services in `public` were four relays draining one `outbox`.
+  pgSchema: { env: 'ATLAS_PG_SCHEMA', type: 'string', default: 'iam' },
   // EP-10.6: the outbox relay. `permissions.changed` and the rest ride out of the same rows the
   // grant was written in.
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
@@ -79,7 +82,7 @@ const tracer = createTracer({
 // which is why the dev manifest pins replicas to 1.
 const keyRing = await KeyRing.create();
 
-const pool = openPool({ connectionString: config.databaseUrl });
+const pool = openPool({ connectionString: config.databaseUrl, schema: config.pgSchema });
 
 /**
  * Wait for the database, within a budget — the same shape as every other service here. On a fresh

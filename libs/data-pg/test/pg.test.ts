@@ -17,6 +17,7 @@ import {
   outboxMigration,
   PgOutboxStore,
   PgSeenStore,
+  schemaOf,
   seenMigration,
   withTransaction,
   type PgClient,
@@ -118,6 +119,49 @@ if (!URL) {
         },
       };
     },
+  });
+
+  test('OWNERSHIP: a pool opened for a schema migrates and writes there, and there only', async () => {
+    // EP-07.6. Every service shares one database, so ownership is the schema: two services with
+    // the same migrations get two `outbox` tables, and one's relay cannot see the other's rows.
+    // Before this, all four services created ONE `outbox` in `public` and four relays drained it.
+    const stamp = Date.now().toString(36);
+    const a = openPool({ connectionString, schema: `own_a_${stamp}` });
+    const b = openPool({ connectionString, schema: `own_b_${stamp}` });
+    try {
+      // The schema does not exist yet; migrate() creates it (under the migration lock).
+      await migrate(a, [outboxMigration, outboxHeadersMigration]);
+      await migrate(b, [outboxMigration, outboxHeadersMigration]);
+
+      const outboxA = new PgOutboxStore(a);
+      const outboxB = new PgOutboxStore(b);
+      await withTransaction(a, (client) =>
+        outboxA.enqueue(client, {
+          id: 'm-a',
+          message: { id: 'm-a', subject: 'atlas.ch12.asset.created', body: { from: 'a' } },
+        }),
+      );
+      assert.equal((await outboxA.listUnsent(10)).length, 1);
+      assert.equal((await outboxB.listUnsent(10)).length, 0, "b's relay cannot see a's row");
+
+      // Every connection the pool hands out is on the schema, not only the first.
+      const paths = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          a.query<{ search_path: string }>('SHOW search_path').then((r) => r.rows[0]!.search_path),
+        ),
+      );
+      assert.ok(
+        paths.every((p) => p.includes(`own_a_${stamp}`)),
+        paths.join(', '),
+      );
+      assert.equal(schemaOf(a), `own_a_${stamp}`);
+      assert.throws(() => openPool({ connectionString, schema: 'public; DROP SCHEMA x' }));
+    } finally {
+      await a.query(`DROP SCHEMA IF EXISTS own_a_${stamp} CASCADE`).catch(() => undefined);
+      await b.query(`DROP SCHEMA IF EXISTS own_b_${stamp} CASCADE`).catch(() => undefined);
+      await a.end();
+      await b.end();
+    }
   });
 
   test('SEEN: a competing transaction BLOCKS on the row lock, then loses', async () => {

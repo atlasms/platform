@@ -1,6 +1,6 @@
 {
   "name": "@atlas/contracts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Executable message contracts: the envelope + every event payload schema, an envelope builder/validator, ULID, and subject helpers. Reads the single-source schemas in docs/architecture/schemas.",

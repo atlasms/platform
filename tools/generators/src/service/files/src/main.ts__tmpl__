@@ -23,7 +23,10 @@ const config = loadConfig({
   port: { env: 'PORT', type: 'number', default: 3000 },
   host: { env: 'HOST', type: 'string', default: '0.0.0.0' },
   iamOrigin: { env: 'ATLAS_IAM_ORIGIN', type: 'string', default: 'http://iam:3000' },<% if (db) { %>
-  databaseUrl: { env: 'ATLAS_PG_URL', type: 'string', default: 'postgres://atlas:atlas@postgres:5432/atlas' },<% } %><% if (broker) { %>
+  databaseUrl: { env: 'ATLAS_PG_URL', type: 'string', default: 'postgres://atlas:atlas@postgres:5432/atlas' },
+  // The service's OWN Postgres schema (EP-07.6): the database is shared infrastructure, the
+  // tables are not. Named after the service; every connection's search_path is pinned to it.
+  pgSchema: { env: 'ATLAS_PG_SCHEMA', type: 'string', default: '<%= schemaName %>' },<% } %><% if (broker) { %>
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },<% if (db) { %>
   relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 1_000 },<% } %><% } %>
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
@@ -42,7 +45,7 @@ const tracer = createTracer({
 
 const metrics = new MetricRegistry();
 <% if (db) { %>
-const pool = openPool({ connectionString: config.databaseUrl });
+const pool = openPool({ connectionString: config.databaseUrl, schema: config.pgSchema });
 
 /**
  * Wait for the database, within a budget.

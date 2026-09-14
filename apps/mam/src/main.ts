@@ -15,6 +15,9 @@ const config = loadConfig({
   port: { env: 'PORT', type: 'number', default: 3000 },
   host: { env: 'HOST', type: 'string', default: '0.0.0.0' },
   databaseUrl: { env: 'ATLAS_PG_URL', type: 'string', required: true },
+  // The service's OWN Postgres schema (EP-07.6): the database is shared infrastructure, the
+  // tables are not — four services in `public` were four relays draining one `outbox`.
+  pgSchema: { env: 'ATLAS_PG_SCHEMA', type: 'string', default: 'mam' },
   iamOrigin: { env: 'ATLAS_IAM_ORIGIN', type: 'string', default: 'http://iam:3000' },
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
   policyTtlMs: { env: 'ATLAS_POLICY_TTL_MS', type: 'number', default: 30_000 },
@@ -34,7 +37,7 @@ const tracer = createTracer({
   sampleRatio: config.traceSampleRatio,
 });
 
-const pool = openPool({ connectionString: config.databaseUrl });
+const pool = openPool({ connectionString: config.databaseUrl, schema: config.pgSchema });
 
 /**
  * Wait for the database, within a budget.

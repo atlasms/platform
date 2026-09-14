@@ -16,14 +16,47 @@ export interface PgOptions {
   max?: number;
   /** Fail fast rather than hanging a request behind an exhausted pool. */
   connectionTimeoutMillis?: number;
+  /**
+   * The service's OWN Postgres schema (EP-07.6; 02-system-architecture.md: the engines are shared
+   * infrastructure, the schemas are owned per service). Every connection this pool hands out has
+   * its `search_path` pinned to it, and `migrate()` creates it if it is missing.
+   *
+   * Without it every service lands in `public` of the one shared database — which is where they
+   * all were: four `outbox` tables that were ONE table, drained by four relays with no claim
+   * locking, so a row MAM wrote was as likely to be published by IAM, twice, out of its subject's
+   * order. Named ownership is what makes "no service reads another's tables" true rather than
+   * intended.
+   */
+  schema?: string;
 }
 
+/** A schema name is an identifier we interpolate — so it is checked, not trusted. */
+const SCHEMA_NAME = /^[a-z][a-z0-9_]{0,62}$/;
+
+const schemas = new WeakMap<pg.Pool, string>();
+
 export function openPool(options: PgOptions): PgPool {
-  return new pg.Pool({
+  const pool = new pg.Pool({
     connectionString: options.connectionString,
     max: options.max ?? 10,
     connectionTimeoutMillis: options.connectionTimeoutMillis ?? 5_000,
   });
+  if (options.schema !== undefined) {
+    if (!SCHEMA_NAME.test(options.schema)) {
+      throw new Error(`invalid schema name "${options.schema}": expected ${SCHEMA_NAME}`);
+    }
+    schemas.set(pool, options.schema);
+    // search_path is per CONNECTION, so pin it on every one the pool opens — not only the first.
+    // A query issued in the `connect` handler is queued ahead of the checkout's own, so the
+    // caller never sees a connection whose path is not yet set.
+    pool.on('connect', (client) => void client.query(`SET search_path TO "${options.schema}"`));
+  }
+  return pool;
+}
+
+/** The schema a pool was opened for, if any. */
+export function schemaOf(pool: PgPool): string | undefined {
+  return schemas.get(pool);
 }
 
 /**
@@ -67,6 +100,11 @@ export async function migrate(
   const applied: string[] = [];
   try {
     await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK]);
+    // Under the lock, on purpose: two replicas racing `CREATE SCHEMA IF NOT EXISTS` can both pass
+    // the existence check and one of them then fails on the catalogue's unique index — a known
+    // Postgres wrinkle that the lock this function already takes removes for free.
+    const schema = schemaOf(pool);
+    if (schema !== undefined) await client.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
     await client.query(
       'CREATE TABLE IF NOT EXISTS _migrations (id text PRIMARY KEY, applied_at timestamptz NOT NULL)',
     );
