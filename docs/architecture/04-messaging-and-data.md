@@ -236,6 +236,15 @@ flowchart TB
 | Feeds, connectors, mappings | Integration | Relational |
 | Audit, logs, metrics | Logging | Search + cold |
 
+**As built (EP-07.6).** One Postgres, and every service owns a **schema named after it** —
+`ATLAS_PG_SCHEMA`, default the service name — with every connection's `search_path` pinned there
+and the migration runner creating it. That is what makes "no service reads another's tables" a
+property of the deployment rather than a convention: before it, four services in `public` shared
+one `outbox` that four relays drained. The tables that do not carry `channel_id … NOT NULL` are
+inventoried with their reasons in [`schemas/tables.json`](schemas/tables.json), and
+`npm run schema:check` holds the migrations to it — one owner per table, both adapters define it,
+the column or a written reason.
+
 ### 4.4 Retention & tiering
 - **Assets** follow HSM tiering (online → near-line → offline) by policy (age, usage,
   schedule proximity).

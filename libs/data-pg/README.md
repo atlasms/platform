@@ -65,6 +65,20 @@ construction.
 **Ordering by `seq`, not `created_at`.** Two rows in the same millisecond would otherwise come back
 in an arbitrary order, and the relay publishes in list order.
 
+## One database, a schema per service (EP-07.6)
+
+`openPool({ connectionString, schema: 'mam' })` pins every connection's `search_path` to the
+service's own schema, and `migrate()` creates it (under the migration lock — two replicas racing
+`CREATE SCHEMA IF NOT EXISTS` can both pass the check and one then fails on the catalogue's unique
+index). The name is validated as an identifier before it is interpolated.
+
+Without it every service landed in `public` of the one shared database — which is where they all
+were: `outbox` was ONE table drained by four relays with no claim locking, so a row MAM wrote was
+as likely to be published by IAM, twice, out of its subject's order. The consumers' dedup hid it.
+02-system-architecture.md says the engines are shared and the schemas are owned; this is the
+"owned". `schemaOf(pool)` says which. The test opens two pools on two schemas and shows one relay
+cannot see the other's rows.
+
 ## Tests
 
 The shared outbox conformance suite (`@atlas/data/conformance`) and the shared SeenStore suite

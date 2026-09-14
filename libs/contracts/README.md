@@ -80,6 +80,15 @@ Which enums exist, and why each one is behaviour rather than data an operator sh
 load like the events are. Nothing validated against them at runtime, so until EP-02.5 nothing
 compiled them either, and a `$ref` in one of them could have been wrong until its first consumer.
 
+## Versioning (EP-02.6)
+
+The surface is the exports **and** the schemas the validators load, so both are versioned in
+[`CHANGELOG.md`](CHANGELOG.md) — Keep a Changelog, semver; while `0.x` a **minor** bump is the
+breaking one, marked **Breaking**. CI refuses a pull request that touches `src/` (not `generated/`)
+or a `*.schema.json` without touching the changelog (`scripts/check-changelog.mjs`, on pull
+requests only — it needs a base). `[Unreleased]` becomes a version when the `package.json` version
+moves; the consumers pin `"*"` inside the workspace, so a release is a statement of what changed.
+
 ## Run
 
 From the workspace root (this is an Nx project — `@atlas/contracts`):

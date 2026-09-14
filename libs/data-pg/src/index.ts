@@ -1,5 +1,6 @@
 export {
   openPool,
+  schemaOf,
   withTransaction,
   migrate,
   type PgClient,

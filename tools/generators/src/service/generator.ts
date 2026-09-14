@@ -77,6 +77,8 @@ export async function serviceGenerator(tree: Tree, options: ServiceGeneratorSche
     className: n.className,
     propertyName: n.propertyName,
     constantName: n.constantName,
+    // A Postgres schema name: an identifier, so the kebab-case service name with `_` for `-`.
+    schemaName: name.replace(/-/g, '_'),
     db,
     broker,
     description,

@@ -104,6 +104,16 @@ draining Fastify is what stops every rollout dropping requests.
 
 **Containers run as non-root with a read-only root filesystem and all capabilities dropped.**
 
+**One Postgres database, a schema per service** (EP-07.6). Every service opens its pool on its own
+schema — `ATLAS_PG_SCHEMA`, default the service name — so `outbox`, `seen`, `_migrations` and the
+domain tables are the service's, not the database's. A dev cluster that ran the platform before
+this carries the old tables in `public`, orphaned and unread — but the **audit index is not
+orphaned**: the projector resumes from the index's own `max(seq)`, and a fresh `logging` schema
+starts `seq` at 1, so against the old index it believes it is caught up and `GET /logs` goes quiet.
+`kind delete cluster` is the clean-up; short of that, delete the index and restart the sink
+(`kubectl -n atlas exec opensearch-0 -- curl -s -X DELETE localhost:9200/atlas-audit`) — the
+rebuild is the operation ADR-0005 designed for.
+
 ## Shipping to an air-gapped site
 
 ```sh

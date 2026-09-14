@@ -1,0 +1,20 @@
+{
+  "$comment": "EP-07.6 — the tables that do NOT carry `channel_id … NOT NULL`, each with the reason. AGENTS.md §5 rule 3 says channelId on every row; this is the list of rows that are the exception, held to the migrations by `npm run schema:check` (scripts/check-schema-conventions.mjs): a table listed here must exist in that state, and a table in that state must be listed here. Every service owns ONE Postgres schema named after it (ATLAS_PG_SCHEMA), so a table name is unique per owner, not per database.",
+  "withoutChannelId": {
+    "_migrations": "The migration ledger of a schema — infrastructure, not data. One per service schema, so it is already scoped by owner.",
+    "outbox": "Transport, not data: the row is an envelope whose subject is atlas.<channelId>.<domain>.<action>, and the channel is inside it. The relay reads every unsent row of ITS OWN schema regardless of channel.",
+    "seen": "A consumer's dedup mark keyed by message id (EP-03.3). The message it marks carried the channel; the mark is about the id, not the row.",
+    "asset_tags": "A join keyed by asset_id → assets.channel_id. Every read goes through the asset, which is the channel-scoped row.",
+    "assignments": "A grant keyed by user_id → users.channel_id, addressable so it can be revoked by id. The grant's own reach is in its rule's scope, which may name several channels.",
+    "credentials": "One row per user, keyed by user_id → users.channel_id. Never queried by channel; never queried by anything but the user.",
+    "login_events": "An attempt against a USERNAME, which may not exist — a failed login for an unknown name has no channel to scope by. Joined through user_id when the user does exist.",
+    "mam_config": "A single-row version marker for the reference snapshot's ETag (EP-04.8). The service's schema IS its scope; the row is CHECK (id = 1).",
+    "memberships": "A join keyed by (user_id, group_id), both of them channel-scoped rows; a platform group (groups.channel_id NULL) takes users from any channel.",
+    "refresh_tokens": "One family per login, keyed by user_id → users.channel_id, looked up by the token hash — never by channel."
+  },
+  "nullableChannelId": {
+    "users": "NULL is a platform-wide account (an operator), the exception iam.md §13 records. A channel user has the channel the token is minted for.",
+    "roles": "NULL is platform-wide: the starter roles (EP-10.7) ship that way for an operator to narrow; a channel admin's own roles carry the channel.",
+    "groups": "NULL is a platform group, which takes users from any channel; a channel group takes the channel's users only (IamAdmin.addMember)."
+  }
+}
