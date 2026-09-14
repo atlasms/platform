@@ -254,7 +254,14 @@ test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENT
     payload: {},
   };
   assert.equal(requiredPermission({ ...base, type: 'asset.created' }), 'asset:read');
-  assert.equal(requiredPermission({ ...base, type: 'permissions.changed' }), 'permissions:read');
+  // IAM's domains take user:admin — no role grants a `permissions:read`, and the identity trail
+  // is what an administrator reads the log for (EP-10.6).
+  assert.equal(requiredPermission({ ...base, type: 'permissions.changed' }), 'user:admin');
+  assert.equal(requiredPermission({ ...base, type: 'group.membership.changed' }), 'user:admin');
+  assert.equal(
+    requiredPermission({ ...base, type: 'audit.recorded', payload: { entityType: 'group' } }),
+    'user:admin',
+  );
   assert.equal(
     requiredPermission({ ...base, type: 'audit.recorded', payload: { entityType: 'schedule' } }),
     'schedule:read',

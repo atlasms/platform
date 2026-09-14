@@ -1,7 +1,8 @@
 # @atlas/iam — identity and access
 
-Login, refresh-token families, lockout, the compiled effective policy, the starter roles — and,
-since EP-10.4, a store that persists. Design: [iam.md](../../docs/architecture/services/iam.md) ·
+Login, refresh-token families, lockout, the compiled effective policy, the starter roles, a store
+that persists (EP-10.4), the administration of users, groups, roles and grants, and — at last —
+the events a grant produces (EP-10.6). Design: [iam.md](../../docs/architecture/services/iam.md) ·
 authorization: [authorization-model.md](../../docs/architecture/authorization-model.md) ·
 contract: [`iam.yaml`](../../docs/architecture/openapi/iam.yaml).
 
@@ -46,13 +47,52 @@ which is what a named bundle is for. `channel_id` is **nullable** on roles and g
 platform-wide (the starter roles ship that way for an operator to narrow) — the one exception to
 the every-row rule, recorded in iam.md §13.
 
+## Administration (EP-10.4 part 2)
+
+`IamAdmin` (`admin.ts`) is the surface behind `/api/v1/users`, `/groups` and `/roles` in
+[`iam.yaml`](../../docs/architecture/openapi/iam.yaml). Every operation requires **`user:admin` in
+the channel of the row it touches**, checked with `canEnforce` and the full resource context:
+
+- A channel admin administers their channel. Another channel's user, group or role is **404**, not
+  403 — a 403 would confirm it exists.
+- A **platform-wide** row (no channel: the starter roles, a platform group) needs an **unscoped**
+  `user:admin`. A strict check with no channel to match cannot be satisfied by a channel-scoped
+  rule, and that is the point: narrowing the platform's roles is a platform operator's act.
+- A rule an admin writes — into a role, a group or a direct assignment — **cannot reach beyond
+  what they administer**: a channel admin can write neither a rule for another channel nor an
+  unscoped one, which would be every channel.
+- A group takes the platform's roles and its own channel's, never another channel's; a channel
+  group takes the channel's users.
+- Deleting a role that is still granted, directly or through a group, is **409**: revoke first, so
+  no permission disappears without being named in a request.
+
+Group ids are ULIDs (they travel in `group.membership.changed`, whose schema says so); role ids are
+kebab-case names (`editor`), minted as a ULID when not given. Adding a member twice is one
+membership and no second event; removing an absent one is a no-op.
+
+## What a grant emits (EP-10.6)
+
+Every mutation writes its rows, its `audit.recorded` delta (AGENTS.md §5.6) and its domain events
+in **one transaction** through the outbox; IAM runs a relay now (`ATLAS_NATS_URL`; not a readiness
+dependency — with the broker down, login keeps working and the events wait).
+
+Whenever what a user MAY DO changes, their `permVersion` is bumped and **`permissions.changed`**
+carries the new value — one per affected user: a grant or revocation, a membership, an account
+disabled or re-enabled, and a **role or group whose rules changed**, which reaches every holder
+directly or through a group. That number is what lets the gateway refuse the old token and the
+WebSocket service drop the old subscriptions within one access-token TTL (FR-IAM-8); the
+consumers were built long before this producer, and the smoke suite now watches a grant's three
+envelopes cross the spine into the audit log. Memberships also emit `group.membership.changed`.
+The credential is never in a delta: the audit says a password changed, not what to.
+
+The logging sink reads IAM's trail — `user`, `group`, `role`, `permissions` — under `user:admin`
+(`apps/logging/src/visibility.ts`); the model defines no `user:read`, and the trail is read there,
+not streamed to browsers.
+
 ## Not yet
 
-- **10.4 (part 2)** — the admin API: groups, roles, assignments, memberships over HTTP, with
-  `user:admin` enforced by `canEnforce`.
-- **10.6** — `permissions.changed` and `group.membership.changed` through the outbox, in the
-  grant's own transaction. The consumers exist (gateway, websocket, Studio); the producer is this.
 - Signing keys are generated per process; a multi-replica IAM needs them from a secret.
+- `holdersOf` a role walks the users; fine at the size of a channel, an index when it is not.
 
 ## Run
 
@@ -61,8 +101,9 @@ npx nx test @atlas/iam                                                          
 ATLAS_PG_URL=postgres://atlas:atlas@localhost:55432/atlas npx nx test @atlas/iam   # + Postgres
 ```
 
-| Variable                                         | Default                            |                                           |
-| ------------------------------------------------ | ---------------------------------- | ----------------------------------------- |
-| `ATLAS_PG_URL`                                   | `postgres://…@postgres:5432/atlas` | waited for at startup, within 120 s       |
-| `ATLAS_SEED_USERNAME` / `_PASSWORD` / `_CHANNEL` | unset                              | dev bootstrap; idempotent across restarts |
-| `ATLAS_LOCKOUT_*`                                | 10 / 15 min / 15 min               | see `lockout.ts`                          |
+| Variable                                         | Default                            |                                            |
+| ------------------------------------------------ | ---------------------------------- | ------------------------------------------ |
+| `ATLAS_PG_URL`                                   | `postgres://…@postgres:5432/atlas` | waited for at startup, within 120 s        |
+| `ATLAS_NATS_URL`                                 | `nats://nats:4222`                 | the outbox relay; retried, never readiness |
+| `ATLAS_SEED_USERNAME` / `_PASSWORD` / `_CHANNEL` | unset                              | dev bootstrap; idempotent across restarts  |
+| `ATLAS_LOCKOUT_*`                                | 10 / 15 min / 15 min               | see `lockout.ts`                           |

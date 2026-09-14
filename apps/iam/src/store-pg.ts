@@ -102,8 +102,12 @@ export const pgMigrations: Migration[] = [
 export function pgIamStore(pool: PgPool): IamStore {
   const outbox = new PgOutboxStore(pool);
 
+  // `version: 1` under the document: a record written before EP-10.4 (part 2) added the field
+  // reads as revision 1 rather than as a record with no revision.
   const docs = async <T>(client: PgPool | PgClient, sql: string, params: unknown[]): Promise<T[]> =>
-    (await client.query<{ data: T }>(sql, params)).rows.map((r) => r.data);
+    (await client.query<{ data: T }>(sql, params)).rows.map(
+      (r) => ({ version: 1, ...(r.data as object) }) as T,
+    );
 
   return {
     async transaction(fn) {

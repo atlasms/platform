@@ -19,6 +19,6 @@ export const API_BASE_URL = new InjectionToken<string>('API_BASE_URL', {
 // `permissionVersion`, this said `permVersion`, and both were "obviously right" to whoever last
 // looked at one of them. Now the contract decides and `npm run api:check` fails the build if this
 // file's source and `docs/architecture/openapi/iam.yaml` disagree.
-export type { TokenPair, User, PermissionRule } from './generated/iam.types.ts';
+export type { TokenPair, User, Rule } from './generated/iam.types.ts';
 export type { Asset, Tag, Person, VocabularyTerm } from './generated/mam.types.ts';
 export type { IngestJob } from './generated/rim.types.ts';

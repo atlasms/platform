@@ -1,7 +1,7 @@
 // The HTTP surface. Thin: every decision lives in IamService, so the routes are transport only.
 // Spec: docs/architecture/services/iam.md · contract: docs/architecture/openapi/iam.yaml
 
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import {
   accessRecord,
   goldenSignals,
@@ -18,12 +18,16 @@ import {
   type Tracer,
 } from '@atlas/service-kit';
 import { ulid } from '@atlas/contracts';
+import { ValidationError } from '@atlas/service-kit';
+import { IamAdmin, type AdminCaller } from './admin.ts';
 import type { IamService } from './service.ts';
 import type { KeyRing } from './tokens.ts';
 
 export interface IamAppOptions {
   service: IamService;
   keyRing: KeyRing;
+  /** The admin surface (EP-10.4). Built from the service when omitted. */
+  admin?: IamAdmin;
   health?: HealthRegistry;
   /**
    * Per-request access log (#245). Omit and nothing is logged — this service emitted no access
@@ -61,6 +65,17 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
   // and this route has to expose the SAME registry or half the signals would be unscrapeable.
   const metrics = service.metrics;
   const signals = goldenSignals(metrics, 'iam');
+
+  // An EMPTY body with a JSON content type is not an error. Fastify's default parser refuses it
+  // (FST_ERR_CTP_EMPTY_JSON_BODY), which turns a body-less DELETE sent with the header into a 500.
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    if (body === '' || body === undefined) return done(null, undefined);
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  });
 
   app.addHook('onRequest', (req, _reply, done) => {
     const incoming = req.headers['x-correlation-id'];
@@ -218,23 +233,230 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
     return reply.code(204).send();
   });
 
-  // The compiled policy. Identified by the gateway-established header, not by re-parsing a JWT.
-  app.get('/api/v1/users/me/effective-permissions', async (req, reply) => {
+  // --- administration (EP-10.4) ----------------------------------------------------------------------
+  //
+  // Behind the gateway: the caller is the gateway-established header, never a re-parsed JWT. Every
+  // decision is the admin module's; these routes parse, call, and answer. Each handler `return
+  // await`s inside the try so a rejection cannot escape the problem document.
+
+  const admin = options.admin ?? new IamAdmin({ service, store: service.store });
+
+  const callerOf = (req: FastifyRequest): AdminCaller => {
     const userId = req.headers['x-atlas-user'];
-    if (typeof userId !== 'string') {
-      const p = toProblem(new Unauthorized('no authenticated subject'), req.correlationId);
-      return reply.code(p.status).type(PROBLEM_CONTENT_TYPE).send(p);
-    }
+    if (typeof userId !== 'string' || userId === '')
+      throw new Unauthorized('no authenticated subject');
+    const channelId = req.headers['x-atlas-channel'];
+    return {
+      userId,
+      ...(typeof channelId === 'string' && channelId !== '' ? { channelId } : {}),
+      correlationId: req.correlationId,
+    };
+  };
+
+  const handle = async (
+    req: FastifyRequest,
+    reply: FastifyReply,
+    status: number,
+    fn: (caller: AdminCaller) => Promise<unknown>,
+  ): Promise<unknown> => {
     try {
-      const policy = await service.effectivePolicy(userId);
-      // Cached against permVersion by every consumer, so it must be revalidatable.
-      void reply.header('etag', `W/"pv-${policy.permVersion}"`);
-      return policy;
+      const result = await fn(callerOf(req));
+      return status === 204 ? reply.code(204).send() : reply.code(status).send(result);
     } catch (err) {
       const p = toProblem(err, req.correlationId);
       return reply.code(p.status).type(PROBLEM_CONTENT_TYPE).send(p);
     }
-  });
+  };
+
+  const body = (req: FastifyRequest): Record<string, unknown> => {
+    if (typeof req.body !== 'object' || req.body === null || Array.isArray(req.body)) {
+      throw new ValidationError('body must be an object');
+    }
+    return req.body as Record<string, unknown>;
+  };
+  const str = (v: unknown, name: string, required = false): string | undefined => {
+    if (v === undefined || v === null) {
+      if (required) throw new ValidationError(`${name} is required`);
+      return undefined;
+    }
+    if (typeof v !== 'string') throw new ValidationError(`${name} must be a string`);
+    return v;
+  };
+  type Q = Record<string, string | undefined>;
+  type P = { id: string; assignmentId: string };
+
+  // The compiled policy. `me` is the caller; anyone else needs user:admin in the user's channel.
+  // Cached against permVersion by every consumer, so it must be revalidatable.
+  app.get<{ Params: P }>('/api/v1/users/:id/effective-permissions', (req, reply) =>
+    handle(req, reply, 200, async (caller) => {
+      const id = req.params.id === 'me' ? caller.userId : req.params.id;
+      const policy = await admin.effectivePolicyOf(caller, id);
+      void reply.header('etag', `W/"pv-${policy.permVersion}"`);
+      return policy;
+    }),
+  );
+
+  app.get<{ Querystring: Q }>('/api/v1/users', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      admin.listUsers(caller, {
+        ...(req.query['channelId'] !== undefined ? { channelId: req.query['channelId'] } : {}),
+        ...(req.query['after'] !== undefined ? { after: req.query['after'] } : {}),
+        ...(req.query['limit'] !== undefined ? { limit: Number(req.query['limit']) } : {}),
+      }),
+    ),
+  );
+  app.post('/api/v1/users', (req, reply) =>
+    handle(req, reply, 201, (caller) => {
+      const b = body(req);
+      const channelId = b['channelId'];
+      if (channelId !== undefined && channelId !== null && typeof channelId !== 'string') {
+        throw new ValidationError('channelId must be a string or null');
+      }
+      const state = str(b['state'], 'state');
+      if (state !== undefined && state !== 'active' && state !== 'invited') {
+        throw new ValidationError('state must be active or invited');
+      }
+      return admin.createUser(caller, {
+        username: str(b['username'], 'username', true) as string,
+        ...(b['password'] !== undefined
+          ? { password: str(b['password'], 'password') as string }
+          : {}),
+        ...(b['name'] !== undefined ? { name: str(b['name'], 'name') as string } : {}),
+        ...(channelId !== undefined ? { channelId: channelId as string | null } : {}),
+        ...(state !== undefined ? { state } : {}),
+      });
+    }),
+  );
+  app.get<{ Params: P }>('/api/v1/users/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) => admin.getUser(caller, req.params.id)),
+  );
+  app.patch<{ Params: P }>('/api/v1/users/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) => {
+      const b = body(req);
+      const state = str(b['state'], 'state');
+      if (state !== undefined && state !== 'active' && state !== 'disabled') {
+        throw new ValidationError('state must be active or disabled');
+      }
+      return admin.updateUser(caller, req.params.id, {
+        ...(b['name'] !== undefined ? { name: str(b['name'], 'name') as string } : {}),
+        ...(state !== undefined ? { state } : {}),
+        ...(b['password'] !== undefined
+          ? { password: str(b['password'], 'password') as string }
+          : {}),
+      });
+    }),
+  );
+
+  app.get<{ Params: P }>('/api/v1/users/:id/assignments', (req, reply) =>
+    handle(req, reply, 200, (caller) => admin.listAssignments(caller, req.params.id)),
+  );
+  app.post<{ Params: P }>('/api/v1/users/:id/assignments', (req, reply) =>
+    handle(req, reply, 201, (caller) => {
+      const b = body(req);
+      if (b['roleId'] !== undefined) {
+        return admin.createAssignment(caller, req.params.id, {
+          roleId: str(b['roleId'], 'roleId') as string,
+        });
+      }
+      if (b['rule'] !== undefined) {
+        return admin.createAssignment(caller, req.params.id, { rule: b['rule'] as never });
+      }
+      throw new ValidationError('an assignment names a roleId or carries a rule');
+    }),
+  );
+  app.delete<{ Params: P }>('/api/v1/users/:id/assignments/:assignmentId', (req, reply) =>
+    handle(req, reply, 204, (caller) =>
+      admin.deleteAssignment(caller, req.params.id, req.params.assignmentId),
+    ),
+  );
+
+  const groupInput = (b: Record<string, unknown>) => {
+    const channelId = b['channelId'];
+    if (channelId !== undefined && channelId !== null && typeof channelId !== 'string') {
+      throw new ValidationError('channelId must be a string or null');
+    }
+    const roleIds = b['roleIds'];
+    if (
+      roleIds !== undefined &&
+      (!Array.isArray(roleIds) || !roleIds.every((r) => typeof r === 'string'))
+    ) {
+      throw new ValidationError('roleIds must be an array of strings');
+    }
+    return {
+      ...(channelId !== undefined ? { channelId: channelId as string | null } : {}),
+      ...(b['name'] !== undefined ? { name: str(b['name'], 'name') as string } : {}),
+      ...(b['description'] !== undefined
+        ? { description: str(b['description'], 'description') as string }
+        : {}),
+      ...(b['rules'] !== undefined ? { rules: b['rules'] as never } : {}),
+      ...(roleIds !== undefined ? { roleIds: roleIds as string[] } : {}),
+    };
+  };
+
+  app.get<{ Querystring: Q }>('/api/v1/groups', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      admin.listGroups(caller, {
+        ...(req.query['channelId'] !== undefined ? { channelId: req.query['channelId'] } : {}),
+      }),
+    ),
+  );
+  app.post('/api/v1/groups', (req, reply) =>
+    handle(req, reply, 201, (caller) => admin.createGroup(caller, groupInput(body(req)))),
+  );
+  app.get<{ Params: P }>('/api/v1/groups/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) => admin.getGroup(caller, req.params.id)),
+  );
+  app.patch<{ Params: P }>('/api/v1/groups/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      admin.updateGroup(caller, req.params.id, groupInput(body(req))),
+    ),
+  );
+  app.delete<{ Params: P }>('/api/v1/groups/:id', (req, reply) =>
+    handle(req, reply, 204, (caller) => admin.deleteGroup(caller, req.params.id)),
+  );
+  app.get<{ Params: P }>('/api/v1/groups/:id/members', (req, reply) =>
+    handle(req, reply, 200, (caller) => admin.listMembers(caller, req.params.id)),
+  );
+  app.post<{ Params: P }>('/api/v1/groups/:id/members', (req, reply) =>
+    handle(req, reply, 204, (caller) =>
+      admin.addMember(caller, req.params.id, str(body(req)['userId'], 'userId', true) as string),
+    ),
+  );
+  app.delete<{ Params: P; Querystring: Q }>('/api/v1/groups/:id/members', (req, reply) =>
+    handle(req, reply, 204, (caller) => {
+      const userId = req.query['userId'];
+      if (userId === undefined || userId === '') throw new ValidationError('userId is required');
+      return admin.removeMember(caller, req.params.id, userId);
+    }),
+  );
+
+  app.get<{ Querystring: Q }>('/api/v1/roles', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      admin.listRoles(caller, {
+        ...(req.query['channelId'] !== undefined ? { channelId: req.query['channelId'] } : {}),
+      }),
+    ),
+  );
+  app.post('/api/v1/roles', (req, reply) =>
+    handle(req, reply, 201, (caller) => {
+      const b = body(req);
+      return admin.createRole(caller, {
+        ...groupInput(b),
+        ...(b['id'] !== undefined ? { id: str(b['id'], 'id') as string } : {}),
+      });
+    }),
+  );
+  app.get<{ Params: P }>('/api/v1/roles/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) => admin.getRole(caller, req.params.id)),
+  );
+  app.patch<{ Params: P }>('/api/v1/roles/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      admin.updateRole(caller, req.params.id, groupInput(body(req))),
+    ),
+  );
+  app.delete<{ Params: P }>('/api/v1/roles/:id', (req, reply) =>
+    handle(req, reply, 204, (caller) => admin.deleteRole(caller, req.params.id)),
+  );
 
   app.setErrorHandler((err, req, reply) => {
     const p = toProblem(err, req.correlationId);

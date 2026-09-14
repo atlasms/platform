@@ -3,11 +3,20 @@
 // Run with plain `node`, no bundler and no tsx: Node 24 strips types natively, so the image ships
 // the same source the tests run against. One fewer build artefact to keep honest.
 
-import { migrate, openPool } from '@atlas/data-pg';
-import { createTracer, createLogger, HealthRegistry, loadConfig } from '@atlas/service-kit';
+import { migrate, openPool, PgOutboxStore } from '@atlas/data-pg';
+import { OutboxRelay } from '@atlas/messaging';
+import { NatsBroker } from '@atlas/messaging-nats';
+import {
+  createTracer,
+  createLogger,
+  currentTraceparent,
+  HealthRegistry,
+  loadConfig,
+} from '@atlas/service-kit';
 import {
   buildIamApp,
   DEFAULT_LOCKOUT,
+  IamAdmin,
   IamService,
   KeyRing,
   pgIamStore,
@@ -28,6 +37,10 @@ const config = loadConfig({
     type: 'string',
     default: 'postgres://atlas:atlas@postgres:5432/atlas',
   },
+  // EP-10.6: the outbox relay. `permissions.changed` and the rest ride out of the same rows the
+  // grant was written in.
+  natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
+  relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 1_000 },
   // iam.md §11 calls these out as configuration, and a site with an unusual threat model will want
   // them. The defaults come from DEFAULT_LOCKOUT rather than being restated, so there is one place
   // that decides what "ten in fifteen minutes" means.
@@ -155,6 +168,9 @@ if (seedUser && seedPassword) {
           // EP-18: the program table, so the smoke suite can write a reel and read it back.
           'schedule:read',
           'schedule:write',
+          // EP-10.4/10.6: the admin surface, so the smoke suite can grant and watch the grant's
+          // events cross the spine. Channel-scoped like the rest.
+          'user:admin',
         ],
         scope: { channelIds: [channelId] },
       },
@@ -167,13 +183,62 @@ if (seedUser && seedPassword) {
   });
 }
 
+const admin = new IamAdmin({
+  service,
+  store: service.store,
+  // The trace context is captured where the event is CREATED, inside the request (EP-13.3): the
+  // relay publishes later on a timer with no ambient context at all.
+  traceHeaders: () => {
+    const traceparent = currentTraceparent();
+    return traceparent ? { traceparent } : undefined;
+  },
+});
+
 const app = buildIamApp({
   service,
+  admin,
   keyRing,
   health,
   tracer,
   onAccessLog: (record) => log.info('access', { ...record }),
 });
+
+// --- the broker: the outbox relay (EP-10.6) ----------------------------------------------------------
+//
+// NOT a readiness check. With NATS down this service still signs people in and answers policies;
+// the events wait in the outbox and the relay resumes. Failing readiness here would take login
+// out of service to protect a queue that loses nothing by waiting.
+
+let broker: NatsBroker | undefined;
+let retryTimer: NodeJS.Timeout | undefined;
+const outbox = new PgOutboxStore(pool);
+
+async function startBroker(): Promise<void> {
+  try {
+    broker = await NatsBroker.connect({ servers: config.natsUrl, service: 'iam' });
+  } catch (err) {
+    log.warn('broker unavailable, retrying', { error: (err as Error).message });
+    retryTimer = setTimeout(() => void startBroker(), 5_000);
+    return;
+  }
+
+  const relay = new OutboxRelay(outbox, broker);
+  log.info('outbox relay started', { intervalMs: config.relayIntervalMs });
+  const tick = async (): Promise<void> => {
+    try {
+      const n = await relay.drain();
+      if (n > 0) log.info('relayed events', { count: n });
+    } catch (err) {
+      // Left unsent on purpose: the next tick retries. Marking them sent to clear the error would
+      // silently drop the event, which is the one outcome the outbox exists to prevent.
+      log.error('relay tick failed', { error: (err as Error).message });
+    }
+    retryTimer = setTimeout(() => void tick(), config.relayIntervalMs);
+  };
+  void tick();
+}
+
+void startBroker();
 
 await app.listen({ port: config.port, host: config.host });
 log.info('iam listening', { port: config.port, host: config.host });
@@ -183,10 +248,12 @@ log.info('iam listening', { port: config.port, host: config.host });
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     log.info(`${signal} received, draining`);
+    if (retryTimer) clearTimeout(retryTimer);
     // Flush AFTER Fastify closes, so spans for in-flight requests make the final batch.
     void app
       .close()
       .then(() => tracer.shutdown())
+      .then(() => broker?.close())
       .then(() => pool.end())
       .then(() => process.exit(0));
   });

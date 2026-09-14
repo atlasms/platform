@@ -62,6 +62,9 @@ const routes: RoutingTable = [
   // identity as internal headers. IAM re-authorizes — the gateway authenticates, it does not
   // authorize.
   { service: 'iam', origin: config.iamOrigin, prefix: '/api/v1/users' },
+  // EP-10.4: the admin surface — groups and roles. Users were already routed.
+  { service: 'iam', origin: config.iamOrigin, prefix: '/api/v1/groups' },
+  { service: 'iam', origin: config.iamOrigin, prefix: '/api/v1/roles' },
   // MAM. The gateway adds no domain endpoints of its own — it verifies the token, forwards the
   // established identity as internal headers, and MAM re-authorizes with its own resource context.
   { service: 'mam', origin: config.mamOrigin, prefix: '/api/v1/assets' },

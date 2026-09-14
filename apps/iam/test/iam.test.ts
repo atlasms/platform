@@ -193,7 +193,7 @@ test('the JWKS contains public halves only', async () => {
 test('effective policy is the union of user, role and group grants', async () => {
   const { service, user } = await iam();
   await service.store.transaction(async (tx) => {
-    await tx.putGroup({ id: 'g-approvers', name: 'Approvers', roleIds: ['approver'] });
+    await tx.putGroup({ id: 'g-approvers', name: 'Approvers', roleIds: ['approver'], version: 1 });
     await tx.putMembership({ userId: user.id, groupId: 'g-approvers' });
   });
 

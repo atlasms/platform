@@ -529,6 +529,65 @@ test('smoke: EP-19.3 — the audit log browse finds a write by its correlation i
   );
 });
 
+test('smoke: EP-10.6 — a grant reaches the spine: permissions.changed and group.membership.changed are in the log', async () => {
+  // IAM emits at last. An admin creates a group, puts the seeded user in it, and the events the
+  // grant produced — in the SAME transaction as the membership row — travel outbox → broker → sink
+  // and turn up in the audit log under the request's correlation id. This is the half of live
+  // revocation that was missing: the consumers were built long before the producer.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+  const me = await get('/api/v1/users/me/effective-permissions', { headers });
+  assert.equal(me.status, 200, `policy failed: ${me.text}`);
+  const before = json(me).permVersion;
+
+  const group = await get('/api/v1/groups', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ name: `smoke ${Date.now().toString(36)}`, roleIds: ['viewer'] }),
+  });
+  assert.equal(group.status, 201, `group create failed: ${group.text}`);
+  const groupId = json(group).id;
+
+  const joined = await get(`/api/v1/groups/${groupId}/members`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ userId: json(me).subjectId }),
+  });
+  assert.equal(joined.status, 204, `add member failed: ${joined.text}`);
+  const correlationId = joined.headers.get('x-correlation-id');
+  assert.ok(correlationId);
+
+  const after = await get('/api/v1/users/me/effective-permissions', { headers });
+  assert.equal(json(after).permVersion, before + 1, 'the membership bumped permVersion');
+
+  const deadline = Date.now() + 20_000;
+  let page;
+  for (;;) {
+    const res = await get(`/api/v1/logs?correlationId=${encodeURIComponent(correlationId)}`, {
+      headers,
+    });
+    if (res.status !== 503) assert.equal(res.status, 200, `browse failed: ${res.text}`);
+    page = res.status === 200 ? json(res) : { items: [] };
+    if (page.items.length >= 3 || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  const types = page.items.map((e) => e.type).sort();
+  assert.deepEqual(
+    types,
+    ['audit.recorded', 'group.membership.changed', 'permissions.changed'],
+    'the three envelopes one grant produces',
+  );
+  const changed = page.items.find((e) => e.type === 'permissions.changed');
+  assert.equal(changed.payload.permVersion, before + 1);
+
+  // Leave the seed user as it was found: the next run bumps from wherever it is, but a group per
+  // run would accumulate.
+  const left = await get(`/api/v1/groups/${groupId}`, { method: 'DELETE', headers });
+  assert.equal(left.status, 204, `group delete failed: ${left.text}`);
+});
+
 test('smoke: EP-18 — a program table is written thinly, read back in reel order, and audited', async () => {
   // Scheduling on a live cluster: create the day, save a reel through the thin write path — with
   // an overlap the backend must NOT refuse (data-model §3.4) — read it back in reel order through
