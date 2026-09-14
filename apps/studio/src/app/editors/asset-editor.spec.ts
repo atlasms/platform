@@ -262,4 +262,20 @@ describe('AssetEditor', () => {
     expect(fake.gets).toHaveLength(1); // no reload
     expect(component.dirtyCount()).toBe(1); // the edit survives
   });
+
+  it('a re-sync reloads the record when clean, and never over unsaved edits (EP-09.4)', () => {
+    const { component, fake } = setup();
+    fake.gets[0]?.result.next(record());
+    const ws = TestBed.inject(WebSocketService);
+
+    ws.resync$.next('reconnected');
+    expect(fake.gets).toHaveLength(2); // a gap may have hidden a change: reload
+    fake.gets[1]?.result.next(record({ title: 'Changed during the gap', version: 5 }));
+    expect(component.asset()?.title).toBe('Changed during the gap');
+
+    component.change('title', 'My unsaved edit');
+    ws.resync$.next('poll');
+    expect(fake.gets).toHaveLength(2); // the polling cadence does not clobber the draft either
+    expect(component.dirtyCount()).toBe(1);
+  });
 });

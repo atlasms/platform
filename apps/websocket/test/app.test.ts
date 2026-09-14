@@ -297,6 +297,21 @@ test('`resume` is refused by name rather than ignored', async () => {
   await app.close();
 });
 
+test('a client `ping` is answered with `pong` — the half-open detector the browser cannot build itself', async () => {
+  // EP-09.4. The server pings sockets and the browser answers without telling the page, so page
+  // script has no way to notice a server that stopped answering. This frame carries no pattern
+  // and is answered before the pattern check, or a heartbeat would be "frame has no pattern".
+  const { app, key } = await harness();
+  const socket = await app.injectWS(`/ws?token=${await token(key)}`);
+
+  const answered = nextFrame(socket);
+  socket.send(JSON.stringify({ type: 'ping' }));
+  assert.deepEqual(await answered, { type: 'pong' });
+
+  socket.terminate();
+  await app.close();
+});
+
 test('over a REAL socket: connect, subscribe, receive, and disconnect cleanly', async () => {
   // The one test that binds a port, and it earns it twice over.
   //

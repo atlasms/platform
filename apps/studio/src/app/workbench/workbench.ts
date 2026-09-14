@@ -79,6 +79,15 @@ const MAX_SIDE_BAR = 640;
         <span>{{ session.userId() ?? locale.t('auth.signIn') }}</span>
         <span class="sep">·</span>
         <span>{{ locale.t('workbench.statusBar.channel') }} {{ session.channelId() ?? '—' }}</span>
+        @if (session.isAuthenticated()) {
+          <span class="sep">·</span>
+          <!-- Live updates, or the polling fallback while the socket is down (NFR-AVAIL-7). -->
+          <span class="live" [class.degraded]="ws.degraded()" [title]="ws.lastError() ?? ''">
+            {{
+              locale.t(ws.degraded() ? 'workbench.statusBar.polling' : 'workbench.statusBar.live')
+            }}
+          </span>
+        }
         @if (editors.hasUnsavedChanges()) {
           <span class="sep">·</span>
           <span>{{ locale.t('workbench.statusBar.unsavedChanges') }}</span>
@@ -114,7 +123,7 @@ export class Workbench {
   protected readonly locale = inject(LocaleService);
   private readonly permissions = inject(PermissionService);
   private readonly auth = inject(AuthService);
-  private readonly ws = inject(WebSocketService);
+  protected readonly ws = inject(WebSocketService);
   private readonly router = inject(Router);
 
   protected async signOut(): Promise<void> {

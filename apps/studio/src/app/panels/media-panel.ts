@@ -258,6 +258,12 @@ export class MediaPanel {
     this.ws.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(({ subject, payload }) => {
       this.handleAssetEvent(subject, payload);
     });
+
+    // The socket came back after a gap, or is down and this is the polling cadence (EP-09.4):
+    // either way the list may be stale, and there is no replay — refetch what is on screen.
+    this.ws.resync$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      this.onQuery(this.query());
+    });
   }
 
   protected onQuery(value: string): void {

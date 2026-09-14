@@ -52,13 +52,14 @@ put that load onto IAM as well.
 
 JSON frames over a single socket at `GET /ws` (Upgrade).
 
-| Frame                         | Direction       | Meaning                                              |
-| ----------------------------- | --------------- | ---------------------------------------------------- |
-| `subscribe` / `unsubscribe`   | client → server | Join or leave a subject pattern.                     |
-| `subscribed` / `unsubscribed` | server → client | The server acted on it.                              |
-| `event`                       | server → client | A permitted domain event, `{ subject, payload }`.    |
-| `error`                       | server → client | A refusal, or a frame the server did not understand. |
-| `permissions-changed`         | server → client | A subscription was dropped mid-session.              |
+| Frame                         | Direction                         | Meaning                                                                                  |
+| ----------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------- |
+| `subscribe` / `unsubscribe`   | client → server                   | Join or leave a subject pattern.                                                         |
+| `subscribed` / `unsubscribed` | server → client                   | The server acted on it.                                                                  |
+| `event`                       | server → client                   | A permitted domain event, `{ subject, payload }`.                                        |
+| `error`                       | server → client                   | A refusal, or a frame the server did not understand.                                     |
+| `permissions-changed`         | server → client                   | A subscription was dropped mid-session.                                                  |
+| `ping` / `pong`               | client → server / server → client | The client's heartbeat (EP-09.4): carries no pattern, answered before the pattern check. |
 
 Subjects are `atlas.<channelId>.<domain>.<action>` and `user.<userId>.<…>`; patterns may use the
 broker's wildcards (`atlas.ch12.asset.>`).
@@ -113,10 +114,16 @@ a resubscribe once IAM returns. A closed socket is the one outcome the client al
 ## What is deliberately missing
 
 `websocket.md` §4 also specifies `resume` and `progress` frames. `resume` replays the gap from a
-**Redis-backed window** (§6.2), and Redis is EP-07.4 — unbuilt. A `resume` that acknowledged the
-frame and replayed nothing would be worse than its absence, because the client would believe it had
-caught up. It is refused **by name** as an unsupported frame, so a client finds out immediately
-rather than inferring it from events that never arrive.
+**Redis-backed window** (§6.2), and Redis was deferred (EP-07.4 chose OpenSearch only, ADR-0005). A
+`resume` that acknowledged the frame and replayed nothing would be worse than its absence, because
+the client would believe it had caught up. It is refused **by name** as an unsupported frame, so a
+client finds out immediately rather than inferring it from events that never arrive. What the
+client does instead (EP-09.4) is what §6.2 prescribes when a gap exceeds the window: on every
+reconnect it re-subscribes and **re-syncs via REST**, and while the socket is down it polls.
+
+The server pings sockets (`ATLAS_WS_HEARTBEAT_MS`) and terminates the ones that do not answer. The
+browser answers those pings without telling the page, which is why the client has a heartbeat of
+its own — the `ping` frame above.
 
 Presence, cross-node routing and horizontal scale (§8) need the same Redis. One replica today.
 

@@ -1,25 +1,61 @@
-import { inject, Injectable, signal } from '@angular/core';
+import { computed, inject, Injectable, InjectionToken, signal } from '@angular/core';
 import { Subject, timer } from 'rxjs';
 import { takeUntil } from 'rxjs/operators';
 import { AuthService } from './auth.service.ts';
 import { SessionStore } from './session.store.ts';
 import { API_BASE_URL } from './api.ts';
 
-export type ClientFrameType = 'subscribe' | 'unsubscribe';
+export type ClientFrameType = 'subscribe' | 'unsubscribe' | 'ping';
 
 export interface ClientFrame {
   type: ClientFrameType;
-  pattern: string;
+  pattern?: string;
 }
 
 export interface ServerFrame {
-  type: 'event' | 'subscribed' | 'unsubscribed' | 'error' | 'permissions-changed';
+  type: 'event' | 'subscribed' | 'unsubscribed' | 'error' | 'permissions-changed' | 'pong';
   subject?: string;
   payload?: unknown;
   message?: string;
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+
+/**
+ * Why a consumer is being told to refetch (EP-09.4).
+ *
+ * `reconnected`: the socket came back after a gap, and there is no replay window (websocket.md
+ * §6.2 — `resume` needs Redis, which is not built), so anything published during the gap is gone.
+ * The only honest recovery is a re-sync via REST, which is what §6.2 prescribes when the gap
+ * exceeds the window — and with no window, every gap does.
+ *
+ * `poll`: the socket has been down for a while. Live panels degrade to polling
+ * (NFR-AVAIL-7) rather than sitting on data that stopped changing when the connection did.
+ */
+export type ResyncReason = 'reconnected' | 'poll';
+
+export interface WebSocketTuning {
+  /** First reconnect delay; doubles per attempt up to `maxDelayMs`, with jitter. */
+  baseDelayMs: number;
+  maxDelayMs: number;
+  /** Client-side heartbeat period; a ping unanswered by the next tick means the socket is dead. */
+  heartbeatMs: number;
+  /** How often `resync$` fires `poll` while the socket is down and something is subscribed. */
+  pollIntervalMs: number;
+  /** The jitter source — injectable so a test can pin it. */
+  random: () => number;
+}
+
+export const WEBSOCKET_TUNING = new InjectionToken<WebSocketTuning>('WEBSOCKET_TUNING', {
+  providedIn: 'root',
+  factory: () => ({
+    baseDelayMs: 1_000,
+    maxDelayMs: 30_000,
+    heartbeatMs: 30_000,
+    pollIntervalMs: 30_000,
+    random: Math.random,
+  }),
+});
 
 interface PendingSubscription {
   pattern: string;
@@ -30,14 +66,21 @@ interface PendingSubscription {
  * WebSocket client for live updates (EP-11.4).
  *
  * The protocol matches the server's ConnectionRegistry:
- * - Client sends: { type: 'subscribe' | 'unsubscribe', pattern: string }
- * - Server sends: { type: 'subscribed' | 'unsubscribed' | 'event' | 'error' | 'permissions-changed', subject?, payload?, message? }
+ * - Client sends: { type: 'subscribe' | 'unsubscribe', pattern: string } and { type: 'ping' }
+ * - Server sends: { type: 'subscribed' | 'unsubscribed' | 'event' | 'error' | 'permissions-changed' | 'pong', subject?, payload?, message? }
  *
  * Subject format: atlas.<channelId>.<domain>.<entity>.<action>  or  user.<userId>.<...>
  * Subscription patterns support wildcards: atlas.ch12.asset.>  or  user.user-123.>
  *
- * Reconnection uses exponential backoff (1s, 2s, 4s, 8s, max 30s).
- * All subscriptions are re-sent after reconnect.
+ * Reconnection uses exponential backoff (1s, 2s, 4s, 8s, max 30s) with jitter — equal jitter,
+ * `[cap/2, cap)`: a server restart otherwise brings every open Studio back in lockstep, at the
+ * same second, forever. All subscriptions are re-sent after reconnect, and `resync$` then tells
+ * every live consumer to refetch, because there is no replay of the gap (see `ResyncReason`).
+ *
+ * The client heartbeats too. The server pings sockets, but the browser answers those without
+ * telling the page, so page script cannot tell a server that died from one with nothing to say.
+ * A `ping` frame every `heartbeatMs` with no `pong` (or any other frame) by the next tick closes
+ * the socket, which is what starts the reconnect that would otherwise never come.
  *
  * The access token is sent as a query parameter: ?token=<accessToken>
  * (IAM refreshes the token; this client does NOT hold the refresh token.)
@@ -47,6 +90,7 @@ export class WebSocketService {
   private readonly auth = inject(AuthService);
   private readonly session = inject(SessionStore);
   private readonly baseUrl = inject(API_BASE_URL);
+  private readonly tuning = inject(WEBSOCKET_TUNING);
 
   private ws: WebSocket | null = null;
   // Never completed for the service's lifetime: `disconnect()` is a pause, not the end of the
@@ -63,13 +107,32 @@ export class WebSocketService {
    */
   private subscriptions = new Set<string>();
   private reconnectAttempt = 0;
-  private readonly maxReconnectDelay = 30_000;
+  /** True once a socket has opened in this session: the next open is a RE-connect. */
+  private everConnected = false;
+  /** Set when a ping goes out; cleared by any frame. Still set at the next tick = dead socket. */
+  private awaitingPong = false;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /** Ends the current poll loop; a new one starts with the next degradation. */
+  private readonly stopPolling$ = new Subject<void>();
 
   readonly state = signal<ConnectionState>('disconnected');
   readonly lastError = signal<string | null>(null);
+  /**
+   * Live updates are not arriving and the panels are polling instead (NFR-AVAIL-7). `connecting`
+   * is not degraded: nothing has been missed yet, and the first connect is the normal path.
+   */
+  readonly degraded = computed(() => this.state() === 'reconnecting');
 
   /** Emits every event frame received from the server. */
   readonly events$ = new Subject<{ subject: string; payload: unknown }>();
+
+  /**
+   * "Refetch what you show." Emitted once on every reconnect after a gap, and every
+   * `pollIntervalMs` while the socket is down and at least one pattern is desired — nobody is
+   * polled for a panel that is not open. A hidden tab is not polled either; it catches up on the
+   * reconnect, or the first tick after it is shown.
+   */
+  readonly resync$ = new Subject<ResyncReason>();
 
   /** Emits when a subscription is confirmed. */
   readonly subscribed$ = new Subject<{ pattern: string; ok: boolean; reason?: string }>();
@@ -85,6 +148,10 @@ export class WebSocketService {
       return;
     }
     this.intentionalClose = false;
+    // A connect() while a reconnect is pending (the session re-authenticated) takes over from the
+    // timer; otherwise the timer would open a SECOND socket next to this one.
+    this.destroy$.next();
+    this.stopPolling$.next();
     this.open();
   }
 
@@ -92,9 +159,11 @@ export class WebSocketService {
   disconnect(): void {
     this.intentionalClose = true;
     this.destroy$.next(); // cancel any pending reconnect timer; the subject stays open for next time
+    this.stopPolling$.next();
     this.cleanup();
     this.state.set('disconnected');
     this.reconnectAttempt = 0;
+    this.everConnected = false;
   }
 
   /**
@@ -142,7 +211,10 @@ export class WebSocketService {
   }
 
   private open(): void {
-    this.state.set('connecting');
+    // A re-attempt stays `reconnecting`: the socket has been lost since the last open, whatever
+    // this particular attempt is doing, and that is what `degraded` and the polling key on. A
+    // browser can sit in CONNECTING for tens of seconds; the panels must not stop polling for it.
+    if (this.state() !== 'reconnecting') this.state.set('connecting');
     this.lastError.set(null);
 
     const token = this.auth.token();
@@ -151,20 +223,33 @@ export class WebSocketService {
     try {
       this.ws = new WebSocket(url);
     } catch (err) {
+      // A constructor that throws (a malformed URL, a page policy) is a failed attempt like any
+      // other. Leaving the state at `connecting` with no timer, as this did, was a socket that
+      // never came back and a UI that said it was on its way.
       this.handleError(err instanceof Error ? err.message : 'WebSocket construction failed');
+      this.scheduleReconnect('construction failed');
       return;
     }
 
     this.ws.onopen = () => {
+      const reconnected = this.everConnected;
+      this.everConnected = true;
       this.state.set('connected');
       this.reconnectAttempt = 0;
+      this.stopPolling$.next();
       // Re-send all subscriptions
       for (const pattern of this.subscriptions) {
         this.ws!.send(JSON.stringify({ type: 'subscribe', pattern }));
       }
+      this.startHeartbeat();
+      // After the subscriptions, so a consumer's refetch cannot race a gap it is still in.
+      if (reconnected) this.resync$.next('reconnected');
     };
 
-    this.ws.onmessage = (event) => this.handleMessage(event.data);
+    this.ws.onmessage = (event) => {
+      this.awaitingPong = false; // any frame proves the peer alive, not only a pong
+      this.handleMessage(event.data);
+    };
 
     this.ws.onclose = (event) => {
       if (!this.intentionalClose) {
@@ -215,7 +300,47 @@ export class WebSocketService {
           });
         }
         break;
+      case 'pong':
+        break; // already counted in onmessage
     }
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws?.readyState !== WebSocket.OPEN) return;
+      if (this.awaitingPong) {
+        // Nothing — not even the pong — in a whole period. The TCP connection may well still be
+        // "open"; that is precisely the case this exists for. Treat it as dropped.
+        this.scheduleReconnect('heartbeat missed');
+        return;
+      }
+      this.awaitingPong = true;
+      this.ws.send(JSON.stringify({ type: 'ping' }));
+    }, this.tuning.heartbeatMs);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    this.awaitingPong = false;
+  }
+
+  /**
+   * The polling fallback. While the socket is down, `resync$` fires `poll` on an interval so the
+   * open live panels refetch on a cadence instead of freezing. Stops on open or on disconnect.
+   */
+  private startPolling(): void {
+    this.stopPolling$.next();
+    timer(this.tuning.pollIntervalMs, this.tuning.pollIntervalMs)
+      .pipe(takeUntil(this.stopPolling$), takeUntil(this.destroy$))
+      .subscribe(() => {
+        if (this.state() !== 'reconnecting' || this.subscriptions.size === 0) return;
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+        this.resync$.next('poll');
+      });
   }
 
   /** A server confirmation that the pattern is now subscribed. Refusals arrive as `error`. */
@@ -249,10 +374,18 @@ export class WebSocketService {
 
   private scheduleReconnect(_reason: string | null): void {
     if (this.intentionalClose) return;
+    const wasDegraded = this.state() === 'reconnecting';
     this.state.set('reconnecting');
     this.cleanup();
+    if (!wasDegraded) this.startPolling();
 
-    const delay = Math.min(1000 * 2 ** this.reconnectAttempt, this.maxReconnectDelay);
+    // Equal jitter: half the cap is the floor, the rest is chance. Full jitter can pick ~0 and
+    // hammer a server that just came up; no jitter picks the same instant for every client.
+    const cap = Math.min(
+      this.tuning.baseDelayMs * 2 ** this.reconnectAttempt,
+      this.tuning.maxDelayMs,
+    );
+    const delay = cap / 2 + this.tuning.random() * (cap / 2);
     this.reconnectAttempt++;
 
     timer(delay)
@@ -267,6 +400,7 @@ export class WebSocketService {
   }
 
   private cleanup(): void {
+    this.stopHeartbeat();
     if (this.ws) {
       this.ws.onopen = null;
       this.ws.onmessage = null;

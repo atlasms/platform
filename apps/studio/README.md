@@ -15,8 +15,9 @@ npm test -w @atlas/studio
 **EP-11.2** — the sign-in flow: real tokens from IAM, refresh, sign-out.
 **EP-11.3** — the workbench: tabbed and splittable editor groups, drag between groups, a resizable
 side bar, workspace persistence.
-**EP-11.4** — the WebSocket client: desired-set subscriptions (queued until the socket opens),
-exponential-backoff reconnect, re-subscribe on open. **The `/ws` endpoint now exists** (EP-13.2). It
+**EP-11.4 / EP-09.4** — the WebSocket client: desired-set subscriptions (queued until the socket
+opens), jittered exponential-backoff reconnect, re-subscribe on open, a client heartbeat, and the
+**re-sync / polling fallback** (NFR-AVAIL-7) — see below. **The `/ws` endpoint now exists** (EP-13.2). It
 is not behind the gateway — `fetch` cannot upgrade a protocol — so production routes `/ws` to the
 WebSocket service by ingress path rule while everything else goes to the gateway, and
 [`proxy.conf.json`](proxy.conf.json) does the same for `npm start` by forwarding it to the dev
@@ -230,6 +231,30 @@ were typed **required** where `rim.yaml` leaves them optional. That is how the I
 render `NaN GB` for a response the contract explicitly allows, with a green build and a banner
 telling the next reader not to touch the file. The banner is a promise; the list is what keeps it.
 Adding a service's client means adding its contract here in the same change.
+
+## Live updates degrade to polling; a reconnect is a re-sync (EP-09.4)
+
+There is no replay of a gap — `resume` needs a Redis window that is not built — so the client does
+not pretend there is. `WebSocketService.resync$` fires **`reconnected`** once on every open after a
+drop (after the subscriptions are re-sent, so a refetch cannot race a gap it is still in) and
+**`poll`** every 30 s while the socket is down, as long as some panel is subscribed and the tab is
+visible. Every live consumer answers both the same way: **refetch what is on screen** — the media
+panel re-runs its recent list or its active search, the dashboard its widgets, the editors their
+record, and the editors keep the rule they apply to a live event: never over unsaved edits. The
+status bar shows `● live` or `○ polling` (`ws.degraded()`).
+
+Reconnects back off exponentially with **equal jitter** — `[cap/2, cap)`, 1 s doubling to 30 s —
+so a restarted server is not hit by every open Studio at the same second, forever. A re-attempt
+stays `reconnecting` (a browser can sit in CONNECTING for tens of seconds, and the panels must not
+stop polling for it), and a `connect()` while a reconnect is pending takes over from the timer
+rather than opening a second socket.
+
+The client **heartbeats**: a `ping` frame every 30 s, and a period with no frame at all — no pong,
+no event — closes the socket and starts the reconnect. The server pings too, but the browser answers
+that without telling the page, so page script has no other way to notice a server that died with
+the TCP connection still "open". A constructor that throws is a failed attempt like any other and
+reconnects; it used to leave the state at `connecting` with no timer. All of it is under fake timers
+in `websocket.service.spec.ts`, with the tuning (`WEBSOCKET_TUNING`) pinned.
 
 ## i18n is RUNTIME, not Angular's build-time `$localize`
 

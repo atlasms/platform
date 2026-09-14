@@ -351,6 +351,14 @@ export class ScheduleEditor {
     .pipe(takeUntilDestroyed(this.destroyRef))
     .subscribe(({ subject, payload }) => this.handleScheduleEvent(subject, payload));
 
+  // A reconnect after a gap, or the polling cadence while the socket is down (EP-09.4). Never
+  // over unsaved edits, as with a live event.
+  private readonly wsResync = this.ws.resync$
+    .pipe(takeUntilDestroyed(this.destroyRef))
+    .subscribe(() => {
+      if (!this.dirty()) this.reload();
+    });
+
   ngOnInit(): void {
     this.reload();
   }

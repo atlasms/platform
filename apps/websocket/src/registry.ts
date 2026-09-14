@@ -8,7 +8,7 @@ import type { EffectivePolicy } from '@atlas/policy';
 import { mayReceive, maySubscribe, type Subscriber } from './eligibility.ts';
 
 export interface ServerFrame {
-  type: 'event' | 'subscribed' | 'unsubscribed' | 'error' | 'permissions-changed';
+  type: 'event' | 'subscribed' | 'unsubscribed' | 'error' | 'permissions-changed' | 'pong';
   subject?: string;
   payload?: unknown;
   message?: string;
