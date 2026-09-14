@@ -185,6 +185,13 @@ key rotation schedule; lockout/backoff thresholds; whether explicit-deny
   groups are stored documents keyed by id — a group references roles by id, so editing a role edits
   it everywhere. `channel_id` is nullable on roles and groups: NULL is platform-wide (the starter
   roles), the exception to the every-row rule, recorded here.
+- **As built (EP-10.4 part 2, EP-10.6):** the administration surface (§4) is `IamAdmin`, every
+  operation `canEnforce`d for `user:admin` in the row's channel; a platform-wide row needs an
+  unscoped grant, and a rule an admin writes cannot reach beyond the channels they administer.
+  IAM runs an **outbox relay**: a grant, a membership, a role edit and a disable write their rows,
+  the `audit.recorded` delta and `permissions.changed` (§5) in one transaction — one event per
+  affected user, a role edit reaching every holder directly or through a group. The broker is not
+  a readiness dependency: login keeps working while the events wait.
 
 ## 14. Open questions / future
 

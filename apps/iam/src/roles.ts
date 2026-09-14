@@ -89,7 +89,7 @@ export async function seedStarterRoles(store: IamStore): Promise<number> {
   const missing = STARTER_ROLES.filter((r) => !present.has(r.id));
   if (missing.length === 0) return 0;
   await store.transaction(async (tx) => {
-    for (const role of missing) await tx.putRole(role);
+    for (const role of missing) await tx.putRole({ ...role, version: 1 });
   });
   return missing.length;
 }

@@ -62,6 +62,9 @@ spec:
                   key: password
             - name: ATLAS_PG_URL
               value: postgres://$(PGUSER):$(PGPASSWORD)@postgres:5432/atlas
+            # EP-10.6: the outbox relay publishes permissions.changed and the rest.
+            - name: ATLAS_NATS_URL
+              value: nats://nats:4222
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

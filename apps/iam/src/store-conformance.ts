@@ -166,7 +166,12 @@ export function iamStoreConformance(name: string, harness: IamStoreHarness): voi
       });
       await store.transaction(async (tx) => {
         await tx.putAssignment({ id: 'a1', userId: jo.id, roleId: 'viewer' });
-        await tx.putGroup({ id: 'g-approvers', name: 'Approvers', roleIds: ['approver'] });
+        await tx.putGroup({
+          id: 'g-approvers',
+          name: 'Approvers',
+          roleIds: ['approver'],
+          version: 1,
+        });
         await tx.putMembership({ userId: jo.id, groupId: 'g-approvers' });
       });
       const policy = await service.effectivePolicy(jo.id);

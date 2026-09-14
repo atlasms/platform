@@ -3,9 +3,13 @@ info:
   title: Atlas IAM API
   version: 0.1.0
   description: >-
-    Stub contract for Identity & Access Management — authentication, tokens, and CRUD for users,
-    groups, roles, and permission rules. See ../services/iam.md. `/groups`, `/roles`, `/rules`
-    mirror the `/users` collection shape (listed here once).
+    Identity & Access Management — authentication, tokens, and the administration of users,
+    groups, roles and grants (EP-10.4). See ../services/iam.md. Rules are not a collection of
+    their own: a rule lives inline in the role, group or assignment that carries it
+    (policy-rule.schema.json), so there is no `/rules`. Every admin operation requires `user:admin`
+    in the channel of the row it touches; a platform-wide row (no channel) requires an unscoped
+    grant. Every mutation emits `audit.recorded` with a field-level delta, and every change to
+    what a user may do emits `permissions.changed` with the user's new `permVersion`.
 servers:
   - url: https://{host}/api/v1
     variables:
@@ -94,20 +98,23 @@ paths:
     get:
       operationId: listUsers
       tags: [admin]
-      summary: List users (scope-filtered)
+      summary: The users the caller may administer, by id (keyset)
       parameters:
-        - { name: channelId, in: query, schema: { type: string } }
+        - { name: channelId, in: query, schema: { type: string }, description: 'Defaults to the caller''s channel.' }
+        - { name: after, in: query, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
-        '200': { description: Users, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/User' } } } } }
+        '200': { description: Users, content: { application/json: { schema: { $ref: '#/components/schemas/UserPage' } } } }
     post:
       operationId: createUser
       tags: [admin]
-      summary: Create a user (admin scope)
+      summary: Create a user (user:admin in its channel); emits user.created
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/User' } } }
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateUser' } } }
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '409': { $ref: '#/components/responses/Error' }
         '4XX': { $ref: '#/components/responses/Error' }
   /users/{id}:
     parameters:
@@ -122,49 +129,168 @@ paths:
     patch:
       operationId: updateUser
       tags: [admin]
-      summary: Update a user
-      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+      summary: Update a user's profile, state or password; emits user.updated
+      description: >-
+        `state` may be set to `active` or `disabled`. Disabling revokes every session and bumps
+        `permVersion` (so `permissions.changed` reaches the gateway and the WebSocket service);
+        setting `active` on a locked account is the operator's unlock. `locked` and `invited`
+        are set by the system, not here. A new `password` replaces the credential.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateUser' } } } }
       responses:
         '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
-    delete:
-      operationId: deleteUser
-      tags: [admin]
-      summary: Delete a user
-      responses:
-        '204': { description: Deleted }
-  /groups/{id}/members:
+        '4XX': { $ref: '#/components/responses/Error' }
+  /users/{id}/assignments:
     parameters:
       - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: listAssignments
+      tags: [admin]
+      summary: The user's direct grants — roles by id and inline rules
+      responses:
+        '200': { description: Assignments, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Assignment' } } } } }
     post:
-      operationId: addGroupMember
+      operationId: createAssignment
       tags: [admin]
-      summary: Add a user to a group
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [userId], properties: { userId: { $ref: '#/components/schemas/Ulid' } } } } } }
+      summary: Grant a role or a rule to the user; emits permissions.changed
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AssignmentInput' } } } }
       responses:
-        '204': { description: Added }
+        '201': { description: Granted, content: { application/json: { schema: { $ref: '#/components/schemas/Assignment' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+  /users/{id}/assignments/{assignmentId}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      - { name: assignmentId, in: path, required: true, schema: { type: string } }
     delete:
-      operationId: removeGroupMember
+      operationId: deleteAssignment
       tags: [admin]
-      summary: Remove a user from a group
-      parameters:
-        - { name: userId, in: query, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      summary: Revoke a grant; emits permissions.changed
       responses:
-        '204': { description: Removed }
+        '204': { description: Revoked }
+        '404': { $ref: '#/components/responses/Error' }
   /users/{id}/effective-permissions:
     parameters:
-      # `me` is the caller — the subject the gateway established — and is the only form IAM serves
-      # today; Studio loads its session from it.
+      # `me` is the caller — the subject the gateway established. Any other id requires user:admin
+      # in the user's channel.
       - { name: id, in: path, required: true, description: 'A user ULID, or `me` for the caller', schema: { type: string } }
     get:
       operationId: getEffectivePermissions
       tags: [admin]
-      summary: Resolved permission set (union of user + group rules, FR-IAM-4)
+      summary: The compiled policy (union of user + group rules, flattened through roles, FR-IAM-4)
       responses:
         '200':
-          description: Effective permissions
+          description: The compiled policy, as @atlas/policy evaluates it
           content:
             application/json:
-              schema: { type: array, items: { $ref: '#/components/schemas/PermissionRule' } }
+              schema: { $ref: '#/components/schemas/EffectivePolicy' }
+  /groups:
+    get:
+      operationId: listGroups
+      tags: [admin]
+      summary: The groups the caller may administer — the channel's, and the platform-wide ones
+      parameters:
+        - { name: channelId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Groups, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Group' } } } } }
+    post:
+      operationId: createGroup
+      tags: [admin]
+      summary: Create a group
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GroupInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Group' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+  /groups/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getGroup
+      tags: [admin]
+      summary: A group, with its members
+      responses:
+        '200': { description: Group, content: { application/json: { schema: { $ref: '#/components/schemas/GroupWithMembers' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: updateGroup
+      tags: [admin]
+      summary: Change a group's name, rules or roles; a grant change reaches every member
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GroupInput' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Group' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteGroup
+      tags: [admin]
+      summary: Delete a group; every member is removed first (group.membership.changed each)
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/Error' }
+  /groups/{id}/members:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: listGroupMembers
+      tags: [admin]
+      summary: The members' user ids
+      responses:
+        '200': { description: Members, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Ulid' } } } } }
+    post:
+      operationId: addGroupMember
+      tags: [admin]
+      summary: Add a user to a group; emits group.membership.changed and permissions.changed
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [userId], properties: { userId: { $ref: '#/components/schemas/Ulid' } } } } } }
+      responses:
+        '204': { description: Added (or already a member) }
+        '4XX': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: removeGroupMember
+      tags: [admin]
+      summary: Remove a user from a group; emits group.membership.changed and permissions.changed
+      parameters:
+        - { name: userId, in: query, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '204': { description: Removed (or was not a member) }
+  /roles:
+    get:
+      operationId: listRoles
+      tags: [admin]
+      summary: The roles the caller may administer — the channel's, and the platform-wide starter roles
+      parameters:
+        - { name: channelId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Roles, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Role' } } } } }
+    post:
+      operationId: createRole
+      tags: [admin]
+      summary: Create a role — a named bundle of rules
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RoleInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Role' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+  /roles/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getRole
+      tags: [admin]
+      summary: A role
+      responses:
+        '200': { description: Role, content: { application/json: { schema: { $ref: '#/components/schemas/Role' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: updateRole
+      tags: [admin]
+      summary: Change a role's name or rules; a rule change reaches every holder, directly or through a group
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RoleInput' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Role' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteRole
+      tags: [admin]
+      summary: Delete a role that nothing holds; 409 while an assignment or group still carries it
+      responses:
+        '204': { description: Deleted }
+        '409': { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
@@ -183,23 +309,131 @@ components:
         refreshToken: { type: string }
         expiresIn: { type: string, description: 'Access-token lifetime, e.g. "15m".' }
         permVersion: { type: integer }
+    UserState:
+      type: string
+      enum: [active, disabled, locked, invited]
+      description: 'common.schema.json#/$defs/UserState. `locked` is the lockout policy''s, `invited` the invitation flow''s; an admin sets only active or disabled.'
     User:
       type: object
-      required: [id, login]
+      required: [id, username, state, permVersion, version, createdAt]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
-        login: { type: string }
-        displayName: { type: string }
-        channelIds: { type: array, items: { type: string } }
-        status: { type: string, enum: [active, disabled] }
-        mfaEnrolled: { type: boolean }
-    PermissionRule:
+        channelId: { type: string, description: 'Absent for a platform-wide account.' }
+        username: { type: string }
+        name: { type: string }
+        state: { $ref: '#/components/schemas/UserState' }
+        permVersion: { type: integer, description: 'Bumped on ANY change to what the user may do; tokens below it are refused at the edge.' }
+        version: { type: integer, description: 'Bumped on every write to the record; the audit revision.' }
+        lastPasswordChange: { type: string, format: date-time }
+        lastLogin: { type: string, format: date-time }
+        lastIp: { type: string }
+        createdAt: { type: string, format: date-time }
+    UserPage:
       type: object
-      required: [action, resourceType]
+      required: [items]
       properties:
-        action: { type: string, examples: ['asset:write'] }
-        resourceType: { type: string }
-        scope: { type: string, description: 'channel/department/resource selector' }
+        items: { type: array, items: { $ref: '#/components/schemas/User' } }
+        nextCursor: { $ref: '#/components/schemas/Ulid' }
+    CreateUser:
+      type: object
+      required: [username]
+      properties:
+        username: { type: string, minLength: 1 }
+        password: { type: string, format: password, description: 'Omit for an SSO-only account.' }
+        name: { type: string }
+        channelId: { type: string, description: 'Defaults to the caller''s channel. Null for platform-wide, which needs an unscoped user:admin.', nullable: true }
+        state: { type: string, enum: [active, invited], default: active }
+    UpdateUser:
+      type: object
+      properties:
+        name: { type: string }
+        state: { type: string, enum: [active, disabled] }
+        password: { type: string, format: password }
+    Scope:
+      type: object
+      description: 'policy-rule.schema.json#/properties/scope — an OMITTED predicate means any.'
+      properties:
+        channelIds: { type: array, items: { type: string } }
+        categoryPaths: { type: array, items: { type: string } }
+        states: { type: array, items: { type: string } }
+        ownedOnly: { type: boolean }
+    Rule:
+      type: object
+      description: 'The atomic grant — policy-rule.schema.json, which is what @atlas/policy evaluates.'
+      required: [id, permissions]
+      properties:
+        id: { type: string }
+        description: { type: string }
+        effect: { type: string, enum: [allow, deny] }
+        permissions: { type: array, items: { type: string }, minItems: 1 }
+        scope: { $ref: '#/components/schemas/Scope' }
+        fieldGroups: { type: array, items: { type: string } }
+    Role:
+      type: object
+      required: [id, rules, version]
+      properties:
+        id: { type: string }
+        channelId: { type: string, description: 'Absent for a platform-wide role (the starter roles).' }
+        name: { type: string }
+        description: { type: string }
+        rules: { type: array, items: { $ref: '#/components/schemas/Rule' } }
+        version: { type: integer }
+    RoleInput:
+      type: object
+      properties:
+        id: { type: string, description: 'Chosen on create (kebab-case); minted when omitted. Ignored on update.' }
+        channelId: { type: string, nullable: true, description: 'On create only. Defaults to the caller''s channel; null is platform-wide.' }
+        name: { type: string }
+        description: { type: string }
+        rules: { type: array, items: { $ref: '#/components/schemas/Rule' } }
+    Group:
+      type: object
+      required: [id, name, version]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid', description: 'Minted by IAM — it travels in group.membership.changed.' }
+        channelId: { type: string }
+        name: { type: string }
+        description: { type: string }
+        rules: { type: array, items: { $ref: '#/components/schemas/Rule' } }
+        roleIds: { type: array, items: { type: string }, description: 'Roles by id — editing the role edits it for every group carrying it.' }
+        version: { type: integer }
+    GroupWithMembers:
+      allOf:
+        - $ref: '#/components/schemas/Group'
+        - type: object
+          required: [members]
+          properties:
+            members: { type: array, items: { $ref: '#/components/schemas/Ulid' } }
+    GroupInput:
+      type: object
+      properties:
+        channelId: { type: string, nullable: true, description: 'On create only.' }
+        name: { type: string }
+        description: { type: string }
+        rules: { type: array, items: { $ref: '#/components/schemas/Rule' } }
+        roleIds: { type: array, items: { type: string } }
+    Assignment:
+      type: object
+      description: 'One direct grant to one user: a role by id OR an inline rule, never both.'
+      required: [id, userId]
+      properties:
+        id: { type: string }
+        userId: { $ref: '#/components/schemas/Ulid' }
+        roleId: { type: string }
+        rule: { $ref: '#/components/schemas/Rule' }
+    AssignmentInput:
+      type: object
+      properties:
+        roleId: { type: string }
+        rule: { $ref: '#/components/schemas/Rule' }
+    EffectivePolicy:
+      type: object
+      description: 'What @atlas/policy compiles and evaluates; cached by consumers against permVersion.'
+      required: [subjectId, permVersion, rules]
+      properties:
+        subjectId: { $ref: '#/components/schemas/Ulid' }
+        permVersion: { type: integer }
+        rules: { type: array, items: { $ref: '#/components/schemas/Rule' } }
     Error:
       description: >-
         RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept:

@@ -20,6 +20,8 @@ export interface User {
   state: UserState;
   /** Bumped on ANY grant or membership change (authorization-model.md §6). */
   permVersion: number;
+  /** Bumped on every write to the record; the audit revision. Distinct from `permVersion`. */
+  version: number;
   lastPasswordChange?: string;
   lastLogin?: string;
   lastIp?: string;
@@ -83,12 +85,14 @@ export interface Group {
   description?: string;
   rules?: Rule[];
   roleIds?: string[];
+  version: number;
 }
 
 /** A role as stored: the policy library's `Role`, plus where it belongs. */
 export interface StoredRole extends Role {
   channelId?: string;
   description?: string;
+  version: number;
 }
 
 /** One grant to one user: a role by id, OR a rule inline. Addressable, so it can be revoked. */

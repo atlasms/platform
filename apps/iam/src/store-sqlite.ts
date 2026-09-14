@@ -101,8 +101,10 @@ export const sqliteMigrations: Migration[] = [
   },
 ];
 
+// `version: 1` under the document: a record written before EP-10.4 (part 2) added the field reads
+// as revision 1 rather than as a record with no revision.
 const parse = <T>(row: { data: string } | undefined): T | undefined =>
-  row ? (JSON.parse(row.data) as T) : undefined;
+  row ? ({ version: 1, ...(JSON.parse(row.data) as object) } as T) : undefined;
 
 export function sqliteIamStore(path = ':memory:'): IamStore & { db: Db } {
   const db = openDb(path);
@@ -213,7 +215,7 @@ export function sqliteIamStore(path = ':memory:'): IamStore & { db: Db } {
   };
 
   const userRows = (sql: string, ...params: (string | number)[]): User[] =>
-    (db.prepare(sql).all(...params) as { data: string }[]).map((r) => JSON.parse(r.data) as User);
+    (db.prepare(sql).all(...params) as { data: string }[]).map((r) => parse<User>(r) as User);
 
   return {
     db,
@@ -302,7 +304,7 @@ export function sqliteIamStore(path = ':memory:'): IamStore & { db: Db } {
               .all(options.channelId)
           : db.prepare('SELECT data FROM groups ORDER BY id').all()
       ) as { data: string }[];
-      return rows.map((r) => JSON.parse(r.data) as Group);
+      return rows.map((r) => parse<Group>(r) as Group);
     },
     async memberships(userId) {
       return db
@@ -329,7 +331,7 @@ export function sqliteIamStore(path = ':memory:'): IamStore & { db: Db } {
               .all(options.channelId)
           : db.prepare('SELECT data FROM roles ORDER BY id').all()
       ) as { data: string }[];
-      return rows.map((r) => JSON.parse(r.data) as StoredRole);
+      return rows.map((r) => parse<StoredRole>(r) as StoredRole);
     },
     async assignments(userId) {
       return (

@@ -64,6 +64,7 @@ const asUser = (over: Partial<User> = {}): User => ({
   username: 'jo',
   state: 'active',
   permVersion: 1,
+  version: 1,
   createdAt: new Date(START).toISOString(),
   ...over,
 });

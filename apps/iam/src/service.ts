@@ -92,6 +92,7 @@ export class IamService {
       username: input.username,
       state: input.state ?? 'active',
       permVersion: 1,
+      version: 1,
       createdAt: now,
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),

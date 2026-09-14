@@ -18,6 +18,18 @@ export {
 } from './auth-signals.ts';
 export { buildIamApp, type IamAppOptions } from './app.ts';
 export {
+  IamAdmin,
+  parseRule,
+  PLATFORM,
+  type AdminCaller,
+  type IamAdminOptions,
+  type CreateUserInput,
+  type UpdateUserInput,
+  type RoleInput,
+  type GroupInput,
+  type AssignmentInput,
+} from './admin.ts';
+export {
   KeyRing,
   signAccessToken,
   mintRefreshToken,
