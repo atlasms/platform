@@ -1,9 +1,9 @@
 import { TestBed } from '@angular/core/testing';
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { API_BASE_URL } from './api.ts';
 import { AuthService } from './auth.service.ts';
 import { SessionStore } from './session.store.ts';
-import { WebSocketService } from './websocket.service.ts';
+import { WEBSOCKET_TUNING, WebSocketService, type WebSocketTuning } from './websocket.service.ts';
 
 class FakeAuth {
   tokenValue: string | null = 'test-access-token';
@@ -277,6 +277,212 @@ describe('WebSocketService', () => {
     ]);
     // Refused server-side, so it must not come back on the next reconnect.
     expect(service.isSubscribed('atlas.ch99.asset.>')).toBe(false);
+  });
+});
+
+/**
+ * EP-09.4 — reconnect, backoff, the heartbeat and the polling fallback, under fake timers with the
+ * tuning pinned: a 100 ms base, a 400 ms cap, a 1 s heartbeat, a 2 s poll, and `random` pinned to
+ * 0 so a backoff is exactly half its cap (equal jitter's floor).
+ */
+describe('WebSocketService — reconnect, heartbeat and the polling fallback (EP-09.4)', () => {
+  let fakeAuth: FakeAuth;
+  let fakeSession: FakeSession;
+  let service: WebSocketService;
+  let realWebSocket: typeof WebSocket;
+  let random = 0;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    random = 0;
+    FakeWebSocket.instances = [];
+    realWebSocket = globalThis.WebSocket;
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    fakeAuth = new FakeAuth();
+    fakeSession = new FakeSession();
+    TestBed.configureTestingModule({
+      providers: [
+        WebSocketService,
+        { provide: AuthService, useValue: fakeAuth },
+        { provide: SessionStore, useValue: fakeSession },
+        { provide: API_BASE_URL, useValue: 'http://localhost:30080' },
+        {
+          provide: WEBSOCKET_TUNING,
+          useValue: {
+            baseDelayMs: 100,
+            maxDelayMs: 400,
+            heartbeatMs: 1_000,
+            pollIntervalMs: 2_000,
+            random: () => random,
+          } satisfies WebSocketTuning,
+        },
+      ],
+    });
+    service = TestBed.inject(WebSocketService);
+  });
+
+  afterEach(() => {
+    service.disconnect();
+    globalThis.WebSocket = realWebSocket;
+    vi.useRealTimers();
+  });
+
+  /** Open the most recent socket as the server would. */
+  function openLatest(): FakeWebSocket {
+    const socket = FakeWebSocket.instances.at(-1)!;
+    socket.readyState = 1;
+    socket.onopen?.();
+    return socket;
+  }
+
+  it('backs off exponentially with jitter, up to the cap, and starts over once connected', async () => {
+    await service.subscribe('atlas.ch12.asset.>');
+    service.connect();
+    openLatest().onclose?.({ wasClean: false, reason: 'lost' });
+    expect(service.state()).toBe('reconnecting');
+
+    // Attempt 1: cap 100 → delay 50 with random pinned to 0. Not a moment before.
+    vi.advanceTimersByTime(49);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+
+    // Attempt 2: cap 200 → 100. Attempt 3: cap 400 → 200. Attempt 4: capped at 400 → 200 again.
+    for (const expected of [100, 200, 200]) {
+      const before = FakeWebSocket.instances.length;
+      FakeWebSocket.instances.at(-1)!.onclose?.({ wasClean: false, reason: 'lost' });
+      vi.advanceTimersByTime(expected - 1);
+      expect(FakeWebSocket.instances).toHaveLength(before);
+      vi.advanceTimersByTime(1);
+      expect(FakeWebSocket.instances).toHaveLength(before + 1);
+    }
+
+    // With random at its other extreme the delay is the whole cap: [cap/2, cap).
+    random = 0.999;
+    FakeWebSocket.instances.at(-1)!.onclose?.({ wasClean: false, reason: 'lost' });
+    vi.advanceTimersByTime(398);
+    const count = FakeWebSocket.instances.length;
+    vi.advanceTimersByTime(2);
+    expect(FakeWebSocket.instances).toHaveLength(count + 1);
+
+    // An open resets the ladder: the next drop waits the FIRST delay again.
+    random = 0;
+    openLatest().onclose?.({ wasClean: false, reason: 'lost' });
+    const beforeReset = FakeWebSocket.instances.length;
+    vi.advanceTimersByTime(50);
+    expect(FakeWebSocket.instances).toHaveLength(beforeReset + 1);
+  });
+
+  it('a reconnect tells consumers to re-sync — the first connect does not', async () => {
+    const reasons: string[] = [];
+    service.resync$.subscribe((r) => reasons.push(r));
+    await service.subscribe('atlas.ch12.asset.>');
+
+    service.connect();
+    const first = openLatest();
+    expect(reasons).toEqual([]); // nothing was missed: there was no "before"
+
+    first.onclose?.({ wasClean: false, reason: 'lost' });
+    vi.advanceTimersByTime(50);
+    const second = openLatest();
+    // Subscriptions go out BEFORE the re-sync signal, so a refetch cannot race a gap it is still in.
+    expect(second.sent).toEqual([
+      JSON.stringify({ type: 'subscribe', pattern: 'atlas.ch12.asset.>' }),
+    ]);
+    expect(reasons).toEqual(['reconnected']);
+
+    // A sign-out/sign-in is a fresh session, not a gap: no re-sync on its first open either.
+    service.disconnect();
+    service.connect();
+    openLatest();
+    expect(reasons).toEqual(['reconnected']);
+  });
+
+  it('while the socket is down, consumers are polled — only if something is subscribed, and never once it is back', async () => {
+    const reasons: string[] = [];
+    service.resync$.subscribe((r) => reasons.push(r));
+    random = 0.999; // keep the reconnect attempts far apart so the poll cadence is what we see
+    service.connect();
+    openLatest().onclose?.({ wasClean: false, reason: 'lost' });
+    expect(service.degraded()).toBe(true);
+
+    // No open panel asked for anything: nobody is polled on their behalf.
+    vi.advanceTimersByTime(2_000);
+    expect(reasons).toEqual([]);
+
+    await service.subscribe('atlas.ch12.asset.>');
+    vi.advanceTimersByTime(2_000);
+    expect(reasons).toEqual(['poll']);
+    vi.advanceTimersByTime(2_000);
+    expect(reasons).toEqual(['poll', 'poll']);
+
+    // Back up: the reconnect re-syncs once, and the polling stops. The server answers the
+    // heartbeat, or the client would (rightly) give the socket up as dead and poll again.
+    const back = openLatest();
+    expect(service.degraded()).toBe(false);
+    expect(reasons).toEqual(['poll', 'poll', 'reconnected']);
+    for (let i = 0; i < 10; i += 1) {
+      vi.advanceTimersByTime(1_000);
+      back.onmessage?.({ data: JSON.stringify({ type: 'pong' }) });
+    }
+    expect(reasons).toEqual(['poll', 'poll', 'reconnected']);
+  });
+
+  it('pings the server on a cadence, and treats a silent period as a dead socket', () => {
+    service.connect();
+    const socket = openLatest();
+
+    vi.advanceTimersByTime(1_000);
+    expect(socket.sent).toEqual([JSON.stringify({ type: 'ping' })]);
+    socket.onmessage?.({ data: JSON.stringify({ type: 'pong' }) });
+
+    vi.advanceTimersByTime(1_000);
+    expect(socket.sent).toHaveLength(2);
+    // Any frame proves the peer alive — an event counts as much as a pong.
+    socket.onmessage?.({
+      data: JSON.stringify({ type: 'event', subject: 'atlas.ch12.asset.updated', payload: {} }),
+    });
+    vi.advanceTimersByTime(1_000);
+    expect(socket.sent).toHaveLength(3);
+    expect(service.state()).toBe('connected');
+
+    // Now nothing answers. At the next tick the socket is given up on, closed and reconnected —
+    // the TCP connection is still "open", which is exactly why a page needs its own heartbeat.
+    vi.advanceTimersByTime(1_000);
+    expect(service.state()).toBe('reconnecting');
+    expect(socket.readyState).toBe(3); // CLOSED by us
+    vi.advanceTimersByTime(50);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
+  it('a constructor that throws is a failed attempt that reconnects, not a socket forever "connecting"', () => {
+    const original = globalThis.WebSocket;
+    let attempts = 0;
+    globalThis.WebSocket = class {
+      constructor() {
+        attempts += 1;
+        throw new Error('blocked by page policy');
+      }
+    } as unknown as typeof WebSocket;
+
+    service.connect();
+    expect(service.state()).toBe('reconnecting');
+    expect(service.lastError()).toBe('blocked by page policy');
+    vi.advanceTimersByTime(50);
+    expect(attempts).toBe(2);
+
+    globalThis.WebSocket = original;
+  });
+
+  it('connect() while a reconnect is pending takes over from the timer — one socket, not two', async () => {
+    service.connect();
+    openLatest().onclose?.({ wasClean: false, reason: 'lost' });
+    expect(service.state()).toBe('reconnecting');
+
+    service.connect(); // the session re-authenticated, say
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    vi.advanceTimersByTime(10_000); // the old timer must not open a third
+    expect(FakeWebSocket.instances).toHaveLength(2);
   });
 });
 

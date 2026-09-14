@@ -10,6 +10,7 @@ import { Subject } from 'rxjs';
 import { AssetsService, type ListOptions, type Page } from '../core/assets.service.ts';
 import type { Asset, Tag } from '../core/generated/mam.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { WebSocketService } from '../core/websocket.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { MediaPanel } from './media-panel.ts';
 
@@ -210,5 +211,22 @@ describe('MediaPanel', () => {
     component.open(asset('01ABC', 'Clip'));
     expect(editors.activeTab()?.resourceId).toBe('01ABC');
     expect(openTabs().length).toBe(before + 1);
+  });
+
+  it('a re-sync refetches what is ON SCREEN — the recent list, or the active search (EP-09.4)', () => {
+    // The socket came back after a gap, or is down and this is the polling cadence: either way
+    // there is no replay, so the panel asks again for exactly what it is showing.
+    const { fake, component } = harness;
+    const ws = TestBed.inject(WebSocketService);
+    fake.lists[0]?.next({ items: [asset('recent')] });
+
+    ws.resync$.next('reconnected');
+    expect(fake.listCalls).toHaveLength(2);
+    expect(fake.searchCalls).toEqual([]);
+
+    component.onQuery('foo');
+    ws.resync$.next('poll');
+    expect(fake.searchCalls).toEqual(['foo', 'foo']);
+    expect(fake.listCalls).toHaveLength(2); // a search on screen is not replaced by "recent"
   });
 });

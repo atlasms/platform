@@ -31,7 +31,9 @@
     "statusBar": {
       "channel": "القناة",
       "unsavedChanges": "● تغييرات غير محفوظة",
-      "panelsVisible": "من اللوحات مرئية"
+      "panelsVisible": "من اللوحات مرئية",
+      "live": "● مباشر",
+      "polling": "○ استطلاع دوري"
     },
     "sideBar": {
       "resize": "تغيير حجم الشريط الجانبي"

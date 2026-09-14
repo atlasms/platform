@@ -31,7 +31,9 @@
     "statusBar": {
       "channel": "channel",
       "unsavedChanges": "● unsaved",
-      "panelsVisible": "of panels visible"
+      "panelsVisible": "of panels visible",
+      "live": "● live",
+      "polling": "○ polling"
     },
     "sideBar": {
       "resize": "Resize side bar"

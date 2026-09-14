@@ -331,6 +331,14 @@ export class AssetEditor {
       this.handleAssetEvent(subject, payload);
     });
 
+  // A reconnect after a gap, or the polling cadence while the socket is down (EP-09.4): the
+  // record may have changed unseen. The same rule as a live event — never over unsaved edits.
+  private readonly wsResync = this.ws.resync$
+    .pipe(takeUntilDestroyed(this.destroyRef))
+    .subscribe(() => {
+      if (this.dirtyFields().size === 0) this.reload();
+    });
+
   ngOnInit(): void {
     this.reload();
   }

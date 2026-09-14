@@ -32,7 +32,7 @@ import {
 import type { ConnectionRegistry, Connection, ServerFrame } from './registry.ts';
 
 /** Frames a client may send. Anything else is answered with an `error` frame, not ignored. */
-type ClientFrame = { type: 'subscribe' | 'unsubscribe'; pattern?: unknown };
+type ClientFrame = { type: 'subscribe' | 'unsubscribe' | 'ping'; pattern?: unknown };
 
 export interface WebsocketAppOptions {
   /** Shared with the broker bridge, so a published message reaches these connections. */
@@ -371,6 +371,15 @@ export async function buildWebsocketApp(options: WebsocketAppOptions): Promise<F
           frame = JSON.parse(String(raw)) as ClientFrame;
         } catch {
           connection.send({ type: 'error', message: 'frame is not valid JSON' });
+          return;
+        }
+
+        // The CLIENT's heartbeat (EP-09.4). The server's own ping (below) is answered by the
+        // browser automatically and never surfaces to page script, so a page cannot tell a
+        // silent server from a quiet one. This frame is what lets it: no `pong` within the
+        // client's interval means the socket is dead, and the client closes it and reconnects.
+        if (frame.type === 'ping') {
+          connection.send({ type: 'pong' });
           return;
         }
 

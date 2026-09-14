@@ -366,7 +366,7 @@ test('smoke: metric labels carry no identifiers', async () => {
   assert.doesNotMatch(res.text, /01H2XKZQ/, 'a resource id leaked into a metric label');
 });
 
-test('smoke: EP-13.2 — a write becomes a live update on a real socket', async () => {
+test('smoke: EP-13.2 — a write becomes a live update on a real socket, and the socket answers a heartbeat', async () => {
   // THE walking-skeleton assertion, and the one no unit test can make: a POST through the gateway
   // commits in MAM's transaction, lands in its outbox, is relayed to JetStream, is consumed by the
   // WebSocket service's bridge in a different pod, is permission-filtered per connection, and
@@ -434,6 +434,13 @@ test('smoke: EP-13.2 — a write becomes a live update on a real socket', async 
       arrived,
       `no event frame arrived within 30s for asset ${assetId}: ${JSON.stringify(frames)}`,
     );
+
+    // EP-09.4: the client's heartbeat over the deployed server. A `ping` carries no pattern and
+    // must be answered with `pong`, not "frame has no pattern" — this is what lets a page notice
+    // a server that died with the TCP connection still open, and reconnect.
+    socket.send(JSON.stringify({ type: 'ping' }));
+    const ponged = await waitFor(() => frames.some((f) => f.type === 'pong'));
+    assert.ok(ponged, `no pong for a ping: ${JSON.stringify(frames)}`);
   } finally {
     socket.close();
   }

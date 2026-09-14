@@ -388,6 +388,11 @@ export class Dashboard {
         this.loadCounts();
       }
     });
+    // A reconnect after a gap, or the polling cadence while the socket is down (EP-09.4).
+    this.ws.resync$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      this.load();
+      this.loadCounts();
+    });
   }
 
   /**

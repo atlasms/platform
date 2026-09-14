@@ -126,6 +126,18 @@
   opacity: 0.6;
 }
 
+// Live updates, or the polling fallback (EP-09.4). On the accent bar a colour token would not
+// read, so the difference is the glyph the locale string carries (● / ○) plus emphasis: degraded
+// is the state worth a glance, so it is the one that stands out.
+.live {
+  opacity: 0.8;
+
+  &.degraded {
+    opacity: 1;
+    font-weight: 600;
+  }
+}
+
 // A button, not an anchor: signing out is an action, not a destination. An <a> here would be
 // keyboard-focusable but announced as a link and offer a meaningless "open in new tab".
 .link {

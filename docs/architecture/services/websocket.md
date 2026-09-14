@@ -110,6 +110,19 @@ the gap exceeds the window it instructs the client to **re-sync via REST** and r
 If the socket is unavailable entirely, Studio **falls back to polling**
 ([NFR-AVAIL-7](../../requirements/06-non-functional-requirements.md#availability)).
 
+**As built (EP-09.4).** There is no replay window — `resume` needs Redis, which was deferred
+(ADR-0005: OpenSearch only) — so _every_ gap "exceeds the window", and the client's recovery is the
+one this section prescribes for that case: on reconnect it re-subscribes and then emits a
+**re-sync** signal, and every live panel refetches what it shows through REST. While the socket
+stays down the same signal fires on a cadence (30 s) for as long as something is subscribed and the
+tab is visible — that is the polling fallback, and the status bar says so (`○ polling`). Reconnects
+use exponential backoff with **equal jitter** (`[cap/2, cap)`, 1 s → 30 s) so a restarted server is
+not hit by every open Studio at the same instant. The client also **heartbeats** (`ping`/`pong`
+frames, 30 s): the server's own ping is answered by the browser without telling the page, so page
+script cannot tell a dead server from a quiet one, and a silent period closes the socket and starts
+the reconnect that would otherwise never come. The editors apply the same rule to a re-sync as to a
+live event: never over unsaved edits.
+
 ### 6.3 Permission change mid-session
 On `permissions.changed` for a connected user, the service re-evaluates that user's
 subscriptions and drops any it no longer permits — so revocation is reflected live, not only at
