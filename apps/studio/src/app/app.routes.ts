@@ -1,5 +1,5 @@
 import type { Routes } from '@angular/router';
-import { requirePermission, requireSession } from './core/permission.guard.ts';
+import { requirePermission } from './core/permission.guard.ts';
 
 /**
  * Panels are lazy and permission-matched.
@@ -37,9 +37,13 @@ export const routes: Routes = [
   {
     // The side bar's landing panel — the dashboard itself is an EDITOR TAB (studio-frontend.md
     // §3), opened by the workbench, not a route.
+    //
+    // NO guard here. A redirect happens before any guard runs, and Angular 22 refuses the pair
+    // at router construction (NG04014) — which took Studio down at startup, since nothing had
+    // built the Router from these routes in a test until app.routes.spec.ts. The session check
+    // is not lost: `media` carries it, and sends a signed-out caller to /signin.
     path: '',
     pathMatch: 'full',
-    canMatch: [requireSession],
     redirectTo: 'media',
   },
   {
