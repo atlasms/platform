@@ -320,6 +320,55 @@ test('an oversized body is 413, not 500', async () => {
   assert.ok(problem.correlationId, 'and it is a real problem document, correlation id and all');
 });
 
+test('a prefix with its OWN body cap admits what the default refuses — and only on that prefix', async () => {
+  // EP-15.1: a chunked upload's parts are the one body larger than the JSON cap. The upload
+  // prefix carries its own limit rather than the gateway raising the cap everywhere.
+  let forwarded = 0;
+  const { app } = await gateway({
+    bodyLimit: 128,
+    routes: [
+      { service: 'iam', origin: 'http://iam:3000', prefix: '/auth', public: true },
+      {
+        service: 'rim',
+        origin: 'http://rim:3000',
+        prefix: '/api/v1/uploads',
+        public: true,
+        bodyLimit: 8192,
+      },
+    ],
+    fetchImpl: async (_url: string | URL | Request, init?: RequestInit) => {
+      forwarded = (init?.body as Uint8Array | undefined)?.byteLength ?? 0;
+      return new Response(null, { status: 204 });
+    },
+  });
+  const part = Buffer.alloc(4096, 1);
+
+  const onPrefix = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/uploads/01H00000000000000000000000/parts/1',
+    headers: { 'content-type': 'application/octet-stream' },
+    payload: part,
+  });
+  assert.equal(onPrefix.statusCode, 204, onPrefix.body);
+  assert.equal(forwarded, 4096, 'the whole part reached the upstream, verbatim');
+
+  const elsewhere = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    headers: { 'content-type': 'application/octet-stream' },
+    payload: part,
+  });
+  assert.equal(elsewhere.statusCode, 413, 'the default cap still holds everywhere else');
+
+  const tooBigEvenThere = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/uploads/01H00000000000000000000000/parts/1',
+    headers: { 'content-type': 'application/octet-stream' },
+    payload: Buffer.alloc(8193, 1),
+  });
+  assert.equal(tooBigEvenThere.statusCode, 413, "the prefix's own cap is a cap");
+});
+
 test('a body within the cap still proxies byte-for-byte', async () => {
   // The cap must not disturb the property the gateway exists to keep: what the upstream receives is
   // what the client sent. A re-serializing proxy breaks any signature or checksum.

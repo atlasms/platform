@@ -21,6 +21,7 @@ resources:
   - mam.yaml
   - websocket.yaml
   - api-gateway.yaml
+  - rim.yaml
   - scheduling.yaml
   - logging.yaml
 

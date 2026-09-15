@@ -375,7 +375,12 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
   }
 
   // --- everything else is proxied --------------------------------------------------------
-  app.all('/*', async (req, reply) => {
+  //
+  // One handler, registered on the catch-all AND on every prefix that declares its own body
+  // cap: Fastify decides the cap per ROUTE before the body is read, so a prefix that must carry
+  // more than the default (the upload's parts) needs a route of its own. find-my-way picks the
+  // more specific one, and the handler still resolves the upstream through the routing table.
+  const proxy = async (req: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
     const path = req.url.split('?')[0] ?? req.url;
     const route = matchRoute(routes, path);
 
@@ -488,7 +493,14 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
       );
       return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
     }
-  });
+  };
+
+  for (const route of routes) {
+    if (route.bodyLimit === undefined) continue;
+    app.all(route.prefix, { bodyLimit: route.bodyLimit }, proxy);
+    app.all(`${route.prefix}/*`, { bodyLimit: route.bodyLimit }, proxy);
+  }
+  app.all('/*', proxy);
 
   app.setErrorHandler((err, req: FastifyRequest, reply: FastifyReply) => {
     // Fastify enforces the body cap itself and raises FST_ERR_CTP_BODY_TOO_LARGE with a 413, but

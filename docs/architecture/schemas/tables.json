@@ -10,7 +10,8 @@
     "login_events": "An attempt against a USERNAME, which may not exist — a failed login for an unknown name has no channel to scope by. Joined through user_id when the user does exist.",
     "mam_config": "A single-row version marker for the reference snapshot's ETag (EP-04.8). The service's schema IS its scope; the row is CHECK (id = 1).",
     "memberships": "A join keyed by (user_id, group_id), both of them channel-scoped rows; a platform group (groups.channel_id NULL) takes users from any channel.",
-    "refresh_tokens": "One family per login, keyed by user_id → users.channel_id, looked up by the token hash — never by channel."
+    "refresh_tokens": "One family per login, keyed by user_id → users.channel_id, looked up by the token hash — never by channel.",
+    "upload_parts": "A part keyed by (upload_id, n) → uploads.channel_id, and CASCADE-deleted with its upload. A resume reads the parts of ONE upload the caller already reached through the channel-scoped row; nothing lists parts across uploads."
   },
   "nullableChannelId": {
     "users": "NULL is a platform-wide account (an operator), the exception iam.md §13 records. A channel user has the channel the token is minted for.",

@@ -20,6 +20,9 @@ const job = (over: Partial<IngestJob> = {}): IngestJob => ({
   source: 'watch/news',
   state: 'quarantined',
   sizeBytes: 1024,
+  createdAt: '2026-09-14T12:00:00.000Z',
+  updatedAt: '2026-09-14T12:00:00.000Z',
+  version: 1,
   ...over,
 });
 
@@ -30,7 +33,14 @@ const job = (over: Partial<IngestJob> = {}): IngestJob => ({
  * `exactOptionalPropertyTypes` is on — an absent key and a key holding `undefined` are different
  * statements, and only the absent one is what RIM would actually send.
  */
-const unsizedJob: IngestJob = { id: '01DEF', channelId: 'ch12', state: 'detected' };
+const unsizedJob: IngestJob = {
+  id: '01DEF',
+  channelId: 'ch12',
+  state: 'detected',
+  createdAt: '2026-09-14T12:00:00.000Z',
+  updatedAt: '2026-09-14T12:00:00.000Z',
+  version: 1,
+};
 
 class FakeIngest {
   listCalls: { limit?: number; cursor?: string }[] = [];

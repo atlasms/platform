@@ -108,7 +108,7 @@ jobs:
       # absorb, not a flake here.
       - name: Wait for the services
         run: |
-          for d in iam mam websocket api-gateway logging scheduling; do
+          for d in iam mam websocket api-gateway logging scheduling rim; do
             kubectl -n atlas rollout status "deployment/$d" --timeout=180s
           done
 
@@ -127,7 +127,7 @@ jobs:
           echo "::group::events"
           kubectl -n atlas get events --sort-by=.lastTimestamp | tail -50 || true
           echo "::endgroup::"
-          for d in iam mam websocket api-gateway logging scheduling; do
+          for d in iam mam websocket api-gateway logging scheduling rim; do
             echo "::group::logs $d"
             kubectl -n atlas logs "deployment/$d" --tail=100 --all-containers || true
             echo "::endgroup::"

@@ -16,6 +16,12 @@ tags:
   - name: ingest
   - name: admin
 paths:
+  # The chunked, resumable upload (EP-15.1; FR-ING-2). The SERVER chooses the part size and says
+  # so at start; parts are numbered 1..partCount, every part but the last is exactly partSizeBytes,
+  # and a part may be sent again (a retry, a resume) — the last write wins. `GET /uploads/{id}` is
+  # what a client resumes from after a dropped connection: which parts the server holds. Bytes
+  # land in RIM's own staging area; on completion they are assembled once, hashed on the way, and
+  # the ingest job is created — from here HSM places them (EP-14; RIM never writes storage).
   /uploads:
     post:
       operationId: startUpload
@@ -25,38 +31,64 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [filename, sizeBytes]
-              properties:
-                filename: { type: string }
-                sizeBytes: { type: integer }
+            schema: { $ref: '#/components/schemas/StartUpload' }
       responses:
         '201':
-          description: Upload created
-          content: { application/json: { schema: { type: object, properties: { uploadId: { $ref: '#/components/schemas/Ulid' } } } } }
+          description: Upload created; the client slices the file as the response says
+          content: { application/json: { schema: { $ref: '#/components/schemas/Upload' } } }
+        '422': { $ref: '#/components/responses/Error' }
+  /uploads/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getUpload
+      tags: [upload]
+      summary: The upload and the parts the server holds — what a client resumes from (scope ingest:write)
+      responses:
+        '200': { description: Upload, content: { application/json: { schema: { $ref: '#/components/schemas/Upload' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: abortUpload
+      tags: [upload]
+      summary: Abandon an upload; its parts are discarded (scope ingest:write)
+      responses:
+        '204': { description: Discarded }
+        '404': { $ref: '#/components/responses/Error' }
   /uploads/{id}/parts/{n}:
     put:
       operationId: putUploadPart
       tags: [upload]
-      summary: Upload a chunk (resumable)
+      summary: Upload one part (resumable — a part may be sent again)
+      description: >-
+        Part `n` is bytes `(n-1)*partSizeBytes` to `n*partSizeBytes` of the file, so every part
+        but the last is exactly `partSizeBytes` long and the last is the remainder; a part of any
+        other length is refused (422) rather than stored. The body is the raw bytes.
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
-        - { name: n, in: path, required: true, schema: { type: integer } }
+        - { name: n, in: path, required: true, schema: { type: integer, minimum: 1 } }
       requestBody:
         required: true
         content: { application/octet-stream: { schema: { type: string, format: binary } } }
       responses:
         '204': { description: Part stored }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: The upload is already complete, $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /uploads/{id}/complete:
     post:
       operationId: completeUpload
       tags: [upload]
-      summary: Finalize an upload; creates an ingest job
+      summary: Finalize an upload; assembles the parts and creates an ingest job
+      description: >-
+        Idempotent: completing an upload that is already complete returns its job again. With
+        parts missing it is a 409 whose `details.missing` lists them — resume, then complete.
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
       responses:
-        '202': { description: Ingest job created, content: { application/json: { schema: { $ref: '#/components/schemas/IngestJob' } } } }
+        '202': { description: Ingest job created (state `detected`), content: { application/json: { schema: { $ref: '#/components/schemas/IngestJob' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: Parts missing, $ref: '#/components/responses/Error' }
   /ingest/queue:
     get:
       operationId: getIngestQueue
@@ -97,6 +129,34 @@ components:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   schemas:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    StartUpload:
+      type: object
+      required: [filename, sizeBytes]
+      properties:
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: The client's file name, kept as the received file's name after sanitising (no path, no control characters).
+        sizeBytes: { type: integer, minimum: 1, description: The whole file's length. What the parts must add up to. }
+        contentType: { type: string, description: The client's idea of the media type; acceptance (EP-15.3) decides from the bytes, not from this. }
+    Upload:
+      type: object
+      required: [uploadId, channelId, filename, sizeBytes, partSizeBytes, partCount, received, state, expiresAt]
+      properties:
+        uploadId: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        filename: { type: string }
+        sizeBytes: { type: integer }
+        contentType: { type: string }
+        partSizeBytes: { type: integer, description: Chosen by the server (ATLAS_UPLOAD_PART_BYTES). Every part but the last is exactly this long. }
+        partCount: { type: integer, description: '`ceil(sizeBytes / partSizeBytes)`; parts are numbered 1..partCount.' }
+        received: { type: array, items: { type: integer }, description: The part numbers the server holds, ascending. Resume by sending the rest. }
+        state: { type: string, enum: [open, completed] }
+        jobId: { $ref: '#/components/schemas/Ulid' }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, description: An open upload not completed by then is swept, parts and all (ATLAS_UPLOAD_TTL_MS). }
     IngestJob:
       type: object
       # `channelId` is required because it is required of EVERY row and every message on this
@@ -104,15 +164,23 @@ components:
       # by default, and a job that cannot say which channel it belongs to cannot be scoped at all.
       # `source` and `sizeBytes` stay optional on purpose: a `detected` job exists before the
       # watcher has finished sizing the file.
-      required: [id, channelId, state]
+      required: [id, channelId, state, version, createdAt, updatedAt]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
         channelId: { type: string }
-        source: { type: string }
+        source: { type: string, description: 'The source that produced it: `upload` for the built-in web upload; a watcher or recorder id later (EP-15.2).' }
+        sourceKind: { type: string, enum: [upload, ftp, watch, recorder] }
         state: { type: string, enum: [detected, validating, rejected, quarantined, accepted, registered] }
+        filename: { type: string }
         sizeBytes: { type: integer }
+        checksum: { type: string, description: 'sha256 of the received bytes, lowercase hex — computed while the parts were assembled, so it is the checksum of what was actually written.' }
+        contentType: { type: string }
         assetId: { $ref: '#/components/schemas/Ulid' }
         reason: { type: string }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, minimum: 1, description: The audit revision (EP-19.2); every write bumps it. }
     Error:
       description: >-
         RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept:

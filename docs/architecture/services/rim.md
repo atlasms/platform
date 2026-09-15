@@ -173,6 +173,23 @@ durations, and recording schedules; chunk size + resumable-upload TTL; quarantin
   demands). `chokidar`/native inotify for folder watch behind a leader lock.
 - Stream bytes to HSM rather than buffering whole files.
 
+## 13a. As built (EP-15.1)
+
+`apps/rim` — Fastify, not NestJS, like every other service here. The upload is the first arrow of
+§6.1 and FR-ING-2, with one decision the stub left open made explicit: **the server sizes the parts.**
+`POST /uploads` answers with `partSizeBytes` (8 MiB, `ATLAS_UPLOAD_PART_BYTES`) and `partCount`;
+every part but the last is exactly that long, and a part of any other length is refused before it
+is stored. `GET /uploads/{id}` lists the parts held, so a resume needs no client-side bookkeeping;
+a part sent again wins; completion with a hole is a 409 that names the holes. Completion assembles
+in part order, hashing the bytes written — the job's `checksum` is of those — and commits the
+`IngestJob` (state `detected`), `ingest.detected` and the `audit.recorded` delta in one
+transaction; asking again returns the same job. Staging is a volume of RIM's own, swept on the
+resumable-upload TTL (§11), and the received file waits there for HSM: RIM does not write storage
+(FR-HSM-5). The tus protocol was not adopted — the three-verb shape above is what Studio's
+uploader (EP-20.3, progress in the EP-20.8 tray) needs, and the gateway carries only a per-prefix body cap for it. The rest of §6.1
+— probe, acceptance, place, register — is 15.3–15.5; the queue and quarantine review API
+of §4 is 15.6. `apps/rim/README.md` has the semantics and the configuration.
+
 ## 14. Open questions / future
 
 - Growing-file / while-recording ingest (edit-while-ingest) — Post-v1.0.

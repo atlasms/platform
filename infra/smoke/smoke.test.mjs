@@ -114,6 +114,7 @@ test('smoke: every PROXIED upstream answers through the gateway before anything 
     ['mam', '/api/v1/assets?limit=1'],
     ['logging', '/api/v1/history/asset/01H000000000000000000000'],
     ['scheduling', '/api/v1/schedules?limit=1'],
+    ['rim', '/api/v1/uploads/01H00000000000000000000000'],
   ];
   const budgetMs = Number(process.env.ATLAS_SMOKE_UPSTREAM_BUDGET_MS ?? 30_000);
 
@@ -593,6 +594,91 @@ test('smoke: EP-10.6 — a grant reaches the spine: permissions.changed and grou
   // run would accumulate.
   const left = await get(`/api/v1/groups/${groupId}`, { method: 'DELETE', headers });
   assert.equal(left.status, 204, `group delete failed: ${left.text}`);
+});
+
+test('smoke: EP-15.1 — a chunked upload through the gateway: parts out of order, resumed, assembled, hashed, audited', async () => {
+  // The upload path on a live cluster: the server sizes the parts, a real 8 MiB part crosses
+  // the gateway's per-prefix cap, a part is sent again as a resume would, the assembled file's
+  // checksum is the checksum of the bytes this test sent, and the job it became is in the audit
+  // history the sink projected. Four services and a volume.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+  const { createHash, randomBytes } = await import('node:crypto');
+  const started = await get('/api/v1/uploads', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      filename: 'smoke.bin',
+      sizeBytes: 1,
+      contentType: 'application/octet-stream',
+    }),
+  });
+  assert.equal(started.status, 201, `start failed: ${started.text}`);
+  const probe = json(started);
+  assert.ok(
+    probe.partSizeBytes >= 1024 * 1024,
+    `the server's part size is real: ${probe.partSizeBytes}`,
+  );
+  await get(`/api/v1/uploads/${probe.uploadId}`, { method: 'DELETE', headers });
+
+  // One full part plus a remainder: the second part is the big one, sent first.
+  const partSize = probe.partSizeBytes;
+  const size = partSize + 12_345;
+  const whole = randomBytes(size);
+  const sha256 = createHash('sha256').update(whole).digest('hex');
+  const upload = json(
+    await get('/api/v1/uploads', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ filename: 'smoke.bin', sizeBytes: size }),
+    }),
+  );
+  assert.equal(upload.partCount, 2);
+
+  const put = (n, bytes) =>
+    get(`/api/v1/uploads/${upload.uploadId}/parts/${n}`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' },
+      body: bytes,
+    });
+  const tail = await put(2, whole.subarray(partSize));
+  assert.equal(tail.status, 204, `part 2 failed: ${tail.text}`);
+  const status = await get(`/api/v1/uploads/${upload.uploadId}`, { headers });
+  assert.deepEqual(json(status).received, [2], 'a resume sees what the server holds');
+  const head = await put(1, whole.subarray(0, partSize));
+  assert.equal(head.status, 204, `part 1 (the full-size one) failed: ${head.text}`);
+  assert.equal(
+    (await put(1, whole.subarray(0, partSize))).status,
+    204,
+    'sent again, as a resume would',
+  );
+
+  const done = await get(`/api/v1/uploads/${upload.uploadId}/complete`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(done.status, 202, `complete failed: ${done.text}`);
+  const job = json(done);
+  assert.equal(job.state, 'detected');
+  assert.equal(job.sizeBytes, size);
+  assert.equal(job.checksum, sha256, 'the checksum is of the bytes this test sent');
+  assert.equal(job.receivedPath, undefined, 'a disk path does not cross the wire');
+
+  // The job's creation is in the audit history, projected from audit.recorded through the spine.
+  const deadline = Date.now() + 20_000;
+  let history;
+  for (;;) {
+    const res = await get(`/api/v1/history/ingest/${job.id}`, { headers });
+    assert.equal(res.status, 200, `history read failed: ${res.text}`);
+    history = json(res);
+    if (history.revisions.length >= 1 || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.ok(history.revisions.length >= 1, 'the ingest job reached the audit history');
+  assert.equal(history.revisions[0].action, 'ingest.detected');
+  assert.deepEqual(history.revisions[0].delta.checksum, { after: sha256 });
 });
 
 test('smoke: EP-18 — a program table is written thinly, read back in reel order, and audited', async () => {

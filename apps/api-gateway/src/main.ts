@@ -18,6 +18,14 @@ const config = loadConfig({
   iamOrigin: { env: 'ATLAS_IAM_ORIGIN', type: 'string', default: 'http://iam:3000' },
   mamOrigin: { env: 'ATLAS_MAM_ORIGIN', type: 'string', default: 'http://mam:3000' },
   loggingOrigin: { env: 'ATLAS_LOGGING_ORIGIN', type: 'string', default: 'http://logging:3000' },
+  rimOrigin: { env: 'ATLAS_RIM_ORIGIN', type: 'string', default: 'http://rim:3000' },
+  // A part of a chunked upload (EP-15.1) is 8 MiB by default (RIM's ATLAS_UPLOAD_PART_BYTES);
+  // the gateway must let one through on the upload prefix without raising its cap everywhere.
+  uploadBodyLimit: {
+    env: 'ATLAS_UPLOAD_BODY_LIMIT_BYTES',
+    type: 'number',
+    default: 8 * 1024 * 1024,
+  },
   schedulingOrigin: {
     env: 'ATLAS_SCHEDULING_ORIGIN',
     type: 'string',
@@ -73,6 +81,14 @@ const routes: RoutingTable = [
   { service: 'logging', origin: config.loggingOrigin, prefix: '/api/v1/logs' },
   // Scheduling (EP-18): the program table.
   { service: 'scheduling', origin: config.schedulingOrigin, prefix: '/api/v1/schedules' },
+  // RIM (EP-15.1): the chunked upload. Its parts are the one body on this platform larger than
+  // the JSON cap, so this prefix carries its own. /api/v1/ingest waits for EP-15.6.
+  {
+    service: 'rim',
+    origin: config.rimOrigin,
+    prefix: '/api/v1/uploads',
+    bodyLimit: config.uploadBodyLimit,
+  },
 ];
 
 // ⚠️ THIS is the production routing table — not `defaultRoutes` in routing.ts, which is the test
