@@ -1,7 +1,8 @@
 # @atlas/rim — Recording & Ingest Manager
 
-The entry point: brings media in — chunked uploads (EP-15.1, this), watched folders and recorders
-(EP-15.2, later) — and decides whether it is accepted (EP-15.3). Design:
+The entry point: brings media in — chunked uploads (EP-15.1), watched folders and recorders
+(EP-15.2, later) — decides whether it is accepted (EP-15.3), and holds what a person must look at
+(EP-15.6). Design:
 [rim.md](../../docs/architecture/services/rim.md) · contract:
 [`rim.yaml`](../../docs/architecture/openapi/rim.yaml).
 
@@ -54,7 +55,64 @@ within `ATLAS_UPLOAD_TTL_MS` (24 h) is **swept**, parts and row, on `ATLAS_UPLOA
 
 **Through the gateway**, a part is the one body on this platform larger than the 1 MiB JSON cap;
 the `/api/v1/uploads` prefix carries its own (`ATLAS_UPLOAD_BODY_LIMIT_BYTES`, 8 MiB) rather than
-the gateway raising the cap everywhere. `/api/v1/ingest` is not routed until EP-15.6.
+the gateway raising the cap everywhere. `/api/v1/ingest` and `/api/v1/acceptance-rules` are
+ordinary JSON routes.
+
+## Acceptance (EP-15.3; FR-ING-4, FR-ING-5)
+
+**Validation follows completion, and is its own transaction.** The job is committed `detected`
+and the 202 answered; then the channel's rules run and the verdict — the new state, its reason,
+`ingest.rejected` when there is one, and the audit delta — commits as one, **guarded by the state
+it read** (`putJob(job, ifState)`): the request's validator and the recovery loop's cannot both
+apply it, and the conformance suite races them. A job left `detected` by a crash between the
+two is validated by the sweep tick once it is `ATLAS_INGEST_VALIDATE_AFTER_MS` old. The probe
+(EP-15.4) will take seconds and belongs in exactly this step, which is why it is not folded into
+the completion request; the `validating` state is for then.
+
+**A channel has rule sets** — `POST /acceptance-rules` (`ingest:admin`), each with a scope (every
+job, one source kind, or one source; sources are EP-15.2) and rules. A job is validated against
+every enabled set whose scope matches it, and **the worst failure decides**: a rule's `onFail` is
+`reject` or `quarantine`, reject beats quarantine, and the reason names the first rule at that
+severity — sets in id order, rules in written order, so it is the same reason every time. **No
+applicable rule set means accepted**; there is nothing to fail.
+
+| rule `kind`    | reads                            | fails when                               |
+| -------------- | -------------------------------- | ---------------------------------------- |
+| `container`    | the file name's extension        | not in `containers` (lowercase, no dot)  |
+| `minSizeBytes` | the received length              | under `bytes`                            |
+| `maxSizeBytes` | the received length              | over `bytes`                             |
+| `aspectRatio`  | the technical metadata (EP-15.4) | not `aspectRatio` — or **not yet known** |
+
+The vocabulary grows with what is _known_ about a job, and the engine is pure
+(`acceptance.ts`, tested without a store). A rule that cannot be evaluated from what is known —
+an aspect-ratio rule before the file has been probed — **quarantines** the job for a person,
+whatever its `onFail` says: a rule an operator wrote is never silently skipped, and `reject` is
+for a decided failure. A rule carrying a parameter its kind does not read is a 422, not a rule
+half-applied.
+
+**Rejected bytes go; the row stays.** A `rejected` job — by a rule or by an operator — has its
+received file discarded from staging after the commit (best effort, logged if not: a file that
+survives is a leak an operator can see, never a row that lies) and `receivedPath` cleared. A
+`quarantined` job keeps its bytes: it may yet be accepted. `ingest.rejected` is emitted for both,
+with `quarantined` saying which (FR-ING-5's notification hook); `ingest.accepted` waits for
+EP-15.5 — its contract carries the `assetId` MAM will mint, which does not exist before EP-14.
+
+## The queue and the review (EP-15.6; FR-ING-7)
+
+|                                                              |                                                                                                                                        |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/ingest/queue?limit&cursor&state&order`          | the channel's jobs, newest first, keyset-paged like every list here (`{ items, nextCursor }`); `state=quarantined` is the review queue |
+| `GET /api/v1/ingest/{id}`                                    | one job — what an uploader polls after completing, until the rules have decided                                                        |
+| `POST /api/v1/ingest/{id}/accept`                            | the operator override (`ingest:approve`): `quarantined` → `accepted`; the reason and rule move to the history                          |
+| `POST /api/v1/ingest/{id}/reject` `{ reason }`               | the operator discard (`ingest:approve`): `quarantined` → `rejected`, bytes gone                                                        |
+| `GET/POST /api/v1/acceptance-rules`, `GET/PUT/DELETE …/{id}` | the rule sets (`ingest:admin`); a replacement is the whole set, as given, `version` bumped                                             |
+
+Only a `quarantined` job is reviewable: anything else is a **409**, including the second accept.
+Every transition is `audit.recorded` at the job's next revision — `ingest.detected`,
+`ingest.validated` (passed), `ingest.rejected` (held or refused, by a rule or a person),
+`ingest.accept` (the override) — and a rule set's create/replace/delete likewise
+(`acceptance-rule-set`). Studio's Ingest panel reads the queue and drives the review; its
+uploader is the rest of EP-20.3.
 
 ## The store is a port, with two adapters and one suite
 
@@ -70,24 +128,25 @@ completion idempotent, another channel's upload not found, the sweeper taking on
 ## Not yet
 
 - **15.2** watchers and recorders (sources become entities; `source` is `upload` until then)
-- **15.3** acceptance rules; **15.4** ffprobe; **15.5** `ingest.accepted` / `rejected`; **15.6** the
-  queue and quarantine review API (Studio's Ingest panel waits on it)
-- the hand-off to HSM (EP-14): the received file waits in staging until then
+- **15.4** ffprobe — the `validating` state, the technical metadata the `aspectRatio` rule reads
+- **15.5** `ingest.accepted` with the asset MAM minted, once EP-14 places the bytes
+- the hand-off to HSM (EP-14): an accepted file waits in staging until then
 
 ## Run
 
 ```sh
 npx nx test @atlas/rim                                                       # sqlite double + a temp dir
 ATLAS_PG_URL=postgres://atlas:atlas@localhost:55432/atlas npx nx test @atlas/rim   # + Postgres
-npm run k8s:up && npm run smoke      # an 8 MiB part through the gateway, resumed, hashed, audited
+npm run k8s:up && npm run smoke      # an 8 MiB part through the gateway; a rule holds an upload, an operator releases it
 ```
 
-| Variable                           | Default                                    |                                                  |
-| ---------------------------------- | ------------------------------------------ | ------------------------------------------------ |
-| `ATLAS_PG_URL` / `ATLAS_PG_SCHEMA` | `postgres://…@postgres:5432/atlas` / `rim` | waited for at startup, within 120 s              |
-| `ATLAS_NATS_URL`                   | `nats://nats:4222`                         | the outbox relay; retried, never readiness       |
-| `ATLAS_IAM_ORIGIN`                 | `http://iam:3000`                          | critical readiness dependency; the policy client |
-| `ATLAS_RIM_STAGING_DIR`            | `/var/lib/atlas/rim/staging`               | created at start; a volume in k8s                |
-| `ATLAS_UPLOAD_PART_BYTES`          | `8388608`                                  | must fit the gateway's cap on `/api/v1/uploads`  |
-| `ATLAS_UPLOAD_TTL_MS`              | `86400000`                                 | an open upload older than this is swept          |
-| `ATLAS_UPLOAD_SWEEP_INTERVAL_MS`   | `60000`                                    |                                                  |
+| Variable                           | Default                                    |                                                                      |
+| ---------------------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
+| `ATLAS_PG_URL` / `ATLAS_PG_SCHEMA` | `postgres://…@postgres:5432/atlas` / `rim` | waited for at startup, within 120 s                                  |
+| `ATLAS_NATS_URL`                   | `nats://nats:4222`                         | the outbox relay; retried, never readiness                           |
+| `ATLAS_IAM_ORIGIN`                 | `http://iam:3000`                          | critical readiness dependency; the policy client                     |
+| `ATLAS_RIM_STAGING_DIR`            | `/var/lib/atlas/rim/staging`               | created at start; a volume in k8s                                    |
+| `ATLAS_UPLOAD_PART_BYTES`          | `8388608`                                  | must fit the gateway's cap on `/api/v1/uploads`                      |
+| `ATLAS_UPLOAD_TTL_MS`              | `86400000`                                 | an open upload older than this is swept                              |
+| `ATLAS_UPLOAD_SWEEP_INTERVAL_MS`   | `60000`                                    | the sweep tick: expired uploads, lost validations                    |
+| `ATLAS_INGEST_VALIDATE_AFTER_MS`   | `60000`                                    | a job `detected` this long has lost its validation; the tick runs it |

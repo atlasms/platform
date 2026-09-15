@@ -186,9 +186,23 @@ in part order, hashing the bytes written — the job's `checksum` is of those �
 transaction; asking again returns the same job. Staging is a volume of RIM's own, swept on the
 resumable-upload TTL (§11), and the received file waits there for HSM: RIM does not write storage
 (FR-HSM-5). The tus protocol was not adopted — the three-verb shape above is what Studio's
-uploader (EP-20.3, progress in the EP-20.8 tray) needs, and the gateway carries only a per-prefix body cap for it. The rest of §6.1
-— probe, acceptance, place, register — is 15.3–15.5; the queue and quarantine review API
-of §4 is 15.6. `apps/rim/README.md` has the semantics and the configuration.
+uploader (EP-20.3, progress in the EP-20.8 tray) needs, and the gateway carries only a per-prefix body cap for it.
+`apps/rim/README.md` has the semantics and the configuration.
+
+**EP-15.3 acceptance, EP-15.6 the queue and review.** Validation follows completion as its own
+transaction, guarded by the state it read, so the request's validator and the recovery loop's
+cannot both apply a verdict; a job left `detected` by a crash is picked up by the sweep tick.
+The `AcceptanceRuleSet` of §3 is as designed — per channel, scoped to every job, a source kind or
+a source, `rules[]` — with the vocabulary `container` / `minSizeBytes` / `maxSizeBytes` /
+`aspectRatio` (a Tier-0 enum, in `rim.yaml`), each rule saying whether failing it rejects or
+quarantines; the worst failure decides. Two things §3.1 left implicit are now explicit: a rule
+that cannot be evaluated from what is known (aspect ratio before the probe, 15.4) quarantines
+rather than passes, and `Validating` is not persisted until the step takes time (15.4). The
+review is `accept`/`reject` on a `quarantined` job only. `ingest.rejected` is emitted for a hold
+and a refusal alike (`quarantined` says which); `ingest.accepted` waits for 15.5, since its
+contract carries MAM's `assetId`. Rejected bytes are discarded from staging; the row is the
+record. The §4 table's `/ingest/queue` is a keyset page, and `GET /ingest/{id}` was added for the
+uploader to poll. Studio's Ingest panel is switched on against it.
 
 ## 14. Open questions / future
 

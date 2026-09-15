@@ -174,9 +174,12 @@ if (seedUser && seedPassword) {
           // EP-10.4/10.6: the admin surface, so the smoke suite can grant and watch the grant's
           // events cross the spine. Channel-scoped like the rest.
           'user:admin',
-          // EP-15.1: the chunked upload, so the smoke suite can push bytes through the gateway.
+          // EP-15.1: the chunked upload, so the smoke suite can push bytes through the gateway;
+          // EP-15.3/15.6: the rules and the review, so it can hold one and release it.
           'ingest:read',
           'ingest:write',
+          'ingest:approve',
+          'ingest:admin',
         ],
         scope: { channelIds: [channelId] },
       },

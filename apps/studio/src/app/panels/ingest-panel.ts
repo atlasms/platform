@@ -7,9 +7,10 @@ import { LocaleService } from '../core/locale.service.ts';
 /**
  * The Ingest/Import panel (EP-20.3) — queue, quarantine accept/reject.
  *
- * NOT ROUTED YET: RIM (EP-15) does not exist and the gateway has no `/api/v1/ingest` route, so
- * panels.ts marks the panel `available: false`. This component is ready for the day the service
- * lands; wiring it visible before then would show a permanently erroring queue.
+ * Backed since EP-15.6 by RIM's `/api/v1/ingest` through the gateway: the queue is the
+ * channel's jobs newest first, and a quarantined one carries the acceptance rule's reason
+ * (EP-15.3) until an operator with `ingest:approve` accepts or rejects it. The uploader itself is
+ * still to come — the button below says so.
  */
 @Component({
   selector: 'atlas-ingest-panel',
@@ -70,9 +71,9 @@ import { LocaleService } from '../core/locale.service.ts';
       </ul>
     }
 
-    <!-- Disabled, not wired: the upload story (EP-15.1, chunked/resumable) has no endpoint yet, so
-         there is nothing for this to POST to. Shown-but-disabled is the same convention panels.ts
-         uses for a panel whose service does not exist — it says "designed, not built" rather than
+    <!-- Disabled, not wired: the endpoint exists (EP-15.1, chunked/resumable) but the uploader —
+         slicing a file into the server's parts, resuming, the transfer tray (EP-20.8) — is the rest
+         of EP-20.3 and is not built. Shown-but-disabled says "designed, not built" rather than
          hiding the affordance or opening a dialog that cannot finish. -->
     <div class="actions">
       <button
@@ -249,8 +250,8 @@ export class IngestPanel {
     this.error.set(null);
 
     this.ingestApi.list({ limit: 100 }).subscribe({
-      next: (jobs) => {
-        this.jobs.set(jobs);
+      next: (page) => {
+        this.jobs.set(page.items);
         this.loading.set(false);
       },
       error: () => {

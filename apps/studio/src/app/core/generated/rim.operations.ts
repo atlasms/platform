@@ -21,9 +21,11 @@ export const RimOperations = {
   completeUpload: { method: 'POST', path: '/api/v1/uploads/{id}/complete', params: ['id'] },
   /** The Ingest/Import page listing (scope ingest:read) */
   getIngestQueue: { method: 'GET', path: '/api/v1/ingest/queue', params: [] },
-  /** Accept a quarantined job (scope ingest:approve) */
+  /** One ingest job (scope ingest:read) — what a client polls after completing an upload */
+  getIngestJob: { method: 'GET', path: '/api/v1/ingest/{id}', params: ['id'] },
+  /** Accept a quarantined job — the operator override (scope ingest:approve) */
   acceptIngest: { method: 'POST', path: '/api/v1/ingest/{id}/accept', params: ['id'] },
-  /** Reject a quarantined job (scope ingest:approve) */
+  /** Reject a quarantined job — the operator discard (scope ingest:approve) */
   rejectIngest: { method: 'POST', path: '/api/v1/ingest/{id}/reject', params: ['id'] },
   /** List folder watchers */
   listWatchers: { method: 'GET', path: '/api/v1/watchers', params: [] },
@@ -33,10 +35,20 @@ export const RimOperations = {
   listRecorders: { method: 'GET', path: '/api/v1/recorders', params: [] },
   /** Create a recorder */
   createRecorder: { method: 'POST', path: '/api/v1/recorders', params: [] },
-  /** List acceptance rule sets */
+  /** The channel's acceptance rule sets (scope ingest:admin) */
   listAcceptanceRules: { method: 'GET', path: '/api/v1/acceptance-rules', params: [] },
-  /** Create an acceptance rule set */
+  /** Create an acceptance rule set (scope ingest:admin) */
   createAcceptanceRules: { method: 'POST', path: '/api/v1/acceptance-rules', params: [] },
+  /** One rule set (scope ingest:admin) */
+  getAcceptanceRules: { method: 'GET', path: '/api/v1/acceptance-rules/{id}', params: ['id'] },
+  /** Replace a rule set — the whole thing, as given (scope ingest:admin) */
+  replaceAcceptanceRules: { method: 'PUT', path: '/api/v1/acceptance-rules/{id}', params: ['id'] },
+  /** Remove a rule set (scope ingest:admin) */
+  deleteAcceptanceRules: {
+    method: 'DELETE',
+    path: '/api/v1/acceptance-rules/{id}',
+    params: ['id'],
+  },
 } as const;
 
 export type RimOperation = keyof typeof RimOperations;

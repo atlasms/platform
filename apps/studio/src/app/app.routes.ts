@@ -29,8 +29,11 @@ export const routes: Routes = [
     canMatch: [requirePermission('schedule:read')],
     loadComponent: () => import('./panels/schedule-panel.ts').then((m) => m.SchedulePanel),
   },
-  // No /ingest route: the panel exists (EP-20.3) but RIM (EP-15) does not, so the panel is
-  // `available: false` in panels.ts and unrouted, like every other not-yet-backed panel.
+  {
+    path: 'ingest',
+    canMatch: [requirePermission('ingest:read')],
+    loadComponent: () => import('./panels/ingest-panel.ts').then((m) => m.IngestPanel),
+  },
   {
     // The side bar's landing panel — the dashboard itself is an EDITOR TAB (studio-frontend.md
     // §3), opened by the workbench, not a route.

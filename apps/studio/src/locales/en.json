@@ -75,7 +75,7 @@
       "accepted": "Accepted",
       "registered": "Registered"
     },
-    "uploadUnavailable": "Uploads need the ingest service (EP-15), which does not exist yet."
+    "uploadUnavailable": "The uploader is not built yet (EP-20.3); the service accepts uploads (EP-15.1)."
   },
   "dashboard": {
     "title": "Dashboard",

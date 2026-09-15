@@ -1,7 +1,10 @@
-// The upload path (EP-15.1): start, parts, resume, complete — and the job the bytes become.
+// The ingest path: the upload (EP-15.1) — start, parts, resume, complete — and the job the bytes
+// become; its validation against the channel's acceptance rules (EP-15.3); the queue and the
+// quarantine review (EP-15.6); the rule sets themselves.
 //
-// AUTHORIZATION. `ingest:write` in the caller's channel, enforced with `canEnforce` and the
-// resource context. An upload is channel-scoped like every row here; another channel's upload is
+// AUTHORIZATION. `ingest:write` for the upload, `ingest:read` for the queue, `ingest:approve` for
+// the review, `ingest:admin` for the rules — in the caller's channel, enforced with `canEnforce`
+// and the resource context. Every row here is channel-scoped; another channel's upload or job is
 // "not found", not "forbidden" — a 403 would confirm it exists.
 //
 // WHAT IS ATOMIC, AND WHAT IS NOT. Bytes go to the staging area, rows go to the store, and a
@@ -11,6 +14,13 @@
 // promises bytes that are not there, and completion would assemble a hole. Completion is one
 // store transaction: the job, `ingest.detected`, and the audit delta commit together, after the
 // bytes are assembled and hashed — the checksum in the job is of what is on disk.
+//
+// VALIDATION FOLLOWS COMPLETION, and is its own transaction. The job is committed `detected`
+// and answered; then the rules run and the verdict — the new state, its reason, `ingest.rejected`
+// when there is one, and the audit delta — commits as one, guarded by the state it started from,
+// so the request's validator and the recovery loop's cannot both apply it. A job left `detected`
+// by a crash between the two is picked up by that loop. The probe (EP-15.4) will take seconds and
+// belongs in exactly this step, which is why it is not folded into the completion request.
 
 import {
   buildEnvelope,
@@ -30,8 +40,14 @@ import {
   PayloadTooLarge,
   ValidationError,
 } from '@atlas/service-kit';
+import {
+  evaluate,
+  newRuleSet,
+  type AcceptanceRuleSet,
+  type AcceptanceRuleSetInput,
+} from './acceptance.ts';
 import type { Staging } from './staging.ts';
-import type { RimStore } from './store.ts';
+import type { JobQuery, RimStore, RimTx } from './store.ts';
 import {
   expectedPartSize,
   missingParts,
@@ -57,29 +73,71 @@ export interface RimServiceOptions {
   partSizeBytes?: number;
   /** An open upload not completed within this is swept. */
   uploadTtlMs?: number;
+  /** A job still `detected` after this long is one whose validation was lost; `recover` runs it. */
+  validateAfterMs?: number;
   now?: () => Date;
   /** Trace context captured into the event where it is created (EP-13.3). */
   traceHeaders?: () => Record<string, string> | undefined;
+  /**
+   * How work that follows a request runs — the validation after completion. `setImmediate` by
+   * default; a test collects the tasks and runs them when it wants to observe the state between.
+   */
+  defer?: (task: () => Promise<void>) => void;
+  /** Where a deferred task's failure goes: main.ts logs it. The recovery loop retries the job. */
+  onBackgroundError?: (err: unknown, context: Record<string, unknown>) => void;
+}
+
+export interface IngestQueuePage {
+  items: IngestJob[];
+  nextCursor?: string;
 }
 
 export const DEFAULT_PART_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
+export const DEFAULT_VALIDATE_AFTER_MS = 60 * 1000;
+
+const SERVICE_ACTOR = { kind: 'service', id: 'rim' } as const;
+
+type Actor = { kind: 'user' | 'service'; id: string };
+interface Origin {
+  actor: Actor;
+  correlationId?: string;
+}
+
+/** The job without the field that never leaves this process: what the audit delta compares. */
+function audited(job: IngestJob): Record<string, unknown> {
+  const { receivedPath: _path, ...rest } = job;
+  void _path;
+  return rest;
+}
 
 export class RimService {
   private readonly store: RimStore;
   private readonly staging: Staging;
   private readonly partSizeBytes: number;
   private readonly uploadTtlMs: number;
+  private readonly validateAfterMs: number;
   private readonly now: () => Date;
   private readonly traceHeaders: () => Record<string, string> | undefined;
+  private readonly defer: (task: () => Promise<void>) => void;
+  private readonly onBackgroundError: (err: unknown, context: Record<string, unknown>) => void;
 
   constructor(options: RimServiceOptions) {
     this.store = options.store;
     this.staging = options.staging;
     this.partSizeBytes = options.partSizeBytes ?? DEFAULT_PART_BYTES;
     this.uploadTtlMs = options.uploadTtlMs ?? DEFAULT_UPLOAD_TTL_MS;
+    this.validateAfterMs = options.validateAfterMs ?? DEFAULT_VALIDATE_AFTER_MS;
     this.now = options.now ?? (() => new Date());
     this.traceHeaders = options.traceHeaders ?? (() => undefined);
+    this.onBackgroundError = options.onBackgroundError ?? (() => undefined);
+    this.defer =
+      options.defer ??
+      ((task) => {
+        setImmediate(() => {
+          task().catch((err) => this.onBackgroundError(err, { task: 'deferred' }));
+        });
+      });
     if (!Number.isInteger(this.partSizeBytes) || this.partSizeBytes < 1) {
       throw new Error('partSizeBytes must be a positive integer');
     }
@@ -126,8 +184,8 @@ export class RimService {
 
   /**
    * Assemble the parts, hash them, and create the job — one transaction for the job and its
-   * events. Idempotent: an upload already completed returns its job again, because the client
-   * that asks twice is the one whose first answer was lost.
+   * events; validation follows, deferred. Idempotent: an upload already completed returns its
+   * job again, because the client that asks twice is the one whose first answer was lost.
    */
   async complete(caller: Caller, id: string): Promise<IngestJob> {
     this.authorize(caller, 'ingest:write');
@@ -169,32 +227,23 @@ export class RimService {
       version: 1,
     };
     const done: Upload = { ...upload, state: 'completed', jobId: job.id };
+    const origin = this.originOf(caller);
     await this.store.transaction(async (tx) => {
       await tx.putJob(job);
       await tx.putUpload(done);
       await tx.enqueue(
-        this.record(caller, job.channelId, 'ingest.detected', {
+        this.record(origin, job.channelId, 'ingest.detected', {
           source: job.source,
           sourceKind: job.sourceKind,
-          path: job.receivedPath,
+          path: assembled.path,
           sizeBytes: job.sizeBytes,
         } satisfies EventPayloads['ingest.detected']),
       );
       // The path is where the bytes sit on this node's disk — an operator's detail, not the
       // trail's. Everything else about the job is.
-      const { receivedPath: _path, ...audited } = job;
-      void _path;
-      await tx.enqueue(
-        this.record(caller, job.channelId, 'audit.recorded', {
-          entityType: 'ingest',
-          entityId: job.id,
-          revision: job.version,
-          action: 'ingest.detected',
-          origin: { service: 'rim' },
-          delta: delta(undefined, audited as unknown as Record<string, unknown>),
-        } satisfies EventPayloads['audit.recorded']),
-      );
+      await tx.enqueue(this.audit(origin, job, undefined, job, 'ingest.detected'));
     });
+    this.defer(() => this.validate(job.id).then(() => undefined));
     return job;
   }
 
@@ -221,11 +270,212 @@ export class RimService {
     return expired.length;
   }
 
+  // --- validation (EP-15.3) ---------------------------------------------------------------------------
+
+  /**
+   * Run the channel's acceptance rules over a `detected` job and commit the verdict. Idempotent
+   * and safe to race: a job in any other state is returned as it is, and the write is guarded
+   * by the state it read, so of two validators exactly one applies. System-initiated — the
+   * actor on the events is this service.
+   */
+  async validate(jobId: string): Promise<IngestJob | undefined> {
+    const job = await this.store.job(jobId);
+    if (!job || job.state !== 'detected') return job;
+    const sets = await this.store.ruleSets(job.channelId);
+    const verdict = evaluate(sets, {
+      source: job.source,
+      sourceKind: job.sourceKind,
+      filename: job.filename,
+      sizeBytes: job.sizeBytes,
+    });
+    const at = this.now().toISOString();
+    const next: IngestJob = {
+      ...job,
+      state: verdict.outcome,
+      ...(verdict.reason !== undefined ? { reason: verdict.reason } : {}),
+      ...(verdict.ruleId !== undefined ? { ruleId: verdict.ruleId } : {}),
+      ...(verdict.ruleSetId !== undefined ? { ruleSetId: verdict.ruleSetId } : {}),
+      updatedAt: at,
+      version: job.version + 1,
+    };
+    // A rejected job's bytes are garbage by decision. The row keeps the record; the path goes
+    // with the file, below, after the commit.
+    if (verdict.outcome === 'rejected') delete next.receivedPath;
+    const origin: Origin = { actor: SERVICE_ACTOR };
+    const applied = await this.store.transaction(async (tx) => {
+      if (!(await tx.putJob(next, 'detected'))) return false;
+      if (verdict.outcome !== 'accepted') {
+        await tx.enqueue(
+          this.record(origin, job.channelId, 'ingest.rejected', {
+            ingestJobId: job.id,
+            source: job.source,
+            reason: verdict.reason ?? 'refused by an acceptance rule',
+            ...(verdict.ruleId !== undefined ? { ruleId: verdict.ruleId } : {}),
+            quarantined: verdict.outcome === 'quarantined',
+          } satisfies EventPayloads['ingest.rejected']),
+        );
+      }
+      const action = verdict.outcome === 'accepted' ? 'ingest.validated' : 'ingest.rejected';
+      await tx.enqueue(this.audit(origin, next, job, next, action));
+      return true;
+    });
+    if (!applied) return this.store.job(jobId);
+    if (verdict.outcome === 'rejected' && job.receivedPath !== undefined) {
+      await this.discardBytes(job.receivedPath, job.id);
+    }
+    return next;
+  }
+
+  /**
+   * Validate the jobs whose validation never ran — `detected` for longer than a request takes.
+   * Run on a timer by main.ts alongside the sweeper; returns how many it took.
+   */
+  async recover(limit = 100): Promise<number> {
+    const before = new Date(this.now().getTime() - this.validateAfterMs).toISOString();
+    const stale = await this.store.jobsInState('detected', before, limit);
+    for (const job of stale) await this.validate(job.id);
+    return stale.length;
+  }
+
+  // --- the queue and the review (EP-15.6) ------------------------------------------------------------
+
   async job(caller: Caller, id: string): Promise<IngestJob> {
     this.authorize(caller, 'ingest:read');
-    const job = await this.store.job(id);
-    if (!job || job.channelId !== caller.channelId) throw new NotFound(`ingest job ${id}`);
-    return job;
+    return this.jobFor(caller, id);
+  }
+
+  async queue(caller: Caller, query: JobQuery): Promise<IngestQueuePage> {
+    this.authorize(caller, 'ingest:read');
+    const rows = await this.store.jobs(caller.channelId, query);
+    const items = rows.slice(0, query.limit);
+    const last = items[items.length - 1];
+    return rows.length > query.limit && last !== undefined
+      ? { items, nextCursor: last.id }
+      : { items };
+  }
+
+  /** The operator override: a quarantined job becomes accepted. The rule that held it moves to the history. */
+  async acceptJob(caller: Caller, id: string): Promise<IngestJob> {
+    this.authorize(caller, 'ingest:approve');
+    const job = await this.jobFor(caller, id);
+    if (job.state !== 'quarantined') {
+      throw new Conflict(`ingest job ${id} is ${job.state}, not quarantined`);
+    }
+    const { reason: _r, ruleId: _i, ruleSetId: _s, ...kept } = job;
+    void _r;
+    void _i;
+    void _s;
+    const next: IngestJob = {
+      ...kept,
+      state: 'accepted',
+      updatedAt: this.now().toISOString(),
+      version: job.version + 1,
+    };
+    const origin = this.originOf(caller);
+    await this.transition(job, next, 'quarantined', (tx) =>
+      tx.enqueue(this.audit(origin, next, job, next, 'ingest.accept')),
+    );
+    return next;
+  }
+
+  /** The operator discard: a quarantined job becomes rejected, with the operator's reason; its bytes go. */
+  async rejectJob(caller: Caller, id: string, reason: string): Promise<IngestJob> {
+    this.authorize(caller, 'ingest:approve');
+    const text = reason.trim();
+    if (text.length === 0 || text.length > 1000) {
+      throw new ValidationError('reason must be 1..1000 characters');
+    }
+    const job = await this.jobFor(caller, id);
+    if (job.state !== 'quarantined') {
+      throw new Conflict(`ingest job ${id} is ${job.state}, not quarantined`);
+    }
+    const next: IngestJob = {
+      ...job,
+      state: 'rejected',
+      reason: text,
+      updatedAt: this.now().toISOString(),
+      version: job.version + 1,
+    };
+    delete next.receivedPath;
+    const origin = this.originOf(caller);
+    await this.transition(job, next, 'quarantined', async (tx) => {
+      await tx.enqueue(
+        this.record(origin, job.channelId, 'ingest.rejected', {
+          ingestJobId: job.id,
+          source: job.source,
+          reason: text,
+          quarantined: false,
+        } satisfies EventPayloads['ingest.rejected']),
+      );
+      await tx.enqueue(this.audit(origin, next, job, next, 'ingest.rejected'));
+    });
+    if (job.receivedPath !== undefined) await this.discardBytes(job.receivedPath, job.id);
+    return next;
+  }
+
+  // --- the rule sets (EP-15.3) --------------------------------------------------------------------------
+
+  async ruleSets(caller: Caller): Promise<AcceptanceRuleSet[]> {
+    this.authorize(caller, 'ingest:admin');
+    return this.store.ruleSets(caller.channelId);
+  }
+
+  async ruleSet(caller: Caller, id: string): Promise<AcceptanceRuleSet> {
+    this.authorize(caller, 'ingest:admin');
+    return this.ruleSetFor(caller, id);
+  }
+
+  async createRuleSet(caller: Caller, input: AcceptanceRuleSetInput): Promise<AcceptanceRuleSet> {
+    this.authorize(caller, 'ingest:admin');
+    const set = newRuleSet(input, caller, this.now().toISOString());
+    const origin = this.originOf(caller);
+    await this.store.transaction(async (tx) => {
+      await tx.putRuleSet(set);
+      await tx.enqueue(this.auditRules(origin, set, undefined, set, 'acceptance-rules.created'));
+    });
+    return set;
+  }
+
+  /** The whole set, as given — like a reel's items (scheduling): what the editor shows is what is saved. */
+  async replaceRuleSet(
+    caller: Caller,
+    id: string,
+    input: AcceptanceRuleSetInput,
+  ): Promise<AcceptanceRuleSet> {
+    this.authorize(caller, 'ingest:admin');
+    const before = await this.ruleSetFor(caller, id);
+    const set: AcceptanceRuleSet = {
+      ...before,
+      ...input,
+      updatedAt: this.now().toISOString(),
+      version: before.version + 1,
+    };
+    const origin = this.originOf(caller);
+    await this.store.transaction(async (tx) => {
+      await tx.putRuleSet(set);
+      await tx.enqueue(this.auditRules(origin, set, before, set, 'acceptance-rules.replaced'));
+    });
+    return set;
+  }
+
+  async deleteRuleSet(caller: Caller, id: string): Promise<void> {
+    this.authorize(caller, 'ingest:admin');
+    const before = await this.ruleSetFor(caller, id);
+    const origin = this.originOf(caller);
+    await this.store.transaction(async (tx) => {
+      await tx.deleteRuleSet(id);
+      // The revision after the last one the set had: a deletion is a mutation like any other,
+      // and the history's key is (entity, revision) — a repeat is refused (EP-10.6).
+      await tx.enqueue(
+        this.auditRules(
+          origin,
+          { ...before, version: before.version + 1 },
+          before,
+          undefined,
+          'acceptance-rules.deleted',
+        ),
+      );
+    });
   }
 
   // --- internals -------------------------------------------------------------------------------------
@@ -244,7 +494,87 @@ export class RimService {
     return upload;
   }
 
-  private record(caller: Caller, channelId: string, type: string, payload: object): OutboxRecord {
+  private async jobFor(caller: Caller, id: string): Promise<IngestJob> {
+    const job = await this.store.job(id);
+    if (!job || job.channelId !== caller.channelId) throw new NotFound(`ingest job ${id}`);
+    return job;
+  }
+
+  private async ruleSetFor(caller: Caller, id: string): Promise<AcceptanceRuleSet> {
+    const set = await this.store.ruleSet(id);
+    if (!set || set.channelId !== caller.channelId) throw new NotFound(`acceptance rule set ${id}`);
+    return set;
+  }
+
+  /** A state transition: the guarded write, then what accompanies it — or a 409 if the job moved. */
+  private async transition(
+    from: IngestJob,
+    to: IngestJob,
+    ifState: IngestJob['state'],
+    accompany: (tx: RimTx) => Promise<void>,
+  ): Promise<void> {
+    const applied = await this.store.transaction(async (tx) => {
+      if (!(await tx.putJob(to, ifState))) return false;
+      await accompany(tx);
+      return true;
+    });
+    if (!applied) throw new Conflict(`ingest job ${from.id} is no longer ${ifState}`);
+  }
+
+  /** Best effort, after the commit: a file that survives is a leak an operator can see, not a lie in a row. */
+  private async discardBytes(path: string, jobId: string): Promise<void> {
+    try {
+      await this.staging.discardReceived(path);
+    } catch (err) {
+      this.onBackgroundError(err, { task: 'discard received bytes', jobId });
+    }
+  }
+
+  private originOf(caller: Caller): Origin {
+    return {
+      actor: { kind: 'user', id: caller.userId },
+      ...(caller.correlationId !== undefined ? { correlationId: caller.correlationId } : {}),
+    };
+  }
+
+  private audit(
+    origin: Origin,
+    at: IngestJob,
+    before: IngestJob | undefined,
+    after: IngestJob,
+    action: string,
+  ): OutboxRecord {
+    return this.record(origin, at.channelId, 'audit.recorded', {
+      entityType: 'ingest',
+      entityId: at.id,
+      revision: at.version,
+      action,
+      origin: { service: 'rim' },
+      delta: delta(before === undefined ? undefined : audited(before), audited(after)),
+    } satisfies EventPayloads['audit.recorded']);
+  }
+
+  private auditRules(
+    origin: Origin,
+    at: AcceptanceRuleSet,
+    before: AcceptanceRuleSet | undefined,
+    after: AcceptanceRuleSet | undefined,
+    action: string,
+  ): OutboxRecord {
+    return this.record(origin, at.channelId, 'audit.recorded', {
+      entityType: 'acceptance-rule-set',
+      entityId: at.id,
+      revision: at.version,
+      action,
+      origin: { service: 'rim' },
+      delta: delta(
+        before as unknown as Record<string, unknown> | undefined,
+        (after ?? {}) as unknown as Record<string, unknown>,
+      ),
+    } satisfies EventPayloads['audit.recorded']);
+  }
+
+  private record(origin: Origin, channelId: string, type: string, payload: object): OutboxRecord {
     const check = validatePayload(type, payload);
     if (!check.valid) {
       throw new ValidationError(
@@ -255,8 +585,8 @@ export class RimService {
       type,
       channelId,
       payload: payload as Record<string, unknown>,
-      actor: { kind: 'user', id: caller.userId },
-      ...(caller.correlationId !== undefined ? { correlationId: caller.correlationId } : {}),
+      actor: origin.actor,
+      ...(origin.correlationId !== undefined ? { correlationId: origin.correlationId } : {}),
     });
     const headers = this.traceHeaders();
     return {

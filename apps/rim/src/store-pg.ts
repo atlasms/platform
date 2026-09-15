@@ -8,6 +8,7 @@ import {
   withTransaction,
   type PgPool,
 } from '@atlas/data-pg';
+import type { AcceptanceRuleSet } from './acceptance.ts';
 import type { RimStore, RimTx } from './store.ts';
 import type { IngestJob, Upload } from './upload.ts';
 
@@ -46,6 +47,17 @@ export const pgMigrations: Migration[] = [
          CREATE INDEX IF NOT EXISTS ingest_jobs_channel_idx ON ingest_jobs (channel_id, created_at DESC);
          CREATE INDEX IF NOT EXISTS ingest_jobs_state_idx ON ingest_jobs (channel_id, state)`,
   },
+  {
+    id: 'rim_acceptance_rule_sets',
+    up: `CREATE TABLE IF NOT EXISTS acceptance_rule_sets (
+           id         text PRIMARY KEY,
+           channel_id text NOT NULL,
+           enabled    boolean NOT NULL,
+           data       jsonb NOT NULL
+         );
+         -- The engine's read: a channel's sets, every validation.
+         CREATE INDEX IF NOT EXISTS acceptance_rule_sets_channel_idx ON acceptance_rule_sets (channel_id)`,
+  },
 ];
 
 export function pgRimStore(pool: PgPool): RimStore {
@@ -72,12 +84,30 @@ export function pgRimStore(pool: PgPool): RimStore {
           async deleteUpload(id) {
             await client.query('DELETE FROM uploads WHERE id = $1', [id]);
           },
-          async putJob(j) {
+          async putJob(j, ifState) {
+            if (ifState !== undefined) {
+              const result = await client.query(
+                'UPDATE ingest_jobs SET state = $1, data = $2 WHERE id = $3 AND state = $4',
+                [j.state, JSON.stringify(j), j.id, ifState],
+              );
+              return result.rowCount === 1;
+            }
             await client.query(
               `INSERT INTO ingest_jobs (id, channel_id, state, created_at, data) VALUES ($1, $2, $3, $4, $5)
                ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, data = EXCLUDED.data`,
               [j.id, j.channelId, j.state, j.createdAt, JSON.stringify(j)],
             );
+            return true;
+          },
+          async putRuleSet(set) {
+            await client.query(
+              `INSERT INTO acceptance_rule_sets (id, channel_id, enabled, data) VALUES ($1, $2, $3, $4)
+               ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, data = EXCLUDED.data`,
+              [set.id, set.channelId, set.enabled, JSON.stringify(set)],
+            );
+          },
+          async deleteRuleSet(id) {
+            await client.query('DELETE FROM acceptance_rule_sets WHERE id = $1', [id]);
           },
           async enqueue(record) {
             await outbox.enqueue(client, record);
@@ -109,6 +139,46 @@ export function pgRimStore(pool: PgPool): RimStore {
     async job(id) {
       const { rows } = await pool.query<{ data: IngestJob }>(
         'SELECT data FROM ingest_jobs WHERE id = $1',
+        [id],
+      );
+      return rows[0]?.data;
+    },
+    async jobs(channelId, query) {
+      const clauses = ['channel_id = $1'];
+      const params: (string | number)[] = [channelId];
+      if (query.state !== undefined) {
+        params.push(query.state);
+        clauses.push(`state = $${params.length}`);
+      }
+      if (query.cursor !== undefined) {
+        params.push(query.cursor);
+        clauses.push(`id ${query.order === 'asc' ? '>' : '<'} $${params.length}`);
+      }
+      params.push(query.limit + 1);
+      const direction = query.order === 'asc' ? 'ASC' : 'DESC';
+      const { rows } = await pool.query<{ data: IngestJob }>(
+        `SELECT data FROM ingest_jobs WHERE ${clauses.join(' AND ')} ORDER BY id ${direction} LIMIT $${params.length}`,
+        params,
+      );
+      return rows.map((r) => r.data);
+    },
+    async jobsInState(state, before, limit) {
+      const { rows } = await pool.query<{ data: IngestJob }>(
+        'SELECT data FROM ingest_jobs WHERE state = $1 AND created_at < $2 ORDER BY created_at LIMIT $3',
+        [state, before, limit],
+      );
+      return rows.map((r) => r.data);
+    },
+    async ruleSets(channelId) {
+      const { rows } = await pool.query<{ data: AcceptanceRuleSet }>(
+        'SELECT data FROM acceptance_rule_sets WHERE channel_id = $1 ORDER BY id',
+        [channelId],
+      );
+      return rows.map((r) => r.data);
+    },
+    async ruleSet(id) {
+      const { rows } = await pool.query<{ data: AcceptanceRuleSet }>(
+        'SELECT data FROM acceptance_rule_sets WHERE id = $1',
         [id],
       );
       return rows[0]?.data;

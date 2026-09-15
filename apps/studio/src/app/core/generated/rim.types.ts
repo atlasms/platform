@@ -48,13 +48,62 @@ export interface IngestJob {
   checksum?: string;
   contentType?: string;
   assetId?: Ulid;
+  /** Why it is quarantined or rejected: the failed rule's reason, or the operator's. Cleared when an operator accepts; the history keeps it. */
   reason?: string;
+  /** The acceptance rule that quarantined or rejected it (EP-15.3). */
+  ruleId?: Ulid;
+  /** The rule set that rule belongs to. */
+  ruleSetId?: Ulid;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;
   /** The audit revision (EP-19.2); every write bumps it. */
   version: number;
 }
+
+export interface IngestQueuePage {
+  items: IngestJob[];
+  /** Absent when the channel is exhausted. */
+  nextCursor?: Ulid;
+}
+
+export interface AcceptanceRuleInput {
+  /** Server-minted when omitted; a client that supplies one keeps a stable id across replacements */
+  id?: Ulid;
+  kind: 'container' | 'minSizeBytes' | 'maxSizeBytes' | 'aspectRatio';
+  /** What failing this rule does to the job. `reject` beats `quarantine` when several rules fail. */
+  onFail: 'reject' | 'quarantine';
+  /** For the reason an operator reads. */
+  label?: string;
+  /** `container`: the file extensions accepted, lowercase, no dot (mxf, mov, mp4). The name is the evidence until the probe (EP-15.4) reads the bytes. */
+  containers?: string[];
+  /** `minSizeBytes` / `maxSizeBytes`: the bound, inclusive. */
+  bytes?: number;
+  /** `aspectRatio`: the ratio the picture must have, W:H (16:9). */
+  aspectRatio?: string;
+}
+
+export type AcceptanceRule = AcceptanceRuleInput & { id: Ulid };
+
+export interface AcceptanceRuleSetInput {
+  name: string;
+  /** Which jobs the set applies to. Empty (or absent) is every job in the channel. */
+  scope?: { sourceKind?: 'upload' | 'ftp' | 'watch' | 'recorder'; sourceId?: string };
+  rules: AcceptanceRuleInput[];
+  /** A disabled set is kept and not applied. */
+  enabled?: boolean;
+}
+
+export type AcceptanceRuleSet = AcceptanceRuleSetInput & {
+  id: Ulid;
+  channelId: string;
+  rules: AcceptanceRule[];
+  enabled: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+};
 
 /** RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept: `code` is the machine key (a closed enum — VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, UNAVAILABLE, INTERNAL), `message` the text. The RFC members are derived from them: `type` is https://atlas.example/problems/<code>, `title` is constant per code, `detail` equals `message`, `instance` is urn:atlas:correlation:<correlationId>. */
 export interface Error {

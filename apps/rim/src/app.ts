@@ -28,8 +28,10 @@ import {
   type Span,
   type Tracer,
 } from '@atlas/service-kit';
+import { parseRuleSetInput } from './acceptance.ts';
 import type { Caller as ServiceCaller, RimService } from './service.ts';
-import { parseStartUpload } from './upload.ts';
+import type { JobQuery } from './store.ts';
+import { INGEST_STATES, parseStartUpload, type IngestJob, type IngestState } from './upload.ts';
 
 export interface RimAppOptions {
   service: RimService;
@@ -307,14 +309,87 @@ export async function buildRimApp(options: RimAppOptions): Promise<FastifyInstan
     }),
   );
 
+  // The received path is where the bytes sit on this node's disk — HSM's business (EP-14) and an
+  // operator's, not a client's. rim.yaml's IngestJob does not carry it, on any route.
+  const wire = (job: IngestJob): Omit<IngestJob, 'receivedPath'> => {
+    const { receivedPath: _path, ...rest } = job;
+    void _path;
+    return rest;
+  };
+
   app.post<{ Params: P }>('/api/v1/uploads/:id/complete', (req, reply) =>
-    handle(req, reply, 202, async (caller) => {
-      // The received path is where the bytes sit on this node's disk — HSM's business (EP-14)
-      // and an operator's, not a client's. rim.yaml's IngestJob does not carry it.
-      const { receivedPath: _path, ...job } = await service.complete(caller, req.params.id);
-      void _path;
-      return job;
+    handle(req, reply, 202, async (caller) => wire(await service.complete(caller, req.params.id))),
+  );
+
+  // --- the queue and the review (EP-15.6) -------------------------------------------------------------
+
+  type Q = { limit?: string; cursor?: string; state?: string; order?: string };
+  const parseQueue = (q: Q): JobQuery => {
+    const limit = q.limit === undefined ? 50 : Number(q.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+      throw new ValidationError('limit must be an integer between 1 and 200');
+    }
+    if (q.cursor !== undefined && !isUlid(q.cursor))
+      throw new ValidationError('cursor must be a ULID');
+    if (q.state !== undefined && !INGEST_STATES.includes(q.state as IngestState)) {
+      throw new ValidationError(`state must be one of ${INGEST_STATES.join(', ')}`);
+    }
+    if (q.order !== undefined && q.order !== 'asc' && q.order !== 'desc') {
+      throw new ValidationError('order must be asc or desc');
+    }
+    return {
+      limit,
+      order: q.order === 'asc' ? 'asc' : 'desc',
+      ...(q.cursor !== undefined ? { cursor: q.cursor } : {}),
+      ...(q.state !== undefined ? { state: q.state as IngestState } : {}),
+    };
+  };
+
+  app.get<{ Querystring: Q }>('/api/v1/ingest/queue', (req, reply) =>
+    handle(req, reply, 200, async (caller) => {
+      const page = await service.queue(caller, parseQueue(req.query));
+      return { ...page, items: page.items.map(wire) };
     }),
+  );
+
+  app.get<{ Params: P }>('/api/v1/ingest/:id', (req, reply) =>
+    handle(req, reply, 200, async (caller) => wire(await service.job(caller, req.params.id))),
+  );
+
+  app.post<{ Params: P }>('/api/v1/ingest/:id/accept', (req, reply) =>
+    handle(req, reply, 200, async (caller) => wire(await service.acceptJob(caller, req.params.id))),
+  );
+
+  app.post<{ Params: P }>('/api/v1/ingest/:id/reject', (req, reply) =>
+    handle(req, reply, 200, async (caller) => {
+      const reason = (req.body as { reason?: unknown } | undefined)?.reason;
+      if (typeof reason !== 'string') throw new ValidationError('reason is required');
+      return wire(await service.rejectJob(caller, req.params.id, reason));
+    }),
+  );
+
+  // --- the acceptance rules (EP-15.3) -------------------------------------------------------------------
+
+  app.get('/api/v1/acceptance-rules', (req, reply) =>
+    handle(req, reply, 200, (caller) => service.ruleSets(caller)),
+  );
+
+  app.post('/api/v1/acceptance-rules', (req, reply) =>
+    handle(req, reply, 201, (caller) => service.createRuleSet(caller, parseRuleSetInput(req.body))),
+  );
+
+  app.get<{ Params: P }>('/api/v1/acceptance-rules/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) => service.ruleSet(caller, req.params.id)),
+  );
+
+  app.put<{ Params: P }>('/api/v1/acceptance-rules/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      service.replaceRuleSet(caller, req.params.id, parseRuleSetInput(req.body)),
+    ),
+  );
+
+  app.delete<{ Params: P }>('/api/v1/acceptance-rules/:id', (req, reply) =>
+    handle(req, reply, 204, (caller) => service.deleteRuleSet(caller, req.params.id)),
   );
 
   return app;
