@@ -14,7 +14,7 @@
 // `kind` is the rule vocabulary and this file branches on it: a Tier-0 enum, declared in
 // rim.yaml. It grows with what is known about a job, not ahead of it.
 
-import { isUlid, ulid } from '@atlas/contracts';
+import { isUlid, ulid, type TechnicalMetadata } from '@atlas/contracts';
 import { ValidationError } from '@atlas/service-kit';
 import type { SourceKind } from './upload.ts';
 
@@ -58,13 +58,16 @@ export interface AcceptanceRuleSet extends AcceptanceRuleSetInput {
   version: number;
 }
 
-/** What the engine knows about a job. `technicalMetadata` arrives with the probe (EP-15.4). */
+/**
+ * What the engine knows about a job. `technicalMetadata` is what the probe read from the bytes
+ * (EP-15.4); absent, the bytes have not been read yet and a rule that needs them cannot decide.
+ */
 export interface Facts {
   source: string;
   sourceKind: SourceKind;
   filename: string;
   sizeBytes: number;
-  technicalMetadata?: { aspectRatio?: string };
+  technicalMetadata?: TechnicalMetadata;
 }
 
 export type Outcome = 'accepted' | 'quarantined' | 'rejected';
@@ -246,14 +249,22 @@ function check(rule: AcceptanceRule, facts: Facts): Check {
       };
     }
     case 'aspectRatio': {
-      const actual = facts.technicalMetadata?.aspectRatio;
-      if (actual === undefined) {
+      if (facts.technicalMetadata === undefined) {
         // Not a failure — an unknown. The job is held for a person until the probe (EP-15.4)
         // can answer; passing it would be skipping a rule an operator wrote.
         return {
           ok: false,
           decided: false,
           reason: `aspect ratio ${rule.aspectRatio} required (${name}) and the file has not been probed`,
+        };
+      }
+      const actual = facts.technicalMetadata.aspectRatio;
+      if (actual === undefined) {
+        // Probed, and there is no picture: a decided failure, not an unknown.
+        return {
+          ok: false,
+          decided: true,
+          reason: `aspect ratio ${rule.aspectRatio} required (${name}) and the file has no picture`,
         };
       }
       if (actual === rule.aspectRatio) return { ok: true };

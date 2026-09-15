@@ -5,9 +5,10 @@
 // resume answering from what was accepted, the last write winning, completion assembling the
 // bytes in order with the checksum OF THOSE BYTES, the job and its events committing together,
 // completion idempotent, another channel's upload not found, the sweeper taking only what expired.
-// And past the upload (EP-15.3/15.6): the verdict committed with its events under the state it
-// read (two validators, one write), a rejected job's bytes gone, the review's transitions, the
-// queue's keyset page, the rule sets' audit trail.
+// And past the upload (EP-15.3/15.4/15.6): the job taken to `validating` and the verdict
+// committed with its events, each under the state it read (two validators, one write), the
+// probe's metadata on the job and its refusal a quarantine, a rejected job's bytes gone, the
+// review's transitions, the queue's keyset page, the rule sets' audit trail.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,6 +20,7 @@ import { ulid, validatePayload, type Envelope, type EventPayloads } from '@atlas
 import { InMemoryBroker, OutboxRelay, type OutboxStore } from '@atlas/messaging';
 import { compile, type EffectivePolicy } from '@atlas/policy';
 import type { AcceptanceRuleSetInput } from './acceptance.ts';
+import { fakeProbe } from './probe-fake.ts';
 import { RimService, type Caller } from './service.ts';
 import { fsStaging } from './staging.ts';
 import type { RimStore } from './store.ts';
@@ -61,6 +63,7 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       settle: () => Promise<void>;
       /** A completed upload of `size` random bytes, as the job the request answered with. */
       uploaded: (filename: string, size: number, who?: Caller) => Promise<IngestJob>;
+      probe: ReturnType<typeof fakeProbe>;
     }) => Promise<void>,
   ): Promise<void> {
     const { store, outbox, cleanup } = await harness.make();
@@ -69,9 +72,11 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
     const broker = new InMemoryBroker();
     const relay = new OutboxRelay(outbox, broker);
     const deferred: (() => Promise<void>)[] = [];
+    const probe = fakeProbe();
     const service = new RimService({
       store,
       staging: fsStaging(dir),
+      probe,
       partSizeBytes: PART,
       uploadTtlMs: 60_000,
       validateAfterMs: 5_000,
@@ -98,7 +103,7 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       return service.complete(who, u.uploadId);
     };
     try {
-      await fn({ service, store, dir, clock, drain, settle, uploaded });
+      await fn({ service, store, dir, clock, drain, settle, uploaded, probe });
     } finally {
       await cleanup?.();
       await store.close().catch(() => undefined);
@@ -286,8 +291,8 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       .filter((a) => a.entityId === entityId)
       .sort((a, b) => a.revision - b.revision);
 
-  test(`[${name}] with no applicable rule set a job is accepted: revision 2, no ingest.rejected`, async () => {
-    await withFixture(async ({ service, uploaded, settle, drain }) => {
+  test(`[${name}] with no applicable rule set a job is accepted through validating: revision 3, the probe's metadata on it, no ingest.rejected`, async () => {
+    await withFixture(async ({ service, uploaded, settle, drain, probe }) => {
       // A disabled set and a set scoped to another source kind are not applicable.
       await service.createRuleSet(
         caller(),
@@ -308,9 +313,12 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       await settle();
       const after = await service.job(caller(), job.id);
       assert.equal(after.state, 'accepted');
-      assert.equal(after.version, 2);
+      assert.equal(after.version, 3, 'detected → validating → accepted');
       assert.equal(after.reason, undefined);
       assert.ok(after.receivedPath, 'an accepted job keeps its bytes for HSM');
+      assert.deepEqual(probe.calls, [job.receivedPath], 'the probe read the received file, once');
+      assert.equal(after.technicalMetadata?.videoCodec, 'mpeg2video');
+      assert.equal(after.technicalMetadata?.aspectRatio, '16:9');
       const events = await drain();
       assert.equal(
         events.some((e) => e.type === 'ingest.rejected'),
@@ -321,10 +329,17 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
         audits.map((a) => [a.revision, a.action]),
         [
           [1, 'ingest.detected'],
-          [2, 'ingest.validated'],
+          [2, 'ingest.validating'],
+          [3, 'ingest.validated'],
         ],
       );
-      assert.deepEqual(audits[1]!.delta['state'], { before: 'detected', after: 'accepted' });
+      assert.deepEqual(audits[1]!.delta['state'], { before: 'detected', after: 'validating' });
+      assert.deepEqual(audits[2]!.delta['state'], { before: 'validating', after: 'accepted' });
+      assert.equal(
+        (audits[2]!.delta['technicalMetadata']?.after as { width?: number })?.width,
+        1920,
+        'what the probe read is in the trail',
+      );
     });
   });
 
@@ -398,11 +413,12 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
         audits.map((a) => [a.revision, a.action]),
         [
           [1, 'ingest.detected'],
-          [2, 'ingest.rejected'],
+          [2, 'ingest.validating'],
+          [3, 'ingest.rejected'],
         ],
       );
-      assert.deepEqual(audits[1]!.delta['reason'], { after: r.reason });
-      assert.equal('receivedPath' in audits[1]!.delta, false);
+      assert.deepEqual(audits[2]!.delta['reason'], { after: r.reason });
+      assert.equal('receivedPath' in audits[2]!.delta, false);
 
       // The wrong container alone, or the size alone with the size rule set to reject: still stable.
       const rules = await service.ruleSets(caller());
@@ -422,11 +438,11 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       await settle();
       assert.equal(a?.state, 'quarantined');
       assert.equal(b?.state, 'quarantined');
-      assert.equal(a?.version, 2);
-      assert.equal(b?.version, 2);
+      assert.equal(a?.version, 3);
+      assert.equal(b?.version, 3);
       const events = await drain();
       assert.equal(events.filter((e) => e.type === 'ingest.rejected').length, 1);
-      assert.equal(auditsOf(events, job.id).length, 2);
+      assert.equal(auditsOf(events, job.id).length, 3, 'one took it, one applied the verdict');
     });
   });
 
@@ -439,6 +455,80 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       assert.equal(await service.recover(), 1);
       assert.equal((await service.job(caller(), job.id)).state, 'accepted');
       assert.equal(await service.recover(), 0);
+
+      // A job whose process died mid-probe: `validating`, and the tool failed on the way — the
+      // loop reports it, leaves it there, and the next pass (the tool back) finishes it.
+      const stuck = await uploaded('toolfail.mxf', PART);
+      clock.now += 5_001;
+      await assert.rejects(service.validate(stuck.id), /ENOENT/);
+      assert.equal((await service.job(caller(), stuck.id)).state, 'validating');
+      clock.now += 5_001;
+      assert.equal(await service.recover(), 1, 'picked up again — and refused by the tool again');
+      assert.equal((await service.job(caller(), stuck.id)).state, 'validating');
+    });
+  });
+
+  // --- EP-15.4: the probe ---------------------------------------------------------------------------------
+
+  test(`[${name}] what the probe says about the bytes is a verdict: unreadable is quarantined; an aspect-ratio rule decides from the picture, and no picture is a failure`, async () => {
+    await withFixture(async ({ service, uploaded, settle, drain }) => {
+      const wide = ulid();
+      await service.createRuleSet(
+        caller(),
+        ruleSet({
+          rules: [
+            {
+              id: wide,
+              kind: 'aspectRatio',
+              onFail: 'reject',
+              aspectRatio: '16:9',
+              label: 'widescreen',
+            },
+          ],
+        }),
+      );
+      const hd = await uploaded('bulletin.mxf', PART);
+      const sd = await uploaded('archive-4x3.mxf', PART);
+      const audio = await uploaded('jingle.wav', PART);
+      const junk = await uploaded('unreadable.mxf', PART);
+      await settle();
+
+      const passed = await service.job(caller(), hd.id);
+      assert.equal(passed.state, 'accepted');
+      assert.equal(passed.technicalMetadata?.aspectRatio, '16:9');
+
+      const wrong = await service.job(caller(), sd.id);
+      assert.equal(wrong.state, 'rejected', 'a decided failure, so onFail applies');
+      assert.equal(wrong.ruleId, wide);
+      assert.match(wrong.reason ?? '', /aspect ratio 4:3 is not 16:9/);
+      assert.equal(wrong.technicalMetadata?.width, 720, 'the metadata stays on the record');
+      assert.equal(wrong.receivedPath, undefined);
+
+      const silent = await service.job(caller(), audio.id);
+      assert.equal(silent.state, 'rejected');
+      assert.match(silent.reason ?? '', /has no picture/);
+      assert.equal(silent.technicalMetadata?.audioCodec, 'pcm_s24le');
+      assert.equal(silent.technicalMetadata?.aspectRatio, undefined);
+
+      const held = await service.job(caller(), junk.id);
+      assert.equal(held.state, 'quarantined', 'not media the tool reads: a person decides');
+      assert.match(held.reason ?? '', /could not be probed: Invalid data/);
+      assert.equal(held.ruleId, undefined, 'no rule was consulted');
+      assert.equal(held.technicalMetadata, undefined);
+      assert.ok(held.receivedPath, 'the bytes are kept for the person');
+
+      const events = await drain();
+      const rejected = events
+        .filter((e) => e.type === 'ingest.rejected')
+        .map((e) => e.payload as unknown as EventPayloads['ingest.rejected']);
+      assert.deepEqual(
+        rejected.map((e) => [e.ingestJobId, e.quarantined]).sort(),
+        [
+          [sd.id, false],
+          [audio.id, false],
+          [junk.id, true],
+        ].sort(),
+      );
     });
   });
 
@@ -458,7 +548,7 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
 
       const accepted = await service.acceptJob(caller(), a.id);
       assert.equal(accepted.state, 'accepted');
-      assert.equal(accepted.version, 3);
+      assert.equal(accepted.version, 4);
       assert.equal(accepted.reason, undefined);
       assert.equal(accepted.ruleId, undefined);
       assert.ok(accepted.receivedPath);
@@ -481,12 +571,13 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
         audits.map((x) => [x.revision, x.action]),
         [
           [1, 'ingest.detected'],
-          [2, 'ingest.rejected'],
-          [3, 'ingest.accept'],
+          [2, 'ingest.validating'],
+          [3, 'ingest.rejected'],
+          [4, 'ingest.accept'],
         ],
       );
-      assert.deepEqual(audits[2]!.delta['state'], { before: 'quarantined', after: 'accepted' });
-      assert.ok(audits[2]!.delta['reason']?.before, 'the reason it was held stays in the history');
+      assert.deepEqual(audits[3]!.delta['state'], { before: 'quarantined', after: 'accepted' });
+      assert.ok(audits[3]!.delta['reason']?.before, 'the reason it was held stays in the history');
       const operatorReject = events
         .filter((e) => e.type === 'ingest.rejected')
         .map((e) => e.payload as unknown as EventPayloads['ingest.rejected'])

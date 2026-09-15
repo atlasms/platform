@@ -89,6 +89,7 @@ interface InternalIngestPanel {
   error: () => string | null;
   loading: () => boolean;
   formatSize(bytes: number | undefined): string;
+  formatTech(tech: NonNullable<IngestJob['technicalMetadata']>): string;
   accept(job: IngestJob): void;
   reject(job: IngestJob, reason: string): void;
 }
@@ -119,6 +120,33 @@ describe('IngestPanel', () => {
     expect(component.formatSize(2048)).toBe('2.0 KB');
     expect(component.formatSize(5 * 1024 * 1024)).toBe('5.0 MB');
     expect(component.formatSize(3 * 1024 ** 3)).toBe('3.0 GB');
+  });
+
+  it('what the probe read is one line, with only what is known', () => {
+    const { component } = setup();
+    expect(
+      component.formatTech({
+        container: 'mxf',
+        videoCodec: 'mpeg2video',
+        width: 1920,
+        height: 1080,
+        aspectRatio: '16:9',
+        frameRate: 25,
+        audioCodec: 'pcm_s24le',
+        audioChannels: 2,
+        durationSec: 12.5,
+      }),
+    ).toBe('mxf · mpeg2video 1920×1080 16:9 25 fps · pcm_s24le 2ch · 12.5 s');
+    // Audio only: no picture segment at all, not a row of dashes.
+    expect(
+      component.formatTech({
+        container: 'wav',
+        audioCodec: 'pcm_s16le',
+        audioChannels: 1,
+        durationSec: 1,
+      }),
+    ).toBe('wav · pcm_s16le 1ch · 1 s');
+    expect(component.formatTech({})).toBe('');
   });
 
   it('loads the queue on mount and renders what came back', () => {

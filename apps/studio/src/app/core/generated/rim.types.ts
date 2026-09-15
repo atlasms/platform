@@ -47,6 +47,7 @@ export interface IngestJob {
   /** sha256 of the received bytes, lowercase hex — computed while the parts were assembled, so it is the checksum of what was actually written. */
   checksum?: string;
   contentType?: string;
+  technicalMetadata?: TechnicalMetadata;
   assetId?: Ulid;
   /** Why it is quarantined or rejected: the failed rule's reason, or the operator's. Cleared when an operator accepts; the history keeps it. */
   reason?: string;
@@ -59,6 +60,21 @@ export interface IngestJob {
   updatedAt: string;
   /** The audit revision (EP-19.2); every write bumps it. */
   version: number;
+}
+
+/** ffprobe-derived technical metadata; additive fields allowed. */
+export interface TechnicalMetadata {
+  /** The demuxer's own name (mxf, mov, wav). */
+  container?: string;
+  videoCodec?: string;
+  audioCodec?: string;
+  durationSec?: number;
+  width?: number;
+  height?: number;
+  /** W:H — the container's declared display aspect, or the frame's own reduced ratio. */
+  aspectRatio?: string;
+  audioChannels?: number;
+  frameRate?: number;
 }
 
 export interface IngestQueuePage {

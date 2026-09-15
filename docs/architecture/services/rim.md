@@ -195,14 +195,23 @@ cannot both apply a verdict; a job left `detected` by a crash is picked up by th
 The `AcceptanceRuleSet` of §3 is as designed — per channel, scoped to every job, a source kind or
 a source, `rules[]` — with the vocabulary `container` / `minSizeBytes` / `maxSizeBytes` /
 `aspectRatio` (a Tier-0 enum, in `rim.yaml`), each rule saying whether failing it rejects or
-quarantines; the worst failure decides. Two things §3.1 left implicit are now explicit: a rule
-that cannot be evaluated from what is known (aspect ratio before the probe, 15.4) quarantines
-rather than passes, and `Validating` is not persisted until the step takes time (15.4). The
-review is `accept`/`reject` on a `quarantined` job only. `ingest.rejected` is emitted for a hold
+quarantines; the worst failure decides. One thing §3.1 left implicit is now explicit: a rule
+that cannot be evaluated from what is known quarantines rather than passes. The review is
+`accept`/`reject` on a `quarantined` job only. `ingest.rejected` is emitted for a hold
 and a refusal alike (`quarantined` says which); `ingest.accepted` waits for 15.5, since its
 contract carries MAM's `assetId`. Rejected bytes are discarded from staging; the row is the
 record. The §4 table's `/ingest/queue` is a keyset page, and `GET /ingest/{id}` was added for the
 uploader to poll. Studio's Ingest panel is switched on against it.
+
+**EP-15.4 the probe.** `Validating` is persisted as §3.1 draws it: the job is taken there
+(guarded by `detected`), ffprobe reads the received file as a child process outside any
+transaction — §13's `child_process` around ffprobe, not a worker pool; the checksum is already
+computed while the parts are assembled, so nothing here needs a worker thread — and the verdict
+commits guarded by `validating`. The report becomes `TechnicalMetadata` (the `$def` §5's
+`ingest.accepted` carries) on the job. What the tool says about the bytes is a verdict — a file
+it refuses is quarantined with its words — and what goes wrong with the tool is not: the job
+stays `validating`, readiness shows it, the loop retries. ffprobe ships in RIM's image only
+(`APK_PACKAGES=ffmpeg`); §9's "malformed upload → rejected" is, as built, "held for a person".
 
 ## 14. Open questions / future
 

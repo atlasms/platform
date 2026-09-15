@@ -124,6 +124,12 @@ jobs:
           node-version: 24
           cache: npm
 
+      # ffprobe for RIM's probe adapter test (EP-15.4): it generates a clip with ffmpeg and reads
+      # it back with the real binary. The test skips on a laptop without the tools and FAILS here
+      # without them — the same rule as ATLAS_PG_URL, so the adapter cannot quietly go untested.
+      - name: Install ffmpeg
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
+
       - name: Install
         run: npm ci
 

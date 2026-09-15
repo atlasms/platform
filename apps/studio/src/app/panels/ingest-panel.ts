@@ -43,6 +43,11 @@ import { LocaleService } from '../core/locale.service.ts';
                 <span class="job-asset">→ asset {{ job.assetId }}</span>
               }
             </div>
+            @if (job.technicalMetadata; as tech) {
+              <!-- What the probe read (EP-15.4): the operator's one-line answer to "what is it".
+                   Every field is optional — audio has no picture, a still has no rate. -->
+              <div class="job-tech">{{ formatTech(tech) }}</div>
+            }
             @if (job.reason) {
               <div class="job-reason">{{ job.reason }}</div>
             }
@@ -185,6 +190,10 @@ import { LocaleService } from '../core/locale.service.ts';
       color: var(--color-fg-muted);
       font-family: monospace;
     }
+    .job-tech {
+      font-size: 0.8rem;
+      color: var(--atlas-text-muted, #666);
+    }
     .job-reason {
       grid-column: 1 / -1;
       font-size: 0.875rem;
@@ -288,6 +297,27 @@ export class IngestPanel {
         this.error.set('Could not reject job.');
       },
     });
+  }
+
+  /** `h264 1920×1080 16:9 25 fps · aac 2ch · 12.5 s` — whatever of it is known. */
+  protected formatTech(tech: NonNullable<IngestJob['technicalMetadata']>): string {
+    const picture = [
+      tech.videoCodec,
+      tech.width && tech.height ? `${tech.width}×${tech.height}` : undefined,
+      tech.aspectRatio,
+      tech.frameRate ? `${tech.frameRate} fps` : undefined,
+    ].filter(Boolean);
+    const sound = [
+      tech.audioCodec,
+      tech.audioChannels ? `${tech.audioChannels}ch` : undefined,
+    ].filter(Boolean);
+    const parts = [
+      tech.container,
+      picture.length ? picture.join(' ') : undefined,
+      sound.length ? sound.join(' ') : undefined,
+      tech.durationSec !== undefined ? `${tech.durationSec} s` : undefined,
+    ].filter(Boolean);
+    return parts.join(' · ');
   }
 
   protected formatSize(bytes: number | undefined): string {

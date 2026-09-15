@@ -60,14 +60,35 @@ ordinary JSON routes.
 
 ## Acceptance (EP-15.3; FR-ING-4, FR-ING-5)
 
-**Validation follows completion, and is its own transaction.** The job is committed `detected`
-and the 202 answered; then the channel's rules run and the verdict — the new state, its reason,
-`ingest.rejected` when there is one, and the audit delta — commits as one, **guarded by the state
-it read** (`putJob(job, ifState)`): the request's validator and the recovery loop's cannot both
-apply it, and the conformance suite races them. A job left `detected` by a crash between the
-two is validated by the sweep tick once it is `ATLAS_INGEST_VALIDATE_AFTER_MS` old. The probe
-(EP-15.4) will take seconds and belongs in exactly this step, which is why it is not folded into
-the completion request; the `validating` state is for then.
+**Validation follows completion, in transactions of its own.** The job is committed `detected`
+and the 202 answered; then it is taken to **`validating`** (guarded by `detected`, so of two
+validators one takes it), the **probe** reads the bytes outside any transaction — seconds, for a
+broadcast master — the channel's rules run, and the verdict — the metadata, the new state, its
+reason, `ingest.rejected` when there is one, and the audit delta — commits as one, **guarded by
+`validating`** (`putJob(job, ifState)`). The conformance suite races two validators. A job left
+in either state by a crash is picked up by the sweep tick once it is
+`ATLAS_INGEST_VALIDATE_AFTER_MS` old, and probed again.
+
+## The probe (EP-15.4; FR-ING-6)
+
+**ffprobe, in RIM's image only** — `APK_PACKAGES=ffmpeg` on its `docker build` line in
+`k8s:build`; the shared Dockerfile takes the argument and every other image stays without the
+~80 MB. `probe.ts` is a port with one adapter: a child process (`ATLAS_FFPROBE_BIN`,
+`ATLAS_PROBE_TIMEOUT_MS`) whose JSON report becomes the platform's `TechnicalMetadata` —
+container, codecs, duration, frame size, aspect ratio (the container's declared display aspect,
+else the frame's own reduced ratio), channels, frame rate — on the job, on the wire, in the audit
+delta, and later in `ingest.accepted` (15.5).
+
+**What the probe says about the bytes is a verdict; what goes wrong with the tool is not.** A
+file ffprobe reads and refuses — not media, not media it understands, or one that takes longer
+than the timeout — is **quarantined** with the tool's own words (`could not be probed: …`),
+before any rule: a person decides what a file that is not what its name says should become. A
+tool that cannot run (no binary, a spawn failure) leaves the job `validating`, is logged, is
+visible on `/readyz` (`ffprobe`, not critical: uploads are still taken), and the recovery tick
+tries again. `probe.test.ts` pins the split on injected runs and then on the real binary over a
+clip ffmpeg generates — skipped on a laptop without the tools, **failed in CI** without them
+(the workflow installs ffmpeg). The conformance suite and the HTTP tests use `fakeProbe()`,
+which decides by file name, the way the sqlite store stands in for Postgres.
 
 **A channel has rule sets** — `POST /acceptance-rules` (`ingest:admin`), each with a scope (every
 job, one source kind, or one source; sources are EP-15.2) and rules. A job is validated against
@@ -76,19 +97,21 @@ every enabled set whose scope matches it, and **the worst failure decides**: a r
 severity — sets in id order, rules in written order, so it is the same reason every time. **No
 applicable rule set means accepted**; there is nothing to fail.
 
-| rule `kind`    | reads                            | fails when                               |
-| -------------- | -------------------------------- | ---------------------------------------- |
-| `container`    | the file name's extension        | not in `containers` (lowercase, no dot)  |
-| `minSizeBytes` | the received length              | under `bytes`                            |
-| `maxSizeBytes` | the received length              | over `bytes`                             |
-| `aspectRatio`  | the technical metadata (EP-15.4) | not `aspectRatio` — or **not yet known** |
+| rule `kind`    | reads                          | fails when                                                                |
+| -------------- | ------------------------------ | ------------------------------------------------------------------------- |
+| `container`    | the file name's extension      | not in `containers` (lowercase, no dot)                                   |
+| `minSizeBytes` | the received length            | under `bytes`                                                             |
+| `maxSizeBytes` | the received length            | over `bytes`                                                              |
+| `aspectRatio`  | the probe's technical metadata | not `aspectRatio`; **no picture** is a failure, **not yet probed** a hold |
 
 The vocabulary grows with what is _known_ about a job, and the engine is pure
 (`acceptance.ts`, tested without a store). A rule that cannot be evaluated from what is known —
-an aspect-ratio rule before the file has been probed — **quarantines** the job for a person,
+an aspect-ratio rule on a job the probe has not read — **quarantines** the job for a person,
 whatever its `onFail` says: a rule an operator wrote is never silently skipped, and `reject` is
-for a decided failure. A rule carrying a parameter its kind does not read is a 422, not a rule
-half-applied.
+for a decided failure; audio with no picture IS a decided failure of an aspect-ratio rule. The
+`container` rule reads the file name on purpose: ffprobe names the demuxer family (`mov` for an
+MP4 too), so the extension is the finer evidence once the probe has confirmed the bytes are media
+at all. A rule carrying a parameter its kind does not read is a 422, not a rule half-applied.
 
 **Rejected bytes go; the row stays.** A `rejected` job — by a rule or by an operator — has its
 received file discarded from staging after the commit (best effort, logged if not: a file that
@@ -109,8 +132,8 @@ EP-15.5 — its contract carries the `assetId` MAM will mint, which does not exi
 
 Only a `quarantined` job is reviewable: anything else is a **409**, including the second accept.
 Every transition is `audit.recorded` at the job's next revision — `ingest.detected`,
-`ingest.validated` (passed), `ingest.rejected` (held or refused, by a rule or a person),
-`ingest.accept` (the override) — and a rule set's create/replace/delete likewise
+`ingest.validating` (taken for the probe), `ingest.validated` (passed), `ingest.rejected` (held
+or refused, by the probe, a rule or a person), `ingest.accept` (the override) — and a rule set's create/replace/delete likewise
 (`acceptance-rule-set`). Studio's Ingest panel reads the queue and drives the review; its
 uploader is the rest of EP-20.3.
 
@@ -128,7 +151,6 @@ completion idempotent, another channel's upload not found, the sweeper taking on
 ## Not yet
 
 - **15.2** watchers and recorders (sources become entities; `source` is `upload` until then)
-- **15.4** ffprobe — the `validating` state, the technical metadata the `aspectRatio` rule reads
 - **15.5** `ingest.accepted` with the asset MAM minted, once EP-14 places the bytes
 - the hand-off to HSM (EP-14): an accepted file waits in staging until then
 
@@ -137,16 +159,18 @@ completion idempotent, another channel's upload not found, the sweeper taking on
 ```sh
 npx nx test @atlas/rim                                                       # sqlite double + a temp dir
 ATLAS_PG_URL=postgres://atlas:atlas@localhost:55432/atlas npx nx test @atlas/rim   # + Postgres
-npm run k8s:up && npm run smoke      # an 8 MiB part through the gateway; a rule holds an upload, an operator releases it
+npm run k8s:up && npm run smoke      # an 8 MiB part through the gateway; a rule holds an upload; ffprobe reads a WAV
 ```
 
-| Variable                           | Default                                    |                                                                      |
-| ---------------------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
-| `ATLAS_PG_URL` / `ATLAS_PG_SCHEMA` | `postgres://…@postgres:5432/atlas` / `rim` | waited for at startup, within 120 s                                  |
-| `ATLAS_NATS_URL`                   | `nats://nats:4222`                         | the outbox relay; retried, never readiness                           |
-| `ATLAS_IAM_ORIGIN`                 | `http://iam:3000`                          | critical readiness dependency; the policy client                     |
-| `ATLAS_RIM_STAGING_DIR`            | `/var/lib/atlas/rim/staging`               | created at start; a volume in k8s                                    |
-| `ATLAS_UPLOAD_PART_BYTES`          | `8388608`                                  | must fit the gateway's cap on `/api/v1/uploads`                      |
-| `ATLAS_UPLOAD_TTL_MS`              | `86400000`                                 | an open upload older than this is swept                              |
-| `ATLAS_UPLOAD_SWEEP_INTERVAL_MS`   | `60000`                                    | the sweep tick: expired uploads, lost validations                    |
-| `ATLAS_INGEST_VALIDATE_AFTER_MS`   | `60000`                                    | a job `detected` this long has lost its validation; the tick runs it |
+| Variable                           | Default                                    |                                                                                   |
+| ---------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------- |
+| `ATLAS_PG_URL` / `ATLAS_PG_SCHEMA` | `postgres://…@postgres:5432/atlas` / `rim` | waited for at startup, within 120 s                                               |
+| `ATLAS_NATS_URL`                   | `nats://nats:4222`                         | the outbox relay; retried, never readiness                                        |
+| `ATLAS_IAM_ORIGIN`                 | `http://iam:3000`                          | critical readiness dependency; the policy client                                  |
+| `ATLAS_RIM_STAGING_DIR`            | `/var/lib/atlas/rim/staging`               | created at start; a volume in k8s                                                 |
+| `ATLAS_UPLOAD_PART_BYTES`          | `8388608`                                  | must fit the gateway's cap on `/api/v1/uploads`                                   |
+| `ATLAS_UPLOAD_TTL_MS`              | `86400000`                                 | an open upload older than this is swept                                           |
+| `ATLAS_UPLOAD_SWEEP_INTERVAL_MS`   | `60000`                                    | the sweep tick: expired uploads, lost validations                                 |
+| `ATLAS_INGEST_VALIDATE_AFTER_MS`   | `60000`                                    | a job `detected`/`validating` this long has lost its validation; the tick runs it |
+| `ATLAS_FFPROBE_BIN`                | `ffprobe`                                  | the probe; `/readyz` says whether it runs                                         |
+| `ATLAS_PROBE_TIMEOUT_MS`           | `30000`                                    | longer than this and the file is refused, not retried                             |
