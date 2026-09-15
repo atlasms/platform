@@ -681,6 +681,124 @@ test('smoke: EP-15.1 — a chunked upload through the gateway: parts out of orde
   assert.deepEqual(history.revisions[0].delta.checksum, { after: sha256 });
 });
 
+test('smoke: EP-15.3/15.6 — an acceptance rule holds an upload; the queue lists it; an operator releases it; every step audited', async () => {
+  // The whole ingest loop on a live cluster: a rule set written through the gateway, an upload
+  // that fails it, the verdict committed after the request by the validation that follows,
+  // the review queue listing it with the rule's reason, the operator override, and the audit
+  // history holding all three revisions. The rule set is removed at the end whatever happens,
+  // so the next run — and the EP-15.1 test's upload — starts from no rules.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const { randomBytes } = await import('node:crypto');
+
+  const created = await get('/api/v1/acceptance-rules', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      name: 'smoke: no stubs',
+      scope: { sourceKind: 'upload' },
+      rules: [
+        { kind: 'minSizeBytes', onFail: 'quarantine', bytes: 1024 * 1024, label: 'smoke minimum' },
+      ],
+    }),
+  });
+  assert.equal(created.status, 201, `rule set failed: ${created.text}`);
+  const ruleSet = json(created);
+  try {
+    const size = 4096;
+    const upload = json(
+      await get('/api/v1/uploads', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ filename: 'smoke-stub.mxf', sizeBytes: size }),
+      }),
+    );
+    const put = await get(`/api/v1/uploads/${upload.uploadId}/parts/1`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' },
+      body: randomBytes(size),
+    });
+    assert.equal(put.status, 204, `part failed: ${put.text}`);
+    const done = await get(`/api/v1/uploads/${upload.uploadId}/complete`, {
+      method: 'POST',
+      headers,
+    });
+    assert.equal(done.status, 202, `complete failed: ${done.text}`);
+    const job = json(done);
+    assert.equal(job.state, 'detected', 'the request answers before the rules run');
+
+    // The verdict follows the request; poll the job until it has one.
+    const deadline = Date.now() + 20_000;
+    let held;
+    for (;;) {
+      const res = await get(`/api/v1/ingest/${job.id}`, { headers });
+      assert.equal(res.status, 200, `job read failed: ${res.text}`);
+      held = json(res);
+      if (held.state !== 'detected' || Date.now() > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    assert.equal(held.state, 'quarantined', `the rule held it: ${JSON.stringify(held)}`);
+    assert.equal(held.ruleId, ruleSet.rules[0].id);
+    assert.equal(held.ruleSetId, ruleSet.id);
+    assert.match(held.reason, /under the minimum/);
+    assert.match(held.reason, /smoke minimum/);
+    assert.equal(held.receivedPath, undefined, 'a disk path does not cross the wire');
+
+    // The review queue: newest first, filtered to what needs a person.
+    const queue = json(await get('/api/v1/ingest/queue?state=quarantined&limit=50', { headers }));
+    assert.ok(Array.isArray(queue.items), 'the queue is a page');
+    assert.ok(
+      queue.items.some((j) => j.id === job.id),
+      'the held job is in the review queue',
+    );
+
+    // The operator override.
+    const accepted = await get(`/api/v1/ingest/${job.id}/accept`, { method: 'POST', headers });
+    assert.equal(accepted.status, 200, `accept failed: ${accepted.text}`);
+    assert.equal(json(accepted).state, 'accepted');
+    assert.equal(json(accepted).reason, undefined, 'the reason moves to the history');
+    assert.equal(
+      (await get(`/api/v1/ingest/${job.id}/accept`, { method: 'POST', headers })).status,
+      409,
+    );
+
+    // Three revisions in the audit history: detected, held by the rule, released by the operator.
+    const historyDeadline = Date.now() + 20_000;
+    let history;
+    for (;;) {
+      const res = await get(`/api/v1/history/ingest/${job.id}`, { headers });
+      assert.equal(res.status, 200, `history read failed: ${res.text}`);
+      history = json(res);
+      if (history.revisions.length >= 3 || Date.now() > historyDeadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    assert.deepEqual(
+      history.revisions.slice(0, 3).map((r) => [r.revision, r.action]),
+      [
+        [1, 'ingest.detected'],
+        [2, 'ingest.rejected'],
+        [3, 'ingest.accept'],
+      ],
+    );
+    assert.deepEqual(history.revisions[1].delta.state, {
+      before: 'detected',
+      after: 'quarantined',
+    });
+    assert.equal(
+      history.revisions[2].delta.reason?.before,
+      held.reason,
+      'the history keeps why it was held',
+    );
+  } finally {
+    const removed = await get(`/api/v1/acceptance-rules/${ruleSet.id}`, {
+      method: 'DELETE',
+      headers,
+    });
+    assert.equal(removed.status, 204, `rule set cleanup failed: ${removed.text}`);
+  }
+});
+
 test('smoke: EP-18 — a program table is written thinly, read back in reel order, and audited', async () => {
   // Scheduling on a live cluster: create the day, save a reel through the thin write path — with
   // an overlap the backend must NOT refuse (data-model §3.4) — read it back in reel order through

@@ -36,22 +36,38 @@ export interface UploadPart {
 
 export type IngestState =
   'detected' | 'validating' | 'rejected' | 'quarantined' | 'accepted' | 'registered';
+export const INGEST_STATES: readonly IngestState[] = [
+  'detected',
+  'validating',
+  'rejected',
+  'quarantined',
+  'accepted',
+  'registered',
+];
+export type SourceKind = 'upload' | 'ftp' | 'watch' | 'recorder';
 
 export interface IngestJob {
   id: string;
   channelId: string;
   source: string;
-  sourceKind: 'upload' | 'ftp' | 'watch' | 'recorder';
+  sourceKind: SourceKind;
   state: IngestState;
   filename: string;
   sizeBytes: number;
   /** sha256 of the received bytes, lowercase hex. */
   checksum: string;
   contentType?: string;
-  /** Where the assembled bytes sit in RIM's staging area. Internal: not on the wire. */
-  receivedPath: string;
+  /**
+   * Where the received bytes sit in RIM's staging area. Internal: not on the wire. Absent once
+   * the bytes are gone — a rejected job's file is discarded; the row stays as the record.
+   */
+  receivedPath?: string;
   assetId?: string;
+  /** Why it is quarantined or rejected — the failed rule's words, or the operator's. */
   reason?: string;
+  /** The acceptance rule and set that quarantined or rejected it (EP-15.3). */
+  ruleId?: string;
+  ruleSetId?: string;
   createdBy: string;
   createdAt: string;
   updatedAt: string;

@@ -82,13 +82,17 @@ const routes: RoutingTable = [
   // Scheduling (EP-18): the program table.
   { service: 'scheduling', origin: config.schedulingOrigin, prefix: '/api/v1/schedules' },
   // RIM (EP-15.1): the chunked upload. Its parts are the one body on this platform larger than
-  // the JSON cap, so this prefix carries its own. /api/v1/ingest waits for EP-15.6.
+  // the JSON cap, so this prefix carries its own.
   {
     service: 'rim',
     origin: config.rimOrigin,
     prefix: '/api/v1/uploads',
     bodyLimit: config.uploadBodyLimit,
   },
+  // RIM (EP-15.6, EP-15.3): the ingest queue with its review, and the acceptance rules. JSON, the
+  // default cap.
+  { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/ingest' },
+  { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/acceptance-rules' },
 ];
 
 // ⚠️ THIS is the production routing table — not `defaultRoutes` in routing.ts, which is the test

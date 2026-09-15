@@ -12,7 +12,7 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { checkFilename } from './upload.ts';
 
@@ -36,6 +36,12 @@ export interface Staging {
   ): Promise<{ path: string; sizeBytes: number; sha256: string }>;
   /** Remove everything the upload left — parts, the received file, the directory. */
   discard(uploadId: string): Promise<void>;
+  /**
+   * Remove a received file and the directory it sits in — a rejected job's bytes (EP-15.3). The
+   * path must be inside the staging area: a row is data, and a path from a row is not trusted
+   * to name what it says any more than a client's id is.
+   */
+  discardReceived(path: string): Promise<void>;
 }
 
 const PART = /^part-(\d+)$/;
@@ -102,6 +108,14 @@ export function fsStaging(root: string): Staging {
 
     async discard(uploadId) {
       await rm(dirOf(uploadId), { recursive: true, force: true });
+    },
+
+    async discardReceived(path) {
+      const dir = dirname(resolve(path));
+      if (!dir.startsWith(base + sep) || dir === base) {
+        throw new Error(`"${path}" is not a received file in the staging area`);
+      }
+      await rm(dir, { recursive: true, force: true });
     },
   };
 }

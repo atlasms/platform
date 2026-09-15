@@ -1,14 +1,15 @@
 // EP-20.3 — the Ingest/Import panel.
 //
-// The panel is `available: false` until RIM (EP-15) exists, which is precisely why it needs a spec:
-// nothing else will exercise it for months. What it got wrong was reading the contract — three
-// fields the contract leaves OPTIONAL were typed required in a hand-written "generated" file, so
-// the panel rendered "NaN GB" and a raw undefined against a perfectly valid response.
+// Written while the panel was `available: false` (RIM did not exist), which is precisely why it
+// needed a spec: nothing else exercised it for months. What it got wrong was reading the contract
+// — three fields the contract leaves OPTIONAL were typed required in a hand-written "generated"
+// file, so the panel rendered "NaN GB" and a raw undefined against a perfectly valid response.
+// Since EP-15.6 the queue is a PAGE (`{ items, nextCursor }`), like every list on the platform.
 
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { IngestJob } from '../core/generated/rim.types.ts';
+import type { IngestJob, IngestQueuePage } from '../core/generated/rim.types.ts';
 import { IngestService } from '../core/ingest.service.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
@@ -44,14 +45,14 @@ const unsizedJob: IngestJob = {
 
 class FakeIngest {
   listCalls: { limit?: number; cursor?: string }[] = [];
-  lists: Subject<IngestJob[]>[] = [];
+  lists: Subject<IngestQueuePage>[] = [];
   accepts: Subject<IngestJob>[] = [];
   rejectCalls: { id: string; reason: string }[] = [];
   rejects: Subject<IngestJob>[] = [];
 
   list(options: { limit?: number; cursor?: string } = {}) {
     this.listCalls.push(options);
-    const subject = new Subject<IngestJob[]>();
+    const subject = new Subject<IngestQueuePage>();
     this.lists.push(subject);
     return subject;
   }
@@ -124,7 +125,7 @@ describe('IngestPanel', () => {
     const { component, fake } = setup();
     expect(fake.listCalls).toEqual([{ limit: 100 }]);
 
-    fake.lists[0]?.next([job(), unsizedJob]);
+    fake.lists[0]?.next({ items: [job(), unsizedJob] });
     expect(component.jobs()).toHaveLength(2);
     expect(component.loading()).toBe(false);
     expect(component.error()).toBeNull();
@@ -132,7 +133,7 @@ describe('IngestPanel', () => {
 
   it('accepting splices the returned job in rather than refetching the whole queue', () => {
     const { component, fake } = setup();
-    fake.lists[0]?.next([job(), job({ id: '01DEF' })]);
+    fake.lists[0]?.next({ items: [job(), job({ id: '01DEF' })] });
 
     component.accept(job());
     fake.accepts[0]?.next(job({ state: 'accepted' }));
@@ -143,7 +144,7 @@ describe('IngestPanel', () => {
 
   it('rejecting carries the operator reason through to the service', () => {
     const { component, fake } = setup();
-    fake.lists[0]?.next([job()]);
+    fake.lists[0]?.next({ items: [job()] });
 
     component.reject(job(), 'wrong aspect ratio');
     expect(fake.rejectCalls).toEqual([{ id: '01ABC', reason: 'wrong aspect ratio' }]);
@@ -154,7 +155,7 @@ describe('IngestPanel', () => {
 
   it('a failed load reports without leaving the panel stuck on "loading"', () => {
     const { component, fake } = setup();
-    fake.lists[0]?.error(new Error('404 — RIM does not exist yet'));
+    fake.lists[0]?.error(new Error('502 upstream "rim" unreachable'));
 
     expect(component.error()).toBe('Could not load ingest queue.');
     expect(component.loading()).toBe(false);

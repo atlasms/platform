@@ -1,7 +1,8 @@
 // The shape every Atlas service shares (generated with the scaffold, and kept), plus the upload's
 // HTTP surface: every route in the contract, its authorization, and the resumable upload as a
 // client sees it — the part size announced, a part refused by length, a resume, a 413 that is a
-// 413, completion idempotent.
+// 413, completion idempotent. Then the queue, the review and the rule sets (EP-15.3/15.6) as the
+// Ingest panel sees them: the page shape, the 409s, the 422s, and who may do what.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,7 +36,16 @@ async function harness(
   const errors: { correlationId: string; url: string }[] = [];
   const dir = await mkdtemp(join(tmpdir(), 'rim-http-'));
   const store = sqliteRimStore();
-  const service = new RimService({ store, staging: fsStaging(dir), partSizeBytes: PART });
+  const deferred: (() => Promise<void>)[] = [];
+  const service = new RimService({
+    store,
+    staging: fsStaging(dir),
+    partSizeBytes: PART,
+    defer: (task) => deferred.push(task),
+  });
+  const settle = async (): Promise<void> => {
+    while (deferred.length > 0) await deferred.shift()!();
+  };
   const app = await buildRimApp({
     service,
     partSizeBytes: PART,
@@ -54,8 +64,40 @@ async function harness(
     await app.close();
     await rm(dir, { recursive: true, force: true });
   };
-  return { app, store, service, logs, errors, caller, close };
+  return { app, store, service, logs, errors, caller, close, settle };
 }
+
+/** One small upload, completed: the job as the client got it. */
+async function uploadOne(
+  h: Awaited<ReturnType<typeof harness>>,
+  filename: string,
+  size = 16,
+): Promise<{ id: string; state: string }> {
+  const started = await h.app.inject({
+    method: 'POST',
+    url: '/api/v1/uploads',
+    headers: h.caller,
+    payload: { filename, sizeBytes: size },
+  });
+  assert.equal(started.statusCode, 201, started.body);
+  const { uploadId } = started.json<{ uploadId: string }>();
+  const put = await h.app.inject({
+    method: 'PUT',
+    url: `/api/v1/uploads/${uploadId}/parts/1`,
+    headers: octets(h.caller),
+    payload: randomBytes(size),
+  });
+  assert.equal(put.statusCode, 204, put.body);
+  const done = await h.app.inject({
+    method: 'POST',
+    url: `/api/v1/uploads/${uploadId}/complete`,
+    headers: h.caller,
+  });
+  assert.equal(done.statusCode, 202, done.body);
+  return done.json<{ id: string; state: string }>();
+}
+
+const ALL = ['ingest:read', 'ingest:write', 'ingest:approve', 'ingest:admin'];
 
 const octets = (caller: Record<string, string>): Record<string, string> => ({
   ...caller,
@@ -348,4 +390,262 @@ test("SECURITY: ingest:write for every upload route; another channel's upload is
     401,
   );
   await nobody.close();
+});
+
+// --- the queue, the review, the rules (EP-15.3 / EP-15.6) ----------------------------------------------
+
+test('rule sets: create → get → list → replace → delete through the contract; a bad rule is a 422', async () => {
+  const h = await harness({ permissions: ALL });
+  const created = await h.app.inject({
+    method: 'POST',
+    url: '/api/v1/acceptance-rules',
+    headers: h.caller,
+    payload: {
+      name: 'masters',
+      scope: { sourceKind: 'upload' },
+      rules: [{ kind: 'container', onFail: 'reject', containers: ['mxf'] }],
+    },
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  const set = created.json<{
+    id: string;
+    version: number;
+    rules: { id: string }[];
+    enabled: boolean;
+  }>();
+  assert.ok(isUlid(set.id));
+  assert.ok(isUlid(set.rules[0]!.id), 'the rule id is minted');
+  assert.equal(set.enabled, true);
+
+  const listed = await h.app.inject({
+    method: 'GET',
+    url: '/api/v1/acceptance-rules',
+    headers: h.caller,
+  });
+  assert.deepEqual(
+    listed.json<{ id: string }[]>().map((x) => x.id),
+    [set.id],
+  );
+  const one = await h.app.inject({
+    method: 'GET',
+    url: `/api/v1/acceptance-rules/${set.id}`,
+    headers: h.caller,
+  });
+  assert.equal(one.statusCode, 200);
+
+  const bad = await h.app.inject({
+    method: 'PUT',
+    url: `/api/v1/acceptance-rules/${set.id}`,
+    headers: h.caller,
+    payload: { name: 'masters', rules: [{ kind: 'minSizeBytes', onFail: 'reject' }] },
+  });
+  assert.equal(bad.statusCode, 422, bad.body);
+  assert.match(bad.json<{ message: string }>().message, /bytes/);
+
+  const replaced = await h.app.inject({
+    method: 'PUT',
+    url: `/api/v1/acceptance-rules/${set.id}`,
+    headers: h.caller,
+    payload: { name: 'masters v2', rules: [], enabled: false },
+  });
+  assert.equal(replaced.statusCode, 200, replaced.body);
+  assert.equal(replaced.json<{ version: number }>().version, 2);
+
+  assert.equal(
+    (
+      await h.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/acceptance-rules/${set.id}`,
+        headers: h.caller,
+      })
+    ).statusCode,
+    204,
+  );
+  assert.equal(
+    (
+      await h.app.inject({
+        method: 'GET',
+        url: `/api/v1/acceptance-rules/${set.id}`,
+        headers: h.caller,
+      })
+    ).statusCode,
+    404,
+  );
+  await h.close();
+});
+
+test('the queue and the review: a quarantined job listed by state, accepted once, 409 after; a reject needs a reason', async () => {
+  const h = await harness({ permissions: ALL });
+  await h.app.inject({
+    method: 'POST',
+    url: '/api/v1/acceptance-rules',
+    headers: h.caller,
+    payload: {
+      name: 'no stubs',
+      rules: [{ kind: 'minSizeBytes', onFail: 'quarantine', bytes: 1024 }],
+    },
+  });
+  const a = await uploadOne(h, 'a.mxf');
+  const b = await uploadOne(h, 'b.mxf');
+  assert.equal(a.state, 'detected', 'the request answers before validation');
+  await h.settle();
+
+  // GET /ingest/{id}: what a client polls after completing.
+  const polled = await h.app.inject({
+    method: 'GET',
+    url: `/api/v1/ingest/${a.id}`,
+    headers: h.caller,
+  });
+  assert.equal(polled.statusCode, 200);
+  const held = polled.json<{
+    state: string;
+    reason?: string;
+    ruleId?: string;
+    receivedPath?: string;
+  }>();
+  assert.equal(held.state, 'quarantined');
+  assert.match(held.reason ?? '', /under the minimum/);
+  assert.ok(isUlid(held.ruleId ?? ''));
+  assert.equal(held.receivedPath, undefined, 'a disk path does not cross the wire');
+
+  // The queue: the page shape, newest first, filtered by state.
+  const queue = await h.app.inject({
+    method: 'GET',
+    url: '/api/v1/ingest/queue?state=quarantined&limit=1',
+    headers: h.caller,
+  });
+  assert.equal(queue.statusCode, 200, queue.body);
+  const page = queue.json<{
+    items: { id: string; receivedPath?: string }[];
+    nextCursor?: string;
+  }>();
+  assert.deepEqual(
+    page.items.map((j) => j.id),
+    [b.id],
+  );
+  assert.equal(page.nextCursor, b.id);
+  assert.equal(page.items[0]!.receivedPath, undefined);
+  const next = await h.app.inject({
+    method: 'GET',
+    url: `/api/v1/ingest/queue?state=quarantined&limit=1&cursor=${page.nextCursor}`,
+    headers: h.caller,
+  });
+  const page2 = next.json<{ items: { id: string }[]; nextCursor?: string }>();
+  assert.deepEqual(
+    page2.items.map((j) => j.id),
+    [a.id],
+  );
+  assert.equal(page2.nextCursor, undefined, 'the end is the absence of a cursor');
+  for (const q of ['limit=0', 'limit=201', 'state=lost', 'order=sideways', 'cursor=nope']) {
+    const r = await h.app.inject({
+      method: 'GET',
+      url: `/api/v1/ingest/queue?${q}`,
+      headers: h.caller,
+    });
+    assert.equal(r.statusCode, 422, q);
+  }
+
+  // The review.
+  const accepted = await h.app.inject({
+    method: 'POST',
+    url: `/api/v1/ingest/${a.id}/accept`,
+    headers: h.caller,
+  });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  assert.equal(accepted.json<{ state: string; reason?: string }>().state, 'accepted');
+  assert.equal(accepted.json<{ reason?: string }>().reason, undefined);
+  const again = await h.app.inject({
+    method: 'POST',
+    url: `/api/v1/ingest/${a.id}/accept`,
+    headers: h.caller,
+  });
+  assert.equal(again.statusCode, 409);
+  assert.equal(again.json<{ code: string }>().code, 'CONFLICT');
+
+  const noReason = await h.app.inject({
+    method: 'POST',
+    url: `/api/v1/ingest/${b.id}/reject`,
+    headers: h.caller,
+    payload: {},
+  });
+  assert.equal(noReason.statusCode, 422);
+  const rejected = await h.app.inject({
+    method: 'POST',
+    url: `/api/v1/ingest/${b.id}/reject`,
+    headers: h.caller,
+    payload: { reason: 'not ours' },
+  });
+  assert.equal(rejected.statusCode, 200, rejected.body);
+  assert.equal(rejected.json<{ state: string; reason: string }>().reason, 'not ours');
+  assert.equal(
+    (
+      await h.app.inject({
+        method: 'GET',
+        url: '/api/v1/ingest/queue?state=quarantined',
+        headers: h.caller,
+      })
+    ).json<{ items: unknown[] }>().items.length,
+    0,
+  );
+  await h.close();
+});
+
+test("SECURITY: ingest:read for the queue, ingest:approve for the review, ingest:admin for the rules; another channel's job is 404", async () => {
+  const admin = await harness({ permissions: ALL });
+  await admin.app.inject({
+    method: 'POST',
+    url: '/api/v1/acceptance-rules',
+    headers: admin.caller,
+    payload: {
+      name: 'hold all',
+      rules: [{ kind: 'maxSizeBytes', onFail: 'quarantine', bytes: 1 }],
+    },
+  });
+  const job = await uploadOne(admin, 'x.mxf');
+  await admin.settle();
+  const other = { ...admin.caller, [INTERNAL_HEADERS.channel]: 'ch99' };
+  for (const [method, url] of [
+    ['GET', `/api/v1/ingest/${job.id}`],
+    ['POST', `/api/v1/ingest/${job.id}/accept`],
+    ['POST', `/api/v1/ingest/${job.id}/reject`],
+  ] as const) {
+    const r = await admin.app.inject({ method, url, headers: other, payload: { reason: 'x' } });
+    assert.equal(r.statusCode, 404, `${method} ${url} from another channel`);
+  }
+  assert.equal(
+    (await admin.app.inject({ method: 'GET', url: '/api/v1/ingest/queue', headers: other })).json<{
+      items: unknown[];
+    }>().items.length,
+    0,
+    "another channel's queue is empty, not forbidden",
+  );
+
+  // A reader sees the queue and nothing else; a writer cannot review; an approver cannot administer.
+  const matrix: [string[], string, string, number][] = [
+    [['ingest:read'], 'GET', '/api/v1/ingest/queue', 200],
+    [['ingest:write'], 'GET', '/api/v1/ingest/queue', 403],
+    [['ingest:read'], 'POST', `/api/v1/ingest/${job.id}/accept`, 403],
+    [['ingest:write'], 'POST', `/api/v1/ingest/${job.id}/reject`, 403],
+    [['ingest:approve'], 'GET', '/api/v1/acceptance-rules', 403],
+    [['ingest:approve'], 'POST', '/api/v1/acceptance-rules', 403],
+    [['ingest:read'], 'DELETE', '/api/v1/acceptance-rules/01H0000000000000000000000Z', 403],
+  ];
+  for (const [permissions, method, url, status] of matrix) {
+    // Same store, so the same job: a second app over it with a narrower policy.
+    const app = await buildRimApp({
+      service: admin.service,
+      partSizeBytes: PART,
+      policyFor: () => policyFor(permissions),
+    });
+    const r = await app.inject({
+      method: method as 'GET',
+      url,
+      headers: admin.caller,
+      payload: { reason: 'x', name: 'n', rules: [] },
+    });
+    assert.equal(r.statusCode, status, `${permissions.join(',')} ${method} ${url}`);
+    if (status === 403) assert.equal(r.json<{ code: string }>().code, 'FORBIDDEN');
+    await app.close();
+  }
+  await admin.close();
 });

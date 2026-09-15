@@ -3,8 +3,9 @@ info:
   title: Atlas RIM API
   version: 0.1.0
   description: >-
-    Stub contract for Recording & Ingest Management — uploads, watchers, recorders, acceptance
-    rules, and the ingest queue. See ../services/rim.md.
+    Recording & Ingest Management — the chunked upload (EP-15.1), acceptance rules (EP-15.3) and
+    the ingest queue with its quarantine review (EP-15.6) are built; watchers and recorders are
+    still the stub. See ../services/rim.md.
 servers:
   - url: https://{host}/api/v1
     variables:
@@ -89,41 +90,134 @@ paths:
         '202': { description: Ingest job created (state `detected`), content: { application/json: { schema: { $ref: '#/components/schemas/IngestJob' } } } }
         '404': { $ref: '#/components/responses/Error' }
         '409': { description: Parts missing, $ref: '#/components/responses/Error' }
+  # The ingest queue and the quarantine review (EP-15.6; FR-ING-5, FR-ING-7). A job is created
+  # `detected` when its bytes arrive and is validated against the channel's acceptance rules right
+  # after (EP-15.3): `accepted`, `quarantined` (held for an operator, with the reason and the rule)
+  # or `rejected` (discarded, with the reason and the rule; the row stays as the record). An
+  # operator's accept or reject of a quarantined job is the review; anything else is a 409.
   /ingest/queue:
     get:
       operationId: getIngestQueue
       tags: [ingest]
       summary: The Ingest/Import page listing (scope ingest:read)
+      description: >-
+        The caller's channel, newest first by default. KEYSET pagination like every list here:
+        `cursor` is the last id already seen; absent `nextCursor` is the end.
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, required: false, schema: { $ref: '#/components/schemas/Ulid' }, description: The last id from the previous page. }
+        - { name: state, in: query, required: false, schema: { type: string, enum: [detected, validating, rejected, quarantined, accepted, registered] }, description: Only jobs in this state — `quarantined` is the review queue. }
+        - { name: order, in: query, required: false, schema: { type: string, enum: [asc, desc], default: desc }, description: ULID order; newest first by default, because the page is about what just arrived. }
       responses:
-        '200': { description: Queue, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/IngestJob' } } } } }
+        '200': { description: One page of jobs, content: { application/json: { schema: { $ref: '#/components/schemas/IngestQueuePage' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+  /ingest/{id}:
+    get:
+      operationId: getIngestJob
+      tags: [ingest]
+      summary: One ingest job (scope ingest:read) — what a client polls after completing an upload
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: The job, content: { application/json: { schema: { $ref: '#/components/schemas/IngestJob' } } } }
+        '404': { $ref: '#/components/responses/Error' }
   /ingest/{id}/accept:
     post:
       operationId: acceptIngest
       tags: [ingest]
-      summary: Accept a quarantined job (scope ingest:approve)
+      summary: Accept a quarantined job — the operator override (scope ingest:approve)
+      description: >-
+        The job becomes `accepted`; the reason and rule that held it are cleared from the job and
+        kept in its audit history. Only a `quarantined` job can be accepted: 409 otherwise.
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
       responses:
         '200': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/IngestJob' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: Not quarantined, $ref: '#/components/responses/Error' }
   /ingest/{id}/reject:
     post:
       operationId: rejectIngest
       tags: [ingest]
-      summary: Reject a quarantined job (scope ingest:approve)
+      summary: Reject a quarantined job — the operator discard (scope ingest:approve)
+      description: >-
+        The job becomes `rejected` with the operator's reason, `ingest.rejected` is emitted, and the
+        received bytes are discarded from staging. Only a `quarantined` job can be rejected: 409
+        otherwise; a reason is required.
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
-      requestBody: { content: { application/json: { schema: { type: object, properties: { reason: { type: string } } } } } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 1000 }
       responses:
         '200': { description: Rejected, content: { application/json: { schema: { $ref: '#/components/schemas/IngestJob' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: Not quarantined, $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /watchers:
     get: { operationId: listWatchers, tags: [admin], summary: List folder watchers, responses: { '200': { description: Watchers } } }
     post: { operationId: createWatcher, tags: [admin], summary: Create a folder watcher, responses: { '201': { description: Created } } }
   /recorders:
     get: { operationId: listRecorders, tags: [admin], summary: List recorders, responses: { '200': { description: Recorders } } }
     post: { operationId: createRecorder, tags: [admin], summary: Create a recorder, responses: { '201': { description: Created } } }
+  # Acceptance rules (EP-15.3; FR-ING-4). A channel has rule SETS; each set has a scope (every
+  # source, one source kind, or one source — sources themselves are EP-15.2) and rules. A job is
+  # validated against every enabled set whose scope matches it, and the worst failure decides:
+  # `reject` beats `quarantine`; a rule that cannot be evaluated from what is known about the job
+  # (an aspect-ratio rule before the file is probed, EP-15.4) quarantines it for review rather than
+  # letting it through. No applicable rule set means accepted — there is nothing to fail.
   /acceptance-rules:
-    get: { operationId: listAcceptanceRules, tags: [admin], summary: List acceptance rule sets, responses: { '200': { description: Rules } } }
-    post: { operationId: createAcceptanceRules, tags: [admin], summary: Create an acceptance rule set, responses: { '201': { description: Created } } }
+    get:
+      operationId: listAcceptanceRules
+      tags: [admin]
+      summary: The channel's acceptance rule sets (scope ingest:admin)
+      responses:
+        '200': { description: Rule sets, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AcceptanceRuleSet' } } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createAcceptanceRules
+      tags: [admin]
+      summary: Create an acceptance rule set (scope ingest:admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AcceptanceRuleSetInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/AcceptanceRuleSet' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+  /acceptance-rules/{id}:
+    get:
+      operationId: getAcceptanceRules
+      tags: [admin]
+      summary: One rule set (scope ingest:admin)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: The rule set, content: { application/json: { schema: { $ref: '#/components/schemas/AcceptanceRuleSet' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: replaceAcceptanceRules
+      tags: [admin]
+      summary: Replace a rule set — the whole thing, as given (scope ingest:admin)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AcceptanceRuleSetInput' } } } }
+      responses:
+        '200': { description: Replaced; `version` bumped, content: { application/json: { schema: { $ref: '#/components/schemas/AcceptanceRuleSet' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteAcceptanceRules
+      tags: [admin]
+      summary: Remove a rule set (scope ingest:admin)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '204': { description: Removed }
+        '404': { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
@@ -176,11 +270,69 @@ components:
         checksum: { type: string, description: 'sha256 of the received bytes, lowercase hex — computed while the parts were assembled, so it is the checksum of what was actually written.' }
         contentType: { type: string }
         assetId: { $ref: '#/components/schemas/Ulid' }
-        reason: { type: string }
+        reason: { type: string, description: 'Why it is quarantined or rejected: the failed rule''s reason, or the operator''s. Cleared when an operator accepts; the history keeps it.' }
+        ruleId: { $ref: '#/components/schemas/Ulid', description: The acceptance rule that quarantined or rejected it (EP-15.3). }
+        ruleSetId: { $ref: '#/components/schemas/Ulid', description: The rule set that rule belongs to. }
         createdBy: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         version: { type: integer, minimum: 1, description: The audit revision (EP-19.2); every write bumps it. }
+    IngestQueuePage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/IngestJob' } }
+        nextCursor: { $ref: '#/components/schemas/Ulid', description: Absent when the channel is exhausted. }
+    AcceptanceRuleInput:
+      type: object
+      # `kind` is the rule vocabulary and the engine branches on it — a Tier-0 enum (AGENTS.md).
+      # It grows with what is KNOWN about a job: `container` and the size bounds read the file
+      # name and length, which every job has; `aspectRatio` reads the technical metadata, which
+      # arrives with the probe (EP-15.4) — until then a job it applies to is quarantined, never
+      # silently passed. The parameter a kind needs is required for that kind (422 otherwise).
+      required: [kind, onFail]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid', description: Server-minted when omitted; a client that supplies one keeps a stable id across replacements, so a job's `ruleId` still names it. }
+        kind: { type: string, enum: [container, minSizeBytes, maxSizeBytes, aspectRatio] }
+        onFail: { type: string, enum: [reject, quarantine], description: What failing this rule does to the job. `reject` beats `quarantine` when several rules fail. }
+        label: { type: string, maxLength: 200, description: For the reason an operator reads. }
+        containers: { type: array, minItems: 1, items: { type: string, minLength: 1, maxLength: 16 }, description: '`container`: the file extensions accepted, lowercase, no dot (mxf, mov, mp4). The name is the evidence until the probe (EP-15.4) reads the bytes.' }
+        bytes: { type: integer, minimum: 0, description: '`minSizeBytes` / `maxSizeBytes`: the bound, inclusive.' }
+        aspectRatio: { type: string, pattern: '^[1-9][0-9]*:[1-9][0-9]*$', description: '`aspectRatio`: the ratio the picture must have, W:H (16:9).' }
+    AcceptanceRule:
+      allOf:
+        - $ref: '#/components/schemas/AcceptanceRuleInput'
+        - type: object
+          required: [id]
+          properties:
+            id: { $ref: '#/components/schemas/Ulid' }
+    AcceptanceRuleSetInput:
+      type: object
+      required: [name, rules]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        scope:
+          type: object
+          description: Which jobs the set applies to. Empty (or absent) is every job in the channel.
+          properties:
+            sourceKind: { type: string, enum: [upload, ftp, watch, recorder] }
+            sourceId: { type: string, description: One source (EP-15.2); `upload` is the built-in web upload. }
+        rules: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/AcceptanceRuleInput' } }
+        enabled: { type: boolean, default: true, description: A disabled set is kept and not applied. }
+    AcceptanceRuleSet:
+      allOf:
+        - $ref: '#/components/schemas/AcceptanceRuleSetInput'
+        - type: object
+          required: [id, channelId, rules, enabled, createdBy, createdAt, updatedAt, version]
+          properties:
+            id: { $ref: '#/components/schemas/Ulid' }
+            channelId: { type: string }
+            rules: { type: array, items: { $ref: '#/components/schemas/AcceptanceRule' } }
+            enabled: { type: boolean }
+            createdBy: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+            version: { type: integer, minimum: 1, description: The audit revision; every replacement bumps it. }
     Error:
       description: >-
         RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept:

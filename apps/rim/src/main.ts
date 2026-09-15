@@ -24,6 +24,7 @@ import {
   buildRimApp,
   DEFAULT_PART_BYTES,
   DEFAULT_UPLOAD_TTL_MS,
+  DEFAULT_VALIDATE_AFTER_MS,
   fsStaging,
   pgMigrations,
   pgRimStore,
@@ -57,6 +58,13 @@ const config = loadConfig({
   partSizeBytes: { env: 'ATLAS_UPLOAD_PART_BYTES', type: 'number', default: DEFAULT_PART_BYTES },
   uploadTtlMs: { env: 'ATLAS_UPLOAD_TTL_MS', type: 'number', default: DEFAULT_UPLOAD_TTL_MS },
   sweepIntervalMs: { env: 'ATLAS_UPLOAD_SWEEP_INTERVAL_MS', type: 'number', default: 60_000 },
+  // A job still `detected` after this long is one whose validation was lost with the process
+  // (EP-15.3); the sweep tick runs it. Longer than any request, shorter than an operator notices.
+  validateAfterMs: {
+    env: 'ATLAS_INGEST_VALIDATE_AFTER_MS',
+    type: 'number',
+    default: DEFAULT_VALIDATE_AFTER_MS,
+  },
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
   // still propagates, so a site without a collector pays only the cost of an id.
   otlpEndpoint: { env: 'ATLAS_OTLP_ENDPOINT', type: 'string', default: '' },
@@ -120,12 +128,17 @@ const service = new RimService({
   staging: fsStaging(config.stagingDir),
   partSizeBytes: config.partSizeBytes,
   uploadTtlMs: config.uploadTtlMs,
+  validateAfterMs: config.validateAfterMs,
   // The trace context is captured where the event is CREATED, inside the request (EP-13.3): the
   // relay publishes later on a timer with no ambient context at all.
   traceHeaders: () => {
     const traceparent = currentTraceparent();
     return traceparent ? { traceparent } : undefined;
   },
+  // The validation after a completion runs past the request; a failure there is not the
+  // client's 500 — the recovery tick below runs it again, and this is where it is seen.
+  onBackgroundError: (err, context) =>
+    log.error('background task failed', { ...context, error: (err as Error).message }),
 });
 const policies = new PolicyClient({ origin: config.iamOrigin, ttlMs: config.policyTtlMs });
 
@@ -197,7 +210,8 @@ async function startBroker(): Promise<void> {
 
 void startBroker();
 
-// --- the sweeper: abandoned uploads do not keep their parts forever ---------------------------------
+// --- the sweeper: abandoned uploads do not keep their parts forever, and a job whose validation
+// was lost with the process gets it (EP-15.3) --------------------------------------------------------
 let sweepTimer: NodeJS.Timeout | undefined;
 const sweep = async (): Promise<void> => {
   try {
@@ -205,6 +219,12 @@ const sweep = async (): Promise<void> => {
     if (n > 0) log.info('swept expired uploads', { count: n });
   } catch (err) {
     log.error('sweep failed', { error: (err as Error).message });
+  }
+  try {
+    const n = await service.recover();
+    if (n > 0) log.info('validated jobs left detected', { count: n });
+  } catch (err) {
+    log.error('recovery failed', { error: (err as Error).message });
   }
   sweepTimer = setTimeout(() => void sweep(), config.sweepIntervalMs);
 };
