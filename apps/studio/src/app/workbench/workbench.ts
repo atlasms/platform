@@ -26,6 +26,10 @@ const MAX_SIDE_BAR = 640;
  * The routed panel renders in the **side bar**, not the editor area: the activity bar switches
  * which panel's views are shown, while the editor area is tabbed and holds whatever the user
  * opened from them. That separation is the whole point of the workbench model.
+ *
+ * The frame exists only for a session: it is the component of the guarded parent route in
+ * app.routes.ts, so a signed-out caller never sees it — the sign-in screen is full-screen, not a
+ * side-bar panel.
  */
 @Component({
   selector: 'atlas-workbench',
@@ -75,8 +79,10 @@ const MAX_SIDE_BAR = 640;
         <atlas-editor-area />
       </main>
 
+      <!-- The workbench is only routed with a session (app.routes.ts), so the status bar has a
+           user to name; the signals stay optional only because the spec builds the frame bare. -->
       <footer class="status-bar">
-        <span>{{ session.userId() ?? locale.t('auth.signIn') }}</span>
+        <span>{{ session.userId() ?? '—' }}</span>
         <span class="sep">·</span>
         <span>{{ locale.t('workbench.statusBar.channel') }} {{ session.channelId() ?? '—' }}</span>
         @if (session.isAuthenticated()) {
@@ -130,6 +136,7 @@ export class Workbench {
     await this.auth.signOut();
     // Navigate explicitly rather than relying on the guard: the guard only runs on the NEXT
     // navigation, so without this the workbench would sit there rendering a session that is gone.
+    // Leaving the shell's routes unmounts the whole frame; /signin is full-screen.
     await this.router.navigateByUrl('/signin');
   }
 
