@@ -56,6 +56,14 @@ exist.
 Studio starts **anonymous**. There is no seeded session any more, so everything downstream renders
 from the policy IAM actually returns rather than from grants we wrote for ourselves.
 
+**Nothing is reachable without a session.** `/signin` is a full-screen, top-level route — not a
+panel in the side bar — and the workbench is the guarded parent of every panel route
+([`app.routes.ts`](src/app/app.routes.ts)): a signed-out caller at any URL is sent to `/signin`
+with a `returnUrl` to come back to, and the frame (activity bar, status bar, editor area) is never
+constructed for them. A caller who already has a session is sent off `/signin` the same way.
+[`app.routes.spec.ts`](src/app/app.routes.spec.ts) builds the Router from the real table and
+walks both directions; the dev cluster's seed account is `dev` / `dev-password`.
+
 `npm start` proxies `/auth` and `/api` to the gateway on `localhost:30080`, so the dev server talks
 to a real deployed cluster ([infra/k8s](../../infra/k8s/)) — `npm run k8s:up` first.
 

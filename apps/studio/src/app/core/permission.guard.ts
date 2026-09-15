@@ -4,6 +4,18 @@ import { PermissionService } from './permission.service.ts';
 import { SessionStore } from './session.store.ts';
 
 /**
+ * Where a signed-out caller goes: /signin, carrying the URL they asked for so the sign-in can
+ * bring them back. The root itself is not worth carrying.
+ */
+function toSignIn(router: Router) {
+  const wanted = router.getCurrentNavigation()?.extractedUrl.toString() ?? '/';
+  return router.createUrlTree(
+    ['/signin'],
+    wanted !== '/' ? { queryParams: { returnUrl: wanted } } : {},
+  );
+}
+
+/**
  * Refuse a route the user has no permission for.
  *
  * `CanMatch` rather than `CanActivate` on purpose: a non-matching route is skipped entirely, so
@@ -20,10 +32,27 @@ export function requirePermission(permission: string): CanMatchFn {
     const router = inject(Router);
 
     if (!session.isAuthenticated()) {
-      return router.createUrlTree(['/signin']);
+      return toSignIn(router);
     }
     // No redirect on a permission failure: falling through lets a later route match, and the
     // catch-all renders "not available" rather than pretending the URL does not exist.
     return permissions.can(permission);
   };
 }
+
+/**
+ * The workbench's guard: any authenticated session, regardless of grants. On the SHELL, not on
+ * each panel — so without a session there is no frame at all, not a frame with an empty side bar.
+ */
+export const requireSession: CanMatchFn = () => {
+  const session = inject(SessionStore);
+  const router = inject(Router);
+  return session.isAuthenticated() ? true : toSignIn(router);
+};
+
+/** The sign-in screen's guard, the other way round: a session has no business there. */
+export const redirectSignedIn: CanMatchFn = () => {
+  const session = inject(SessionStore);
+  const router = inject(Router);
+  return session.isAuthenticated() ? router.createUrlTree(['/']) : true;
+};
