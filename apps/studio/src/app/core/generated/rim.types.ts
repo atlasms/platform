@@ -6,14 +6,54 @@
 
 export type Ulid = string;
 
+export interface StartUpload {
+  /** The client's file name, kept as the received file's name after sanitising (no path, no control characters). */
+  filename: string;
+  /** The whole file's length. What the parts must add up to. */
+  sizeBytes: number;
+  /** The client's idea of the media type; acceptance (EP-15.3) decides from the bytes */
+  contentType?: string;
+}
+
+export interface Upload {
+  uploadId: Ulid;
+  channelId: string;
+  filename: string;
+  sizeBytes: number;
+  contentType?: string;
+  /** Chosen by the server (ATLAS_UPLOAD_PART_BYTES). Every part but the last is exactly this long. */
+  partSizeBytes: number;
+  /** `ceil(sizeBytes / partSizeBytes)`; parts are numbered 1..partCount. */
+  partCount: number;
+  /** The part numbers the server holds */
+  received: number[];
+  state: 'open' | 'completed';
+  jobId?: Ulid;
+  createdBy?: string;
+  createdAt?: string;
+  /** An open upload not completed by then is swept */
+  expiresAt: string;
+}
+
 export interface IngestJob {
   id: Ulid;
   channelId: string;
+  /** The source that produced it: `upload` for the built-in web upload; a watcher or recorder id later (EP-15.2). */
   source?: string;
+  sourceKind?: 'upload' | 'ftp' | 'watch' | 'recorder';
   state: 'detected' | 'validating' | 'rejected' | 'quarantined' | 'accepted' | 'registered';
+  filename?: string;
   sizeBytes?: number;
+  /** sha256 of the received bytes, lowercase hex — computed while the parts were assembled, so it is the checksum of what was actually written. */
+  checksum?: string;
+  contentType?: string;
   assetId?: Ulid;
   reason?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+  /** The audit revision (EP-19.2); every write bumps it. */
+  version: number;
 }
 
 /** RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept: `code` is the machine key (a closed enum — VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, UNAVAILABLE, INTERNAL), `message` the text. The RFC members are derived from them: `type` is https://atlas.example/problems/<code>, `title` is constant per code, `detail` equals `message`, `instance` is urn:atlas:correlation:<correlationId>. */

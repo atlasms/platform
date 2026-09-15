@@ -11,9 +11,13 @@
 export const RimOperations = {
   /** Start a chunked/resumable upload (scope ingest:write) */
   startUpload: { method: 'POST', path: '/api/v1/uploads', params: [] },
-  /** Upload a chunk (resumable) */
+  /** The upload and the parts the server holds — what a client resumes from (scope ingest:write) */
+  getUpload: { method: 'GET', path: '/api/v1/uploads/{id}', params: ['id'] },
+  /** Abandon an upload; its parts are discarded (scope ingest:write) */
+  abortUpload: { method: 'DELETE', path: '/api/v1/uploads/{id}', params: ['id'] },
+  /** Upload one part (resumable — a part may be sent again) */
   putUploadPart: { method: 'PUT', path: '/api/v1/uploads/{id}/parts/{n}', params: ['id', 'n'] },
-  /** Finalize an upload; creates an ingest job */
+  /** Finalize an upload; assembles the parts and creates an ingest job */
   completeUpload: { method: 'POST', path: '/api/v1/uploads/{id}/complete', params: ['id'] },
   /** The Ingest/Import page listing (scope ingest:read) */
   getIngestQueue: { method: 'GET', path: '/api/v1/ingest/queue', params: [] },

@@ -24,6 +24,12 @@ export interface RouteTarget {
    * the mechanism for that. An operator whose clients have distinct addresses can set it.
    */
   rateLimit?: RateLimitPolicy;
+  /**
+   * A body cap for this prefix, overriding the gateway's default (1 MiB). The upload prefix is
+   * the reason it exists: a chunked upload's parts are the one body larger than the JSON cap, and
+   * raising the cap everywhere to admit them would hand every JSON route the same slack.
+   */
+  bodyLimit?: number;
 }
 
 export type RoutingTable = RouteTarget[];
