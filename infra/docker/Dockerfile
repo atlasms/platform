@@ -73,7 +73,12 @@ WORKDIR /app
 # dumb-init reaps zombies and forwards signals. Without it node runs as PID 1, where the default
 # SIGTERM disposition does not apply — so a rollout would hang until Kubernetes escalated to
 # SIGKILL, dropping in-flight requests every deploy.
-RUN apk add --no-cache dumb-init
+#
+# APK_PACKAGES is what a service needs from the OS beyond Node — passed by ITS entry in
+# `k8s:build`, so only that image carries it: rim's ffprobe (EP-15.4) is the ffmpeg package,
+# ~80 MB the gateway has no use for. Empty for every other service.
+ARG APK_PACKAGES=""
+RUN apk add --no-cache dumb-init ${APK_PACKAGES}
 
 COPY --from=deps --chown=node:node /app /app
 

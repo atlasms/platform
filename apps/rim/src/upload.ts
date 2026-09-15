@@ -5,7 +5,7 @@
 // any other length is refused before it is stored: the assembled file is then `sizeBytes` long by
 // construction, and a client that sliced wrongly finds out at the first part, not at completion.
 
-import { ulid } from '@atlas/contracts';
+import { ulid, type TechnicalMetadata } from '@atlas/contracts';
 import { ValidationError } from '@atlas/service-kit';
 
 export type UploadState = 'open' | 'completed';
@@ -57,6 +57,8 @@ export interface IngestJob {
   /** sha256 of the received bytes, lowercase hex. */
   checksum: string;
   contentType?: string;
+  /** What the probe read from the bytes (EP-15.4). Absent until `validating` has run it. */
+  technicalMetadata?: TechnicalMetadata;
   /**
    * Where the received bytes sit in RIM's staging area. Internal: not on the wire. Absent once
    * the bytes are gone — a rejected job's file is discarded; the row stays as the record.

@@ -26,6 +26,16 @@ export {
   type RuleScope,
   type Verdict,
 } from './acceptance.ts';
+export {
+  aspectRatioOf,
+  DEFAULT_PROBE_TIMEOUT_MS,
+  ffprobeProbe,
+  metadataOf,
+  ProbeRefusal,
+  type FfprobeOptions,
+  type Probe,
+} from './probe.ts';
+export { fakeProbe } from './probe-fake.ts';
 export { fsStaging, type Staging } from './staging.ts';
 export type { JobQuery, RimStore, RimTx } from './store.ts';
 export { pgMigrations, pgRimStore } from './store-pg.ts';

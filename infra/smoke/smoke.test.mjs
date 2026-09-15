@@ -681,6 +681,32 @@ test('smoke: EP-15.1 — a chunked upload through the gateway: parts out of orde
   assert.deepEqual(history.revisions[0].delta.checksum, { after: sha256 });
 });
 
+/**
+ * A real media file with no tools: `seconds` of 8 kHz mono 16-bit silence in a WAV — 44 bytes of
+ * header and the samples. ffprobe reads it (EP-15.4), so an upload of it gets past the probe and
+ * into the acceptance rules, where the tests want it.
+ */
+function silentWav(seconds) {
+  const sampleRate = 8000;
+  const pcm = Buffer.alloc(sampleRate * 2 * seconds);
+  const wav = Buffer.alloc(44 + pcm.length);
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(36 + pcm.length, 4);
+  wav.write('WAVE', 8);
+  wav.write('fmt ', 12);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20); // PCM
+  wav.writeUInt16LE(1, 22); // mono
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(sampleRate * 2, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(pcm.length, 40);
+  pcm.copy(wav, 44);
+  return wav;
+}
+
 test('smoke: EP-15.3/15.6 — an acceptance rule holds an upload; the queue lists it; an operator releases it; every step audited', async () => {
   // The whole ingest loop on a live cluster: a rule set written through the gateway, an upload
   // that fails it, the verdict committed after the request by the validation that follows,
@@ -690,7 +716,6 @@ test('smoke: EP-15.3/15.6 — an acceptance rule holds an upload; the queue list
   const token = await seedToken();
   if (!token) return;
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
-  const { randomBytes } = await import('node:crypto');
 
   const created = await get('/api/v1/acceptance-rules', {
     method: 'POST',
@@ -706,18 +731,19 @@ test('smoke: EP-15.3/15.6 — an acceptance rule holds an upload; the queue list
   assert.equal(created.status, 201, `rule set failed: ${created.text}`);
   const ruleSet = json(created);
   try {
-    const size = 4096;
+    // Real media (the probe reads it, EP-15.4) that is far too small for the rule.
+    const stub = silentWav(1);
     const upload = json(
       await get('/api/v1/uploads', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ filename: 'smoke-stub.mxf', sizeBytes: size }),
+        body: JSON.stringify({ filename: 'smoke-stub.wav', sizeBytes: stub.length }),
       }),
     );
     const put = await get(`/api/v1/uploads/${upload.uploadId}/parts/1`, {
       method: 'PUT',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' },
-      body: randomBytes(size),
+      body: stub,
     });
     assert.equal(put.status, 204, `part failed: ${put.text}`);
     const done = await get(`/api/v1/uploads/${upload.uploadId}/complete`, {
@@ -735,7 +761,8 @@ test('smoke: EP-15.3/15.6 — an acceptance rule holds an upload; the queue list
       const res = await get(`/api/v1/ingest/${job.id}`, { headers });
       assert.equal(res.status, 200, `job read failed: ${res.text}`);
       held = json(res);
-      if (held.state !== 'detected' || Date.now() > deadline) break;
+      if ((held.state !== 'detected' && held.state !== 'validating') || Date.now() > deadline)
+        break;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     assert.equal(held.state, 'quarantined', `the rule held it: ${JSON.stringify(held)}`);
@@ -770,23 +797,24 @@ test('smoke: EP-15.3/15.6 — an acceptance rule holds an upload; the queue list
       const res = await get(`/api/v1/history/ingest/${job.id}`, { headers });
       assert.equal(res.status, 200, `history read failed: ${res.text}`);
       history = json(res);
-      if (history.revisions.length >= 3 || Date.now() > historyDeadline) break;
+      if (history.revisions.length >= 4 || Date.now() > historyDeadline) break;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     assert.deepEqual(
-      history.revisions.slice(0, 3).map((r) => [r.revision, r.action]),
+      history.revisions.slice(0, 4).map((r) => [r.revision, r.action]),
       [
         [1, 'ingest.detected'],
-        [2, 'ingest.rejected'],
-        [3, 'ingest.accept'],
+        [2, 'ingest.validating'],
+        [3, 'ingest.rejected'],
+        [4, 'ingest.accept'],
       ],
     );
-    assert.deepEqual(history.revisions[1].delta.state, {
-      before: 'detected',
+    assert.deepEqual(history.revisions[2].delta.state, {
+      before: 'validating',
       after: 'quarantined',
     });
     assert.equal(
-      history.revisions[2].delta.reason?.before,
+      history.revisions[3].delta.reason?.before,
       held.reason,
       'the history keeps why it was held',
     );
@@ -797,6 +825,90 @@ test('smoke: EP-15.3/15.6 — an acceptance rule holds an upload; the queue list
     });
     assert.equal(removed.status, 204, `rule set cleanup failed: ${removed.text}`);
   }
+});
+
+test('smoke: EP-15.4 — the probe reads a real file: a WAV is accepted with its technical metadata, random bytes are held', async () => {
+  // ffprobe in RIM's image (Dockerfile, APK_PACKAGES=ffmpeg), on a live cluster. The WAV is
+  // built here — 44 bytes of header and a second of silence — so the runner needs no tools; the
+  // job it becomes carries what the probe read, and bytes that are not media are quarantined
+  // with the probe's own reason rather than passed.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const { randomBytes } = await import('node:crypto');
+
+  const wav = silentWav(1);
+
+  const send = async (filename, bytes) => {
+    const upload = json(
+      await get('/api/v1/uploads', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ filename, sizeBytes: bytes.length }),
+      }),
+    );
+    const put = await get(`/api/v1/uploads/${upload.uploadId}/parts/1`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' },
+      body: bytes,
+    });
+    assert.equal(put.status, 204, `part failed: ${put.text}`);
+    const done = await get(`/api/v1/uploads/${upload.uploadId}/complete`, {
+      method: 'POST',
+      headers,
+    });
+    assert.equal(done.status, 202, `complete failed: ${done.text}`);
+    return json(done);
+  };
+  const settled = async (id) => {
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      const res = await get(`/api/v1/ingest/${id}`, { headers });
+      assert.equal(res.status, 200, `job read failed: ${res.text}`);
+      const job = json(res);
+      if ((job.state !== 'detected' && job.state !== 'validating') || Date.now() > deadline)
+        return job;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+
+  const tone = await settled((await send('smoke-silence.wav', wav)).id);
+  assert.equal(tone.state, 'accepted', `the WAV: ${JSON.stringify(tone)}`);
+  assert.equal(tone.technicalMetadata?.container, 'wav');
+  assert.equal(tone.technicalMetadata?.audioCodec, 'pcm_s16le');
+  assert.equal(tone.technicalMetadata?.audioChannels, 1);
+  assert.ok(
+    Math.abs(tone.technicalMetadata?.durationSec - 1) < 0.05,
+    `duration ${tone.technicalMetadata?.durationSec}`,
+  );
+  assert.equal(tone.technicalMetadata?.videoCodec, undefined, 'no picture in a WAV');
+
+  const junk = await settled((await send('smoke-noise.mxf', randomBytes(4096))).id);
+  assert.equal(junk.state, 'quarantined', `random bytes: ${JSON.stringify(junk)}`);
+  assert.match(junk.reason, /could not be probed/);
+  assert.equal(junk.technicalMetadata, undefined);
+
+  // The history shows the step: detected → validating → the verdict.
+  const deadline = Date.now() + 20_000;
+  let history;
+  for (;;) {
+    history = json(await get(`/api/v1/history/ingest/${tone.id}`, { headers }));
+    if (history.revisions.length >= 3 || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.deepEqual(
+    history.revisions.slice(0, 3).map((r) => [r.revision, r.action]),
+    [
+      [1, 'ingest.detected'],
+      [2, 'ingest.validating'],
+      [3, 'ingest.validated'],
+    ],
+  );
+  assert.equal(
+    history.revisions[2].delta.technicalMetadata?.after?.audioCodec,
+    'pcm_s16le',
+    'what the probe read is in the trail',
+  );
 });
 
 test('smoke: EP-18 — a program table is written thinly, read back in reel order, and audited', async () => {

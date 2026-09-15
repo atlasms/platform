@@ -15,6 +15,7 @@ import { compile, type EffectivePolicy, type Rule } from '@atlas/policy';
 import { HealthRegistry, type AccessRecord } from '@atlas/service-kit';
 import {
   buildRimApp,
+  fakeProbe,
   fsStaging,
   INTERNAL_HEADERS,
   RimService,
@@ -40,6 +41,7 @@ async function harness(
   const service = new RimService({
     store,
     staging: fsStaging(dir),
+    probe: fakeProbe(),
     partSizeBytes: PART,
     defer: (task) => deferred.push(task),
   });
@@ -502,11 +504,18 @@ test('the queue and the review: a quarantined job listed by state, accepted once
     reason?: string;
     ruleId?: string;
     receivedPath?: string;
+    technicalMetadata?: { videoCodec?: string; width?: number };
   }>();
   assert.equal(held.state, 'quarantined');
   assert.match(held.reason ?? '', /under the minimum/);
   assert.ok(isUlid(held.ruleId ?? ''));
   assert.equal(held.receivedPath, undefined, 'a disk path does not cross the wire');
+  assert.equal(
+    held.technicalMetadata?.videoCodec,
+    'mpeg2video',
+    'what the probe read is on the wire',
+  );
+  assert.equal(held.technicalMetadata?.width, 1920);
 
   // The queue: the page shape, newest first, filtered by state.
   const queue = await h.app.inject({

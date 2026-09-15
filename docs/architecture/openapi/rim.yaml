@@ -91,9 +91,10 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { description: Parts missing, $ref: '#/components/responses/Error' }
   # The ingest queue and the quarantine review (EP-15.6; FR-ING-5, FR-ING-7). A job is created
-  # `detected` when its bytes arrive and is validated against the channel's acceptance rules right
-  # after (EP-15.3): `accepted`, `quarantined` (held for an operator, with the reason and the rule)
-  # or `rejected` (discarded, with the reason and the rule; the row stays as the record). An
+  # `detected` when its bytes arrive; right after, it is `validating` — the probe reads the bytes
+  # (EP-15.4) and the channel's acceptance rules run (EP-15.3) — and then `accepted`, `quarantined`
+  # (held for an operator, with the reason and the rule; or because the probe could not read the
+  # bytes) or `rejected` (discarded, with the reason and the rule; the row stays as the record). An
   # operator's accept or reject of a quarantined job is the review; anything else is a 409.
   /ingest/queue:
     get:
@@ -269,6 +270,7 @@ components:
         sizeBytes: { type: integer }
         checksum: { type: string, description: 'sha256 of the received bytes, lowercase hex — computed while the parts were assembled, so it is the checksum of what was actually written.' }
         contentType: { type: string }
+        technicalMetadata: { $ref: '#/components/schemas/TechnicalMetadata' }
         assetId: { $ref: '#/components/schemas/Ulid' }
         reason: { type: string, description: 'Why it is quarantined or rejected: the failed rule''s reason, or the operator''s. Cleared when an operator accepts; the history keeps it.' }
         ruleId: { $ref: '#/components/schemas/Ulid', description: The acceptance rule that quarantined or rejected it (EP-15.3). }
@@ -277,6 +279,23 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         version: { type: integer, minimum: 1, description: The audit revision (EP-19.2); every write bumps it. }
+    TechnicalMetadata:
+      # What ffprobe read from the bytes (EP-15.4) — the platform's shape, mirrored from
+      # common.schema.json#/$defs/TechnicalMetadata, which `ingest.accepted` carries (EP-15.5).
+      # Absent until the job has been through `validating`; absent after, when the probe refused
+      # the bytes (the job is then quarantined with the reason).
+      type: object
+      description: ffprobe-derived technical metadata; additive fields allowed.
+      properties:
+        container: { type: string, description: 'The demuxer''s own name (mxf, mov, wav).' }
+        videoCodec: { type: string }
+        audioCodec: { type: string }
+        durationSec: { type: number, minimum: 0 }
+        width: { type: integer, minimum: 0 }
+        height: { type: integer, minimum: 0 }
+        aspectRatio: { type: string, description: 'W:H — the container''s declared display aspect, or the frame''s own reduced ratio.' }
+        audioChannels: { type: integer, minimum: 0 }
+        frameRate: { type: number, minimum: 0 }
     IngestQueuePage:
       type: object
       required: [items]

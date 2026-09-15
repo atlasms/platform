@@ -15,12 +15,15 @@
 // store transaction: the job, `ingest.detected`, and the audit delta commit together, after the
 // bytes are assembled and hashed — the checksum in the job is of what is on disk.
 //
-// VALIDATION FOLLOWS COMPLETION, and is its own transaction. The job is committed `detected`
-// and answered; then the rules run and the verdict — the new state, its reason, `ingest.rejected`
-// when there is one, and the audit delta — commits as one, guarded by the state it started from,
-// so the request's validator and the recovery loop's cannot both apply it. A job left `detected`
-// by a crash between the two is picked up by that loop. The probe (EP-15.4) will take seconds and
-// belongs in exactly this step, which is why it is not folded into the completion request.
+// VALIDATION FOLLOWS COMPLETION, in transactions of its own. The job is committed `detected`
+// and answered; then it is taken to `validating` (guarded by `detected`, so of two validators
+// one takes it), the probe reads the bytes OUTSIDE any transaction — seconds, for a broadcast
+// master — and the verdict — the metadata, the new state, its reason, `ingest.rejected` when
+// there is one, and the audit delta — commits as one, guarded by `validating`. A job left in
+// either state by a crash is picked up by the recovery loop after a grace. What the probe says
+// about the BYTES (not media, or not media it reads) is a verdict: quarantined, for a person.
+// What goes wrong with the TOOL (no binary) is not: the job stays `validating`, the failure is
+// logged and shown by readiness, and the loop tries again.
 
 import {
   buildEnvelope,
@@ -30,6 +33,7 @@ import {
   validatePayload,
   type Envelope,
   type EventPayloads,
+  type TechnicalMetadata,
 } from '@atlas/contracts';
 import type { OutboxRecord } from '@atlas/messaging';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
@@ -45,7 +49,9 @@ import {
   newRuleSet,
   type AcceptanceRuleSet,
   type AcceptanceRuleSetInput,
+  type Verdict,
 } from './acceptance.ts';
+import { ProbeRefusal, type Probe } from './probe.ts';
 import type { Staging } from './staging.ts';
 import type { JobQuery, RimStore, RimTx } from './store.ts';
 import {
@@ -69,11 +75,13 @@ export interface Caller {
 export interface RimServiceOptions {
   store: RimStore;
   staging: Staging;
+  /** Reads what the bytes are (EP-15.4): ffprobe in production, a fake in tests. */
+  probe: Probe;
   /** Every part but the last is exactly this long. Bounded by what the gateway will carry. */
   partSizeBytes?: number;
   /** An open upload not completed within this is swept. */
   uploadTtlMs?: number;
-  /** A job still `detected` after this long is one whose validation was lost; `recover` runs it. */
+  /** A job still `detected` or `validating` after this long lost its validation; `recover` runs it. */
   validateAfterMs?: number;
   now?: () => Date;
   /** Trace context captured into the event where it is created (EP-13.3). */
@@ -114,6 +122,7 @@ function audited(job: IngestJob): Record<string, unknown> {
 export class RimService {
   private readonly store: RimStore;
   private readonly staging: Staging;
+  private readonly probe: Probe;
   private readonly partSizeBytes: number;
   private readonly uploadTtlMs: number;
   private readonly validateAfterMs: number;
@@ -125,6 +134,7 @@ export class RimService {
   constructor(options: RimServiceOptions) {
     this.store = options.store;
     this.staging = options.staging;
+    this.probe = options.probe;
     this.partSizeBytes = options.partSizeBytes ?? DEFAULT_PART_BYTES;
     this.uploadTtlMs = options.uploadTtlMs ?? DEFAULT_UPLOAD_TTL_MS;
     this.validateAfterMs = options.validateAfterMs ?? DEFAULT_VALIDATE_AFTER_MS;
@@ -270,40 +280,76 @@ export class RimService {
     return expired.length;
   }
 
-  // --- validation (EP-15.3) ---------------------------------------------------------------------------
+  // --- validation (EP-15.3, EP-15.4) --------------------------------------------------------------------
 
   /**
-   * Run the channel's acceptance rules over a `detected` job and commit the verdict. Idempotent
-   * and safe to race: a job in any other state is returned as it is, and the write is guarded
-   * by the state it read, so of two validators exactly one applies. System-initiated — the
-   * actor on the events is this service.
+   * Take a `detected` job through `validating` — the probe, then the channel's acceptance
+   * rules — and commit the verdict. Idempotent and safe to race: a job in any other state is
+   * returned as it is; each write is guarded by the state it read, so of two validators one
+   * takes the job and one applies the verdict. A job found already `validating` (a crash mid-
+   * probe, picked up by `recover`) is probed again. System-initiated — the actor is this service.
    */
   async validate(jobId: string): Promise<IngestJob | undefined> {
-    const job = await this.store.job(jobId);
-    if (!job || job.state !== 'detected') return job;
-    const sets = await this.store.ruleSets(job.channelId);
-    const verdict = evaluate(sets, {
-      source: job.source,
-      sourceKind: job.sourceKind,
-      filename: job.filename,
-      sizeBytes: job.sizeBytes,
-    });
-    const at = this.now().toISOString();
+    const found = await this.store.job(jobId);
+    if (!found || (found.state !== 'detected' && found.state !== 'validating')) return found;
+    const origin: Origin = { actor: SERVICE_ACTOR };
+    let job = found;
+    if (job.state === 'detected') {
+      const taken: IngestJob = {
+        ...job,
+        state: 'validating',
+        updatedAt: this.now().toISOString(),
+        version: job.version + 1,
+      };
+      const took = await this.store.transaction(async (tx) => {
+        if (!(await tx.putJob(taken, 'detected'))) return false;
+        await tx.enqueue(this.audit(origin, taken, job, taken, 'ingest.validating'));
+        return true;
+      });
+      if (!took) return this.store.job(jobId);
+      job = taken;
+    }
+
+    // The probe, outside any transaction. What it says about the bytes is a verdict; what goes
+    // wrong with the tool propagates — the job stays `validating` for the loop to retry.
+    let metadata: TechnicalMetadata | undefined;
+    let refusal: string | undefined;
+    if (job.receivedPath === undefined) {
+      refusal = 'there is no received file to read';
+    } else {
+      try {
+        metadata = await this.probe.probe(job.receivedPath);
+      } catch (err) {
+        if (!(err instanceof ProbeRefusal)) throw err;
+        refusal = err.message;
+      }
+    }
+    const verdict: Verdict =
+      refusal !== undefined
+        ? { outcome: 'quarantined', reason: `could not be probed: ${refusal}` }
+        : evaluate(await this.store.ruleSets(job.channelId), {
+            source: job.source,
+            sourceKind: job.sourceKind,
+            filename: job.filename,
+            sizeBytes: job.sizeBytes,
+            ...(metadata !== undefined ? { technicalMetadata: metadata } : {}),
+          });
+
     const next: IngestJob = {
       ...job,
+      ...(metadata !== undefined ? { technicalMetadata: metadata } : {}),
       state: verdict.outcome,
       ...(verdict.reason !== undefined ? { reason: verdict.reason } : {}),
       ...(verdict.ruleId !== undefined ? { ruleId: verdict.ruleId } : {}),
       ...(verdict.ruleSetId !== undefined ? { ruleSetId: verdict.ruleSetId } : {}),
-      updatedAt: at,
+      updatedAt: this.now().toISOString(),
       version: job.version + 1,
     };
     // A rejected job's bytes are garbage by decision. The row keeps the record; the path goes
     // with the file, below, after the commit.
     if (verdict.outcome === 'rejected') delete next.receivedPath;
-    const origin: Origin = { actor: SERVICE_ACTOR };
     const applied = await this.store.transaction(async (tx) => {
-      if (!(await tx.putJob(next, 'detected'))) return false;
+      if (!(await tx.putJob(next, 'validating'))) return false;
       if (verdict.outcome !== 'accepted') {
         await tx.enqueue(
           this.record(origin, job.channelId, 'ingest.rejected', {
@@ -327,13 +373,23 @@ export class RimService {
   }
 
   /**
-   * Validate the jobs whose validation never ran — `detected` for longer than a request takes.
-   * Run on a timer by main.ts alongside the sweeper; returns how many it took.
+   * Validate the jobs whose validation never finished — `detected` or `validating` for longer
+   * than a probe takes. Run on a timer by main.ts alongside the sweeper; returns how many it
+   * took. A tool failure on one job is reported and the rest still run.
    */
   async recover(limit = 100): Promise<number> {
     const before = new Date(this.now().getTime() - this.validateAfterMs).toISOString();
-    const stale = await this.store.jobsInState('detected', before, limit);
-    for (const job of stale) await this.validate(job.id);
+    const stale = [
+      ...(await this.store.jobsInState('detected', before, limit)),
+      ...(await this.store.jobsInState('validating', before, limit)),
+    ];
+    for (const job of stale) {
+      try {
+        await this.validate(job.id);
+      } catch (err) {
+        this.onBackgroundError(err, { task: 'recover', jobId: job.id });
+      }
+    }
     return stale.length;
   }
 

@@ -24,7 +24,9 @@ import {
   buildRimApp,
   DEFAULT_PART_BYTES,
   DEFAULT_UPLOAD_TTL_MS,
+  DEFAULT_PROBE_TIMEOUT_MS,
   DEFAULT_VALIDATE_AFTER_MS,
+  ffprobeProbe,
   fsStaging,
   pgMigrations,
   pgRimStore,
@@ -64,6 +66,13 @@ const config = loadConfig({
     env: 'ATLAS_INGEST_VALIDATE_AFTER_MS',
     type: 'number',
     default: DEFAULT_VALIDATE_AFTER_MS,
+  },
+  // The probe (EP-15.4): ffprobe from the image's ffmpeg package (Dockerfile, APK_PACKAGES).
+  ffprobeBin: { env: 'ATLAS_FFPROBE_BIN', type: 'string', default: 'ffprobe' },
+  probeTimeoutMs: {
+    env: 'ATLAS_PROBE_TIMEOUT_MS',
+    type: 'number',
+    default: DEFAULT_PROBE_TIMEOUT_MS,
   },
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
   // still propagates, so a site without a collector pays only the cost of an id.
@@ -123,9 +132,11 @@ await migrateWithRetry();
 await mkdir(config.stagingDir, { recursive: true });
 
 const store = pgRimStore(pool);
+const probe = ffprobeProbe({ binary: config.ffprobeBin, timeoutMs: config.probeTimeoutMs });
 const service = new RimService({
   store,
   staging: fsStaging(config.stagingDir),
+  probe,
   partSizeBytes: config.partSizeBytes,
   uploadTtlMs: config.uploadTtlMs,
   validateAfterMs: config.validateAfterMs,
@@ -152,7 +163,11 @@ const health = new HealthRegistry()
   )
   .register('postgres', async () => (await pool.query('SELECT 1').catch(() => null)) !== null, {
     critical: true,
-  });
+  })
+  // Not critical: uploads are still taken without the probe — they wait in `validating` and the
+  // recovery tick runs them once the tool is back. But a deploy without the binary is a
+  // deployment bug, and this is where it shows before a job does.
+  .register('ffprobe', () => probe.available(), { critical: false });
 
 const app = await buildRimApp({
   service,
