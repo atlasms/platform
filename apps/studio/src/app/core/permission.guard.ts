@@ -27,10 +27,3 @@ export function requirePermission(permission: string): CanMatchFn {
     return permissions.can(permission);
   };
 }
-
-/** Any authenticated session, regardless of grants. */
-export const requireSession: CanMatchFn = () => {
-  const session = inject(SessionStore);
-  const router = inject(Router);
-  return session.isAuthenticated() ? true : router.createUrlTree(['/signin']);
-};
