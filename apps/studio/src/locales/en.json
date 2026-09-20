@@ -74,8 +74,7 @@
       "rejected": "Rejected",
       "accepted": "Accepted",
       "registered": "Registered"
-    },
-    "uploadUnavailable": "The uploader is not built yet (EP-20.3); the service accepts uploads (EP-15.1)."
+    }
   },
   "dashboard": {
     "title": "Dashboard",
@@ -205,5 +204,23 @@
     "loadError": "Could not load schedules.",
     "createError": "Could not create the program table.",
     "tabPrefix": "Schedule"
+  },
+  "transfers": {
+    "title": "Transfers",
+    "active": "active",
+    "idle": "nothing in progress",
+    "minimize": "Minimize transfers",
+    "expand": "Expand transfers",
+    "clear": "Clear finished",
+    "dismiss": "Dismiss",
+    "state": {
+      "queued": "Queued",
+      "uploading": "Uploading",
+      "completing": "Assembling",
+      "validating": "Validating",
+      "done": "Done",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    }
   }
 }
