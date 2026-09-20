@@ -21,7 +21,7 @@ export {
   type LogFilter,
   type RetentionPolicy,
 } from './store.ts';
-export { requiredPermission, visible } from './visibility.ts';
+export { entityPermission, requiredPermission, visible } from './visibility.ts';
 export { sqliteAuditStore, sqliteMigrations } from './store-sqlite.ts';
 export { pgAuditStore, pgMigrations } from './store-pg.ts';
 export {

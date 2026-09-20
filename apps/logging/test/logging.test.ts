@@ -519,5 +519,29 @@ test('SECURITY: retention is governance — compliance:admin for the read and th
   });
   assert.equal(other.json<{ defaults: boolean; channelId: string }>().defaults, true);
   assert.equal(other.json<{ channelId: string }>().channelId, 'ch99');
+
+  // The policy's HISTORY is governance too: compliance:admin (with logs:read), not a
+  // `retention-policy:read` nobody holds — the same exception identities make with user:admin.
+  const history = await admin.app.inject({
+    method: 'GET',
+    url: '/api/v1/history/retention-policy/ch12',
+    headers: admin.caller,
+  });
+  assert.equal(history.statusCode, 403, 'logs:read is still the door');
   await admin.app.close();
+  const auditor = await harness({ permissions: ['logs:read', 'compliance:admin'] });
+  await auditor.app.inject({
+    method: 'PUT',
+    url: '/api/v1/retention-policies',
+    headers: { ...auditor.caller, 'content-type': 'application/json' },
+    payload: { hotDays: 3, coldDays: 0 },
+  });
+  const read = await auditor.app.inject({
+    method: 'GET',
+    url: '/api/v1/history/retention-policy/ch12',
+    headers: auditor.caller,
+  });
+  assert.equal(read.statusCode, 200, read.body);
+  assert.equal(read.json<{ revisions: unknown[] }>().revisions.length, 1);
+  await auditor.app.close();
 });
