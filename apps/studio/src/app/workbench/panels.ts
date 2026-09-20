@@ -104,9 +104,12 @@ export const PANELS: readonly PanelDefinition[] = [
     id: 'admin',
     titleKey: 'workbench.panels.admin',
     icon: '⚙',
-    permission: 'admin:read',
+    // `user:admin` — the permission every operation on the first view (Users, EP-20.7) needs.
+    // Groups, roles, field schemas and theme are the panel's later views; each will reveal
+    // itself by its own permission when it exists.
+    permission: 'user:admin',
     route: '/admin',
-    available: false,
+    available: true,
   },
   {
     id: 'logs',

@@ -40,6 +40,15 @@ the queue at the top. **EP-20.8** — the transfer tray
 ([`transfer-tray.ts`](src/app/workbench/transfer-tray.ts)): bottom corner of the frame,
 minimizable, grouped progress and per-transfer cancel/retry/dismiss. See below.
 **EP-20.4** — the Search panel: simple query against MAM search, results open in the asset editor.
+**EP-20.7** — user management (basic): the **Admin** panel's first view, Users, revealed by
+`user:admin` — the keyset list, a new user, and each user as an **editor tab**
+([`user-editor.ts`](src/app/editors/user-editor.ts)): the display name (the one dirty field),
+disable/enable/unlock with the consequence on the button (disabling signs the user out
+everywhere), a new password, and the direct grants — a role from the channel's and the starter
+roles, or an inline rule (permissions, scoped to the user's channel, a ULID minted in the
+browser) — each its own request against IAM (EP-10.4/10.6), because each is its own audited
+mutation there. Disabling yourself is refused in Studio before IAM refuses it. Groups, roles,
+field schemas and theme are the panel's later views.
 **EP-20.6** — the dashboard: an editor tab opened as the default landing view — system-state
 counts and what's-new against real MAM, live-refreshed. State counts page the channel with a
 1000-asset cap; a real counts endpoint is a follow-up.
