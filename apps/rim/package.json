@@ -20,7 +20,7 @@
     "@atlas/messaging-nats": "*",
     "@atlas/policy": "*",
     "@atlas/service-kit": "*",
-    "fastify": "^5.12.3"
+    "fastify": "^5.12.5"
   },
   "devDependencies": {
     "tsx": "^4.23.13"
