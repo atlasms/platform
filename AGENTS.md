@@ -109,7 +109,7 @@ that write's own audit history read back through the gateway.
 Studio signs in against it for real — `npm run k8s:up`, then `npm start -w @atlas/studio`, which
 proxies `/auth` and `/api` to the gateway.
 
-**Suggested next tasks:** `EP-14` HSM (accepted files wait in staging for it, `ingest.accepted` (15.5) needs the asset it lets MAM mint, and the audit log's cold tier needs the storage; **§5.7: two reviewers + pairing, not AI-fast-tracked**) · `EP-07.5` IaC · finish `EP-20.2` per-file rows after
+**Suggested next tasks:** `EP-14` HSM (accepted files wait in staging for it, `ingest.accepted` (15.5) needs the asset it lets MAM mint, and the audit log's cold tier needs the storage; **§5.7: two reviewers + pairing, not AI-fast-tracked**) · finish `EP-20.2` per-file rows after
 EP-17.8. Two decisions are waiting on a human before code, both recorded on their issues: RFC 9457 for errors (#72) and how API clients get generated (#57). Every other open Phase-0/1 story is blocked on a service that does not exist yet — and when one is started, it starts with `npx nx g service <name>`.
 
 > **Adapters are separate packages, held to shared conformance suites.** `@atlas/messaging` and
