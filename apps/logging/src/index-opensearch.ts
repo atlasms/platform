@@ -65,6 +65,14 @@ export interface AuditIndex extends LogBrowser {
   index(events: readonly AuditEvent[]): Promise<void>;
   /** Drop the whole index. The rebuild is the projector's next tick. */
   drop(): Promise<void>;
+  /**
+   * Retention (EP-19.4): remove a channel's documents that occurred before `before` AND sit
+   * below `belowSeq` — never the channel's head. The index IS the projector's checkpoint (its
+   * per-channel max seq), so trimming the newest document would make the next tick re-index the
+   * channel from the start, and the trim after that remove it again, forever. Returns how many
+   * went.
+   */
+  trim(channelId: string, before: string, belowSeq: number): Promise<number>;
 }
 
 export function openSearchAuditIndex(
@@ -163,6 +171,29 @@ export function openSearchAuditIndex(
       guard(async () => {
         await client.indices.delete({ index, ignore_unavailable: true });
       }),
+
+    async trim(channelId, before, belowSeq) {
+      const { body } = await guard(() =>
+        client.deleteByQuery({
+          index,
+          // Searchable at once, so a browse straight after the tick sees the trimmed window and
+          // the next `heads()` is exact; conflicts are impossible — nothing updates a document.
+          refresh: true,
+          body: {
+            query: {
+              bool: {
+                filter: [
+                  { term: { channel_id: channelId } },
+                  { range: { occurred_at: { lt: before } } },
+                  { range: { seq: { lt: belowSeq } } },
+                ],
+              },
+            },
+          },
+        }),
+      );
+      return Number((body as { deleted?: number }).deleted ?? 0);
+    },
   };
 }
 

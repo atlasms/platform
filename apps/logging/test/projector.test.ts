@@ -7,42 +7,14 @@ import assert from 'node:assert/strict';
 import { buildEnvelope, ulid } from '@atlas/contracts';
 import {
   ingest,
+  memoryAuditIndex,
   sqliteAuditStore,
   startProjector,
-  type AuditEvent,
   type AuditIndex,
   type AuditStore,
 } from '../src/index.ts';
 
-/** An AuditIndex in a Map, with the same "keyed by messageId" and "heads" semantics. */
-function memoryIndex(opts: { failNext?: () => boolean } = {}) {
-  const docs = new Map<string, AuditEvent>();
-  let bulks = 0;
-  const index: AuditIndex = {
-    ready: async () => undefined,
-    heads: async () => {
-      const heads = new Map<string, number>();
-      for (const e of docs.values())
-        heads.set(e.channelId, Math.max(heads.get(e.channelId) ?? 0, e.seq));
-      return [...heads].map(([channelId, seq]) => ({ channelId, seq }));
-    },
-    index: async (events) => {
-      bulks += 1;
-      if (opts.failNext?.()) throw new Error('bulk refused');
-      for (const e of events) docs.set(e.messageId, e);
-    },
-    browse: async (channelId, filter) =>
-      [...docs.values()]
-        .filter(
-          (e) =>
-            e.channelId === channelId && (filter.before === undefined || e.seq < filter.before),
-        )
-        .sort((a, b) => b.seq - a.seq)
-        .slice(0, filter.limit),
-    drop: async () => docs.clear(),
-  };
-  return { index, docs, bulks: () => bulks };
-}
+const memoryIndex = memoryAuditIndex;
 
 async function put(store: AuditStore, channelId = 'ch12'): Promise<void> {
   const envelope = buildEnvelope({

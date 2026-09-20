@@ -22,14 +22,25 @@ import type { AuditEvent } from './store.ts';
 export function requiredPermission(event: AuditEvent): string {
   if (event.type === 'audit.recorded') {
     const entityType = (event.payload as { entityType?: unknown } | null)?.entityType;
-    const entity = typeof entityType === 'string' ? entityType : 'audit';
-    return IAM_DOMAINS.has(entity) ? 'user:admin' : `${entity}:read`;
+    return entityPermission(typeof entityType === 'string' ? entityType : 'audit');
   }
-  const domain = event.type.split('.')[0] ?? event.type;
-  return IAM_DOMAINS.has(domain) ? 'user:admin' : `${domain}:read`;
+  return entityPermission(event.type.split('.')[0] ?? event.type);
+}
+
+/**
+ * The read permission of an entity type — for its history and for its entries in the browse, one
+ * answer. `<type>:read` by default; the exceptions are the domains whose administration is one
+ * permission with no `:read` beside it: identities (`user:admin`), and the audit log's own
+ * governance (`compliance:admin` — a retention policy's history is read by whoever may set it).
+ */
+export function entityPermission(entityType: string): string {
+  if (IAM_DOMAINS.has(entityType)) return 'user:admin';
+  if (GOVERNANCE.has(entityType)) return 'compliance:admin';
+  return `${entityType}:read`;
 }
 
 const IAM_DOMAINS: ReadonlySet<string> = new Set(['user', 'group', 'role', 'permissions']);
+const GOVERNANCE: ReadonlySet<string> = new Set(['retention-policy']);
 
 /**
  * STRICT evaluation with the full context. The channel is known and the permission is derived

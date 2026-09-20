@@ -122,6 +122,31 @@ if (!URL) {
     }
   });
 
+  test('[OpenSearch index] trim removes what occurred before the cutoff and sits below the head — never the head', async () => {
+    const h = await harness();
+    try {
+      // Five records; the store's clock is now, so "before" is chosen around the records' own
+      // occurredAt: everything is trimmed except what the seq floor protects.
+      for (let i = 0; i < 5; i += 1) await put(h.store);
+      await h.projector.tick();
+      const chain = await h.store.chain('ch12');
+      const head = chain[chain.length - 1]!;
+      const future = new Date(Date.now() + 60_000).toISOString();
+      assert.equal(await h.index.trim('ch12', future, head.seq), 4, 'four below the head');
+      assert.deepEqual(await h.index.heads(), [{ channelId: 'ch12', seq: head.seq }]);
+      assert.equal(await h.index.trim('ch12', future, head.seq), 0, 'idempotent');
+      // The head survives whatever the cutoff, so the projector's checkpoint does.
+      assert.equal(
+        (await h.index.browse('ch12', { limit: 10 })).map((e) => e.seq).join(','),
+        String(head.seq),
+      );
+      await put(h.store);
+      assert.equal(await h.projector.tick(), 1, 'the next tick resumes from the kept head');
+    } finally {
+      await h.cleanup();
+    }
+  });
+
   test('[OpenSearch index] an engine that cannot be reached is a 503 problem, not a 500', async () => {
     const client = openSearch({ node: 'http://127.0.0.1:1', requestTimeoutMs: 500 });
     const index = openSearchAuditIndex(client, { index: unique() });

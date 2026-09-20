@@ -110,6 +110,23 @@ export interface LogBrowser {
   browse(channelId: string, filter: LogFilter): Promise<AuditEvent[]>;
 }
 
+/**
+ * A channel's retention policy (EP-19.4; logging-analytics.md §3, §6.3). `hotDays` is how long
+ * a record stays in the search index; `coldDays` how long it is kept at all after that — `0` is
+ * forever, and until there is a cold tier to move it to (object storage, EP-14) every record IS
+ * kept forever in Postgres, so `coldDays` is recorded and not yet acted on. `legalHold` pauses
+ * every tier move for the channel.
+ */
+export interface RetentionPolicy {
+  channelId: string;
+  hotDays: number;
+  coldDays: number;
+  legalHold: boolean;
+  version: number;
+  updatedAt: string;
+  updatedBy: string;
+}
+
 export interface AuditStore extends LogBrowser {
   /** The unit of work. Everything a consumer does for one message happens inside ONE of these. */
   transaction<T>(fn: (tx: AuditTx) => Promise<T>): Promise<T>;
@@ -125,6 +142,8 @@ export interface AuditStore extends LogBrowser {
   heads(): Promise<ChainHead[]>;
   chainSince(channelId: string, afterSeq: number, limit: number): Promise<AuditEvent[]>;
   count(): Promise<{ events: number; history: number }>;
+  /** The channel's stored policy, if an operator has set one. Absent means the defaults apply. */
+  retentionPolicy(channelId: string): Promise<RetentionPolicy | undefined>;
   close(): Promise<void>;
 }
 
@@ -138,6 +157,8 @@ export interface AuditTx {
   head(channelId: string): Promise<ChainHead | undefined>;
   append(event: AuditEvent): Promise<void>;
   appendHistory(entry: HistoryEntry): Promise<void>;
+  /** Write a channel's policy — one row per channel, replaced whole. */
+  putRetentionPolicy(policy: RetentionPolicy): Promise<void>;
 }
 
 /** What the first record in a channel chains from. Fixed, so a chain is verifiable from nothing. */

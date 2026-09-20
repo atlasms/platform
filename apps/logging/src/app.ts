@@ -8,10 +8,18 @@
 // same tests). What a service DOES goes in `service.ts` and its routes below the marker.
 
 import Fastify, { type FastifyInstance } from 'fastify';
-import { isUlid, ulid } from '@atlas/contracts';
+import { buildEnvelope, delta, isUlid, ulid, type EventPayloads } from '@atlas/contracts';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
-import type { AuditStore, LogBrowser, LogFilter } from './store.ts';
-import { visible } from './visibility.ts';
+import {
+  DEFAULT_COLD_DAYS,
+  DEFAULT_HOT_DAYS,
+  effectivePolicy,
+  parseRetentionPolicyInput,
+  type RetentionDefaults,
+} from './retention.ts';
+import { appendEnvelope } from './sink.ts';
+import type { AuditStore, LogBrowser, LogFilter, RetentionPolicy } from './store.ts';
+import { entityPermission, visible } from './visibility.ts';
 import {
   accessRecord,
   Forbidden,
@@ -55,6 +63,9 @@ export interface LoggingAppOptions {
   accessLogPolicy?: AccessLogPolicy;
   /** Every 5xx, where it is raised, with the correlation id the caller was given. */
   onError?: (err: unknown, context: { correlationId: string; url: string }) => void;
+  /** The retention a channel has until an operator sets one (EP-19.4). */
+  retentionDefaults?: RetentionDefaults;
+  now?: () => Date;
 }
 
 /** Header names the gateway establishes and this service trusts. It never sees a token. */
@@ -237,7 +248,7 @@ export async function buildLoggingApp(options: LoggingAppOptions): Promise<Fasti
 
       const { entityType, id } = req.params;
       const context = { channelId: caller.channelId };
-      for (const permission of ['logs:read', `${entityType}:read`]) {
+      for (const permission of ['logs:read', entityPermission(entityType)]) {
         const decision = canEnforce(policy, permission, context);
         if (!decision.allowed) throw new Forbidden(decision.reason ?? `missing ${permission}`);
       }
@@ -334,6 +345,78 @@ export async function buildLoggingApp(options: LoggingAppOptions): Promise<Fasti
   app.post<{ Body: Record<string, unknown> | null }>('/api/v1/logs/query', async (req) =>
     browse(req.headers, parseFilter(req.body ?? {})),
   );
+
+  // --- retention (EP-19.4) --------------------------------------------------------------------------
+  //
+  // One policy per channel, the caller's. `compliance:admin` for both the read and the write:
+  // how long the audit log is hot is governance, not something every reader of the log needs to
+  // know. The write is this service's own mutation, and it is audited the way every mutation on
+  // the platform is — a field-level delta at the next revision — but appended to the log
+  // DIRECTLY, in the transaction of the change, since the log is here.
+
+  const defaults = options.retentionDefaults ?? {
+    hotDays: DEFAULT_HOT_DAYS,
+    coldDays: DEFAULT_COLD_DAYS,
+  };
+  const now = options.now ?? (() => new Date());
+
+  const governor = async (headers: Record<string, string | string[] | undefined>) => {
+    const caller = callerOf(headers);
+    const policy = await options.policyFor(caller.userId);
+    if (!policy) throw new Unauthorized('no policy for subject');
+    const decision = canEnforce(policy, 'compliance:admin', { channelId: caller.channelId });
+    if (!decision.allowed) throw new Forbidden(decision.reason ?? 'missing compliance:admin');
+    return caller;
+  };
+
+  /** Never `updatedBy` in the delta as an identity is not a label: it is a field, and audited. */
+  const wire = (policy: RetentionPolicy) => ({ ...policy, defaults: policy.version === 0 });
+
+  app.get('/api/v1/retention-policies', async (req) => {
+    const caller = await governor(req.headers);
+    return wire(
+      effectivePolicy(
+        caller.channelId,
+        await options.store.retentionPolicy(caller.channelId),
+        defaults,
+      ),
+    );
+  });
+
+  app.put<{ Body: unknown }>('/api/v1/retention-policies', async (req, reply) => {
+    const caller = await governor(req.headers);
+    const input = parseRetentionPolicyInput(req.body);
+    const before = await options.store.retentionPolicy(caller.channelId);
+    const next: RetentionPolicy = {
+      channelId: caller.channelId,
+      ...input,
+      version: (before?.version ?? 0) + 1,
+      updatedAt: now().toISOString(),
+      updatedBy: caller.userId,
+    };
+    const envelope = buildEnvelope({
+      type: 'audit.recorded',
+      channelId: caller.channelId,
+      actor: { kind: 'user', id: caller.userId },
+      correlationId: req.correlationId,
+      payload: {
+        entityType: 'retention-policy',
+        entityId: caller.channelId,
+        revision: next.version,
+        action: 'retention-policy.updated',
+        origin: { service: 'logging' },
+        delta: delta(
+          before as unknown as Record<string, unknown> | undefined,
+          next as unknown as Record<string, unknown>,
+        ),
+      } satisfies EventPayloads['audit.recorded'],
+    });
+    await options.store.transaction(async (tx) => {
+      await tx.putRetentionPolicy(next);
+      await appendEnvelope(tx, envelope);
+    });
+    return reply.code(200).send(wire(next));
+  });
 
   return app;
 }

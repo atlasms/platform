@@ -79,6 +79,8 @@ const routes: RoutingTable = [
   // Logging (EP-19): the audit history read surface; `/logs` is 19.3.
   { service: 'logging', origin: config.loggingOrigin, prefix: '/api/v1/history' },
   { service: 'logging', origin: config.loggingOrigin, prefix: '/api/v1/logs' },
+  // EP-19.4: the audit log's retention policy, governance behind compliance:admin.
+  { service: 'logging', origin: config.loggingOrigin, prefix: '/api/v1/retention-policies' },
   // Scheduling (EP-18): the program table.
   { service: 'scheduling', origin: config.schedulingOrigin, prefix: '/api/v1/schedules' },
   // RIM (EP-15.1): the chunked upload. Its parts are the one body on this platform larger than

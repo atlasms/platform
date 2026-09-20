@@ -88,9 +88,27 @@ paths:
         - { name: name, in: path, required: true, schema: { type: string } }
       responses:
         '200': { description: Report, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  # Retention (EP-19.4; §6.3, NFR-CMP-2). ONE policy per channel — the caller's — rather than a
+  # list of scoped policies: the scope of §3's RetentionPolicy is the channel, as built, and a
+  # finer scope (per log category) is a later story. `GET` answers the policy in force, which is
+  # the deployment's defaults until an operator sets one (`defaults: true`). Every write is
+  # audited into the log itself at the policy's next version.
   /retention-policies:
-    get: { operationId: listRetentionPolicies, tags: [admin], summary: List retention policies, responses: { '200': { description: Policies } } }
-    post: { operationId: createRetentionPolicy, tags: [admin], summary: Create a retention policy (scope compliance:admin), responses: { '201': { description: Created } } }
+    get:
+      operationId: getRetentionPolicy
+      tags: [admin]
+      summary: The caller's channel's retention policy, or the defaults (scope compliance:admin)
+      responses:
+        '200': { description: The policy in force, content: { application/json: { schema: { $ref: '#/components/schemas/RetentionPolicy' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: putRetentionPolicy
+      tags: [admin]
+      summary: Replace the caller's channel's retention policy (scope compliance:admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RetentionPolicyInput' } } } }
+      responses:
+        '200': { description: Replaced; `version` bumped, content: { application/json: { schema: { $ref: '#/components/schemas/RetentionPolicy' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
   /visibility-rules:
     get: { operationId: listVisibilityRules, tags: [admin], summary: List log-visibility rules, responses: { '200': { description: Rules } } }
     post: { operationId: createVisibilityRule, tags: [admin], summary: Create a visibility rule (scope compliance:admin), responses: { '201': { description: Created } } }
@@ -98,6 +116,25 @@ components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   schemas:
+    RetentionPolicyInput:
+      type: object
+      required: [hotDays, coldDays]
+      properties:
+        hotDays: { type: integer, minimum: 1, maximum: 36500, description: How long a record stays in the search index. Older records are read from the system of record — slower, never gone. }
+        coldDays: { type: integer, minimum: 0, maximum: 36500, description: How long a record is kept after it leaves the hot tier; 0 is forever. Recorded, and acted on once there is a cold tier to move records to (object storage, EP-14) — until then every record is kept. }
+        legalHold: { type: boolean, default: false, description: Pauses every tier move for the channel while set. }
+    RetentionPolicy:
+      allOf:
+        - $ref: '#/components/schemas/RetentionPolicyInput'
+        - type: object
+          required: [channelId, legalHold, version, updatedAt, updatedBy, defaults]
+          properties:
+            channelId: { type: string }
+            legalHold: { type: boolean }
+            version: { type: integer, minimum: 0, description: 0 while the defaults apply; the audit revision after. }
+            updatedAt: { type: string, description: Empty while the defaults apply. }
+            updatedBy: { type: string, description: Empty while the defaults apply. }
+            defaults: { type: boolean, description: True when no operator has set a policy and the deployment's defaults are in force. }
     LogQuery:
       type: object
       additionalProperties: false

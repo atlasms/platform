@@ -180,6 +180,8 @@ if (seedUser && seedPassword) {
           'ingest:write',
           'ingest:approve',
           'ingest:admin',
+          // EP-19.4: the audit log's retention policy, so the smoke suite can set and read it.
+          'compliance:admin',
         ],
         scope: { channelIds: [channelId] },
       },
