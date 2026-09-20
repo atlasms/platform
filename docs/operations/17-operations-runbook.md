@@ -48,6 +48,12 @@ readiness probes enforce this without manual sequencing.
 - Sizing per [hardware requirements](../requirements/07-hardware-requirements.md) for the tier.
 
 ### 3.2 Connected install
+> **As built:** the platform is Kustomize, not Helm ([ADR-0002](../adr/0002-deployment-target.md)),
+> and [`infra/k8s/overlays/staging`](../../infra/k8s/overlays/staging/) is the production-shaped
+> overlay an install starts from — registry images by release tag, one TLS Ingress, PDBs, a sized
+> data plane, credentials from a Secret git never sees. `npm run k8s:check` holds every overlay to
+> those conventions in CI. A Helm chart for customer distribution remains additive.
+
 1. Point at the registry; apply the platform Helm umbrella chart (`values.yaml` sets channel(s),
    storage classes, replica counts, external IdP if any).
 2. Provision the data plane (managed or in-cluster operators), broker, vault; load secrets.

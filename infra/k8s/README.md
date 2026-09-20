@@ -6,6 +6,7 @@ Kustomize for environment variance.
 ```
 base/                environment-independent definitions
 overlays/dev/        local kind cluster — NodePort, single replicas, local images
+overlays/staging/    the production shape — registry images, an Ingress, PDBs, sized data plane
 ```
 
 ## Bring up a local environment
@@ -60,6 +61,39 @@ kind delete cluster --name atlas-dev
 
 The NodePort is deliberately not dressed up as an ingress: simulating one would hide the TLS and
 routing work rather than schedule it.
+
+## The staging overlay (EP-07.5): the production shape, as code
+
+`overlays/staging` is the first environment shaped like production, and the one an install is
+copied from. It differs from dev in exactly the rows of the table above: images come from a
+**registry by release tag** (`registry.example` is the placeholder, replaced once; CD pins a digest
+with `kustomize edit set image atlas/iam=registry/atlas/iam@sha256:…`), the gateway and MAM run at
+the base's **two replicas behind PodDisruptionBudgets**, the data plane has **real sizes** (Postgres
+50 Gi/4 Gi, OpenSearch 100 Gi/4 Gi, NATS 20 Gi, RIM's staging 200 Gi), the credentials are a Secret
+**generated from a file git never sees** (`postgres.env`, copied from the committed `.example`; a
+secrets backend replaces the generator with the Secret it manages — the base only ever names
+`postgres-credentials`), the platform is reached through **one Ingress with TLS** (`/ws` to the
+websocket service, `/` to the gateway; ingress-nginx annotations for the upgrade's idle timeout
+and a body cap above the gateway's), and there is **no seeded account**.
+
+```sh
+cp infra/k8s/overlays/staging/postgres.env.example infra/k8s/overlays/staging/postgres.env   # then edit
+kubectl apply -k infra/k8s/overlays/staging
+```
+
+**`npm run k8s:check`** ([`scripts/check-k8s.mjs`](../../scripts/check-k8s.mjs), part of
+`verify` and CI) renders every overlay with `kubectl kustomize` — so a patch whose path moved
+fails in CI, not on the cluster — and asserts the conventions on the rendered documents: every
+Atlas workload has both probes, cpu and memory requests and a memory limit, and every service
+runs with a read-only root filesystem; and staging is shaped like production — a registry and a
+release tag or digest on every image (never `:dev`), no NodePort, no `ATLAS_SEED_*`, exactly one
+Ingress with TLS routing `/ws` and `/`, a PDB for every deployment with more than one replica,
+and the credentials Secret generated. The dev overlay keeps its shortcuts; that is what it is for.
+
+Not here: the cluster itself, storage classes, DNS and the TLS certificate — those are the
+environment's (a managed cluster, or the runbook's on-prem install), and ADR-0002 keeps the
+toolchain at `kubectl`. IAM still runs one replica everywhere: its signing key ring is per
+process until it is loaded from a Secret.
 
 ## Why the WebSocket service has its own port
 

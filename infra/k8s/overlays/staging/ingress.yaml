@@ -1,0 +1,44 @@
+# ONE origin for the browser (infra/k8s/README.md "Why the WebSocket service has its own port"):
+# a path rule sends /ws to the websocket service — it authenticates its own upgrade and the
+# gateway's `fetch` proxy cannot perform one — and everything else to the gateway. TLS terminates
+# here. The host and the ingress class are the environment's; the placeholders are replaced once.
+#
+# The websocket path needs a proxy that keeps an idle upgraded connection open longer than a
+# request: the two timeouts below are ingress-nginx's names for that, and the annotation is
+# ignored by any other class — set its equivalent there.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: atlas
+  labels:
+    app.kubernetes.io/name: atlas
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # The gateway caps bodies itself (1 MiB JSON, 8 MiB on /api/v1/uploads); the ingress must not
+    # cap them lower, or an upload part never reaches the service that would accept it.
+    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - atlas.staging.example
+      secretName: atlas-tls
+  rules:
+    - host: atlas.staging.example
+      http:
+        paths:
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: websocket
+                port:
+                  number: 3000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8080
