@@ -18,10 +18,12 @@ This repo (`atlasms/platform`) is **one Nx monorepo** holding the design docs _a
 - `apps/` — one deployable per service, plus `studio` (the Angular SPA) and `walking-skeleton`.
 - `reference/` — a **frozen, validated prototype** (84 passing tests) that is being lifted into
   `libs/` package by package. Do not develop here; lift from it.
-- `scripts/` — GitHub project/backlog automation, and the CI checks (`api:check`, `graph:check`, `tier0:check`, `schema:check`, and `check-changelog` on pull requests).
+- `scripts/` — GitHub project/backlog automation, the CI checks (`api:check`, `graph:check`, `tier0:check`, `schema:check`, and `check-changelog` on pull requests), and **`setup.sh` / `setup.ps1`** — a new machine from nothing to smoke-green, requirements check first ([`SETUP.md`](SETUP.md)).
 - `tools/` — local Nx generators. **`npx nx g service <name>` is how a service starts** ([`tools/generators/README.md`](tools/generators/README.md)).
 
 ## 2. Orient yourself in ~10 minutes
+
+(A new machine? [`SETUP.md`](SETUP.md) — requirements, every manual step, and the script that does them.)
 
 Read these four, in order. Do **not** read the whole `docs/` tree.
 
