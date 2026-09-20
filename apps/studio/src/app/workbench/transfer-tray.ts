@@ -79,8 +79,8 @@ import { UploadService } from '../core/upload.service.ts';
                 @if (t.error) {
                   <p class="error">{{ t.error }}</p>
                 }
-                @if (t.state === 'done' && t.job?.reason) {
-                  <p class="muted">{{ t.job?.reason }}</p>
+                @if (t.state === 'done' && t.job?.reason; as reason) {
+                  <p class="muted">{{ reason }}</p>
                 }
               </li>
             }
