@@ -13,6 +13,8 @@ import type { IngestJob, IngestQueuePage } from '../core/generated/rim.types.ts'
 import { IngestService } from '../core/ingest.service.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
+import type { Transfer } from '../core/transfer.store.ts';
+import { UploadService } from '../core/upload.service.ts';
 import { IngestPanel } from './ingest-panel.ts';
 
 const job = (over: Partial<IngestJob> = {}): IngestJob => ({
@@ -77,6 +79,14 @@ class FakeLocale {
   }
 }
 
+/** The uploader: records what it was handed, and settles each transfer when the test says. */
+class FakeUploads {
+  started: { file: File; settle: (t: Transfer) => void }[] = [];
+  start(file: File): Promise<Transfer> {
+    return new Promise((settle) => this.started.push({ file, settle }));
+  }
+}
+
 /** The panel's own template gates on `ingest:*`; these tests drive the class, not the gate. */
 class FakePermissions {
   can(): boolean {
@@ -86,6 +96,7 @@ class FakePermissions {
 
 interface InternalIngestPanel {
   jobs: () => IngestJob[];
+  onFilesPicked(event: Event): void;
   error: () => string | null;
   loading: () => boolean;
   formatSize(bytes: number | undefined): string;
@@ -96,15 +107,32 @@ interface InternalIngestPanel {
 
 function setup() {
   const fake = new FakeIngest();
+  const uploads = new FakeUploads();
   TestBed.configureTestingModule({
     providers: [
       { provide: IngestService, useValue: fake },
+      { provide: UploadService, useValue: uploads },
       { provide: LocaleService, useClass: FakeLocale },
       { provide: PermissionService, useClass: FakePermissions },
     ],
   });
   const fixture = TestBed.createComponent(IngestPanel);
-  return { fixture, component: fixture.componentInstance as unknown as InternalIngestPanel, fake };
+  return {
+    fixture,
+    component: fixture.componentInstance as unknown as InternalIngestPanel,
+    fake,
+    uploads,
+  };
+}
+
+/** A `change` on a file input whose files are these — jsdom lets the list be set this way. */
+function picked(files: File[]): Event {
+  const input = document.createElement('input');
+  input.type = 'file';
+  Object.defineProperty(input, 'files', { value: files });
+  const event = new Event('change');
+  Object.defineProperty(event, 'target', { value: input });
+  return event;
 }
 
 describe('IngestPanel', () => {
@@ -187,5 +215,41 @@ describe('IngestPanel', () => {
 
     expect(component.error()).toBe('Could not load ingest queue.');
     expect(component.loading()).toBe(false);
+  });
+
+  it('picking files hands each to the uploader; a transfer that settles with a job leads the queue, once', async () => {
+    const { component, fake, uploads } = setup();
+    fake.lists[0]?.next({ items: [job()] });
+
+    const a = new File([new Uint8Array(3)], 'a.mxf');
+    const b = new File([new Uint8Array(3)], 'b.mxf');
+    component.onFilesPicked(picked([a, b]));
+    expect(uploads.started.map((s) => s.file.name)).toEqual(['a.mxf', 'b.mxf']);
+
+    const settled = job({ id: '01NEW', state: 'accepted', filename: 'b.mxf' });
+    uploads.started[1]?.settle({
+      id: 't2',
+      name: 'b.mxf',
+      sizeBytes: 3,
+      sentBytes: 3,
+      state: 'done',
+      job: settled,
+      startedAt: 0,
+    });
+    await Promise.resolve();
+    expect(component.jobs().map((j) => j.id)).toEqual(['01NEW', '01ABC']);
+
+    // A cancelled or failed transfer has no job to add.
+    uploads.started[0]?.settle({
+      id: 't1',
+      name: 'a.mxf',
+      sizeBytes: 3,
+      sentBytes: 0,
+      state: 'cancelled',
+      startedAt: 0,
+    });
+    await Promise.resolve();
+    expect(component.jobs()).toHaveLength(2);
+    expect(fake.listCalls).toHaveLength(1);
   });
 });

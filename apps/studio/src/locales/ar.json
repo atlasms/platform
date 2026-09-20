@@ -74,8 +74,7 @@
       "rejected": "مرفوض",
       "accepted": "مقبول",
       "registered": "مسجل"
-    },
-    "uploadUnavailable": "أداة الرفع لم تُبنَ بعد (EP-20.3)؛ الخدمة تقبل الرفع (EP-15.1)."
+    }
   },
   "dashboard": {
     "title": "لوحة التحكم",
@@ -205,5 +204,23 @@
     "loadError": "تعذّر تحميل الجداول.",
     "createError": "تعذّر إنشاء جدول البرامج.",
     "tabPrefix": "جدول"
+  },
+  "transfers": {
+    "title": "عمليات النقل",
+    "active": "قيد التنفيذ",
+    "idle": "لا شيء قيد التنفيذ",
+    "minimize": "تصغير عمليات النقل",
+    "expand": "توسيع عمليات النقل",
+    "clear": "مسح المكتملة",
+    "dismiss": "إخفاء",
+    "state": {
+      "queued": "في الانتظار",
+      "uploading": "جارٍ الرفع",
+      "completing": "جارٍ التجميع",
+      "validating": "جارٍ التحقق",
+      "done": "تم",
+      "failed": "فشل",
+      "cancelled": "أُلغي"
+    }
   }
 }

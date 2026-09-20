@@ -33,10 +33,12 @@ and [Every colour is a token, and every token is declared](#every-colour-is-a-to
 **EP-20.2** — the asset editor: real Basic-info reads and minimal PATCHes,
 dirty-state tracking, independent `core`/`taxonomy`/`rights` field-group rendering, and the Files
 rendition-readiness view. Per-file rows await the MAM FileRef projection (EP-17.8).
-**EP-20.3** — the Ingest panel: queue, quarantine accept/reject — **built but not routed**: RIM
-(EP-15) does not exist and the gateway has no `/api/v1/ingest` route, so the panel is
-`available: false` until the service lands. Upload is the same story one level down: the button is
-rendered **disabled**, because EP-15.1's chunked-upload endpoint has nothing to POST to.
+**EP-20.3** — the Ingest panel: **upload**, queue, quarantine accept/reject, against RIM through
+the gateway (EP-15.1/15.3/15.4/15.6). Upload hands each picked file to the uploader
+([`upload.service.ts`](src/app/core/upload.service.ts)); when its job has a verdict, the row joins
+the queue at the top. **EP-20.8** — the transfer tray
+([`transfer-tray.ts`](src/app/workbench/transfer-tray.ts)): bottom corner of the frame,
+minimizable, grouped progress and per-transfer cancel/retry/dismiss. See below.
 **EP-20.4** — the Search panel: simple query against MAM search, results open in the asset editor.
 **EP-20.6** — the dashboard: an editor tab opened as the default landing view — system-state
 counts and what's-new against real MAM, live-refreshed. State counts page the channel with a
@@ -50,6 +52,31 @@ its program table) and the reel editor tab — add, move, resize, remove, and on
 
 **Not built:** Newsroom and later editor types remain placeholders until their owning services
 exist.
+
+## The uploader obeys the server, and resume is just another attempt (EP-20.3, EP-20.8)
+
+RIM's upload is chunked and resumable ([apps/rim/README.md](../rim/README.md)), and **the
+server sizes the parts**: `POST /uploads` answers `partSizeBytes` and `partCount`, and the file is
+sliced exactly that way — every part but the last exactly that long, a part of any other length is
+a 422. Parts go one at a time as `application/octet-stream` with the request's upload progress
+counted into the bar, so it moves inside an 8 MiB part and not only between them.
+
+A part that fails on the way — a dropped connection, a 502 — is sent again up to three times with
+a growing pause. A part the server **refuses** (4xx) is not: the same bytes would be refused the
+same way, and the transfer fails with the problem document's message. A failed transfer keeps its
+`uploadId`, and **Retry** in the tray is one more attempt: `GET /uploads/{id}` says which parts the
+server already holds, and only the rest are sent. An upload swept meanwhile (past RIM's TTL) is
+started over rather than retried forever. **Cancel** aborts the request in flight and abandons the
+upload server-side.
+
+Completion is a hand-off: `POST /complete` answers the job at `detected`, and the verdict — the
+probe, the acceptance rules — follows on the server, so the transfer polls `GET /ingest/{id}` until
+the state settles and shows _that_ as its result: accepted, quarantined (with the reason),
+rejected. The tray is in the workbench frame, not in the panel, because an upload must outlive the
+panel that started it — navigating away from Ingest does not abort a 4 GB master. What a reload
+loses is the tray's list, not the parts: they are on the server, and the next attempt at the same
+file resumes them. [`upload.service.spec.ts`](src/app/core/upload.service.spec.ts) asserts every
+request of every path above by method and URL against a fake gateway.
 
 ## Signing in
 

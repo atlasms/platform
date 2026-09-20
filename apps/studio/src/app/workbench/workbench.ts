@@ -15,6 +15,7 @@ import { LocaleService } from '../core/locale.service.ts';
 import { EditorArea } from './editor-area.ts';
 import { EditorStore } from './editor.store.ts';
 import { PANELS, type PanelDefinition } from './panels.ts';
+import { TransferTray } from './transfer-tray.ts';
 
 const MIN_SIDE_BAR = 160;
 const MAX_SIDE_BAR = 640;
@@ -34,7 +35,7 @@ const MAX_SIDE_BAR = 640;
 @Component({
   selector: 'atlas-workbench',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, RouterOutlet, EditorArea],
+  imports: [RouterLink, RouterOutlet, EditorArea, TransferTray],
   template: `
     <div class="workbench" [style.--side-bar-width.px]="sideBarWidth()">
       <nav class="activity-bar" aria-label="Panels">
@@ -78,6 +79,10 @@ const MAX_SIDE_BAR = 640;
       <main class="editor-area">
         <atlas-editor-area />
       </main>
+
+      <!-- Bottom corner, over the frame (studio-frontend.md §1.1): uploads outlive the panel that
+           started them, so their progress lives here, not in Ingest. -->
+      <atlas-transfer-tray />
 
       <!-- The workbench is only routed with a session (app.routes.ts), so the status bar has a
            user to name; the signals stay optional only because the spec builds the frame bare. -->

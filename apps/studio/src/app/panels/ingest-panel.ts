@@ -1,16 +1,25 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  inject,
+  signal,
+  viewChild,
+  type ElementRef,
+} from '@angular/core';
 import { IngestService } from '../core/ingest.service.ts';
 import type { IngestJob } from '../core/generated/rim.types.ts';
 import { IfCanDirective } from '../core/if-can.directive.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { UploadService } from '../core/upload.service.ts';
 
 /**
- * The Ingest/Import panel (EP-20.3) — queue, quarantine accept/reject.
+ * The Ingest/Import panel (EP-20.3) — upload, queue, quarantine accept/reject.
  *
- * Backed since EP-15.6 by RIM's `/api/v1/ingest` through the gateway: the queue is the
- * channel's jobs newest first, and a quarantined one carries the acceptance rule's reason
- * (EP-15.3) until an operator with `ingest:approve` accepts or rejects it. The uploader itself is
- * still to come — the button below says so.
+ * Backed by RIM through the gateway: the queue is the channel's jobs newest first (EP-15.6), a
+ * quarantined one carries the acceptance rule's or the probe's reason (EP-15.3/15.4) until an
+ * operator with `ingest:approve` accepts or rejects it, and Upload hands files to the uploader
+ * (upload.service.ts) — chunked, resumable, against EP-15.1 — whose progress the transfer tray
+ * shows. When an upload's job settles, its row joins the queue here without a refetch.
  */
 @Component({
   selector: 'atlas-ingest-panel',
@@ -76,17 +85,18 @@ import { LocaleService } from '../core/locale.service.ts';
       </ul>
     }
 
-    <!-- Disabled, not wired: the endpoint exists (EP-15.1, chunked/resumable) but the uploader —
-         slicing a file into the server's parts, resuming, the transfer tray (EP-20.8) — is the rest
-         of EP-20.3 and is not built. Shown-but-disabled says "designed, not built" rather than
-         hiding the affordance or opening a dialog that cannot finish. -->
+    <!-- The native picker, driven by the button: no dialog of our own to keep accessible, and
+         multiple, because a bulletin is rarely one file. -->
+    <input
+      #picker
+      type="file"
+      multiple
+      hidden
+      (change)="onFilesPicked($event)"
+      [attr.aria-label]="locale.t('ingest.upload')"
+    />
     <div class="actions">
-      <button
-        type="button"
-        *atlasIfCan="'ingest:write'"
-        disabled
-        [title]="locale.t('ingest.uploadUnavailable')"
-      >
+      <button type="button" *atlasIfCan="'ingest:write'" (click)="picker.click()">
         {{ locale.t('ingest.upload') }}
       </button>
     </div>
@@ -244,7 +254,9 @@ import { LocaleService } from '../core/locale.service.ts';
 })
 export class IngestPanel {
   private readonly ingestApi = inject(IngestService);
+  private readonly uploads = inject(UploadService);
   protected readonly locale = inject(LocaleService);
+  private readonly picker = viewChild<ElementRef<HTMLInputElement>>('picker');
 
   protected readonly jobs = signal<IngestJob[]>([]);
   protected readonly loading = signal(false);
@@ -268,6 +280,31 @@ export class IngestPanel {
         this.loading.set(false);
       },
     });
+  }
+
+  /**
+   * Each picked file becomes a transfer; when its job has a verdict, the row joins the queue at
+   * the top — the panel is the newest-first list, and this is the newest. The picker is reset so
+   * choosing the same file again fires `change` again.
+   */
+  protected onFilesPicked(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    for (const file of files) {
+      void this.uploads.start(file).then((transfer) => {
+        if (transfer.state === 'done' && transfer.job) this.upsert(transfer.job);
+      });
+    }
+  }
+
+  /** The job as it came from its transfer: replaces its row, or leads the list. */
+  private upsert(job: IngestJob): void {
+    this.jobs.update((list) =>
+      list.some((j) => j.id === job.id)
+        ? list.map((j) => (j.id === job.id ? job : j))
+        : [job, ...list],
+    );
   }
 
   protected accept(job: IngestJob): void {

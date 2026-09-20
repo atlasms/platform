@@ -34,6 +34,8 @@ export type Query = Record<string, string | number | boolean | undefined>;
 interface BaseOptions {
   query?: Query;
   body?: unknown;
+  /** Set only what the contract needs beyond JSON — an upload part's `application/octet-stream`. */
+  headers?: Record<string, string>;
   context?: HttpContext;
 }
 
@@ -89,6 +91,7 @@ export class ApiClient {
         this.http.request<T>(op.method, url, {
           params,
           ...(options?.body !== undefined ? { body: options.body } : {}),
+          ...(options?.headers !== undefined ? { headers: options.headers } : {}),
           ...(options?.context !== undefined ? { context: options.context } : {}),
         }),
     };
