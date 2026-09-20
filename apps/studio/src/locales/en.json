@@ -222,5 +222,46 @@
       "failed": "Failed",
       "cancelled": "Cancelled"
     }
+  },
+  "admin": {
+    "users": "Users",
+    "newUser": "New user",
+    "name": "Display name",
+    "create": "Create",
+    "createError": "Could not create the user.",
+    "usernameTaken": "That username is taken.",
+    "loading": "Loading…",
+    "loadError": "Could not load.",
+    "none": "No users.",
+    "more": "More",
+    "platformWide": "platform-wide",
+    "profile": "Profile",
+    "save": "Save",
+    "lastLogin": "Last login",
+    "lastPasswordChange": "Password changed",
+    "account": "Account",
+    "disable": "Disable",
+    "disableWhy": "Signs the user out everywhere, at once.",
+    "enable": "Enable",
+    "unlock": "Unlock",
+    "notYourself": "You cannot disable your own account.",
+    "newPassword": "New password (8+ characters)",
+    "setPassword": "Set password",
+    "grants": "Grants",
+    "noGrants": "No direct grants. Access may still come through a group.",
+    "role": "role",
+    "rule": "rule",
+    "revoke": "Revoke",
+    "grantRole": "Grant a role",
+    "grantRule": "Grant permissions (noun:verb, comma-separated)",
+    "grant": "Grant",
+    "ruleScope": "A rule granted here is scoped to the user's channel.",
+    "writeError": "The change was not saved.",
+    "state": {
+      "active": "Active",
+      "disabled": "Disabled",
+      "locked": "Locked",
+      "invited": "Invited"
+    }
   }
 }

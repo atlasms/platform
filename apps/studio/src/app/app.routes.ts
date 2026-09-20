@@ -48,6 +48,11 @@ export const routes: Routes = [
         loadComponent: () => import('./panels/ingest-panel.ts').then((m) => m.IngestPanel),
       },
       {
+        path: 'admin',
+        canMatch: [requirePermission('user:admin')],
+        loadComponent: () => import('./panels/admin-panel.ts').then((m) => m.AdminPanel),
+      },
+      {
         // The side bar's landing panel — the dashboard itself is an EDITOR TAB (studio-frontend.md
         // §3), opened by the workbench, not a route. No guard on a redirect: Angular refuses the
         // pair (NG04014), and the session check is the parent's.
