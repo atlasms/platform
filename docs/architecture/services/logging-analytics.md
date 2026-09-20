@@ -203,6 +203,15 @@ policy (audit never sampled); PII-field tagging.
   rows into the index in chain order, keyed by `messageId`, resuming from the index's own per-channel
   `max(seq)`; the browse reads the index when configured. Eventually consistent by one projector
   interval; `503` when the engine is away, ready regardless.
+- **As built (EP-19.4):** §6.3's tiers, with Postgres as the cold tier for now. A channel's
+  `RetentionPolicy` (§3: `hotDays`, `coldDays`, `legalHold`; one per channel, the caller's, behind
+  `compliance:admin`) governs a retention tick that trims the hot index to the window — never the
+  channel's head, which is the projector's checkpoint — and is paused by legal hold. The browse is
+  tiered: the index for the hot window, the record for anything older, so a record becomes slower
+  with age, not unreadable. Every record stays in Postgres; `coldDays` is recorded and not yet
+  acted on, since there is no object-storage tier to move records to before EP-14 — archive export
+  and a guarded purge are the follow-up, and a compliance decision. A policy write is audited into
+  the log itself, in the transaction of the change.
 
 ## 14. Open questions / future
 

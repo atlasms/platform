@@ -3,7 +3,14 @@
 import type { Migration } from '@atlas/data';
 import { PgSeenStore, seenMigration, withTransaction, type PgPool } from '@atlas/data-pg';
 import { browseClauses } from './store.ts';
-import type { AuditEvent, AuditStore, AuditTx, ChainHead, HistoryEntry } from './store.ts';
+import type {
+  AuditEvent,
+  AuditStore,
+  AuditTx,
+  ChainHead,
+  HistoryEntry,
+  RetentionPolicy,
+} from './store.ts';
 
 export const pgMigrations: Migration[] = [
   seenMigration,
@@ -55,6 +62,15 @@ export const pgMigrations: Migration[] = [
          CREATE TRIGGER entity_history_append_only
            BEFORE UPDATE OR DELETE ON entity_history
            FOR EACH ROW EXECUTE FUNCTION audit_append_only();`,
+  },
+  {
+    // One row per channel (EP-19.4). Not append-only: a policy is configuration, and its
+    // history is in the audit log like any other mutation's.
+    id: 'logging_retention_policies',
+    up: `CREATE TABLE IF NOT EXISTS retention_policies (
+           channel_id text NOT NULL PRIMARY KEY,
+           data       jsonb NOT NULL
+         )`,
   },
 ];
 
@@ -177,6 +193,13 @@ export function pgAuditStore(pool: PgPool): AuditStore {
               ],
             );
           },
+          async putRetentionPolicy(p) {
+            await client.query(
+              `INSERT INTO retention_policies (channel_id, data) VALUES ($1, $2)
+               ON CONFLICT (channel_id) DO UPDATE SET data = EXCLUDED.data`,
+              [p.channelId, JSON.stringify(p)],
+            );
+          },
         };
         return fn(tx);
       });
@@ -224,6 +247,13 @@ export function pgAuditStore(pool: PgPool): AuditStore {
       const e = await pool.query<{ c: string }>('SELECT count(*) c FROM audit_events');
       const h = await pool.query<{ c: string }>('SELECT count(*) c FROM entity_history');
       return { events: Number(e.rows[0]?.c ?? 0), history: Number(h.rows[0]?.c ?? 0) };
+    },
+    async retentionPolicy(channelId) {
+      const { rows } = await pool.query<{ data: RetentionPolicy }>(
+        'SELECT data FROM retention_policies WHERE channel_id = $1',
+        [channelId],
+      );
+      return rows[0]?.data;
     },
     async close() {
       await pool.end();

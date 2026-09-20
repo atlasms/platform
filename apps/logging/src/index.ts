@@ -19,11 +19,13 @@ export {
   type HistoryEntry,
   type LogBrowser,
   type LogFilter,
+  type RetentionPolicy,
 } from './store.ts';
 export { requiredPermission, visible } from './visibility.ts';
 export { sqliteAuditStore, sqliteMigrations } from './store-sqlite.ts';
 export { pgAuditStore, pgMigrations } from './store-pg.ts';
 export {
+  appendEnvelope,
   ingest,
   startSink,
   DEFAULT_SINK_PATTERNS,
@@ -43,3 +45,19 @@ export {
   type AuditIndex,
 } from './index-opensearch.ts';
 export { startProjector, type Projector, type ProjectorOptions } from './projector.ts';
+export { memoryAuditIndex } from './index-memory.ts';
+export {
+  DEFAULT_COLD_DAYS,
+  DEFAULT_HOT_DAYS,
+  effectivePolicy,
+  hotCutoff,
+  parseRetentionPolicyInput,
+  retentionTick,
+  startRetention,
+  tieredBrowser,
+  type Retention,
+  type RetentionDefaults,
+  type RetentionPolicyInput,
+  type RetentionTickOptions,
+  type TrimReport,
+} from './retention.ts';

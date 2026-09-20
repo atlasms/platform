@@ -21,11 +21,15 @@ import {
 import {
   buildLoggingApp,
   DEFAULT_AUDIT_INDEX,
+  DEFAULT_COLD_DAYS,
+  DEFAULT_HOT_DAYS,
   openSearchAuditIndex,
   pgAuditStore,
   pgMigrations,
   startProjector,
+  startRetention,
   startSink,
+  tieredBrowser,
   type LogBrowser,
 } from './index.ts';
 
@@ -49,6 +53,15 @@ const config = loadConfig({
   opensearchUrl: { env: 'ATLAS_OPENSEARCH_URL', type: 'string', default: '' },
   auditIndex: { env: 'ATLAS_AUDIT_INDEX', type: 'string', default: DEFAULT_AUDIT_INDEX },
   projectorIntervalMs: { env: 'ATLAS_PROJECTOR_INTERVAL_MS', type: 'number', default: 1_000 },
+  // Retention (EP-19.4): the hot window a channel has until an operator sets its policy, and how
+  // often the index is trimmed to it. Postgres keeps every record regardless.
+  auditHotDays: { env: 'ATLAS_AUDIT_HOT_DAYS', type: 'number', default: DEFAULT_HOT_DAYS },
+  auditColdDays: { env: 'ATLAS_AUDIT_COLD_DAYS', type: 'number', default: DEFAULT_COLD_DAYS },
+  retentionIntervalMs: {
+    env: 'ATLAS_AUDIT_RETENTION_INTERVAL_MS',
+    type: 'number',
+    default: 60 * 60 * 1_000,
+  },
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
   // still propagates, so a site without a collector pays only the cost of an id.
   otlpEndpoint: { env: 'ATLAS_OTLP_ENDPOINT', type: 'string', default: '' },
@@ -127,7 +140,10 @@ const policies = new PolicyClient({ origin: config.iamOrigin, ttlMs: config.poli
 const search = config.opensearchUrl !== '' ? openSearch({ node: config.opensearchUrl }) : undefined;
 const index = search ? openSearchAuditIndex(search, { index: config.auditIndex }) : undefined;
 if (search) health.register('opensearch', () => searchHealthy(search));
-const browser: LogBrowser = index ?? store;
+// With an index, the browse is tiered (EP-19.4): the hot window from the engine, anything older
+// from the record — old is slower, never gone.
+const browser: LogBrowser = index ? tieredBrowser(index, store) : store;
+const retentionDefaults = { hotDays: config.auditHotDays, coldDays: config.auditColdDays };
 
 const indexed = metrics.counter({
   name: 'atlas_audit_events_indexed_total',
@@ -164,6 +180,33 @@ if (projector) {
   log.info('audit projector started', { index: config.auditIndex });
 }
 
+// --- retention (EP-19.4): the hot index trimmed to each channel's window ------------------------
+const trimmed = metrics.counter({
+  name: 'atlas_audit_index_trimmed_total',
+  help: 'Documents removed from the hot index by retention.',
+  labelNames: ['service'],
+});
+const retention = index
+  ? startRetention({
+      store,
+      index,
+      defaults: retentionDefaults,
+      intervalMs: config.retentionIntervalMs,
+      onTrimmed: (reports) => {
+        const count = reports.reduce((n, r) => n + (r.trimmed ?? 0), 0);
+        trimmed.inc({ service: 'logging' }, count);
+        log.info('hot index trimmed', { count, channels: reports.length });
+      },
+      onError: (err) => log.warn('retention tick failed', { error: (err as Error).message }),
+    })
+  : undefined;
+if (retention) {
+  log.info('audit retention started', {
+    hotDays: retentionDefaults.hotDays,
+    intervalMs: config.retentionIntervalMs,
+  });
+}
+
 const sunk = metrics.counter({
   name: 'atlas_audit_events_appended_total',
   help: 'Envelopes appended to the audit log.',
@@ -183,6 +226,7 @@ const refused = metrics.counter({
 const app = await buildLoggingApp({
   store,
   browser,
+  retentionDefaults,
   policyFor: (userId) => policies.policyFor(userId),
   health,
   metrics,
@@ -248,6 +292,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     log.info(`${signal} received, draining`);
     if (retryTimer) clearTimeout(retryTimer);
     projector?.stop();
+    retention?.stop();
     void app
       .close()
       // After Fastify closes, so spans for in-flight requests make the final batch.

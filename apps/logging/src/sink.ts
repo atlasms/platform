@@ -18,7 +18,14 @@ import {
 } from '@atlas/contracts';
 import type { Broker, Message, Subscription } from '@atlas/messaging';
 import { ValidationError } from '@atlas/service-kit';
-import { chainHash, GENESIS, historyOf, type AuditEvent, type AuditStore } from './store.ts';
+import {
+  chainHash,
+  GENESIS,
+  historyOf,
+  type AuditEvent,
+  type AuditStore,
+  type AuditTx,
+} from './store.ts';
 
 export type Outcome = 'appended' | 'duplicate';
 
@@ -36,36 +43,46 @@ export async function ingest(store: AuditStore, msg: Message): Promise<Outcome> 
     // redelivery carries. They are the same for every producer on this platform, but the claim
     // must be keyed on the thing that comes back.
     if (!(await tx.markSeen(msg.id))) return 'duplicate';
-
-    const head = await tx.head(envelope.channelId);
-    const seq = (head?.seq ?? 0) + 1;
-    const prevHash = head?.hash ?? GENESIS;
-    const content: Omit<AuditEvent, 'prevHash' | 'hash'> = {
-      messageId: envelope.messageId,
-      channelId: envelope.channelId,
-      type: envelope.type,
-      occurredAt: envelope.occurredAt,
-      ...(envelope.actor ? { actorKind: envelope.actor.kind, actorId: envelope.actor.id } : {}),
-      ...(envelope.correlationId ? { correlationId: envelope.correlationId } : {}),
-      payload: envelope.payload,
-      seq,
-    };
-    await tx.append({ ...content, prevHash, hash: chainHash(prevHash, content) });
-
-    if (envelope.type === 'audit.recorded') {
-      const check = validatePayload('audit.recorded', envelope.payload);
-      if (!check.valid) {
-        throw new ValidationError(
-          `audit.recorded ${envelope.messageId} does not match its schema: ${check.errors.map((e) => `${e.path} ${e.message}`).join('; ')}`,
-        );
-      }
-      // Validated against its schema just above, so the narrowing is earned rather than assumed.
-      await tx.appendHistory(
-        historyOf(envelope as unknown as Envelope<EventPayloads['audit.recorded']>),
-      );
-    }
+    await appendEnvelope(tx, envelope);
     return 'appended';
   });
+}
+
+/**
+ * Extend the channel's chain with one envelope and, for an `audit.recorded`, project its history
+ * row — inside the caller's transaction. The sink's own path, and the one this service's OWN
+ * mutations take (a retention policy, EP-19.4): the record of what the audit log's keeper changed
+ * goes into the audit log directly, in the same transaction as the change, rather than out to the
+ * broker and back in.
+ */
+export async function appendEnvelope(tx: AuditTx, envelope: Envelope): Promise<void> {
+  const head = await tx.head(envelope.channelId);
+  const seq = (head?.seq ?? 0) + 1;
+  const prevHash = head?.hash ?? GENESIS;
+  const content: Omit<AuditEvent, 'prevHash' | 'hash'> = {
+    messageId: envelope.messageId,
+    channelId: envelope.channelId,
+    type: envelope.type,
+    occurredAt: envelope.occurredAt,
+    ...(envelope.actor ? { actorKind: envelope.actor.kind, actorId: envelope.actor.id } : {}),
+    ...(envelope.correlationId ? { correlationId: envelope.correlationId } : {}),
+    payload: envelope.payload,
+    seq,
+  };
+  await tx.append({ ...content, prevHash, hash: chainHash(prevHash, content) });
+
+  if (envelope.type === 'audit.recorded') {
+    const check = validatePayload('audit.recorded', envelope.payload);
+    if (!check.valid) {
+      throw new ValidationError(
+        `audit.recorded ${envelope.messageId} does not match its schema: ${check.errors.map((e) => `${e.path} ${e.message}`).join('; ')}`,
+      );
+    }
+    // Validated against its schema just above, so the narrowing is earned rather than assumed.
+    await tx.appendHistory(
+      historyOf(envelope as unknown as Envelope<EventPayloads['audit.recorded']>),
+    );
+  }
 }
 
 export interface SinkOptions {
