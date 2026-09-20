@@ -8,7 +8,8 @@ import { SessionStore } from './session.store.ts';
  * bring them back. The root itself is not worth carrying.
  */
 function toSignIn(router: Router) {
-  const wanted = router.getCurrentNavigation()?.extractedUrl.toString() ?? '/';
+  // `currentNavigation()` is the signal; `getCurrentNavigation()` is deprecated since 20.2.
+  const wanted = router.currentNavigation()?.extractedUrl.toString() ?? '/';
   return router.createUrlTree(
     ['/signin'],
     wanted !== '/' ? { queryParams: { returnUrl: wanted } } : {},
