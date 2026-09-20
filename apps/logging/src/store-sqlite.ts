@@ -10,7 +10,14 @@ import {
 } from '@atlas/data';
 import type { Migration } from '@atlas/data';
 import { browseClauses } from './store.ts';
-import type { AuditEvent, AuditStore, AuditTx, ChainHead, HistoryEntry } from './store.ts';
+import type {
+  AuditEvent,
+  AuditStore,
+  AuditTx,
+  ChainHead,
+  HistoryEntry,
+  RetentionPolicy,
+} from './store.ts';
 
 export const sqliteMigrations: Migration[] = [
   seenMigration,
@@ -58,6 +65,15 @@ export const sqliteMigrations: Migration[] = [
            BEGIN SELECT RAISE(ABORT, 'entity_history is append-only'); END;
          CREATE TRIGGER IF NOT EXISTS entity_history_no_delete BEFORE DELETE ON entity_history
            BEGIN SELECT RAISE(ABORT, 'entity_history is append-only'); END;`,
+  },
+  {
+    // One row per channel (EP-19.4). Not append-only: a policy is configuration, and its
+    // history is in the audit log like any other mutation's.
+    id: 'logging_retention_policies',
+    up: `CREATE TABLE IF NOT EXISTS retention_policies (
+           channel_id TEXT NOT NULL PRIMARY KEY,
+           data       TEXT NOT NULL
+         )`,
   },
 ];
 
@@ -172,6 +188,12 @@ export function sqliteAuditStore(path = ':memory:'): AuditStore & { db: Db } {
         h.messageId,
       );
     },
+    async putRetentionPolicy(p) {
+      db.prepare(
+        `INSERT INTO retention_policies (channel_id, data) VALUES (?, ?)
+         ON CONFLICT (channel_id) DO UPDATE SET data = excluded.data`,
+      ).run(p.channelId, JSON.stringify(p));
+    },
   };
 
   return {
@@ -222,6 +244,12 @@ export function sqliteAuditStore(path = ':memory:'): AuditStore & { db: Db } {
       const history = (db.prepare('SELECT count(*) c FROM entity_history').get() as { c: number })
         .c;
       return { events, history };
+    },
+    async retentionPolicy(channelId) {
+      const row = db
+        .prepare('SELECT data FROM retention_policies WHERE channel_id = ?')
+        .get(channelId) as { data: string } | undefined;
+      return row ? (JSON.parse(row.data) as RetentionPolicy) : undefined;
     },
     async close() {
       db.close();

@@ -119,6 +119,32 @@ Filters: `type` (comma-separated) / `types`, `correlationId` — the **request v
 request caused, which the smoke suite proves on a live cluster — `actorId`, `from`/`to`, `before`,
 `limit` (max 200). A malformed filter is a 422 problem document.
 
+## Retention (EP-19.4): the index is hot, the record is kept
+
+Two tiers, as built. A channel's **retention policy** — `GET`/`PUT /api/v1/retention-policies`
+behind `compliance:admin`, one per channel, the caller's — says how many days a record stays
+**hot** in the search index (`hotDays`; the deployment's `ATLAS_AUDIT_HOT_DAYS`, 90, until set).
+A **tick** on `ATLAS_AUDIT_RETENTION_INTERVAL_MS` (an hour) trims each channel's documents older
+than that from the index, so the browse stays fast over a window that does not grow; a channel on
+**legal hold** is skipped. The tick never removes a channel's newest document, whatever its age:
+the index is the projector's checkpoint (its per-channel max seq), and trimming the head would
+make the next projector tick re-index the channel from the start and the trim after that remove it
+again, forever.
+
+**Every record stays in Postgres**, where the chain and the append-only trigger are. A browse that
+reaches below the hot window **falls through to the record** (`tieredBrowser`): the index answers
+what it has, and when its page is short the rest comes from Postgres, strictly older than the last
+hot row, so nothing is seen twice — old is slower, never gone. `coldDays` is recorded and **not
+yet acted on**: there is no cold tier to move a record to until object storage exists (EP-14),
+and until then "cold" is Postgres and the retention there is forever. Archive export and a
+guarded purge are the follow-up, and a compliance decision.
+
+A policy write is this service's own mutation, and it is audited the way every mutation on the
+platform is — a field-level delta at the policy's next version, `entityType: retention-policy`,
+`entityId: <channelId>` — but appended to the log **directly, in the transaction of the change**
+(`appendEnvelope`, the sink's own path): the record of what the audit log's keeper changed goes
+into the audit log, not out to the broker and back in.
+
 ## Not fanned out
 
 `audit.recorded` is **not** delivered to WebSocket subscribers: the websocket service maps
@@ -128,7 +154,8 @@ the consumer.
 
 ## Not yet
 
-- **19.4** retention and cold-storage tiering.
+- **19.4, the cold half**: archive export to object storage and a guarded purge after `coldDays`
+  (both wait for a cold tier, EP-14, and a compliance decision on deleting audit records).
 - `user.>` (private per-user streams) is not sunk by default. Adding it is one pattern; deciding it
   is a privacy question.
 - A `verifyChain` endpoint for compliance to call. The function exists; the route is a decision.
@@ -142,12 +169,15 @@ npm run k8s:up && npm run smoke                             # the spine, on kind
 kubectl -n atlas logs deployment/logging -f
 ```
 
-| Variable              | Default                            |                                                                           |
-| --------------------- | ---------------------------------- | ------------------------------------------------------------------------- |
-| `ATLAS_PG_URL`        | `postgres://…@postgres:5432/atlas` | waited for at startup, within a 120 s budget                              |
-| `ATLAS_NATS_URL`      | `nats://nats:4222`                 | retried, never a readiness check — JetStream retains what it has not seen |
-| `ATLAS_IAM_ORIGIN`    | `http://iam:3000`                  | critical readiness dependency; the policy client                          |
-| `ATLAS_POLICY_TTL_MS` | `30000`                            | the revocation window for cached policies                                 |
+| Variable                            | Default                            |                                                                           |
+| ----------------------------------- | ---------------------------------- | ------------------------------------------------------------------------- |
+| `ATLAS_PG_URL`                      | `postgres://…@postgres:5432/atlas` | waited for at startup, within a 120 s budget                              |
+| `ATLAS_NATS_URL`                    | `nats://nats:4222`                 | retried, never a readiness check — JetStream retains what it has not seen |
+| `ATLAS_IAM_ORIGIN`                  | `http://iam:3000`                  | critical readiness dependency; the policy client                          |
+| `ATLAS_POLICY_TTL_MS`               | `30000`                            | the revocation window for cached policies                                 |
+| `ATLAS_AUDIT_HOT_DAYS`              | `90`                               | the hot window a channel has until an operator sets its policy            |
+| `ATLAS_AUDIT_COLD_DAYS`             | `0`                                | the default `coldDays` (0 = forever); recorded, not yet acted on          |
+| `ATLAS_AUDIT_RETENTION_INTERVAL_MS` | `3600000`                          | how often the hot index is trimmed; only with `ATLAS_OPENSEARCH_URL`      |
 
 Metrics: `atlas_audit_events_appended_total`, `_duplicate_total`, `_refused_total` — by service
 only, never by subject (a subject carries the channel id).

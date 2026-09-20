@@ -14,7 +14,7 @@ overlays/staging/    the production shape — registry images, an Ingress, PDBs,
 ```sh
 kind create cluster --config infra/k8s/kind-cluster.yaml
 npm run k8s:up            # build images, load them into the node, apply the overlay
-npm run smoke             # 23 checks against http://localhost:30080 (and ws://localhost:30081)
+npm run smoke             # 24 checks against http://localhost:30080 (and ws://localhost:30081)
 ```
 
 `npm run k8s:up` is `k8s:build` + `k8s:load` + `k8s:deploy`. Rebuild and reload after a code change:

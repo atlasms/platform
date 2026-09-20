@@ -215,6 +215,31 @@ export function auditStoreConformance(name: string, harness: AuditStoreHarness):
     });
   });
 
+  test(`[${name}] a retention policy is one row per channel, replaced whole; absent means the defaults`, async () => {
+    await withStore(async (store) => {
+      assert.equal(await store.retentionPolicy(CH), undefined);
+      const first = {
+        channelId: CH,
+        hotDays: 30,
+        coldDays: 0,
+        legalHold: false,
+        version: 1,
+        updatedAt: '2026-09-21T00:00:00.000Z',
+        updatedBy: 'u1',
+      };
+      await store.transaction((tx) => tx.putRetentionPolicy(first));
+      assert.deepEqual(await store.retentionPolicy(CH), first);
+      await store.transaction((tx) =>
+        tx.putRetentionPolicy({ ...first, hotDays: 7, legalHold: true, version: 2 }),
+      );
+      const second = await store.retentionPolicy(CH);
+      assert.equal(second?.hotDays, 7);
+      assert.equal(second?.legalHold, true);
+      assert.equal(second?.version, 2);
+      assert.equal(await store.retentionPolicy('ch99'), undefined, 'per channel');
+    });
+  });
+
   test(`[${name}] a message that is not an envelope is refused, and appends nothing`, async () => {
     await withStore(async (store) => {
       await assert.rejects(

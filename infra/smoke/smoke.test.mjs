@@ -911,6 +911,59 @@ test('smoke: EP-15.4 — the probe reads a real file: a WAV is accepted with its
   );
 });
 
+test('smoke: EP-19.4 — the retention policy is governance: the defaults until set, replaced whole, and audited into the log it governs', async () => {
+  // Through the gateway to the logging service: the policy in force for the seed channel, a
+  // replacement with legal hold, and the keeper's own mutation read back from the audit history
+  // — appended directly, in the transaction of the change, not via the broker. The policy is
+  // put back to the defaults' values at the end so the trim behaves the same on the next run.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+  const before = await get('/api/v1/retention-policies', { headers });
+  assert.equal(before.status, 200, `read failed: ${before.text}`);
+  const inForce = json(before);
+  assert.equal(inForce.channelId, 'ch12');
+  assert.ok(inForce.hotDays >= 1);
+  assert.equal(typeof inForce.defaults, 'boolean');
+
+  const put = await get('/api/v1/retention-policies', {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ hotDays: 45, coldDays: 3650, legalHold: true }),
+  });
+  assert.equal(put.status, 200, `write failed: ${put.text}`);
+  const policy = json(put);
+  assert.equal(policy.hotDays, 45);
+  assert.equal(policy.legalHold, true);
+  assert.equal(policy.defaults, false);
+  assert.equal(policy.version, inForce.version + 1);
+
+  const after = json(await get('/api/v1/retention-policies', { headers }));
+  assert.equal(after.version, policy.version, 'replaced whole, and read back');
+  assert.equal(after.legalHold, true);
+
+  const history = json(await get('/api/v1/history/retention-policy/ch12', { headers }));
+  const latest = history.revisions.find((r) => r.revision === policy.version);
+  assert.ok(latest, `revision ${policy.version} in the audit history: ${JSON.stringify(history)}`);
+  assert.equal(latest.action, 'retention-policy.updated');
+  assert.deepEqual(latest.delta.legalHold, {
+    ...(inForce.defaults ? {} : { before: inForce.legalHold }),
+    after: true,
+  });
+
+  const reset = await get('/api/v1/retention-policies', {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({
+      hotDays: inForce.hotDays,
+      coldDays: inForce.coldDays,
+      legalHold: false,
+    }),
+  });
+  assert.equal(reset.status, 200, `reset failed: ${reset.text}`);
+});
+
 test('smoke: EP-18 — a program table is written thinly, read back in reel order, and audited', async () => {
   // Scheduling on a live cluster: create the day, save a reel through the thin write path — with
   // an overlap the backend must NOT refuse (data-model §3.4) — read it back in reel order through

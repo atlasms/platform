@@ -407,3 +407,141 @@ test('SECURITY: logs need logs:read — asset:read alone is 403, and another cha
   assert.deepEqual(cross.json<{ items: unknown[] }>().items, []);
   await other.app.close();
 });
+
+// --- retention policies (EP-19.4) ------------------------------------------------------------------------
+
+test('retention: the defaults until set; PUT replaces the channel policy, bumps its version, and audits it into the log itself', async () => {
+  const { app, store, caller } = await harness({ permissions: ['compliance:admin', 'logs:read'] });
+  const before = await app.inject({
+    method: 'GET',
+    url: '/api/v1/retention-policies',
+    headers: caller,
+  });
+  assert.equal(before.statusCode, 200, before.body);
+  assert.deepEqual(
+    before.json<{
+      hotDays: number;
+      coldDays: number;
+      legalHold: boolean;
+      version: number;
+      defaults: boolean;
+    }>(),
+    {
+      channelId: CH,
+      hotDays: 90,
+      coldDays: 0,
+      legalHold: false,
+      version: 0,
+      updatedAt: '',
+      updatedBy: '',
+      defaults: true,
+    },
+  );
+
+  const put = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/retention-policies',
+    headers: { ...caller, 'content-type': 'application/json' },
+    payload: { hotDays: 30, coldDays: 3650, legalHold: false },
+  });
+  assert.equal(put.statusCode, 200, put.body);
+  const policy = put.json<{
+    version: number;
+    updatedBy: string;
+    defaults: boolean;
+    hotDays: number;
+  }>();
+  assert.equal(policy.version, 1);
+  assert.equal(policy.updatedBy, 'user-1');
+  assert.equal(policy.defaults, false);
+
+  const again = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/retention-policies',
+    headers: { ...caller, 'content-type': 'application/json' },
+    payload: { hotDays: 30, coldDays: 3650, legalHold: true },
+  });
+  assert.equal(again.json<{ version: number }>().version, 2);
+  assert.equal((await store.retentionPolicy(CH))?.legalHold, true);
+
+  // The keeper's own mutation is in the log it keeps: two revisions, field-level deltas.
+  const history = await store.history(CH, 'retention-policy', CH);
+  assert.deepEqual(
+    history.map((h) => [h.revision, h.action, h.actorId]),
+    [
+      [1, 'retention-policy.updated', 'user-1'],
+      [2, 'retention-policy.updated', 'user-1'],
+    ],
+  );
+  assert.deepEqual(history[1]!.delta['legalHold'], { before: false, after: true });
+  assert.equal('hotDays' in history[1]!.delta, false, 'unchanged fields are not in the delta');
+  // And it is a link in the channel's chain, like every record.
+  const chain = await store.chain(CH);
+  assert.equal(chain.length, 2);
+  assert.equal(chain[1]!.prevHash, chain[0]!.hash);
+
+  const bad = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/retention-policies',
+    headers: { ...caller, 'content-type': 'application/json' },
+    payload: { hotDays: 0, coldDays: 0 },
+  });
+  assert.equal(bad.statusCode, 422);
+  await app.close();
+});
+
+test('SECURITY: retention is governance — compliance:admin for the read and the write, logs:read alone is 403', async () => {
+  const reader = await harness({ permissions: ['logs:read', 'asset:read'] });
+  for (const method of ['GET', 'PUT'] as const) {
+    const res = await reader.app.inject({
+      method,
+      url: '/api/v1/retention-policies',
+      headers: { ...reader.caller, 'content-type': 'application/json' },
+      ...(method === 'PUT' ? { payload: { hotDays: 1, coldDays: 0 } } : {}),
+    });
+    assert.equal(res.statusCode, 403, method);
+    assert.equal(res.json<{ code: string }>().code, 'FORBIDDEN');
+  }
+  await reader.app.close();
+
+  // Another channel's admin does not see this channel's policy: the route is the caller's channel.
+  const admin = await harness({ permissions: ['compliance:admin'] });
+  await admin.app.inject({
+    method: 'PUT',
+    url: '/api/v1/retention-policies',
+    headers: { ...admin.caller, 'content-type': 'application/json' },
+    payload: { hotDays: 3, coldDays: 0 },
+  });
+  const other = await admin.app.inject({
+    method: 'GET',
+    url: '/api/v1/retention-policies',
+    headers: { [INTERNAL_HEADERS.user]: 'user-2', [INTERNAL_HEADERS.channel]: 'ch99' },
+  });
+  assert.equal(other.json<{ defaults: boolean; channelId: string }>().defaults, true);
+  assert.equal(other.json<{ channelId: string }>().channelId, 'ch99');
+
+  // The policy's HISTORY is governance too: compliance:admin (with logs:read), not a
+  // `retention-policy:read` nobody holds — the same exception identities make with user:admin.
+  const history = await admin.app.inject({
+    method: 'GET',
+    url: '/api/v1/history/retention-policy/ch12',
+    headers: admin.caller,
+  });
+  assert.equal(history.statusCode, 403, 'logs:read is still the door');
+  await admin.app.close();
+  const auditor = await harness({ permissions: ['logs:read', 'compliance:admin'] });
+  await auditor.app.inject({
+    method: 'PUT',
+    url: '/api/v1/retention-policies',
+    headers: { ...auditor.caller, 'content-type': 'application/json' },
+    payload: { hotDays: 3, coldDays: 0 },
+  });
+  const read = await auditor.app.inject({
+    method: 'GET',
+    url: '/api/v1/history/retention-policy/ch12',
+    headers: auditor.caller,
+  });
+  assert.equal(read.statusCode, 200, read.body);
+  assert.equal(read.json<{ revisions: unknown[] }>().revisions.length, 1);
+  await auditor.app.close();
+});
