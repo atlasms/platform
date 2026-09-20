@@ -151,6 +151,12 @@ jobs:
       - name: Project graph is complete (consumer fanout)
         run: npm run graph:check
 
+      # Every overlay renders and keeps its conventions (EP-07.5): probes, requests, a read-only
+      # root; and staging shaped like production — registry images by release tag, no NodePort,
+      # no seed, one TLS Ingress, a PDB per multi-replica deployment. kubectl is on the runner.
+      - name: Manifests render and hold their conventions
+        run: npm run k8s:check
+
       # Every `enum` in the schemas is a Tier-0 decision — code branches on it — and each is recorded
       # with its reason in docs/architecture/schemas/tier0-enums.json. An enum that is not there is
       # either a new behaviour or a list an operator should own, and only a person can say which.

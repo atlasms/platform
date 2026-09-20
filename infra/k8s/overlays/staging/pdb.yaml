@@ -1,0 +1,26 @@
+# The two-replica deployments stay reachable through a node drain or a rollout: one pod of each
+# is always available. A PDB for a single-replica deployment would BLOCK drains, so IAM (one
+# replica by a correctness constraint — its signing key ring is per process) has none.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api-gateway
+  labels:
+    app.kubernetes.io/name: api-gateway
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mam
+  labels:
+    app.kubernetes.io/name: mam
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mam

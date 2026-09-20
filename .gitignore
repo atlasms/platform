@@ -40,3 +40,6 @@ npm-debug.log*
 
 # local agent tooling config — machine-specific, never committed (it leaked once, #270)
 .kilo/
+
+# staging credentials are generated from a file kustomize reads and git never sees
+infra/k8s/overlays/staging/*.env

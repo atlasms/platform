@@ -1,0 +1,103 @@
+# Staging — the first environment shaped like production (EP-07.5; ADR-0002).
+#
+#   cp infra/k8s/overlays/staging/postgres.env.example infra/k8s/overlays/staging/postgres.env
+#   $EDITOR infra/k8s/overlays/staging/postgres.env infra/k8s/overlays/staging/ingress.yaml
+#   kubectl apply -k infra/k8s/overlays/staging
+#
+# What differs from dev, and why each difference is the one that would be wrong in production:
+# images come from a REGISTRY by tag (CD pins the digest with `kustomize edit set image`), the
+# gateway and MAM run at the base's two replicas behind PodDisruptionBudgets, the data plane has
+# real sizes, the credentials are a Secret generated from a file that is NOT in the repository,
+# the platform is reached through ONE Ingress with TLS (/ws to the websocket service, everything
+# else to the gateway — the shape infra/k8s/README.md describes), and there is no seeded account.
+# `npm run k8s:check` renders this overlay and asserts every one of those conventions in CI.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: atlas
+
+resources:
+  - ../../base
+  - ingress.yaml
+  - pdb.yaml
+
+# The registry and the tag are the release's. `registry.example` is the placeholder a real
+# environment replaces once, in this file; the tag is the platform version, and CD pins a digest:
+#   kustomize edit set image atlas/iam=registry.example/atlas/iam@sha256:…
+images:
+  - name: atlas/iam
+    newName: registry.example/atlas/iam
+    newTag: 0.1.0
+  - name: atlas/mam
+    newName: registry.example/atlas/mam
+    newTag: 0.1.0
+  - name: atlas/websocket
+    newName: registry.example/atlas/websocket
+    newTag: 0.1.0
+  - name: atlas/api-gateway
+    newName: registry.example/atlas/api-gateway
+    newTag: 0.1.0
+  - name: atlas/logging
+    newName: registry.example/atlas/logging
+    newTag: 0.1.0
+  - name: atlas/scheduling
+    newName: registry.example/atlas/scheduling
+    newTag: 0.1.0
+  - name: atlas/rim
+    newName: registry.example/atlas/rim
+    newTag: 0.1.0
+
+# The credentials come from a file kustomize reads at render time and git never sees
+# (`*.env` in this directory is ignored; the `.example` is committed). A secrets backend — vault,
+# sealed-secrets — replaces this generator with a reference to the Secret it manages; the base
+# only ever names `postgres-credentials`.
+secretGenerator:
+  - name: postgres-credentials
+    envs:
+      - postgres.env
+    options:
+      disableNameSuffixHash: true
+
+# ONE `patches:` key (a second would silently replace the first — YAML duplicate keys).
+patches:
+  # --- the data plane, sized for a facility rather than a laptop -----------------------------
+  - target:
+      kind: StatefulSet
+      name: postgres
+    patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 50Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: { cpu: "500m", memory: "1Gi" }
+          limits: { memory: "4Gi" }
+  - target:
+      kind: StatefulSet
+      name: opensearch
+    patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 100Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: { cpu: "1", memory: "3Gi" }
+          limits: { memory: "4Gi" }
+  - target:
+      kind: StatefulSet
+      name: nats
+    patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 20Gi
+  # RIM's staging area: a facility's uploads in flight, not a laptop's.
+  - target:
+      kind: PersistentVolumeClaim
+      name: rim-staging
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 200Gi
