@@ -798,6 +798,67 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  test(`${name}: files are one row per (asset, kind, variant), replaced whole; a message id is claimed once`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await store.transaction(async (tx) => tx.put(a));
+      const file = (over: Record<string, unknown>) => ({
+        id: '01H0000000000000000000000F',
+        channelId: a.channelId,
+        assetId: a.id,
+        kind: 'proxy' as const,
+        storage: { path: '/p', tier: 'online' as const, status: 'available' as const },
+        checksum: { algorithm: 'sha256', value: 'x' },
+        sourceMessageId: '01H0000000000000000000000M',
+        version: 1,
+        updatedAt: '2026-09-21T00:00:00.000Z',
+        ...over,
+      });
+      await store.transaction(async (tx) => {
+        await tx.putFile(file({}));
+        await tx.putFile(
+          file({ id: '01H0000000000000000000000G', kind: 'thumbnail', variant: '01' }),
+        );
+        await tx.putFile(
+          file({ id: '01H0000000000000000000000H', kind: 'thumbnail', variant: '02' }),
+        );
+      });
+      assert.deepEqual(
+        (await store.filesOf(a.id)).map((f) => [f.kind, f.variant ?? '']),
+        [
+          ['proxy', ''],
+          ['thumbnail', '01'],
+          ['thumbnail', '02'],
+        ],
+      );
+      // The same (kind, variant) again replaces the row — same identity, new content.
+      await store.transaction(async (tx) =>
+        tx.putFile(
+          file({ version: 2, storage: { path: '/p2', tier: 'near-line', status: 'available' } }),
+        ),
+      );
+      const proxy = (await store.filesOf(a.id)).find((f) => f.kind === 'proxy');
+      assert.equal(proxy?.version, 2);
+      assert.equal(proxy?.storage.tier, 'near-line');
+      assert.deepEqual(await store.filesOf('01H000000000000000000000NO'), []);
+
+      // The seen-mark: the first claim wins, inside the transaction it is part of.
+      assert.equal(await store.transaction((tx) => tx.markSeen('msg-1')), true);
+      assert.equal(await store.transaction((tx) => tx.markSeen('msg-1')), false);
+      await assert.rejects(
+        store.transaction(async (tx) => {
+          await tx.markSeen('msg-2');
+          throw new Error('rolled back');
+        }),
+      );
+      assert.equal(
+        await store.transaction((tx) => tx.markSeen('msg-2')),
+        true,
+        'a rolled-back claim is no claim',
+      );
+    });
+  });
+
   test(`${name}: a failed transaction leaves the store usable`, async () => {
     // A driver that forgets to ROLLBACK leaves the connection in a failed transaction, and every
     // later query dies with "current transaction is aborted". The first symptom is the SECOND

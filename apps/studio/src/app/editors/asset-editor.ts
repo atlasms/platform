@@ -10,7 +10,7 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AssetsService } from '../core/assets.service.ts';
-import type { Asset, UpdateAssetInput } from '../core/generated/mam.types.ts';
+import type { Asset, FileRef, UpdateAssetInput } from '../core/generated/mam.types.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { LocaleService } from '../core/locale.service.ts';
@@ -277,6 +277,49 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
               </dd>
             </div>
           </dl>
+          <!-- The FileRef mirror (EP-17.8; the per-file rows EP-20.2 waited for): what HSM and
+               MTS last announced about each file. Read on entering the tab, and again on a live
+               event for this asset, since a placement or a transcode changes rows, not the asset.
+               HSM remains the source of truth; sourceMessageId names the ledger entry. -->
+          @if (filesError()) {
+            <p class="error" role="alert">{{ filesError() }}</p>
+          } @else if (files() === null) {
+            <p class="files-note">{{ locale.t('assetEditor.filesLoading') }}</p>
+          } @else if (files()!.length === 0) {
+            <p class="files-note">{{ locale.t('assetEditor.noFiles') }}</p>
+          } @else {
+            <table class="file-rows">
+              <thead>
+                <tr>
+                  <th>{{ locale.t('assetEditor.fileKind') }}</th>
+                  <th>{{ locale.t('assetEditor.fileTier') }}</th>
+                  <th>{{ locale.t('assetEditor.fileStatus') }}</th>
+                  <th>{{ locale.t('assetEditor.fileSize') }}</th>
+                  <th>{{ locale.t('assetEditor.fileChecksum') }}</th>
+                  <th>{{ locale.t('assetEditor.filePath') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (file of files(); track file.id) {
+                  <tr [attr.data-status]="file.storage.status">
+                    <td>
+                      {{ file.kind }}
+                      @if (file.variant) {
+                        <span class="muted">· {{ file.variant }}</span>
+                      }
+                    </td>
+                    <td>{{ file.storage.tier }}</td>
+                    <td>{{ locale.t('assetEditor.fileStatuses.' + file.storage.status) }}</td>
+                    <td>{{ formatSize(file.sizeBytes) }}</td>
+                    <td class="mono" [title]="file.checksum.algorithm + ' ' + file.checksum.value">
+                      {{ file.checksum.algorithm }} {{ file.checksum.value.slice(0, 12) }}…
+                    </td>
+                    <td class="mono path" [title]="file.storage.path">{{ file.storage.path }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          }
           <p class="files-note">
             {{ locale.t('assetEditor.filesNote') }}
           </p>
@@ -339,8 +382,36 @@ export class AssetEditor {
       if (this.dirtyFields().size === 0) this.reload();
     });
 
+  /** The Files tab's rows: null until read, then what MAM mirrors (EP-17.8). */
+  protected readonly files = signal<FileRef[] | null>(null);
+  protected readonly filesError = signal<string | null>(null);
+
+  // Read when the tab is entered and whenever the asset is (re)loaded while it is open — a live
+  // event refetches the asset, and a placement or a transcode changes the rows, not the asset.
+  private readonly filesEffect = effect(() => {
+    const asset = this.asset();
+    if (this.section() !== 'files' || !asset) return;
+    this.loadFiles(asset.id);
+  });
+
   ngOnInit(): void {
     this.reload();
+  }
+
+  private loadFiles(id: string): void {
+    this.filesError.set(null);
+    this.assetsApi.files(id).subscribe({
+      next: (rows) => this.files.set(rows),
+      error: () => this.filesError.set(this.locale.t('assetEditor.filesError')),
+    });
+  }
+
+  protected formatSize(bytes: number | undefined): string {
+    if (bytes === undefined) return '—';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 
   protected reload(): void {

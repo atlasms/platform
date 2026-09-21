@@ -369,3 +369,33 @@ Three things worth knowing:
 - **It is not fanned out to sockets.** The websocket service maps `atlas.<ch>.audit.*` to
   `audit:read`, which no role grants, so eligibility fails closed. Deliberate: the delta carries
   whole field values, including groups a reader may not hold. The sink (EP-19.1) is the consumer.
+
+## The FileRef mirror: MAM's first consumer (EP-17.8)
+
+HSM is the system of record for where a file is and whether it is intact; MTS produces the
+renditions. MAM keeps a **copy** of what they announce — the `FileRef` of mam.md §3 and
+data-model §1.5, one row per `(asset, kind, variant)` — so the asset editor's Files tab and the
+search can answer without a call across services, and so the answer is what the ledger last
+said. `GET /api/v1/assets/{id}/files` reads it (`asset:read` on the `files` group);
+`sourceMessageId` names the ledger entry each row mirrors.
+
+Two subjects, `atlas.*.transcode.completed` and `atlas.*.file.placed` (`startFileMirror`,
+durable per subject). **Each message is one unit of work**: the seen-mark, the rows, the asset's
+`hasRenditions` bump and the audit records commit together — the `SeenStore` (EP-03.3) in use in
+this service for the first time, `AssetTx.markSeen` in the transaction the effect is in, so a
+redelivery is a **duplicate** and a crash mid-way is a **retry**. A `transcode.completed`
+replaces its kinds (MTS re-ran: same row id, next version, the delta says what moved) and bumps
+the asset exactly as `attachRenditions` does; a `file.placed` writes the storage of the row it
+names — path, tier, the checksum when HSM sent one — or a new row when nothing announced the
+file before (the original, placed after ingest), and does not touch the asset row.
+
+**Refused, not skipped**: a message that is not an envelope of the expected type, or one for an
+asset this channel does not have, is thrown — the broker retries (ordering may deliver it again
+once the asset exists), then dead-letters it where `scripts/dlq.mjs` shows it to a person.
+Skipping would ack an event the mirror then silently lacks. Every row write is `audit.recorded`
+(`entityType: file`, the row's own revision) with the service as actor and the producing event's
+correlation id carried through.
+
+Not here: the producers. Neither HSM (EP-14) nor MTS (EP-16) exists yet, so on the dev cluster
+nothing publishes these events and the smoke suite cannot drive the mirror end to end; the
+contract events and the conformance/consumer tests are what hold it until they do.

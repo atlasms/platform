@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { map } from 'rxjs';
 import { ApiClient } from './api-client.ts';
-import type { Asset, Tag, UpdateAssetInput } from './generated/mam.types.ts';
+import type { Asset, FileRef, Tag, UpdateAssetInput } from './generated/mam.types.ts';
 import { MamOperations as ops } from './generated/mam.operations.ts';
 
 /**
@@ -50,6 +50,11 @@ export class AssetsService {
   /** Save only changed, user-editable core fields; MAM remains the authorization boundary. */
   update(id: string, patch: UpdateAssetInput) {
     return this.api.call(ops.updateAsset, { params: { id }, body: patch }).as<Asset>();
+  }
+
+  /** The asset's files as MAM mirrors them from HSM/MTS (EP-17.8) — the Files tab's rows. */
+  files(id: string) {
+    return this.api.call(ops.listAssetFiles, { params: { id } }).as<FileRef[]>();
   }
 
   /**

@@ -261,6 +261,13 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     ),
   );
 
+  // EP-17.8: the asset's files as mirrored from HSM/MTS — asset:read on the `files` group.
+  app.get('/api/v1/assets/:id/files', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.files(await callerOf(req), (req.params as { id: string }).id),
+    ),
+  );
+
   app.patch('/api/v1/assets/:id', async (req, reply) =>
     handle(req, reply, async () =>
       options.service.update(

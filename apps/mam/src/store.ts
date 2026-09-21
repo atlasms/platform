@@ -10,6 +10,7 @@
 import type { OutboxRecord } from '@atlas/messaging';
 import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
+import type { FileRef } from './file.ts';
 import type { ParsedQuery, SearchHit } from './search.ts';
 import type { Tag, TagCandidate } from './tag.ts';
 
@@ -123,6 +124,8 @@ export interface AssetStore {
    * it in SQL would put the policy evaluator in the database.
    */
   search(channelId: string, query: ParsedQuery, limit: number): Promise<SearchHit[]>;
+  /** The asset's files as last mirrored from HSM/MTS (EP-17.8), by kind then variant. */
+  filesOf(assetId: string): Promise<FileRef[]>;
 
   /** One unit of work. Everything written inside commits together, or none of it does. */
   transaction<T>(fn: (tx: AssetTx) => Promise<T>): Promise<T>;
@@ -166,4 +169,11 @@ export interface AssetTx {
   indexTerms(assetId: string, channelId: string, terms: readonly string[]): Promise<void>;
   /** Enqueue a domain event on the outbox — in THIS transaction, with the row it announces. */
   enqueue(record: OutboxRecord): Promise<void>;
+  /**
+   * Claim a broker message id IN this transaction (EP-03.3) — `false` means it was already
+   * consumed and nothing must be done. The claim commits with the effect or rolls back with it.
+   */
+  markSeen(messageId: string): Promise<boolean>;
+  /** Write a file row, replacing the one with the same (asset, kind, variant). */
+  putFile(file: FileRef): Promise<void>;
 }

@@ -43,6 +43,8 @@ export const MamOperations = {
   getAssetExtended: { method: 'GET', path: '/api/v1/assets/{id}/extended', params: ['id'] },
   /** Merge extended values; each is validated against its field definition (scope asset:write) */
   updateAssetExtended: { method: 'PATCH', path: '/api/v1/assets/{id}/extended', params: ['id'] },
+  /** The asset's files as mirrored from the HSM ledger (scope asset:read / files) */
+  listAssetFiles: { method: 'GET', path: '/api/v1/assets/{id}/files', params: ['id'] },
   /** The asset's free-form tags (FR-TAX-1) */
   listAssetTags: { method: 'GET', path: '/api/v1/assets/{id}/tags', params: ['id'] },
   /** Replace the asset's tag set; unknown labels are minted (scope asset:write / taxonomy) */

@@ -8,13 +8,16 @@ import {
   openDb,
   outboxHeadersMigration,
   outboxMigration,
+  seenMigration,
   SqliteOutboxStore,
+  SqliteSeenStore,
   withTransactionAsync,
   type Db,
   type Migration,
 } from '@atlas/data';
 import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
+import type { FileRef } from './file.ts';
 import type { AssetStore, AssetTx } from './store.ts';
 import { prefixUpperBound } from './search.ts';
 import type { Tag } from './tag.ts';
@@ -92,6 +95,22 @@ export const sqliteSearchMigration: Migration = {
          ON asset_search (channel_id, term, asset_id);`,
 };
 
+// The FileRef mirror (EP-17.8): one row per (asset, kind, variant), the document alongside the
+// columns the reads and the uniqueness need. `channel_id` like every row.
+export const sqliteFilesMigration: Migration = {
+  id: 'mam_files',
+  up: `CREATE TABLE IF NOT EXISTS asset_files (
+         id         TEXT PRIMARY KEY,
+         channel_id TEXT NOT NULL,
+         asset_id   TEXT NOT NULL,
+         kind       TEXT NOT NULL,
+         variant    TEXT NOT NULL DEFAULT '',
+         data       TEXT NOT NULL,
+         UNIQUE (asset_id, kind, variant)
+       );
+       CREATE INDEX IF NOT EXISTS asset_files_asset_idx ON asset_files (asset_id, kind, variant);`,
+};
+
 export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
   const db = openDb(path);
   migrate(db, [
@@ -104,8 +123,12 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     // recorded the ones above. Slotting these next to their tables would re-order history.
     outboxHeadersMigration,
     sqliteConfigMigration,
+    // EP-17.8: the first broker consumer in MAM brings the seen-mark, and the files it mirrors.
+    seenMigration,
+    sqliteFilesMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
+  const seen = new SqliteSeenStore(db);
 
   const read = (row: { data: string } | undefined): Asset | undefined =>
     row ? (JSON.parse(row.data) as Asset) : undefined;
@@ -193,6 +216,22 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     },
     async enqueue(record) {
       outbox.enqueue(record);
+    },
+    async markSeen(messageId) {
+      return seen.mark(db, messageId);
+    },
+    async putFile(file) {
+      db.prepare(
+        `INSERT INTO asset_files (id, channel_id, asset_id, kind, variant, data) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (asset_id, kind, variant) DO UPDATE SET id = excluded.id, data = excluded.data`,
+      ).run(
+        file.id,
+        file.channelId,
+        file.assetId,
+        file.kind,
+        file.variant ?? '',
+        JSON.stringify(file),
+      );
     },
   };
 
@@ -343,6 +382,12 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
       const row = db.prepare('SELECT version FROM mam_config WHERE id = 1').get() as
         { version: number } | undefined;
       return row?.version ?? 1;
+    },
+    async filesOf(assetId) {
+      const rows = db
+        .prepare('SELECT data FROM asset_files WHERE asset_id = ? ORDER BY kind, variant')
+        .all(assetId) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as FileRef);
     },
     async transaction(fn) {
       return withTransactionAsync(db, () => fn(tx));

@@ -20,6 +20,8 @@ export {
 } from './asset.ts';
 export {
   MamService,
+  systemCaller,
+  type MirrorOutcome,
   type MamReferenceSnapshot,
   type Caller,
   type MamOptions,
@@ -58,6 +60,14 @@ export {
   type SearchHit,
 } from './search.ts';
 export { CONTROL, INVISIBLE, ZWNJ, cleanText, foldText } from './text.ts';
+export {
+  fileFromPlacement,
+  fileFromRendition,
+  fileKey,
+  type FileRef,
+  type FileStatus,
+} from './file.ts';
+export { FILE_MIRROR_PATTERNS, startFileMirror, type FileMirrorOptions } from './files.ts';
 export {
   MAX_TAGS_PER_ASSET,
   MAX_TAG_LENGTH,
