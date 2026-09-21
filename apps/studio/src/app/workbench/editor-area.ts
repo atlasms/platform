@@ -2,6 +2,8 @@ import { CdkDrag, CdkDropList, CdkDropListGroup, type CdkDragDrop } from '@angul
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { AssetEditor } from '../editors/asset-editor.ts';
 import { ScheduleEditor } from '../editors/schedule-editor.ts';
+import { GroupEditor } from '../editors/group-editor.ts';
+import { RoleEditor } from '../editors/role-editor.ts';
 import { UserEditor } from '../editors/user-editor.ts';
 import { Dashboard } from '../panels/dashboard.ts';
 import { LocaleService } from '../core/locale.service.ts';
@@ -26,6 +28,8 @@ import { EditorStore } from './editor.store.ts';
     Dashboard,
     ScheduleEditor,
     UserEditor,
+    GroupEditor,
+    RoleEditor,
   ],
   template: `
     @if (store.isEmpty()) {
@@ -103,6 +107,12 @@ import { EditorStore } from './editor.store.ts';
                     }
                     @case ('user') {
                       <atlas-user-editor [userId]="tab.resourceId" [tabId]="tab.id" />
+                    }
+                    @case ('group') {
+                      <atlas-group-editor [groupId]="tab.resourceId" [tabId]="tab.id" />
+                    }
+                    @case ('role') {
+                      <atlas-role-editor [roleId]="tab.resourceId" [tabId]="tab.id" />
                     }
                     @default {
                       <h2>{{ tab.title }}</h2>

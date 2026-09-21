@@ -1,0 +1,93 @@
+/* The Admin panel's views share one look: a collapsible "new" form, a list of items that open as
+ * editor tabs, a state chip. Tokens only (studio-frontend.md §5). */
+
+.panel-title {
+  margin: 0 0 var(--space-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-fg-muted);
+}
+.new summary {
+  cursor: pointer;
+  color: var(--color-accent);
+  font-size: 0.8125rem;
+}
+.new form {
+  display: grid;
+  gap: var(--space-1);
+  margin-block: var(--space-2);
+}
+.new label {
+  display: grid;
+  gap: 2px;
+  font-size: 0.75rem;
+  color: var(--color-fg-muted);
+}
+.new input {
+  padding: var(--space-1) var(--space-2);
+  color: inherit;
+  background: var(--color-bg-hover);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+}
+.new input:focus-visible {
+  border-color: var(--color-accent);
+  outline: none;
+}
+.mode {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-fg-muted);
+}
+.items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.items button {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  inline-size: 100%;
+  padding: var(--space-1) var(--space-2);
+  text-align: start;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.items button:hover {
+  background: var(--color-bg-hover);
+}
+.title {
+  flex: 1;
+}
+.state {
+  font-size: 0.6875rem;
+  color: var(--color-fg-muted);
+}
+.state[data-state='disabled'],
+.state[data-state='locked'] {
+  color: var(--color-danger);
+}
+.link {
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+.muted,
+.error {
+  color: var(--color-fg-muted);
+  font-size: 0.8125rem;
+}
+.error {
+  color: var(--color-danger);
+}

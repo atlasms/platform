@@ -47,8 +47,17 @@ disable/enable/unlock with the consequence on the button (disabling signs the us
 everywhere), a new password, and the direct grants — a role from the channel's and the starter
 roles, or an inline rule (permissions, scoped to the user's channel, a ULID minted in the
 browser) — each its own request against IAM (EP-10.4/10.6), because each is its own audited
-mutation there. Disabling yourself is refused in Studio before IAM refuses it. Groups, roles,
-field schemas and theme are the panel's later views.
+mutation there. Disabling yourself is refused in Studio before IAM refuses it.
+The panel's **Groups** and **Roles** views follow the same shape
+([`panels/admin/`](src/app/panels/admin/)): a list, a create form, and the item as an editor
+tab. A group ([`group-editor.ts`](src/app/editors/group-editor.ts)) has its profile (the dirty
+pair), its members — added and removed by IAM's member calls, offered from the users not yet in
+it — and its grants (roles and inline rules, PATCHed as the whole set, the page saying a change
+reaches every member at once); deleting it closes the tab. A role
+([`role-editor.ts`](src/app/editors/role-editor.ts)) has its profile and its rules, PATCHed the
+same way; a **platform-wide** role (the starter roles, no `channelId`) is shown, not offered for
+editing, since IAM would refuse; deleting a role something still holds is IAM's 409, shown as
+such. Field schemas and theme are the panel's later views.
 **EP-20.6** — the dashboard: an editor tab opened as the default landing view — system-state
 counts and what's-new against real MAM, live-refreshed. State counts page the channel with a
 1000-asset cap; a real counts endpoint is a follow-up.

@@ -4,11 +4,11 @@
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { CreateUser, User, UserPage } from '../core/generated/iam.types.ts';
-import { LocaleService } from '../core/locale.service.ts';
-import { UsersService } from '../core/users.service.ts';
-import { EditorStore } from '../workbench/editor.store.ts';
-import { AdminPanel } from './admin-panel.ts';
+import type { CreateUser, User, UserPage } from '../../core/generated/iam.types.ts';
+import { LocaleService } from '../../core/locale.service.ts';
+import { UsersService } from '../../core/users.service.ts';
+import { EditorStore } from '../../workbench/editor.store.ts';
+import { UsersView } from './users-view.ts';
 
 const user = (over: Partial<User> = {}): User => ({
   id: '01H0000000000000000000000A',
@@ -56,7 +56,7 @@ function setup() {
       { provide: LocaleService, useValue: { t: (k: string) => k } },
     ],
   });
-  const fixture = TestBed.createComponent(AdminPanel);
+  const fixture = TestBed.createComponent(UsersView);
   fixture.detectChanges();
   return {
     fixture,
@@ -67,7 +67,7 @@ function setup() {
   };
 }
 
-describe('AdminPanel', () => {
+describe('UsersView', () => {
   beforeEach(() => TestBed.resetTestingModule());
 
   it('lists the users as IAM pages them, appends the next page after the last id, and opens one as a tab', () => {
