@@ -38,6 +38,7 @@ import {
   type FieldSchema,
 } from './field-schema.ts';
 import { fileFromPlacement, fileFromRendition, fileKey, type FileRef } from './file.ts';
+import type { AssetCache, CacheFamilies, CacheFamily } from './cache.ts';
 import type { AssetStore, AssetTx, ExtendedValues } from './store.ts';
 import { groupsForCoreFields, groupsForExtended, type AssetFieldGroup } from './field-groups.ts';
 import { indexTerms, parseQuery } from './search.ts';
@@ -67,7 +68,27 @@ export interface MamOptions {
    * its fields unwritable rather than unchecked — see `field-schema.ts`.
    */
   vocabularies?: () => ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * The read cache for hot assets (EP-17.7). Absent, every read goes to the store. See
+   * `cache.ts` for what is cached and, more importantly, how it is invalidated.
+   */
+  cache?: AssetCache;
+  /** One call per cached read, for the hit-rate counter. `family`, never an id, is the label. */
+  onCacheRead?: (family: CacheFamily, outcome: CacheOutcome) => void;
   now?: () => Date;
+}
+
+export type CacheOutcome = 'hit' | 'miss' | 'bypass';
+
+/**
+ * How a read may be answered.
+ *
+ * `fresh` reads through the cache — what `Cache-Control: no-cache` on the request means, and what
+ * a client refetching on a live event asks for, since the event and this replica's eviction are
+ * two consumers of one stream with no order between them.
+ */
+export interface ReadOptions {
+  fresh?: boolean;
 }
 
 /**
@@ -222,11 +243,77 @@ export class MamService {
    * A cross-tenant id is reported as NOT FOUND, not FORBIDDEN. "You may not see this" confirms the
    * asset exists, which is itself a leak across a tenant boundary.
    */
-  async get(caller: Caller, id: string): Promise<Asset> {
-    const asset = await this.options.store.get(id);
+  async get(caller: Caller, id: string, options: ReadOptions = {}): Promise<Asset> {
+    const asset = await this.cachedAsset(id, options.fresh ?? false);
     if (!asset || asset.channelId !== caller.channelId) throw new NotFound(`no asset ${id}`);
     this.authorize(caller, 'asset:read', asset);
     return asset;
+  }
+
+  /**
+   * The base of a mutation: the same scoping and permission as {@link get}, from the STORE.
+   *
+   * A write computes `version + 1` from what it read. Read from another replica's stale cache
+   * entry, that is a lost update wearing a valid version number — so a mutation's base never comes
+   * from the cache, whatever the cache's invalidation promises.
+   */
+  private async fresh(caller: Caller, id: string): Promise<Asset> {
+    return this.get(caller, id, { fresh: true });
+  }
+
+  // --- the read cache (EP-17.7) ---------------------------------------------
+
+  private async cachedAsset(id: string, fresh: boolean): Promise<Asset | undefined> {
+    return this.cached('asset', id, fresh, () => this.options.store.get(id));
+  }
+
+  private async cachedExtended(id: string, fresh: boolean): Promise<ExtendedValues | undefined> {
+    const value = await this.cached(
+      'extended',
+      id,
+      fresh,
+      async () => (await this.options.store.extended(id)) ?? null,
+    );
+    return value ?? undefined;
+  }
+
+  private async cachedTags(id: string, fresh: boolean): Promise<Tag[]> {
+    return (await this.cached('tags', id, fresh, () => this.options.store.tagsOf(id))) ?? [];
+  }
+
+  /**
+   * Cache-aside for one family. A miss is NOT cached: a probe for an id that does not exist is an
+   * index lookup anyway, and an unbounded key space of misses is how a cache is filled with
+   * nothing.
+   */
+  private async cached<F extends CacheFamily>(
+    family: F,
+    id: string,
+    fresh: boolean,
+    load: () => Promise<CacheFamilies[F] | undefined>,
+  ): Promise<CacheFamilies[F] | undefined> {
+    const cache = this.options.cache;
+    if (!cache || fresh) {
+      if (cache) this.options.onCacheRead?.(family, 'bypass');
+      return load();
+    }
+    const hit = await cache.get(id, family);
+    if (hit !== undefined) {
+      this.options.onCacheRead?.(family, 'hit');
+      return hit;
+    }
+    this.options.onCacheRead?.(family, 'miss');
+    const loaded = await load();
+    if (loaded !== undefined) await cache.set(id, family, loaded);
+    return loaded;
+  }
+
+  /**
+   * Forget what is cached about one asset — called after every committed mutation here, and by
+   * the broadcast subscription for the mutations OTHER replicas commit (`cache-invalidation.ts`).
+   */
+  async evictCached(assetId: string): Promise<void> {
+    await this.options.cache?.evict(assetId);
   }
 
   /**
@@ -370,7 +457,7 @@ export class MamService {
   }
 
   async update(caller: Caller, id: string, patch: UpdateAssetInput): Promise<Asset> {
-    const existing = await this.get(caller, id);
+    const existing = await this.fresh(caller, id);
 
     // ALLOWLIST, not the caller's object. `UpdateAssetInput` omits `state`, but a type is erased
     // at runtime and this patch arrives as JSON — spreading it would let `{"state":"approved"}`
@@ -424,7 +511,7 @@ export class MamService {
     action: LifecycleAction,
     options: { expiresAt?: string; retainUntil?: string; reason?: string } = {},
   ): Promise<Asset> {
-    const existing = await this.get(caller, id);
+    const existing = await this.fresh(caller, id);
 
     // Approving is its own permission: someone who may edit metadata is not thereby entitled to
     // sign an asset off for air.
@@ -473,7 +560,7 @@ export class MamService {
 
   /** Attach renditions — normally driven by `transcode.completed` from MTS. */
   async attachRenditions(caller: Caller, id: string): Promise<Asset> {
-    const existing = await this.get(caller, id);
+    const existing = await this.fresh(caller, id);
     // `files` — renditions are the file set, which §3.1 puts in the Librarian's half, not the
     // Editor's. Normally driven by MTS rather than by a person, but the grant is what it is.
     this.authorize(caller, 'asset:write', existing, 'files');
@@ -551,6 +638,7 @@ export class MamService {
       await tx.enqueue(assetAudit);
       for (const a of fileAudits) await tx.enqueue(a);
     });
+    await this.evictCached(assetId);
     return outcome;
   }
 
@@ -648,14 +736,18 @@ export class MamService {
   async extended(
     caller: Caller,
     id: string,
+    options: ReadOptions = {},
   ): Promise<{
     values: ExtendedValues;
     fields: FieldDefinition[];
     orphaned: string[];
   }> {
-    const asset = await this.get(caller, id);
+    const fresh = options.fresh ?? false;
+    const asset = await this.get(caller, id, options);
+    // The RAW document is what is cached; the schema join happens here, on every read, so a
+    // schema change needs no eviction.
     const [values, fields] = await Promise.all([
-      this.options.store.extended(id),
+      this.cachedExtended(id, fresh),
       this.fieldsFor(asset),
     ]);
     const stored = values ?? {};
@@ -674,7 +766,7 @@ export class MamService {
     id: string,
     patch: Readonly<Record<string, unknown>>,
   ): Promise<ExtendedValues> {
-    const asset = await this.get(caller, id);
+    const asset = await this.fresh(caller, id);
 
     const fields = await this.fieldsFor(asset);
     const errors = validateExtended(fields, patch, {
@@ -751,9 +843,9 @@ export class MamService {
   // --- free-form tags (EP-17.3) ----------------------------------------------
 
   /** The tags on one asset. Scoped and authorized by {@link get}. */
-  async tags(caller: Caller, id: string): Promise<Tag[]> {
-    const asset = await this.get(caller, id);
-    return this.options.store.tagsOf(asset.id);
+  async tags(caller: Caller, id: string, options: ReadOptions = {}): Promise<Tag[]> {
+    const asset = await this.get(caller, id, options);
+    return this.cachedTags(asset.id, options.fresh ?? false);
   }
 
   /**
@@ -802,7 +894,7 @@ export class MamService {
    * about a new term without polling for one.
    */
   async setTags(caller: Caller, id: string, labels: readonly unknown[]): Promise<Tag[]> {
-    const asset = await this.get(caller, id);
+    const asset = await this.fresh(caller, id);
     this.authorize(caller, 'asset:write', asset, TAXONOMY_GROUP);
 
     const parsed = parseTagLabels(labels);
@@ -907,7 +999,9 @@ export class MamService {
     const assets: Asset[] = [];
     for (const hit of hits) {
       if (assets.length >= limit) break;
-      const asset = await this.options.store.get(hit.assetId);
+      // Through the cache: a results page is one primary-key read per hit, and the same assets
+      // top the same searches — this is the read the cache exists for.
+      const asset = await this.cachedAsset(hit.assetId, false);
       // Belt and braces on the channel: the store filters by it, and a hit that somehow escaped
       // that filter must not be rescued by a permissive policy.
       if (!asset || asset.channelId !== caller.channelId) continue;
@@ -1135,6 +1229,9 @@ export class MamService {
       if (domain) await tx.enqueue(domain);
       await tx.enqueue(audit);
     });
+    // AFTER the commit, never before: an eviction before it would let a concurrent read refill
+    // the cache with the row about to be replaced.
+    await this.evictCached(asset.id);
   }
 
   /**

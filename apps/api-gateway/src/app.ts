@@ -461,7 +461,9 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
 
     // Forward only what the upstream needs. Notably NOT `authorization`: downstream services
     // trust the internal header set the gateway establishes rather than re-parsing the JWT.
-    for (const h of ['content-type', 'accept', 'if-none-match']) {
+    // `cache-control` is the client's word on a service's read cache (MAM, EP-17.7): a refetch
+    // that must not be answered from memory says `no-cache`, and it has to reach the service.
+    for (const h of ['content-type', 'accept', 'if-none-match', 'cache-control']) {
       const v = req.headers[h];
       if (typeof v === 'string') headers[h] = v;
     }

@@ -42,9 +42,20 @@ export class AssetsService {
     return this.api.call(ops.listAssets, { query: { ...options } }).as<Page<Asset>>();
   }
 
-  /** One complete core record for an editor tab. */
-  get(id: string) {
-    return this.api.call(ops.getAsset, { params: { id } }).as<Asset>();
+  /**
+   * One complete core record for an editor tab.
+   *
+   * `fresh` reads through MAM's asset cache (EP-17.7), by HTTP's own word for it. A refetch on a
+   * live event wants it: the event and the cache's eviction are two consumers of one stream with
+   * no order between them, so a plain read right after the event may still be the old record.
+   */
+  get(id: string, options: { fresh?: boolean } = {}) {
+    return this.api
+      .call(ops.getAsset, {
+        params: { id },
+        ...(options.fresh ? { headers: { 'cache-control': 'no-cache' } } : {}),
+      })
+      .as<Asset>();
   }
 
   /** Save only changed, user-editable core fields; MAM remains the authorization boundary. */

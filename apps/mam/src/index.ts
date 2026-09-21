@@ -21,12 +21,29 @@ export {
 export {
   MamService,
   systemCaller,
+  type CacheOutcome,
   type MirrorOutcome,
   type MamReferenceSnapshot,
   type Caller,
   type MamOptions,
+  type ReadOptions,
   type SearchSources,
 } from './service.ts';
+export {
+  DEFAULT_CACHE_MAX_ENTRIES,
+  DEFAULT_CACHE_TTL_MS,
+  MemoryAssetCache,
+  type AssetCache,
+  type CacheFamilies,
+  type CacheFamily,
+  type MemoryCacheOptions,
+} from './cache.ts';
+export {
+  CACHE_INVALIDATION_PATTERN,
+  assetOf,
+  startCacheInvalidation,
+  type CacheInvalidationOptions,
+} from './cache-invalidation.ts';
 export {
   FIELD_TYPES,
   orphanedFields,

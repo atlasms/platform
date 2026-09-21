@@ -57,7 +57,14 @@ describe('AssetsService', () => {
     service.get('asset/with slash').subscribe();
     const get = http.expectOne('/api/v1/assets/asset%2Fwith%20slash');
     expect(get.request.method).toBe('GET');
+    expect(get.request.headers.has('cache-control')).toBe(false);
     get.flush(asset);
+
+    // A fresh read says so to MAM's cache (EP-17.7).
+    service.get(asset.id, { fresh: true }).subscribe();
+    const fresh = http.expectOne(`/api/v1/assets/${asset.id}`);
+    expect(fresh.request.headers.get('cache-control')).toBe('no-cache');
+    fresh.flush(asset);
 
     service.update(asset.id, { title: 'Renamed' }).subscribe();
     const patch = http.expectOne(`/api/v1/assets/${asset.id}`);

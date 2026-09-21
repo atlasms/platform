@@ -146,6 +146,62 @@ export function brokerConformance(name: string, harness: ConformanceHarness): vo
     });
   });
 
+  test(`[${name}] broadcast: two subscriptions on the SAME pattern each receive the message, once`, async () => {
+    await withBroker(async (broker, chan) => {
+      const a: Message[] = [];
+      const b: Message[] = [];
+      broker.subscribe(
+        `atlas.${chan}.>`,
+        (m) => {
+          a.push(m);
+        },
+        { broadcast: true },
+      );
+      broker.subscribe(
+        `atlas.${chan}.>`,
+        (m) => {
+          b.push(m);
+        },
+        { broadcast: true },
+      );
+      await sleep(harness.timeoutMs ? 500 : 0);
+
+      await broker.publish({ id: mid(), subject: `atlas.${chan}.asset.created`, body: {} });
+
+      assert.ok(
+        await waitFor(() => a.length === 1 && b.length === 1),
+        `expected each to get 1, got ${a.length} and ${b.length}`,
+      );
+      await sleep(harness.timeoutMs ? 500 : 0);
+      assert.equal(a.length, 1);
+      assert.equal(b.length, 1);
+    });
+  });
+
+  test(`[${name}] broadcast: a failing handler is neither retried nor dead-lettered`, async () => {
+    await withBroker(async (broker, chan) => {
+      // The dead-letter store of a durable transport is shared across the run, so the assertion
+      // is that THIS message added nothing to it.
+      const deadBefore = (await harness.deadLetterCount?.(broker)) ?? 0;
+      let calls = 0;
+      broker.subscribe(
+        `atlas.${chan}.>`,
+        () => {
+          calls++;
+          throw new Error('nope');
+        },
+        { broadcast: true, maxAttempts: 3 },
+      );
+      await sleep(harness.timeoutMs ? 500 : 0);
+
+      await broker.publish({ id: mid(), subject: `atlas.${chan}.asset.created`, body: {} });
+      assert.ok(await waitFor(() => calls >= 1));
+      await sleep(harness.timeoutMs ? 1_000 : 50);
+      assert.equal(calls, 1);
+      if (harness.deadLetterCount) assert.equal(await harness.deadLetterCount(broker), deadBefore);
+    });
+  });
+
   test(`[${name}] unsubscribe stops delivery`, async () => {
     await withBroker(async (broker, chan) => {
       const got: Message[] = [];

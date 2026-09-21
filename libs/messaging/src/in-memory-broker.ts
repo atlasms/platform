@@ -42,7 +42,15 @@ export class InMemoryBroker implements Broker, DeadLetterQueue {
   }
 
   subscribe(pattern: string, handler: Handler, opts: SubscribeOptions = {}): Subscription {
-    const sub: Sub = { pattern, handler, opts: { maxAttempts: opts.maxAttempts ?? 3 } };
+    const broadcast = opts.broadcast ?? false;
+    const sub: Sub = {
+      pattern,
+      handler,
+      // A broadcast is tried once and never dead-lettered — the same promise the JetStream
+      // adapter's ephemeral consumer makes, so a test against this double cannot lean on a retry
+      // the real transport would not give it.
+      opts: { maxAttempts: broadcast ? 1 : (opts.maxAttempts ?? 3), broadcast },
+    };
     this.subs.push(sub);
     return {
       unsubscribe: () => {
@@ -52,6 +60,12 @@ export class InMemoryBroker implements Broker, DeadLetterQueue {
   }
 
   private async deliver(sub: Sub, msg: Message): Promise<void> {
+    if (sub.opts.broadcast) {
+      await Promise.resolve()
+        .then(() => sub.handler(msg))
+        .catch(() => undefined);
+      return;
+    }
     let lastErr: unknown;
     for (let attempt = 1; attempt <= sub.opts.maxAttempts; attempt++) {
       try {

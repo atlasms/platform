@@ -8,10 +8,11 @@ and the events every other service reacts to
 
 **EP-17.1** asset core + lifecycle states · **EP-17.2** extensible metadata (AssetExtended +
 FieldSchema) · **EP-17.3** free-form tags · **EP-17.4** simple search · **EP-17.5** the
-mandatory-metadata gate · **EP-17.6** lifecycle events through the outbox.
+mandatory-metadata gate · **EP-17.6** lifecycle events through the outbox · **EP-17.7** the read
+cache for hot assets · **EP-17.8** the FileRef mirror of the HSM ledger.
 
-**Not built:** read cache (17.7), FileRef mirror of the HSM ledger (17.8), and the _faceted_ half
-of search. The service is deliberately narrow and correct rather than broad and provisional.
+**Not built:** the _faceted_ half of search. The service is deliberately narrow and correct rather
+than broad and provisional.
 
 ## Extensible metadata
 
@@ -318,6 +319,48 @@ confirms the asset exists, which is itself the leak.
 
 Approving is a **separate permission** from writing: someone who may edit metadata is not thereby
 entitled to sign an asset off for air.
+
+## The read cache for hot assets (EP-17.7)
+
+[`cache.ts`](src/cache.ts). Three read models are answered from memory, each under the asset's
+id: the record (`GET /assets/{id}`, and every hit of a search page), the raw extensible document
+and the tags. Not the files: `file.placed` changes a file row without touching the asset, so a
+cached file list would have no invalidation signal another replica could act on — and files are
+read on entering an editor tab, not on every listing. A miss is never cached: an unknown id is an
+index lookup anyway, and an unbounded key space of misses is how a cache fills with nothing.
+
+A cache is only as good as its invalidation, so that is the design:
+
+1. **In process, exact.** Every mutation evicts the asset _after_ its transaction commits (before
+   it, a concurrent read could refill the entry with the row about to be replaced). On the
+   replica that wrote, a read after the write sees the write.
+2. **Across replicas, by the mutation's own announcement.** Every asset mutation emits
+   `audit.recorded` for entity `asset` — the domain event is optional (an internal lifecycle step,
+   a rendition attach), the audit record is not (AGENTS.md §5.6) — and every replica listens to
+   `atlas.*.audit.recorded` in the broker's **broadcast** mode
+   ([`cache-invalidation.ts`](src/cache-invalidation.ts)) and forgets the asset named. Broadcast,
+   because an eviction is not work to be shared but a fact every instance must hear, and a record
+   published before this instance existed cannot concern a cache that was empty then.
+3. **A TTL, as the bound.** The announcement rides the outbox: with the broker away it arrives
+   when the broker returns, and until then another replica's cache is stale. The TTL (default
+   10 s, `ATLAS_MAM_CACHE_TTL_MS`) is the promise of how stale at most. `ATLAS_MAM_CACHE_MAX_ENTRIES`
+   is the LRU bound (default 10 000; `0` turns the cache off).
+
+**Mutations never read from the cache.** A write computes `version + 1` from what it read; from
+another replica's stale entry that is a lost update wearing a valid version number. So every
+mutation's base (`fresh`) comes from the store, whatever the invalidation promises — there is a
+test that plants a stale entry and checks the write builds on the stored version.
+
+**`Cache-Control: no-cache` reads through.** HTTP's own word for it, on `GET /assets/{id}`,
+`/extended` and `/tags`, forwarded by the gateway. Studio sends it on every reload that answers a
+live event, a resync or the user's own Retry — the event and this replica's eviction are two
+consumers of one stream with no order between them, so a plain read right after the event may
+still be the old record. `atlas_mam_cache_reads_total{family,outcome}` (hit / miss / bypass) is the
+hit rate; no id is a label.
+
+The port (`AssetCache`) is async so a shared cache — Redis/Valkey, one hash per asset, `DEL` to
+evict — can stand in for the in-process one without the service changing. Nothing needs that
+today; a second replica is served correctly by the in-process cache plus the broadcast eviction.
 
 ## Running in a cluster
 

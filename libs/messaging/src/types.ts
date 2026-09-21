@@ -13,6 +13,18 @@ export type Handler = (msg: Message) => Promise<void> | void;
 export interface SubscribeOptions {
   /** delivery attempts before dead-lettering (default 3). */
   maxAttempts?: number;
+  /**
+   * Every instance gets every message, from now on, once.
+   *
+   * The default subscription is a SHARED cursor: instances of one service split the work, each
+   * message is handled by one of them, a failure is retried and then dead-lettered, and a restart
+   * resumes where it left off. That is what work wants. A cache invalidation or a fan-out to
+   * connected clients wants the opposite on every count — each instance must see each message,
+   * nothing published before the instance existed matters, and a handler that fails has nothing
+   * to retry. `broadcast: true` is that: not durable, not retried, not dead-lettered, and
+   * `maxAttempts` is ignored. Never use it for work.
+   */
+  broadcast?: boolean;
 }
 
 export interface Subscription {

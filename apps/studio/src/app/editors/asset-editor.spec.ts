@@ -27,13 +27,13 @@ const record = (overrides: Partial<Asset> = {}): Asset => ({
 });
 
 class FakeAssets {
-  readonly gets: Array<{ id: string; result: Subject<Asset> }> = [];
+  readonly gets: Array<{ id: string; fresh: boolean; result: Subject<Asset> }> = [];
   readonly updates: Array<{ id: string; patch: UpdateAssetInput; result: Subject<Asset> }> = [];
   readonly fileLists: Array<{ id: string; result: Subject<FileRef[]> }> = [];
 
-  get(id: string) {
+  get(id: string, options: { fresh?: boolean } = {}) {
     const result = new Subject<Asset>();
-    this.gets.push({ id, result });
+    this.gets.push({ id, fresh: options.fresh ?? false, result });
     return result;
   }
 
@@ -289,6 +289,8 @@ describe('AssetEditor', () => {
 
     emitAssetEvent(ws, '01K00000000000000000000000', 'updated');
     expect(fake.gets).toHaveLength(2); // the reload
+    expect(fake.gets[0]?.fresh).toBe(false); // the first read may be served from MAM's cache
+    expect(fake.gets[1]?.fresh).toBe(true); // the one answering an event must not be
 
     fake.gets[1]?.result.next(record({ title: 'Renamed elsewhere', version: 4 }));
     expect(component.asset()?.title).toBe('Renamed elsewhere');
@@ -317,6 +319,7 @@ describe('AssetEditor', () => {
 
     ws.resync$.next('reconnected');
     expect(fake.gets).toHaveLength(2); // a gap may have hidden a change: reload
+    expect(fake.gets[1]?.fresh).toBe(true);
     fake.gets[1]?.result.next(record({ title: 'Changed during the gap', version: 5 }));
     expect(component.asset()?.title).toBe('Changed during the gap');
 

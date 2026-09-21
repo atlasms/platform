@@ -248,6 +248,16 @@ test('smoke: the full write path — gateway → MAM → Postgres → outbox', a
   assert.equal(fetched.status, 200, `read-back failed: ${fetched.text}`);
   assert.equal(json(fetched).title, 'Smoke clip');
 
+  // EP-17.7: the second read may be MAM's cache; a read that says `no-cache` is the store's, and
+  // the header has to survive the gateway hop for that to be true in a deployment.
+  const again = await get(`/api/v1/assets/${asset.id}`, { headers: auth });
+  assert.equal(again.status, 200);
+  const fresh = await get(`/api/v1/assets/${asset.id}`, {
+    headers: { ...auth, 'cache-control': 'no-cache' },
+  });
+  assert.equal(fresh.status, 200, `no-cache read failed: ${fresh.text}`);
+  assert.deepEqual(json(fresh), json(again), 'cached and fresh reads agree on an unchanged asset');
+
   // The mandatory gate, enforced by the deployment and not just by a unit test: an asset with no
   // renditions cannot be marked ready, whatever its metadata says.
   await get(`/api/v1/assets/${asset.id}/process`, { method: 'POST', headers: auth });

@@ -97,6 +97,12 @@ paths:
       operationId: getAsset
       tags: [assets]
       summary: Get an asset (core + extensible metadata)
+      # EP-17.7: the record may be answered from MAM's read cache — exact on the replica that
+      # last wrote it, and on every other replica within the eviction its audit record carries or
+      # the cache's TTL (default 10 s), whichever comes first. A client that must see the row as
+      # it is now says so with `Cache-Control: no-cache`, and is read through.
+      parameters:
+        - $ref: '#/components/parameters/CacheControl'
       responses:
         '200': { description: Asset, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
         '404': { $ref: '#/components/responses/Error' }
@@ -220,7 +226,7 @@ paths:
     parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
     # The extensible metadata is read and written on its own (EP-17.2): governed by its field
     # schema, authorized on its own, and unbounded in size — so a catalogue listing never carries it.
-    get: { operationId: getAssetExtended, tags: [assets], summary: The asset's extended values with the field definitions that govern them (scope asset:read), responses: { '200': { description: Extended values, fields and orphaned keys } } }
+    get: { operationId: getAssetExtended, tags: [assets], summary: The asset's extended values with the field definitions that govern them (scope asset:read), parameters: [{ $ref: '#/components/parameters/CacheControl' }], responses: { '200': { description: Extended values, fields and orphaned keys } } }
     patch: { operationId: updateAssetExtended, tags: [assets], summary: Merge extended values; each is validated against its field definition (scope asset:write), responses: { '200': { description: The extended values after the merge }, '4XX': { $ref: '#/components/responses/Error' } } }
   /assets/{id}/files:
     parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
@@ -241,6 +247,8 @@ paths:
       operationId: listAssetTags
       tags: [taxonomy]
       summary: The asset's free-form tags (FR-TAX-1)
+      parameters:
+        - $ref: '#/components/parameters/CacheControl'
       responses:
         '200': { description: Tags, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Tag' } } } } }
     put:
@@ -397,6 +405,17 @@ paths:
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    CacheControl:
+      name: Cache-Control
+      in: header
+      required: false
+      schema: { type: string }
+      description: >-
+        `no-cache` (or `no-store`) reads through MAM's asset cache (EP-17.7): the answer is the
+        store's, whatever any replica holds in memory. A refetch that answers a live event sends
+        it, because the event and the cache's eviction are two consumers of one stream with no
+        order between them. Any other value is ignored.
   schemas:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
     FileRef:
