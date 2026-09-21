@@ -3,6 +3,7 @@ import {
   activeGroup,
   activeTab,
   close as closeTab,
+  findTab,
   closeAll as closeAllTabs,
   closeOthers as closeOtherTabs,
   emptyLayout,
@@ -53,6 +54,12 @@ export class EditorStore {
 
   close(groupId: string, tabId: string): void {
     this.update(closeTab(this._layout(), groupId, tabId));
+  }
+
+  /** Close a tab wherever it is — an editor knows its tab id, not the group the user dragged it to. */
+  closeTab(tabId: string): void {
+    const found = findTab(this._layout(), tabId);
+    if (found) this.close(found.group.id, tabId);
   }
 
   closeOthers(groupId: string, keepId: string): void {
