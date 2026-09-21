@@ -222,6 +222,19 @@ paths:
     # schema, authorized on its own, and unbounded in size — so a catalogue listing never carries it.
     get: { operationId: getAssetExtended, tags: [assets], summary: The asset's extended values with the field definitions that govern them (scope asset:read), responses: { '200': { description: Extended values, fields and orphaned keys } } }
     patch: { operationId: updateAssetExtended, tags: [assets], summary: Merge extended values; each is validated against its field definition (scope asset:write), responses: { '200': { description: The extended values after the merge }, '4XX': { $ref: '#/components/responses/Error' } } }
+  /assets/{id}/files:
+    parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
+    get:
+      operationId: listAssetFiles
+      tags: [assets]
+      # The FileRef mirror (EP-17.8): what HSM and MTS last announced about the asset's files,
+      # copied from `file.placed` and `transcode.completed`. HSM is the system of record for
+      # location, tier and integrity; this is a read model, and `sourceMessageId` names the ledger
+      # entry each row mirrors. Scope asset:read on the `files` field group.
+      summary: The asset's files as mirrored from the HSM ledger (scope asset:read / files)
+      responses:
+        '200': { description: Files, by kind then variant, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/FileRef' } } } } }
+        '404': { $ref: '#/components/responses/Error' }
   /assets/{id}/tags:
     parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
     get:
@@ -386,6 +399,34 @@ components:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   schemas:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    FileRef:
+      type: object
+      description: One of an asset's files, as MAM mirrors it from HSM/MTS (data-model.md §1.5; file.schema.json). A file belongs to exactly one asset; unique per (asset, kind, variant).
+      required: [id, channelId, assetId, kind, storage, checksum, sourceMessageId, version, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        assetId: { $ref: '#/components/schemas/Ulid' }
+        kind: { type: string, enum: [original, proxy, broadcast, thumbnail, vtt-filmstrip, hover-preview] }
+        variant: { type: string, description: A subtitle language, a thumbnail index — what tells two files of one kind apart. }
+        storage:
+          type: object
+          required: [path, tier, status]
+          properties:
+            path: { type: string, description: HSM-resolved logical path. }
+            tier: { type: string, enum: [online, near-line, offline] }
+            status: { type: string, enum: [available, restoring, missing, quarantined] }
+        checksum:
+          type: object
+          required: [algorithm, value]
+          properties:
+            algorithm: { type: string }
+            value: { type: string }
+        sizeBytes: { type: integer, minimum: 0 }
+        durationSec: { type: number, minimum: 0 }
+        sourceMessageId: { $ref: '#/components/schemas/Ulid', description: The event that last wrote this row — the ledger entry it mirrors. }
+        version: { type: integer, minimum: 1, description: Bumped on every write to the row; the audit revision. }
+        updatedAt: { type: string, format: date-time }
     Tag:
       type: object
       required: [id, channelId, label, normalized]

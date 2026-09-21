@@ -133,7 +133,22 @@
     "renditionSet": "مجموعة النسخ",
     "renditionsAttached": "النسخ مرفقة",
     "awaitingRenditions": "في انتظار النسخ",
-    "filesNote": "ستظهر صفوف الملفات الفردية، و مجموعات التحقق، ومستوى التخزين، والبيانات الوصفية التقنية هنا عند توفر إسقاط FileRef الخاص بـ MAM. يظل HSM مصدر الحقيقة للملفات."
+    "filesNote": "الصفوف هي مرآة MAM لسجل HSM (FileRef)؛ يبقى HSM مصدر الحقيقة للملفات.",
+    "filesLoading": "جارٍ تحميل الملفات…",
+    "noFiles": "لا ملفات بعد — لم يضع HSM الأصل، ولم ينتج MTS نسخًا.",
+    "filesError": "تعذّر تحميل الملفات.",
+    "fileKind": "النوع",
+    "fileTier": "الطبقة",
+    "fileStatus": "الحالة",
+    "fileSize": "الحجم",
+    "fileChecksum": "المجموع التحققي",
+    "filePath": "المسار",
+    "fileStatuses": {
+      "available": "متاح",
+      "restoring": "قيد الاستعادة",
+      "missing": "مفقود",
+      "quarantined": "محجور"
+    }
   },
   "editor": {
     "close": "إغلاق",

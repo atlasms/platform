@@ -221,6 +221,12 @@ index/analyzer config (multilingual, RTL).
   (index), `ioredis` (cache). Outbox table + relay to the broker. Strict TS DTOs shared with
   Studio for the extensible-schema forms.
 - Index projections are versioned and rebuildable; keep an offline reindex path.
+- **As built (EP-17.8):** the `FileRef` of §3 is a table MAM writes only from `file.placed` and
+  `transcode.completed` — its first broker consumer, one unit of work per message with the
+  seen-mark, the rows, the `hasRenditions` bump and the audit records in one transaction. HSM
+  stays the system of record; `GET /assets/{id}/files` reads the mirror. Messages the mirror
+  cannot apply are refused to the broker (retry, then dead-letter), never skipped. `file.moved`
+  (§5) is not consumed yet — it has no schema; `file.placed` carries the tier.
 
 ## 14. Open questions / future
 

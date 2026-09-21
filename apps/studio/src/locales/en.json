@@ -133,7 +133,22 @@
     "renditionSet": "Rendition set",
     "renditionsAttached": "Renditions attached",
     "awaitingRenditions": "Awaiting renditions",
-    "filesNote": "Individual file rows, checksums, storage tier and technical metadata will appear here when MAM's FileRef projection is available. HSM remains the source of truth for files."
+    "filesNote": "Rows are MAM's mirror of the HSM ledger (FileRef); HSM remains the source of truth for files.",
+    "filesLoading": "Loading files…",
+    "noFiles": "No files yet — HSM has not placed the original, and MTS has not produced renditions.",
+    "filesError": "Could not load the files.",
+    "fileKind": "Kind",
+    "fileTier": "Tier",
+    "fileStatus": "Status",
+    "fileSize": "Size",
+    "fileChecksum": "Checksum",
+    "filePath": "Path",
+    "fileStatuses": {
+      "available": "Available",
+      "restoring": "Restoring",
+      "missing": "Missing",
+      "quarantined": "Quarantined"
+    }
   },
   "editor": {
     "close": "Close",

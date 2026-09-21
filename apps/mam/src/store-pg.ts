@@ -9,11 +9,14 @@ import {
   outboxHeadersMigration,
   outboxMigration,
   PgOutboxStore,
+  PgSeenStore,
+  seenMigration,
   withTransaction,
   type PgPool,
 } from '@atlas/data-pg';
 import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
+import type { FileRef } from './file.ts';
 import type { AssetStore, AssetTx } from './store.ts';
 import type { Tag } from './tag.ts';
 
@@ -157,6 +160,22 @@ export const pgSearchMigration: Migration = {
          ON asset_search (channel_id, term text_pattern_ops);`,
 };
 
+// The FileRef mirror (EP-17.8): one row per (asset, kind, variant), the document alongside the
+// columns the reads and the uniqueness need. `channel_id` like every row.
+export const pgFilesMigration: Migration = {
+  id: 'mam_files',
+  up: `CREATE TABLE IF NOT EXISTS asset_files (
+         id         text PRIMARY KEY,
+         channel_id text NOT NULL,
+         asset_id   text NOT NULL,
+         kind       text NOT NULL,
+         variant    text NOT NULL DEFAULT '',
+         data       jsonb NOT NULL,
+         UNIQUE (asset_id, kind, variant)
+       );
+       CREATE INDEX IF NOT EXISTS asset_files_asset_idx ON asset_files (asset_id, kind, variant);`,
+};
+
 /** Everything MAM's database needs, in order. Applied at startup under an advisory lock. */
 export const mamMigrations: Migration[] = [
   outboxMigration,
@@ -168,10 +187,14 @@ export const mamMigrations: Migration[] = [
   // recorded the ones above. Slotting this next to its table would re-order history.
   outboxHeadersMigration,
   pgConfigMigration,
+  // EP-17.8: the first broker consumer in MAM brings the seen-mark, and the files it mirrors.
+  seenMigration,
+  pgFilesMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
   const outbox = new PgOutboxStore(pool);
+  const seen = new PgSeenStore(pool);
 
   return {
     async get(id) {
@@ -418,9 +441,34 @@ export function pgAssetStore(pool: PgPool): AssetStore {
           async enqueue(record) {
             await outbox.enqueue(client, record);
           },
+          async markSeen(messageId) {
+            return seen.mark(client, messageId);
+          },
+          async putFile(file) {
+            await client.query(
+              `INSERT INTO asset_files (id, channel_id, asset_id, kind, variant, data) VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT (asset_id, kind, variant) DO UPDATE SET id = EXCLUDED.id, data = EXCLUDED.data`,
+              [
+                file.id,
+                file.channelId,
+                file.assetId,
+                file.kind,
+                file.variant ?? '',
+                JSON.stringify(file),
+              ],
+            );
+          },
         };
         return fn(tx);
       });
+    },
+
+    async filesOf(assetId) {
+      const { rows } = await pool.query<{ data: FileRef }>(
+        'SELECT data FROM asset_files WHERE asset_id = $1 ORDER BY kind, variant',
+        [assetId],
+      );
+      return rows.map((r) => r.data);
     },
 
     async close() {

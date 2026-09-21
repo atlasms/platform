@@ -6,6 +6,29 @@
 
 export type Ulid = string;
 
+/** One of an asset's files, as MAM mirrors it from HSM/MTS (data-model.md §1.5; file.schema.json). A file belongs to exactly one asset; unique per (asset, kind, variant). */
+export interface FileRef {
+  id: Ulid;
+  channelId: string;
+  assetId: Ulid;
+  kind: 'original' | 'proxy' | 'broadcast' | 'thumbnail' | 'vtt-filmstrip' | 'hover-preview';
+  /** A subtitle language */
+  variant?: string;
+  storage: {
+    path: string;
+    tier: 'online' | 'near-line' | 'offline';
+    status: 'available' | 'restoring' | 'missing' | 'quarantined';
+  };
+  checksum: { algorithm: string; value: string };
+  sizeBytes?: number;
+  durationSec?: number;
+  /** The event that last wrote this row — the ledger entry it mirrors. */
+  sourceMessageId: Ulid;
+  /** Bumped on every write to the row; the audit revision. */
+  version: number;
+  updatedAt: string;
+}
+
 export interface Tag {
   id: Ulid;
   channelId: string;

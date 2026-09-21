@@ -8,7 +8,7 @@ import { OutboxRelay } from '@atlas/messaging';
 import { NatsBroker } from '@atlas/messaging-nats';
 import { PgOutboxStore } from '@atlas/data-pg';
 import { createTracer, createLogger, HealthRegistry, loadConfig } from '@atlas/service-kit';
-import { buildMamApp, mamMigrations, MamService, pgAssetStore } from './index.ts';
+import { buildMamApp, mamMigrations, MamService, pgAssetStore, startFileMirror } from './index.ts';
 import { PolicyClient } from '@atlas/policy/client';
 
 const config = loadConfig({
@@ -133,6 +133,22 @@ async function startRelay(): Promise<void> {
 
   const relay = new OutboxRelay(outbox, broker);
   log.info('outbox relay started', { intervalMs: config.relayIntervalMs });
+
+  // EP-17.8: the FileRef mirror — MAM's first consumer. Durable per subject, so a restart resumes
+  // where it left off; a message the mirror keeps refusing goes to the dead-letter queue.
+  startFileMirror({
+    broker,
+    service,
+    onApplied: (subject) => log.info('file mirror applied', { subject }),
+    onDuplicate: (subject) => log.info('file mirror duplicate', { subject }),
+    onError: (err, msg) =>
+      log.warn('file mirror refused a message', {
+        subject: msg.subject,
+        messageId: msg.id,
+        error: (err as Error).message,
+      }),
+  });
+  log.info('file mirror started', { subjects: ['transcode.completed', 'file.placed'] });
 
   const tick = async (): Promise<void> => {
     try {

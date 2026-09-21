@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AssetsService } from '../core/assets.service.ts';
-import type { Asset, UpdateAssetInput } from '../core/generated/mam.types.ts';
+import type { Asset, FileRef, UpdateAssetInput } from '../core/generated/mam.types.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { LocaleService } from '../core/locale.service.ts';
@@ -29,10 +29,17 @@ const record = (overrides: Partial<Asset> = {}): Asset => ({
 class FakeAssets {
   readonly gets: Array<{ id: string; result: Subject<Asset> }> = [];
   readonly updates: Array<{ id: string; patch: UpdateAssetInput; result: Subject<Asset> }> = [];
+  readonly fileLists: Array<{ id: string; result: Subject<FileRef[]> }> = [];
 
   get(id: string) {
     const result = new Subject<Asset>();
     this.gets.push({ id, result });
+    return result;
+  }
+
+  files(id: string) {
+    const result = new Subject<FileRef[]>();
+    this.fileLists.push({ id, result });
     return result;
   }
 
@@ -80,7 +87,7 @@ class FakeLocale {
       'assetEditor.renditionsAttached': 'Renditions attached',
       'assetEditor.awaitingRenditions': 'Awaiting renditions',
       'assetEditor.filesNote':
-        "Individual file rows, checksums, storage tier and technical metadata will appear here when MAM's FileRef projection is available. HSM remains the source of truth for files.",
+        "Rows are MAM's mirror of the HSM ledger (FileRef); HSM remains the source of truth for files.",
       'assetEditor.loading': 'Loading asset…',
       'common.retry': 'Retry',
     };
@@ -223,16 +230,56 @@ describe('AssetEditor', () => {
     expect(component.saveError()).toContain('ISO-8601');
   });
 
-  it('shows rendition readiness without inventing unavailable FileRef rows', () => {
+  it('the Files tab reads the FileRef mirror on entry — one row per file, a reload refreshes them', () => {
     const { component, fake, fixture } = setup();
     fake.gets[0]?.result.next(record({ hasRenditions: true }));
+    fixture.detectChanges();
+    expect(fake.fileLists).toHaveLength(0);
+
     component.section.set('files');
     fixture.detectChanges();
+    expect(fake.fileLists).toHaveLength(1);
+    expect(fake.fileLists[0]?.id).toBe('01K00000000000000000000000');
+    fake.fileLists[0]?.result.next([
+      {
+        id: '01F00000000000000000000001',
+        channelId: 'ch12',
+        assetId: '01K00000000000000000000000',
+        kind: 'proxy',
+        storage: { path: '/online/proxy.mp4', tier: 'online', status: 'available' },
+        checksum: { algorithm: 'sha256', value: 'abcdef0123456789' },
+        sizeBytes: 5 * 1024 * 1024,
+        sourceMessageId: '01M00000000000000000000001',
+        version: 1,
+        updatedAt: '2026-09-21T00:00:00.000Z',
+      },
+      {
+        id: '01F00000000000000000000002',
+        channelId: 'ch12',
+        assetId: '01K00000000000000000000000',
+        kind: 'original',
+        storage: { path: '/nearline/bulletin.mxf', tier: 'near-line', status: 'quarantined' },
+        checksum: { algorithm: 'sha256', value: 'ffff' },
+        sourceMessageId: '01M00000000000000000000002',
+        version: 3,
+        updatedAt: '2026-09-21T00:00:00.000Z',
+      },
+    ]);
+    fixture.detectChanges();
 
-    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
-    expect(text).toContain('Renditions attached');
-    expect(text).toContain('FileRef projection');
-    expect(text).toContain('HSM remains the source of truth');
+    const root = fixture.nativeElement as HTMLElement;
+    const rows = Array.from(root.querySelectorAll('.file-rows tbody tr'));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.textContent).toContain('proxy');
+    expect(rows[0]?.textContent).toContain('5.0 MB');
+    expect(rows[0]?.textContent).toContain('sha256 abcdef012345');
+    expect(rows[1]?.getAttribute('data-status')).toBe('quarantined');
+    expect(root.textContent).toContain('HSM remains the source of truth');
+
+    // A live event refetches the asset; the rows follow, because a placement changes rows.
+    fake.gets[0]?.result.next(record({ hasRenditions: true, version: 2 }));
+    fixture.detectChanges();
+    expect(fake.fileLists).toHaveLength(2);
   });
 
   it('a live event for THIS asset refetches it — for another asset it does nothing', () => {

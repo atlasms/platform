@@ -11,6 +11,7 @@
 
 import {
   buildEnvelope,
+  envelopeShapeErrors,
   subjectFor,
   ulid,
   validatePayload,
@@ -19,7 +20,8 @@ import {
   type Envelope,
   type EventPayloads,
 } from '@atlas/contracts';
-import { can, canEnforce, type EffectivePolicy } from '@atlas/policy';
+import type { Message } from '@atlas/messaging';
+import { can, canEnforce, compile, type EffectivePolicy } from '@atlas/policy';
 import {
   Conflict,
   currentTraceparent,
@@ -35,6 +37,7 @@ import {
   type FieldDefinition,
   type FieldSchema,
 } from './field-schema.ts';
+import { fileFromPlacement, fileFromRendition, fileKey, type FileRef } from './file.ts';
 import type { AssetStore, AssetTx, ExtendedValues } from './store.ts';
 import { groupsForCoreFields, groupsForExtended, type AssetFieldGroup } from './field-groups.ts';
 import { indexTerms, parseQuery } from './search.ts';
@@ -171,7 +174,25 @@ export interface Caller {
   channelId: string;
   policy: EffectivePolicy;
   correlationId?: string;
+  /** Who the envelope names as actor. A person by default; this service for what it does itself. */
+  actorKind?: 'user' | 'service';
 }
+
+/**
+ * The platform's own hands (EP-17.8): the caller for a mutation no person requested — a mirror
+ * of another service's event. Its policy is empty and never consulted; a system path does not go
+ * through `authorize`, which is exactly why it is a separate constructor rather than a grant.
+ */
+const SYSTEM_POLICY = compile({ subjectId: 'mam', permVersion: 0, rules: [] });
+export const systemCaller = (channelId: string, correlationId?: string): Caller => ({
+  userId: 'mam',
+  channelId,
+  policy: SYSTEM_POLICY,
+  actorKind: 'service',
+  ...(correlationId !== undefined ? { correlationId } : {}),
+});
+
+export type MirrorOutcome = 'applied' | 'duplicate';
 
 /**
  * What `GET /reference` returns for MAM — the shape mam.yaml's `ReferenceSnapshot` describes.
@@ -465,6 +486,155 @@ export class MamService {
     };
     await this.commitWith(caller, updated, existing, { action: 'asset.attachRenditions' });
     return updated;
+  }
+
+  // --- the FileRef mirror (EP-17.8) ---------------------------------------------------------------
+  //
+  // HSM is the system of record for where a file is and whether it is intact; MTS produces the
+  // renditions. MAM keeps a COPY of what they announce, so the asset's files can be read here.
+  // Each consumer is one unit of work — the seen-mark, the rows, the audit — committed together,
+  // so a redelivery is a duplicate and a crash mid-way is a retry (EP-03.3). An event for an
+  // asset this channel does not have is thrown: ordering may deliver it again after the asset
+  // exists, and if not the broker's dead-letter queue shows it to a person.
+
+  /** The asset's files as last mirrored. `files` is the Librarian's group (§3.1), read here. */
+  async files(caller: Caller, assetId: string): Promise<FileRef[]> {
+    const asset = await this.get(caller, assetId);
+    this.authorize(caller, 'asset:read', asset, 'files');
+    return this.options.store.filesOf(assetId);
+  }
+
+  /**
+   * `transcode.completed`: every rendition becomes (or replaces) a FileRef, and the asset has
+   * renditions — the same bump `attachRenditions` makes, with the same audit action, plus one
+   * audit record per file at the file's own revision.
+   */
+  async mirrorTranscode(msg: Message): Promise<MirrorOutcome> {
+    const envelope = this.envelopeOf<EventPayloads['transcode.completed']>(
+      msg,
+      'transcode.completed',
+    );
+    const { assetId, renditions } = envelope.payload;
+    const existing = await this.assetInChannel(assetId, envelope.channelId);
+    const current = new Map(
+      (await this.options.store.filesOf(assetId)).map((f) => [fileKey(f.kind, f.variant), f]),
+    );
+    const now = this.now().toISOString();
+    const files = renditions.map((r) =>
+      fileFromRendition(r, {
+        channelId: envelope.channelId,
+        assetId,
+        messageId: msg.id,
+        now,
+        ...defined({ existing: current.get(fileKey(r.kind, undefined)) }),
+      }),
+    );
+    const updated: Asset = {
+      ...existing,
+      hasRenditions: true,
+      version: existing.version + 1,
+      updatedAt: now,
+    };
+    const caller = systemCaller(envelope.channelId, envelope.correlationId);
+    const assetAudit = this.auditRecord(caller, updated, existing, 'asset.attachRenditions');
+    const fileAudits = files.map((f) =>
+      this.fileAudit(caller, f, current.get(fileKey(f.kind, f.variant)), 'transcode.completed'),
+    );
+    let outcome: MirrorOutcome = 'applied';
+    await this.options.store.transaction(async (tx) => {
+      if (!(await tx.markSeen(msg.id))) {
+        outcome = 'duplicate';
+        return;
+      }
+      await tx.put(updated);
+      for (const f of files) await tx.putFile(f);
+      await tx.enqueue(assetAudit);
+      for (const a of fileAudits) await tx.enqueue(a);
+    });
+    return outcome;
+  }
+
+  /**
+   * `file.placed`: the ledger's word on where a file is — its path and tier, and the checksum
+   * when HSM sent one — on the row of that kind, or a new row when nothing announced the file
+   * before (the original, placed after ingest). The asset row does not change.
+   */
+  async mirrorPlacement(msg: Message): Promise<MirrorOutcome> {
+    const envelope = this.envelopeOf<EventPayloads['file.placed']>(msg, 'file.placed');
+    const placed = envelope.payload;
+    await this.assetInChannel(placed.assetId, envelope.channelId);
+    const kind = placed.renditionKind ?? 'original';
+    const existing = (await this.options.store.filesOf(placed.assetId)).find(
+      (f) => f.kind === kind && f.variant === undefined,
+    );
+    const file = fileFromPlacement(placed, {
+      channelId: envelope.channelId,
+      messageId: msg.id,
+      now: this.now().toISOString(),
+      ...defined({ existing }),
+    });
+    const caller = systemCaller(envelope.channelId, envelope.correlationId);
+    const audit = this.fileAudit(caller, file, existing, 'file.placed');
+    let outcome: MirrorOutcome = 'applied';
+    await this.options.store.transaction(async (tx) => {
+      if (!(await tx.markSeen(msg.id))) {
+        outcome = 'duplicate';
+        return;
+      }
+      await tx.putFile(file);
+      await tx.enqueue(audit);
+    });
+    return outcome;
+  }
+
+  /** The envelope, checked for shape, type and payload — a message that is not one is refused for good. */
+  private envelopeOf<P extends object>(msg: Message, type: string): Envelope<P> {
+    const shape = envelopeShapeErrors(msg.body);
+    if (!shape.valid) {
+      throw new ValidationError(
+        `message ${msg.id} on ${msg.subject} is not an envelope: ${shape.errors.map((e) => `${e.path} ${e.message}`).join('; ')}`,
+      );
+    }
+    const envelope = msg.body as Envelope;
+    if (envelope.type !== type) {
+      throw new ValidationError(`message ${msg.id} is a ${envelope.type}, not a ${type}`);
+    }
+    const check = validatePayload(type, envelope.payload);
+    if (!check.valid) {
+      throw new ValidationError(
+        `${type} ${msg.id} does not match its schema: ${check.errors.map((e) => `${e.path} ${e.message}`).join('; ')}`,
+      );
+    }
+    return envelope as unknown as Envelope<P>;
+  }
+
+  private async assetInChannel(assetId: string, channelId: string): Promise<Asset> {
+    const asset = await this.options.store.get(assetId);
+    if (!asset || asset.channelId !== channelId) {
+      throw new NotFound(`no asset ${assetId} in channel ${channelId}`);
+    }
+    return asset;
+  }
+
+  /** The audit record of one file row (EP-19.2): entity `file`, revision the row's own version. */
+  private fileAudit(
+    caller: Caller,
+    file: FileRef,
+    before: FileRef | undefined,
+    action: string,
+  ): { id: string; message: { id: string; subject: string; body: Envelope } } {
+    const payload: EventPayloads['audit.recorded'] = {
+      entityType: 'file',
+      entityId: file.id,
+      revision: file.version,
+      action,
+      origin: { service: 'mam' },
+      delta: delta(
+        before as unknown as Record<string, unknown> | undefined,
+        file as unknown as Record<string, unknown>,
+      ),
+    };
+    return this.eventRecord(caller, file.channelId, 'audit.recorded', payload);
   }
 
   // --- extensible metadata (EP-17.2) -----------------------------------------
@@ -1030,7 +1200,7 @@ export class MamService {
       channelId,
       // Validated against its schema two lines up, so the widening is earned rather than assumed.
       payload: payload as Record<string, unknown>,
-      actor: { kind: 'user', id: caller.userId },
+      actor: { kind: caller.actorKind ?? 'user', id: caller.userId },
       ...defined({ correlationId: caller.correlationId }),
     });
 
