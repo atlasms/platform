@@ -43,6 +43,13 @@ await new OutboxRelay(store, broker).drain();
     unaffected, and everything that did publish **is marked sent** before `RelayPartialFailure` is
     thrown, so a retry does not republish it.
 - **`idempotent`**: dedupes redelivered messages by id — process-once under at-least-once delivery.
+- **`subscribe(pattern, handler, { broadcast: true })`** (EP-17.7): every instance gets every
+  message, from now on, once. The default subscription is a SHARED cursor — instances of one
+  service split the work, a failure is retried then dead-lettered, a restart resumes. A cache
+  invalidation or a fan-out to connected clients wants the opposite on every count, and broadcast
+  is that: not durable, not retried, not dead-lettered, nothing published before the instance
+  existed. On JetStream it is an ephemeral consumer (`DeliverPolicy.New`, `AckPolicy.None`,
+  deleted by the server once the instance is gone). Never use it for work.
 
 Composes with [`@atlas/contracts`](../contracts/README.md): build the envelope there, wrap it as a
 transport `Message` (`id = messageId`, `subject = subjectFor(...)`, `body = envelope`), publish here.

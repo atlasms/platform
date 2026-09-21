@@ -160,7 +160,7 @@ The gateway answers on `http://localhost:30080`, the WebSocket server on `ws://l
 ## 6. Smoke
 
 ```sh
-npm run smoke      # 23 checks against the live cluster
+npm run smoke      # 24 checks against the live cluster
 ```
 
 The suite signs in as the dev overlay's seed account, writes through the gateway, and reads the

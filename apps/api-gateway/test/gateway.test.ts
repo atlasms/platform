@@ -115,7 +115,7 @@ test('a valid token is proxied with the internal identity header set', async () 
   const res = await app.inject({
     method: 'GET',
     url: '/api/v1/assets?q=x',
-    headers: { authorization: `Bearer ${token}` },
+    headers: { authorization: `Bearer ${token}`, 'cache-control': 'no-cache' },
   });
 
   assert.equal(res.statusCode, 200);
@@ -125,6 +125,8 @@ test('a valid token is proxied with the internal identity header set', async () 
   assert.equal(h[INTERNAL_HEADERS.channel], 'ch12');
   assert.equal(h[INTERNAL_HEADERS.scopes], 'asset:read asset:write');
   assert.equal(h[INTERNAL_HEADERS.permVersion], '7');
+  // The client's word on a service's read cache travels with the request (MAM, EP-17.7).
+  assert.equal(h['cache-control'], 'no-cache');
 });
 
 test('SECURITY: the raw Authorization header is NOT forwarded upstream', async () => {

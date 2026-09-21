@@ -51,7 +51,9 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
     } @else if (loadError()) {
       <div class="state" role="alert">
         <p>{{ loadError() }}</p>
-        <button type="button" (click)="reload()">{{ locale.t('common.retry') }}</button>
+        <button type="button" (click)="reload({ fresh: true })">
+          {{ locale.t('common.retry') }}
+        </button>
       </div>
     } @else if (asset(); as current) {
       <header class="editor-header">
@@ -379,7 +381,7 @@ export class AssetEditor {
   private readonly wsResync = this.ws.resync$
     .pipe(takeUntilDestroyed(this.destroyRef))
     .subscribe(() => {
-      if (this.dirtyFields().size === 0) this.reload();
+      if (this.dirtyFields().size === 0) this.reload({ fresh: true });
     });
 
   /** The Files tab's rows: null until read, then what MAM mirrors (EP-17.8). */
@@ -414,10 +416,15 @@ export class AssetEditor {
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 
-  protected reload(): void {
+  /**
+   * `fresh` reads through MAM's cache (EP-17.7): a reload that answers an event, a resync or the
+   * user's own Retry exists because the record may have just changed, and a cached copy of what
+   * it was is exactly the wrong answer to that.
+   */
+  protected reload(options: { fresh?: boolean } = {}): void {
     this.loading.set(true);
     this.loadError.set(null);
-    this.assetsApi.get(this.assetId()).subscribe({
+    this.assetsApi.get(this.assetId(), options).subscribe({
       next: (asset) => {
         this.asset.set(asset);
         this.draft.set(toDraft(asset));
@@ -569,7 +576,7 @@ export class AssetEditor {
     // work, so skip the refresh while dirty; the next save's version conflict or a manual
     // reload reconciles instead. When clean, reload for any state-changing event.
     if (this.dirtyFields().size > 0) return;
-    this.reload();
+    this.reload({ fresh: true });
   }
 }
 

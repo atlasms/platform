@@ -147,6 +147,7 @@ export class NatsBroker implements Broker, DeadLetterQueue {
   }
 
   subscribe(pattern: string, handler: Handler, opts: SubscribeOptions = {}): Subscription {
+    if (opts.broadcast) return this.subscribeBroadcast(pattern, handler);
     const maxAttempts = opts.maxAttempts ?? 3;
     const durable = durableName(this.options.service, pattern);
     let messages: ConsumerMessages | undefined;
@@ -180,6 +181,63 @@ export class NatsBroker implements Broker, DeadLetterQueue {
 
       for await (const m of pump) {
         await this.dispatch(m, handler, maxAttempts);
+      }
+    })();
+
+    return {
+      unsubscribe: () => {
+        stopped = true;
+        messages?.stop();
+      },
+    };
+  }
+
+  /**
+   * `broadcast: true` — an EPHEMERAL consumer: no durable name, so every instance that subscribes
+   * gets its own cursor rather than a share of one; `DeliverPolicy.New`, so nothing published
+   * before this instance existed is replayed to it; `AckPolicy.None`, so nothing is retried or
+   * dead-lettered. JetStream deletes the consumer itself once the instance is gone for
+   * `inactive_threshold`, which is what keeps a rolling deployment from leaving a cursor per pod.
+   */
+  private subscribeBroadcast(pattern: string, handler: Handler): Subscription {
+    let messages: ConsumerMessages | undefined;
+    let stopped = false;
+
+    void (async () => {
+      const jsm = this.jsm;
+      const js = this.js;
+      if (!jsm || !js) throw new Error('NatsBroker: not connected');
+
+      const info = await jsm.consumers.add(this.stream, {
+        filter_subject: pattern,
+        ack_policy: AckPolicy.None,
+        deliver_policy: DeliverPolicy.New,
+        inactive_threshold: nanos(60_000),
+      });
+
+      const consumer = await js.consumers.get(this.stream, info.name);
+      const pump = await consumer.consume();
+      if (stopped) {
+        pump.stop();
+        return;
+      }
+      messages = pump;
+      this.open.push(pump);
+
+      for await (const m of pump) {
+        const headers = headersOf(m);
+        // A broadcast handler's failure is its own business: there is no retry to drive and no
+        // queue to park the message in, so the loop simply goes on to the next one.
+        await Promise.resolve()
+          .then(() =>
+            handler({
+              id: m.headers?.get('Nats-Msg-Id') || String(m.seq),
+              subject: m.subject,
+              body: decode(m.data),
+              ...(headers !== undefined ? { headers } : {}),
+            }),
+          )
+          .catch(() => undefined);
       }
     })();
 

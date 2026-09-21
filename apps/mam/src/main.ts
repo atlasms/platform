@@ -7,8 +7,24 @@ import { migrate, openPool } from '@atlas/data-pg';
 import { OutboxRelay } from '@atlas/messaging';
 import { NatsBroker } from '@atlas/messaging-nats';
 import { PgOutboxStore } from '@atlas/data-pg';
-import { createTracer, createLogger, HealthRegistry, loadConfig } from '@atlas/service-kit';
-import { buildMamApp, mamMigrations, MamService, pgAssetStore, startFileMirror } from './index.ts';
+import {
+  createTracer,
+  createLogger,
+  HealthRegistry,
+  loadConfig,
+  MetricRegistry,
+} from '@atlas/service-kit';
+import {
+  buildMamApp,
+  DEFAULT_CACHE_MAX_ENTRIES,
+  DEFAULT_CACHE_TTL_MS,
+  mamMigrations,
+  MamService,
+  MemoryAssetCache,
+  pgAssetStore,
+  startCacheInvalidation,
+  startFileMirror,
+} from './index.ts';
 import { PolicyClient } from '@atlas/policy/client';
 
 const config = loadConfig({
@@ -22,6 +38,14 @@ const config = loadConfig({
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
   policyTtlMs: { env: 'ATLAS_POLICY_TTL_MS', type: 'number', default: 30_000 },
   relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 1_000 },
+  // EP-17.7: the in-process read cache. Entries is the LRU bound; 0 turns the cache off. The TTL
+  // is the bound on how stale another replica may be while the broker is away — see cache.ts.
+  cacheMaxEntries: {
+    env: 'ATLAS_MAM_CACHE_MAX_ENTRIES',
+    type: 'number',
+    default: DEFAULT_CACHE_MAX_ENTRIES,
+  },
+  cacheTtlMs: { env: 'ATLAS_MAM_CACHE_TTL_MS', type: 'number', default: DEFAULT_CACHE_TTL_MS },
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
   // still propagates, so a site without a collector pays only the cost of an id and its traces are
   // already joined up the day one appears.
@@ -74,7 +98,21 @@ async function migrateWithRetry(budgetMs = 120_000, intervalMs = 2_000): Promise
 await migrateWithRetry();
 
 const store = pgAssetStore(pool);
-const service = new MamService({ store });
+const metrics = new MetricRegistry();
+const cacheReads = metrics.counter({
+  name: 'atlas_mam_cache_reads_total',
+  help: 'Asset cache reads by family and outcome. hit/(hit+miss) is the hit rate; bypass is no-cache.',
+  labelNames: ['family', 'outcome'],
+});
+const cache =
+  config.cacheMaxEntries > 0
+    ? new MemoryAssetCache({ maxEntries: config.cacheMaxEntries, ttlMs: config.cacheTtlMs })
+    : undefined;
+const service = new MamService({
+  store,
+  ...(cache ? { cache } : {}),
+  onCacheRead: (family, outcome) => cacheReads.inc({ family, outcome }),
+});
 const policies = new PolicyClient({ origin: config.iamOrigin, ttlMs: config.policyTtlMs });
 
 const health = new HealthRegistry()
@@ -96,6 +134,7 @@ const app = buildMamApp({
   service,
   policyFor: (userId) => policies.policyFor(userId),
   health,
+  metrics,
   tracer,
   onAccessLog: (record) => log.info('access', { ...record }),
   onError: (err, ctx) =>
@@ -133,6 +172,16 @@ async function startRelay(): Promise<void> {
 
   const relay = new OutboxRelay(outbox, broker);
   log.info('outbox relay started', { intervalMs: config.relayIntervalMs });
+
+  // EP-17.7: every replica hears every audit record and forgets the asset it names. Broadcast:
+  // not a share of the work, not durable, not retried — the TTL covers what this misses.
+  if (cache) {
+    startCacheInvalidation({ broker, service });
+    log.info('cache invalidation started', {
+      maxEntries: config.cacheMaxEntries,
+      ttlMs: config.cacheTtlMs,
+    });
+  }
 
   // EP-17.8: the FileRef mirror — MAM's first consumer. Durable per subject, so a restart resumes
   // where it left off; a message the mirror keeps refusing goes to the dead-letter queue.

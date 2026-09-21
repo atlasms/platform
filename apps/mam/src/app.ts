@@ -25,7 +25,7 @@ import {
   type Tracer,
 } from '@atlas/service-kit';
 import type { LifecycleAction } from './lifecycle.ts';
-import type { MamService, Caller } from './service.ts';
+import type { MamService, Caller, ReadOptions } from './service.ts';
 
 export interface MamAppOptions {
   service: MamService;
@@ -173,6 +173,13 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     return reply.code(report.status === 'ready' ? 200 : 503).send(report);
   });
 
+  /** `Cache-Control: no-cache` (or `no-store`) → read through the cache (EP-17.7). */
+  const readOptions = (req: FastifyRequest): ReadOptions => {
+    const control = req.headers['cache-control'];
+    const value = Array.isArray(control) ? control.join(',') : (control ?? '');
+    return /(^|[\s,])no-(cache|store)(?=$|[\s,])/i.test(value) ? { fresh: true } : {};
+  };
+
   /** Rebuild the caller from the gateway's headers. Missing identity is 401, never a default. */
   const callerOf = async (req: FastifyRequest): Promise<Caller> => {
     const userId = req.headers['x-atlas-user'];
@@ -255,9 +262,11 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     handle(req, reply, async () => ({ counts: await options.service.counts(await callerOf(req)) })),
   );
 
+  // EP-17.7: `Cache-Control: no-cache` on the request reads through the asset cache — HTTP's own
+  // word for "do not answer this from a cache", and what a client refetching on a live event says.
   app.get('/api/v1/assets/:id', async (req, reply) =>
     handle(req, reply, async () =>
-      options.service.get(await callerOf(req), (req.params as { id: string }).id),
+      options.service.get(await callerOf(req), (req.params as { id: string }).id, readOptions(req)),
     ),
   );
 
@@ -283,7 +292,11 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
   // catalogue listing should never carry it.
   app.get('/api/v1/assets/:id/extended', async (req, reply) =>
     handle(req, reply, async () =>
-      options.service.extended(await callerOf(req), (req.params as { id: string }).id),
+      options.service.extended(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+        readOptions(req),
+      ),
     ),
   );
 
@@ -301,7 +314,11 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
   // what a tag input hands back — there is no partial form of "these are the keywords".
   app.get('/api/v1/assets/:id/tags', async (req, reply) =>
     handle(req, reply, async () =>
-      options.service.tags(await callerOf(req), (req.params as { id: string }).id),
+      options.service.tags(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+        readOptions(req),
+      ),
     ),
   );
 
