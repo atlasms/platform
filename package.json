@@ -27,6 +27,8 @@
     "api:check": "node scripts/generate-api-types.mjs --check",
     "graph:check": "node scripts/check-project-graph.mjs",
     "k8s:check": "node scripts/check-k8s.mjs",
+    "helm:build": "node scripts/build-helm-chart.mjs",
+    "helm:package": "helm package infra/helm/atlas --destination dist",
     "tier0:check": "node scripts/check-tier0-enums.mjs",
     "schema:check": "node scripts/check-schema-conventions.mjs",
     "lint:scripts": "eslint scripts",

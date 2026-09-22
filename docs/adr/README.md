@@ -23,3 +23,4 @@ disagree with data.
 | [0003](0003-observability-stack.md) | Prometheus + Loki + Grafana + Alloy, as an optional overlay | Accepted |
 | [0004](0004-tracing-implementation.md) | W3C Trace Context + OTLP written by hand, not the OTel SDK | Accepted |
 | [0005](0005-audit-log-storage.md) | The audit log: Postgres as the record, OpenSearch as a derived hot index | Accepted |
+| [0006](0006-helm-chart.md) | The Helm chart for distribution, generated from the manifests | Accepted |

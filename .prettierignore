@@ -17,3 +17,8 @@ docs/
 
 # Local agent/editor state — not ours to format.
 .claude/
+
+# The Helm chart is GENERATED from infra/k8s/base (ADR-0006) and is YAML with Go template
+# expressions in it — prettier cannot parse `{{ ... }}` as a value, and reformatting a generated
+# file would only make `npm run k8s:check` fail. Change the manifests, not the chart.
+infra/helm/

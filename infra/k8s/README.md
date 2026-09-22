@@ -9,6 +9,11 @@ overlays/dev/        local kind cluster — NodePort, single replicas, local ima
 overlays/staging/    the production shape — registry images, an Ingress, PDBs, sized data plane
 ```
 
+**A customer installs with Helm.** The chart under [`infra/helm/atlas`](../helm/) is GENERATED
+from `base/` ([ADR-0006](../../docs/adr/0006-helm-chart.md)) — one source, so the two paths cannot
+drift, and `npm run k8s:check` fails if a manifest changes without `npm run helm:build`. Kustomize
+stays the way OUR environments are configured; values are the way a site's are.
+
 ## Bring up a local environment
 
 ```sh
@@ -161,5 +166,7 @@ installer that needs no network and no kustomize — see
 ## Related
 
 - [ADR-0002](../../docs/adr/0002-deployment-target.md) — why Kubernetes, and what it costs
+- [ADR-0006](../../docs/adr/0006-helm-chart.md) · [`infra/helm/`](../helm/) — the chart for
+  customer installs, generated from these manifests
 - [`infra/docker/`](../docker/) — the image, and why there is no build step
 - [operations runbook](../../docs/operations/17-operations-runbook.md) — install, upgrade, backup, DR

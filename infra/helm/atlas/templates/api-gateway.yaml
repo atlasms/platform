@@ -1,0 +1,106 @@
+# GENERATED from infra/k8s/base/api-gateway.yaml by scripts/build-helm-chart.mjs — do not edit.
+# Change the manifest and run `npm run helm:build`; `npm run k8s:check` fails if you do not.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/part-of: atlas
+    {{- include "atlas.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.apiGateway }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api-gateway
+        app.kubernetes.io/part-of: atlas
+      # See mam.yaml: the pod announces its own scrape target, so a service cannot ship and be
+      # silently unmonitored. Honoured by any Prometheus-compatible scraper, ours or a customer's.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api-gateway
+          image: {{ include "atlas.image" (dict "ctx" . "name" "api-gateway") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: ATLAS_IAM_ORIGIN
+              value: http://iam:3000
+            - name: ATLAS_MAM_ORIGIN
+              value: http://mam:3000
+            - name: ATLAS_LOGGING_ORIGIN
+              value: http://logging:3000
+            - name: ATLAS_SCHEDULING_ORIGIN
+              value: http://scheduling:3000
+            - name: ATLAS_RIM_ORIGIN
+              value: http://rim:3000
+            - name: ATLAS_ISSUER
+              value: atlas-iam
+            - name: ATLAS_AUDIENCE
+              value: atlas
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources.apiGateway | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          # The gateway's readiness includes reaching IAM: without it no token can be verified, so
+          # reporting ready would only route traffic into failures.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 3
+            failureThreshold: 20
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/part-of: atlas
+    {{- include "atlas.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: api-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

@@ -115,3 +115,8 @@ Two smaller traps, both worth knowing because neither reports an error:
   paying for itself — at which point compare against k3s specifically before considering Compose.
 - Customer feedback shows `helm install` is expected as the delivery mechanism; that is additive
   and does not overturn this decision.
+
+> **Followed up in [ADR-0006](0006-helm-chart.md) (2026-09-22):** the chart was built once the
+> manifests had settled, and it is GENERATED from them rather than written beside them — so the
+> "two deployment paths" cost above is not paid. The decision here is unchanged: Kustomize
+> remains how our own environments are configured.

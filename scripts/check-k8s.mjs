@@ -13,9 +13,15 @@
 // stands in when the real file is absent, and is removed again afterwards — this script never
 // leaves a credential file behind that it did not find.
 //
+// The HELM CHART (ADR-0006) is held to the same bar, in the same place, because it is the same
+// platform: the generator is re-run and its output compared with what is committed, `helm lint`
+// passes, and the chart is rendered twice — once with the defaults, once shaped like production
+// — and both renders go through the checks above. A convention that held for Kustomize and not
+// for the chart would be a convention that half the installs do not get.
+//
 //   npm run k8s:check
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +29,7 @@ import { parseAllDocuments } from 'yaml';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const OVERLAYS = join(ROOT, 'infra/k8s/overlays');
+const CHART = join(ROOT, 'infra/helm/atlas');
 
 const problems = [];
 const problem = (overlay, text) => problems.push(`${overlay}: ${text}`);
@@ -135,6 +142,164 @@ function checkStaging(overlay, docs) {
     problem(overlay, 'no postgres-credentials Secret is generated');
 }
 
+// --- the Helm chart ----------------------------------------------------------
+
+/**
+ * The chart's production-shaped values: a registry, a release tag, pull secrets, an Ingress, and
+ * one more replica than the defaults — so the PodDisruptionBudget rule is exercised rather than
+ * merely present.
+ */
+const CHART_PRODUCTION_VALUES = [
+  'image.registry=registry.example',
+  'image.tag=0.1.0',
+  'imagePullSecrets[0].name=atlas-registry',
+  'storageClass=fast-ssd',
+  'ingress.enabled=true',
+  'ingress.host=atlas.staging.example',
+  'replicas.websocket=2',
+];
+
+function helm(args) {
+  const result = spawnSync('helm', args, { encoding: 'utf8', maxBuffer: 64 << 20 });
+  if (result.status !== 0) {
+    throw new Error(
+      `helm ${args.join(' ')} failed:\n${(result.stderr || result.stdout || '').trim()}`,
+    );
+  }
+  return result.stdout;
+}
+
+function parse(text) {
+  return parseAllDocuments(text)
+    .map((d) => d.toJS())
+    .filter((d) => d && typeof d === 'object');
+}
+
+/** The chart's own promises, beyond the workload conventions every render is held to. */
+function checkChart(label, docs, { production }) {
+  const deployments = docs.filter((d) => d.kind === 'Deployment' && isAtlas(d));
+  if (deployments.length === 0) problem(label, 'rendered no Atlas deployments');
+
+  for (const d of deployments) {
+    const name = `Deployment/${d.metadata.name}`;
+    for (const c of containersOf(d)) {
+      const image = String(c.image ?? '');
+      if (production) {
+        if (!image.startsWith('registry.example/'))
+          problem(label, `${name}: image "${image}" ignores image.registry`);
+        if (/:(dev|latest)$/.test(image))
+          problem(label, `${name}: image "${image}" must carry a release tag`);
+      }
+      // Whatever the values say, a credential is read from a Secret and never inlined.
+      for (const env of c.env ?? []) {
+        if (/^ATLAS_SEED_/.test(env.name))
+          problem(label, `${name}: ${env.name} is set — a seeded account is a dev-only shortcut`);
+        if (/PASSWORD|SECRET/i.test(env.name) && env.value !== undefined)
+          problem(label, `${name}: ${env.name} is a literal value, not a secretKeyRef`);
+      }
+    }
+    const replicas = d.spec?.replicas ?? 1;
+    const pdb = docs.find(
+      (x) =>
+        x.kind === 'PodDisruptionBudget' &&
+        x.spec?.selector?.matchLabels?.['app.kubernetes.io/name'] === d.metadata.name,
+    );
+    // Both directions: a multi-replica deployment needs a budget, and a single-replica one must
+    // NOT have one — a PDB over the only pod blocks a node drain outright.
+    if (replicas > 1 && !pdb)
+      problem(label, `${name}: ${replicas} replicas without a PodDisruptionBudget`);
+    if (replicas === 1 && pdb)
+      problem(label, `${name}: one replica with a PodDisruptionBudget would block a drain`);
+  }
+
+  for (const s of docs.filter((d) => d.kind === 'Service')) {
+    if (s.spec?.type === 'NodePort')
+      problem(
+        label,
+        `Service/${s.metadata.name}: NodePort — the chart is reached through an Ingress`,
+      );
+  }
+
+  const ingresses = docs.filter((d) => d.kind === 'Ingress');
+  if (!production) {
+    if (ingresses.length !== 0)
+      problem(label, 'an Ingress is rendered by default — it must be opt-in');
+    return;
+  }
+  if (ingresses.length !== 1) {
+    problem(label, `expected exactly one Ingress, found ${ingresses.length}`);
+    return;
+  }
+  const ing = ingresses[0];
+  if (!ing.spec?.tls?.length) problem(label, 'Ingress: TLS is not configured');
+  const paths = (ing.spec?.rules ?? []).flatMap((r) => r.http?.paths ?? []);
+  const to = (path) => paths.find((p) => p.path === path)?.backend?.service?.name;
+  if (to('/ws') !== 'websocket') problem(label, 'Ingress: /ws must route to the websocket service');
+  if (to('/') !== 'api-gateway') problem(label, 'Ingress: / must route to the api-gateway service');
+}
+
+/** Every workload the manifests define is in the chart, under the same name. */
+function checkChartParity(label, chartDocs) {
+  const baseDocs = parse(render(join(ROOT, 'infra/k8s/base')));
+  const key = (d) => `${d.kind}/${d.metadata?.name}`;
+  const inChart = new Set(chartDocs.map(key));
+  for (const doc of baseDocs) {
+    // The Namespace is the release's, and Helm creates it or the operator does.
+    if (doc.kind === 'Namespace') continue;
+    if (!inChart.has(key(doc)))
+      problem(label, `${key(doc)} is in the manifests but not in the chart`);
+  }
+}
+
+function checkHelmChart() {
+  const label = 'helm/atlas';
+  if (spawnSync('helm', ['version', '--short'], { encoding: 'utf8' }).status !== 0) {
+    // A laptop without helm is fine; CI without helm means the chart stopped being checked and
+    // nothing said so. Same rule as the JetStream conformance suite.
+    if (process.env['CI']) {
+      throw new Error(
+        'helm is not on PATH in CI: the chart would go unchecked. Restore the Helm step in ' +
+          '.github/workflows/ci.yml.',
+      );
+    }
+    console.log('  (helm not found — skipping the chart; install it to check it locally)');
+    return 0;
+  }
+
+  // 1. What is committed is what the manifests generate. Everything below checks the chart; this
+  //    checks that the chart is still the manifests.
+  const generator = spawnSync(
+    process.execPath,
+    [join(ROOT, 'scripts/build-helm-chart.mjs'), '--check'],
+    {
+      encoding: 'utf8',
+    },
+  );
+  if (generator.status !== 0) {
+    problem(label, (generator.stdout + generator.stderr).trim());
+    return 0;
+  }
+
+  helm(['lint', CHART]);
+
+  const defaults = parse(helm(['template', 'atlas', CHART]));
+  const production = parse(
+    helm(['template', 'atlas', CHART, ...CHART_PRODUCTION_VALUES.flatMap((v) => ['--set', v])]),
+  );
+
+  for (const docs of [defaults, production]) {
+    for (const doc of docs) {
+      if ((doc.kind === 'Deployment' || doc.kind === 'StatefulSet') && isAtlas(doc))
+        checkWorkload(label, doc);
+    }
+  }
+  checkChart(`${label} (defaults)`, defaults, { production: false });
+  checkChart(`${label} (production values)`, production, { production: true });
+  checkChartParity(label, defaults);
+
+  return defaults.length + production.length;
+}
+
 const overlays = readdirSync(OVERLAYS, { withFileTypes: true })
   .filter((e) => e.isDirectory())
   .map((e) => e.name)
@@ -165,11 +330,20 @@ for (const overlay of overlays) {
   if (overlay === 'staging') checkStaging(overlay, docs);
 }
 
+let chartDocuments = 0;
+try {
+  chartDocuments = checkHelmChart();
+} catch (err) {
+  problem('helm/atlas', err.message);
+}
+
 if (problems.length > 0) {
   console.error(`${problems.length} manifest problem(s):`);
   for (const p of problems) console.error(`  ${p}`);
   process.exit(1);
 }
 console.log(
-  `manifests OK: ${overlays.length} overlay(s) render (${overlays.join(', ')}), ${rendered} documents, every convention holds`,
+  `manifests OK: ${overlays.length} overlay(s) render (${overlays.join(', ')}), ${rendered} documents, ` +
+    `every convention holds` +
+    (chartDocuments > 0 ? `; the Helm chart matches them and renders ${chartDocuments} more` : ''),
 );
