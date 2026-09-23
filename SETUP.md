@@ -44,6 +44,7 @@ reaches readiness.
 | **PowerShell 7** (Windows) | ≥ 7.2                        | For `scripts/setup.ps1`. Windows PowerShell 5.1 is not enough (`&&`, ternaries).                                                                                                                                      |
 | ffmpeg / ffprobe           | any recent (optional)        | RIM's probe adapter test runs the real binary over a clip ffmpeg generates; without the tools that one test **skips** on a laptop (and **fails in CI**, which installs them). The RIM _image_ gets its own via `apk`. |
 | GitHub CLI `gh`            | ≥ 2.40 (optional)            | The PR flow and `scripts/seed-github-backlog.mjs`. Not needed to build or run.                                                                                                                                        |
+| **Helm**                   | ≥ 3.14 (optional)            | Only to check or install the customer chart (`infra/helm`, [ADR-0006](docs/adr/0006-helm-chart.md)). Without it `npm run k8s:check` skips the chart locally; **CI refuses to skip it**.                               |
 
 Nothing else: no Python, no global Nx, no Angular CLI (both come with `npm ci`), no database
 installed on the host.
@@ -61,6 +62,7 @@ winget install --id Kubernetes.kubectl -e       # Docker Desktop also bundles ku
 winget install --id Microsoft.PowerShell -e     # PowerShell 7
 winget install --id Gyan.FFmpeg -e              # optional
 winget install --id GitHub.cli -e               # optional
+winget install --id Helm.Helm -e                # optional
 ```
 
 Log out and in again so the new `PATH` reaches every shell. Docker Desktop must be **running**
@@ -71,7 +73,7 @@ Log out and in again so the new `PATH` reaches every shell. Docker Desktop must 
 <details><summary><b>macOS</b></summary>
 
 ```sh
-brew install git node@24 kind kubectl ffmpeg gh
+brew install git node@24 kind kubectl ffmpeg gh helm
 brew install --cask docker     # Docker Desktop; start it, give the VM ≥ 6 GB
 ```
 

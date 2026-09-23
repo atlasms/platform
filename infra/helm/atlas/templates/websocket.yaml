@@ -1,0 +1,120 @@
+# GENERATED from infra/k8s/base/websocket.yaml by scripts/build-helm-chart.mjs — do not edit.
+# Change the manifest and run `npm run helm:build`; `npm run k8s:check` fails if you do not.
+# The WebSocket service — permission-aware fan-out to Studio
+# ([websocket.md](../../../docs/architecture/services/websocket.md)).
+#
+# NOT BEHIND THE GATEWAY, and that is deliberate. The gateway proxies with `fetch`, which cannot
+# perform a protocol upgrade, so `/ws` could never have been another row in its routing table. The
+# choice was between teaching it to pipe raw sockets and routing around it, and routing around it
+# wins on three counts: this service authenticates its own tokens already (it has to — websocket.md
+# §10 requires validation at upgrade), a stateless proxy tier would hold a second socket open for
+# the life of every connection, and §8 wants connections sticky per node, which is easier when the
+# ingress addresses the pods directly than when a scaling proxy sits in between.
+#
+# In production that is an ingress path rule: `/ws` here, everything else to the gateway — so the
+# browser still sees ONE origin. In dev it is the NodePort in overlays/dev.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: websocket
+  labels:
+    app.kubernetes.io/name: websocket
+    app.kubernetes.io/part-of: atlas
+    {{- include "atlas.labels" . | nindent 4 }}
+spec:
+  # ONE replica, and this is a constraint rather than a default. A connection lives on the node that
+  # accepted it, and there is no Redis yet (EP-07.4) for presence or cross-node routing — so a
+  # second replica would hold connections that the first replica's broker subscription can still
+  # deliver to, but nothing shares subscription state between them. Both replicas would consume the
+  # same subjects and each fan out only to its own sockets, which happens to be correct today
+  # because the bridge is a broadcast subscriber; it stops being correct the moment resume windows
+  # or presence exist. Scale this when §8's Redis lands, not before.
+  replicas: {{ .Values.replicas.websocket }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: websocket
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: websocket
+        app.kubernetes.io/part-of: atlas
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: /metrics
+    spec:
+      # Longer than the 30s every other service uses: a rollout should let open sockets drain
+      # rather than cutting live updates mid-session. Studio reconnects with backoff either way,
+      # so this buys a quieter deploy, not correctness.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: websocket
+          image: {{ include "atlas.image" (dict "ctx" . "name" "websocket") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: ATLAS_IAM_ORIGIN
+              value: http://iam:3000
+            - name: ATLAS_NATS_URL
+              value: nats://{{ .Values.nats.host }}:{{ .Values.nats.port }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources.websocket | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          # IAM is the only critical dependency: without it no token verifies and no policy
+          # resolves, so every upgrade is a 401 and ready would be a lie. NATS is deliberately NOT
+          # covered — with the broker down the service still accepts connections and answers
+          # subscribes, and what stops is live delivery, which Studio's panels already reconcile by
+          # refetching. Same reasoning MAM applies to its outbox relay.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 3
+            failureThreshold: 40
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: websocket
+  labels:
+    app.kubernetes.io/name: websocket
+    app.kubernetes.io/part-of: atlas
+    {{- include "atlas.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: websocket
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

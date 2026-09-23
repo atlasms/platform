@@ -1,0 +1,32 @@
+Atlas {{ .Chart.AppVersion }} is installed as "{{ .Release.Name }}" in namespace {{ .Release.Namespace }}.
+
+{{ if .Values.ingress.enabled -}}
+Reach it at https://{{ .Values.ingress.host }} — the browser talks to one origin; /ws is the
+WebSocket service and everything else is the gateway.
+{{- else -}}
+No Ingress was requested. To reach the gateway without one:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/api-gateway 8080:8080
+
+Live updates need the WebSocket service on the same origin as the API, so a real deployment wants
+`ingress.enabled: true` (or your own ingress with the same two paths).
+{{- end }}
+
+Check it came up:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/api-gateway
+  kubectl -n {{ .Release.Namespace }} get pods
+
+{{ if not .Values.postgres.enabled -}}
+PostgreSQL is not installed by this release: the services are pointed at {{ .Values.postgres.host }}:{{ .Values.postgres.port }}.
+{{ end -}}
+{{ if .Values.postgres.auth.existingSecret -}}
+Database credentials come from the Secret "{{ .Values.postgres.auth.existingSecret }}". If it does
+not exist, every service will crash-loop with a missing environment variable.
+{{- else -}}
+Database credentials were created as the Secret "{{ .Release.Name }}-postgres" from values. Rotate
+them into a Secret your secrets backend manages, then set postgres.auth.existingSecret.
+{{- end }}
+
+There is no seeded account: create the first administrator with the runbook's bootstrap procedure
+(docs/operations/17-operations-runbook.md).
