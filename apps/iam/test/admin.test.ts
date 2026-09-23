@@ -279,6 +279,120 @@ test('editing a role reaches every holder — directly and through a group; dele
   assert.equal(await h.store.role(role.id), undefined);
 });
 
+test('who holds a role: directly, through a group, both at once — and what a revoker needs to act', async () => {
+  const h = await harness();
+  const caller = chCaller(h.chAdmin);
+  const direct = await h.service.createUser({
+    username: 'zoe',
+    password: PASSWORD,
+    channelId: 'ch12',
+  });
+  const member = await h.service.createUser({
+    username: 'ana',
+    password: PASSWORD,
+    channelId: 'ch12',
+  });
+  const both = await h.service.createUser({
+    username: 'bo',
+    password: PASSWORD,
+    channelId: 'ch12',
+  });
+  await h.service.createUser({ username: 'nobody', password: PASSWORD, channelId: 'ch12' });
+  const role = await h.admin.createRole(caller, {
+    id: 'ch12-reporter',
+    name: 'Reporter',
+    rules: [{ id: 'r1', permissions: ['asset:read'], scope: { channelIds: ['ch12'] } }],
+  });
+
+  assert.deepEqual(
+    await h.admin.roleHolders(caller, role.id),
+    { users: [], groups: [] },
+    'a fresh role reaches nobody',
+  );
+
+  const assignment = await h.admin.createAssignment(caller, direct.id, { roleId: role.id });
+  const bothAssignment = await h.admin.createAssignment(caller, both.id, { roleId: role.id });
+  const desk = await h.admin.createGroup(caller, { name: 'Desk', roleIds: [role.id] });
+  await h.admin.addMember(caller, desk.id, member.id);
+  await h.admin.addMember(caller, desk.id, both.id);
+  // A group that does NOT carry the role reaches nobody through it, however many members it has.
+  const other = await h.admin.createGroup(caller, { name: 'Sport' });
+  await h.admin.addMember(caller, other.id, member.id);
+
+  const holders = await h.admin.roleHolders(caller, role.id);
+  assert.deepEqual(
+    holders.groups,
+    [{ id: desk.id, name: 'Desk' }],
+    'only the group that carries it',
+  );
+  assert.deepEqual(
+    holders.users.map((u) => u.username),
+    ['ana', 'bo', 'zoe'],
+    'every person it reaches, once each, by username',
+  );
+  const [ana, bo, zoe] = holders.users;
+  // The direct grant's id IS the revoke: no second request to read the user's assignments.
+  assert.equal(zoe?.assignmentId, assignment.id);
+  assert.deepEqual(zoe?.viaGroupIds, []);
+  // Through a group only: nothing to revoke here, and the page can say which group to go to.
+  assert.equal(ana?.assignmentId, undefined);
+  assert.deepEqual(ana?.viaGroupIds, [desk.id]);
+  // Both paths are one row carrying both facts.
+  assert.equal(bo?.assignmentId, bothAssignment.id);
+  assert.deepEqual(bo?.viaGroupIds, [desk.id]);
+
+  // Revoking each path empties it, which is also the precondition `deleteRole` enforces.
+  await h.admin.deleteAssignment(caller, direct.id, assignment.id);
+  await h.admin.deleteAssignment(caller, both.id, bothAssignment.id);
+  await h.admin.updateGroup(caller, desk.id, { roleIds: [] });
+  assert.deepEqual(await h.admin.roleHolders(caller, role.id), { users: [], groups: [] });
+  await h.admin.deleteRole(caller, role.id);
+});
+
+test('GET /roles/{id}/holders: the contract shape, and another channel’s role is 404 rather than 403', async () => {
+  const h = await harness();
+  const caller = chCaller(h.chAdmin);
+  const role = await h.admin.createRole(caller, {
+    id: 'ch12-reporter',
+    name: 'Reporter',
+    rules: [],
+  });
+  const assignment = await h.admin.createAssignment(caller, h.jo.id, { roleId: role.id });
+
+  const res = await h.app.inject({
+    method: 'GET',
+    url: `/api/v1/roles/${role.id}/holders`,
+    headers: h.as(h.chAdmin),
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  assert.deepEqual(res.json(), {
+    users: [{ id: h.jo.id, username: 'jo', viaGroupIds: [], assignmentId: assignment.id }],
+    groups: [],
+  });
+
+  // A platform-wide role needs an unscoped grant to read, exactly as reading the role does: a
+  // channel administrator is not told who holds the starter roles across the estate.
+  const starter = await h.app.inject({
+    method: 'GET',
+    url: '/api/v1/roles/editor/holders',
+    headers: h.as(h.chAdmin),
+  });
+  assert.equal(starter.statusCode, 404, starter.body);
+  const asRoot = await h.app.inject({
+    method: 'GET',
+    url: '/api/v1/roles/editor/holders',
+    headers: h.as(h.root),
+  });
+  assert.equal(asRoot.statusCode, 200, asRoot.body);
+
+  const missing = await h.app.inject({
+    method: 'GET',
+    url: '/api/v1/roles/no-such-role/holders',
+    headers: h.as(h.chAdmin),
+  });
+  assert.equal(missing.statusCode, 404);
+});
+
 test('disabling a user revokes every session, bumps, and emits user.updated + permissions.changed', async () => {
   const h = await harness();
   await h.service.login('jo', PASSWORD);

@@ -6,10 +6,13 @@ import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type {
+  Assignment,
+  AssignmentInput,
   Group,
   GroupInput,
   GroupWithMembers,
   Role,
+  RoleHolders,
   RoleInput,
   UserPage,
 } from '../core/generated/iam.types.ts';
@@ -26,7 +29,13 @@ import { RoleEditor } from './role-editor.ts';
 const GID = '01H0000000000000000000000G';
 
 class FakeGroups {
+  readonly lists: Subject<Group[]>[] = [];
   readonly gets: Subject<GroupWithMembers>[] = [];
+  list() {
+    const s = new Subject<Group[]>();
+    this.lists.push(s);
+    return s;
+  }
   readonly updates: { id: string; patch: GroupInput; result: Subject<Group> }[] = [];
   readonly adds: { id: string; userId: string; result: Subject<void> }[] = [];
   readonly removes: { id: string; userId: string; result: Subject<void> }[] = [];
@@ -61,8 +70,14 @@ class FakeGroups {
 class FakeRoles {
   readonly lists: Subject<Role[]>[] = [];
   readonly gets: Subject<Role>[] = [];
+  readonly holderReads: Subject<RoleHolders>[] = [];
   readonly updates: { id: string; patch: RoleInput; result: Subject<Role> }[] = [];
   readonly deletes: { id: string; result: Subject<void> }[] = [];
+  holders() {
+    const s = new Subject<RoleHolders>();
+    this.holderReads.push(s);
+    return s;
+  }
   list() {
     const s = new Subject<Role[]>();
     this.lists.push(s);
@@ -87,10 +102,22 @@ class FakeRoles {
 
 class FakeUsers {
   readonly lists: Subject<UserPage>[] = [];
+  readonly grants: { id: string; input: AssignmentInput; result: Subject<Assignment> }[] = [];
+  readonly revocations: { id: string; assignmentId: string; result: Subject<void> }[] = [];
   list() {
     const s = new Subject<UserPage>();
     this.lists.push(s);
     return s;
+  }
+  grant(id: string, input: AssignmentInput) {
+    const result = new Subject<Assignment>();
+    this.grants.push({ id, input, result });
+    return result;
+  }
+  revoke(id: string, assignmentId: string) {
+    const result = new Subject<void>();
+    this.revocations.push({ id, assignmentId, result });
+    return result;
   }
 }
 
@@ -265,7 +292,14 @@ interface RoleInternal {
   readOnly: () => boolean;
   dirty: () => boolean;
   error: () => string | null;
+  holdersError: () => string | null;
+  grantableUsers: () => { id: string; username: string }[];
+  grantableGroups: () => { id: string; name: string }[];
   permissions: string;
+  holderRef: string;
+  grant(): void;
+  revokeUser(userId: string, assignmentId: string): void;
+  revokeGroup(groupId: string): void;
   setName(v: string): void;
   saveProfile(): void;
   addRule(): void;
@@ -276,7 +310,31 @@ interface RoleInternal {
 describe('RoleEditor', () => {
   beforeEach(() => TestBed.resetTestingModule());
 
-  function open(role: Role) {
+  const HOLDERS: RoleHolders = {
+    users: [
+      // Sorted by username, each person once, carrying every path the role reaches them by.
+      {
+        id: '01H0000000000000000000000A',
+        username: 'ana',
+        viaGroupIds: ['01H000000000000000000000G1'],
+      },
+      {
+        id: '01H0000000000000000000000B',
+        username: 'bo',
+        assignmentId: 'asg-bo',
+        viaGroupIds: ['01H000000000000000000000G1'],
+      },
+      {
+        id: '01H0000000000000000000000Z',
+        username: 'zoe',
+        assignmentId: 'asg-zoe',
+        viaGroupIds: [],
+      },
+    ],
+    groups: [{ id: '01H000000000000000000000G1', name: 'Desk' }],
+  };
+
+  function open(role: Role, holders: RoleHolders | 'refuse' = HOLDERS) {
     const t = configure();
     t.editors.open({ type: 'role', resourceId: role.id, title: role.name ?? role.id });
     const fixture = TestBed.createComponent(RoleEditor);
@@ -284,6 +342,52 @@ describe('RoleEditor', () => {
     fixture.componentRef.setInput('tabId', `role:${role.id}`);
     fixture.detectChanges();
     t.roles.gets[0]?.next(role);
+    if (holders === 'refuse') t.roles.holderReads[0]?.error({ status: 404 });
+    else t.roles.holderReads[0]?.next(holders);
+    t.groups.lists[0]?.next([
+      {
+        id: '01H000000000000000000000G1',
+        channelId: 'ch12',
+        name: 'Desk',
+        roleIds: [role.id],
+        version: 1,
+      },
+      {
+        id: '01H000000000000000000000G2',
+        channelId: 'ch12',
+        name: 'Sport',
+        roleIds: [],
+        version: 1,
+      },
+    ]);
+    t.users.lists[0]?.next({
+      items: [
+        {
+          id: '01H0000000000000000000000A',
+          username: 'ana',
+          state: 'active',
+          permVersion: 1,
+          version: 1,
+          createdAt: '',
+        },
+        {
+          id: '01H0000000000000000000000Z',
+          username: 'zoe',
+          state: 'active',
+          permVersion: 1,
+          version: 1,
+          createdAt: '',
+        },
+        {
+          id: '01H0000000000000000000000N',
+          username: 'newbie',
+          state: 'active',
+          permVersion: 1,
+          version: 1,
+          createdAt: '',
+        },
+      ],
+    });
     fixture.detectChanges();
     return {
       ...t,
@@ -336,6 +440,73 @@ describe('RoleEditor', () => {
     expect(t.root.textContent).toContain('admin.platformWideRole');
     expect(t.root.querySelector('form')).toBeNull();
     expect(t.root.querySelector('.danger')).toBeNull();
+  });
+
+  it('holders: every path shown once per person, and what can be revoked from here', () => {
+    const t = open(editor);
+    const rows = Array.from(t.root.querySelectorAll('.grants li')).map((li) =>
+      li.textContent?.replace(/\s+/g, ' ').trim(),
+    );
+    // The rule row, then the group that carries the role, then each person it reaches.
+    expect(rows).toEqual([
+      'admin.ruleasset:write @ ch12 admin.remove',
+      'admin.groupDesk admin.remove',
+      'admin.userana — admin.viaGroup Desk',
+      'admin.userbo — admin.viaGroup Desk admin.remove',
+      'admin.userzoe admin.remove',
+    ]);
+
+    // Only a DIRECT grant is revocable here: ana holds it through the group, so the group row is
+    // where that ends, and her row offers nothing to click.
+    t.component.revokeUser('01H0000000000000000000000B', 'asg-bo');
+    expect(t.users.revocations[0]).toMatchObject({
+      id: '01H0000000000000000000000B',
+      assignmentId: 'asg-bo',
+    });
+    t.users.revocations[0]?.result.next();
+    // The answer is IAM's join, so it is re-read rather than patched in the browser.
+    expect(t.roles.holderReads).toHaveLength(2);
+  });
+
+  it('granting: one select for two kinds of holder; a group is a PATCH of its roles, a user a grant', () => {
+    const t = open(editor);
+    // Offered: the groups that do not already carry it, and the users without a DIRECT grant —
+    // ana is offered although the group already reaches her, because a direct grant outlives the
+    // group membership.
+    expect(t.component.grantableGroups().map((g) => g.name)).toEqual(['Sport']);
+    expect(t.component.grantableUsers().map((u) => u.username)).toEqual(['ana', 'newbie']);
+
+    t.component.holderRef = 'user:01H0000000000000000000000N';
+    t.component.grant();
+    expect(t.users.grants[0]).toMatchObject({
+      id: '01H0000000000000000000000N',
+      input: { roleId: 'editor' },
+    });
+    t.users.grants[0]?.result.next({ id: 'asg-new', userId: '01H0000000000000000000000N' });
+    expect(t.component.holderRef).toBe('');
+
+    t.component.holderRef = 'group:01H000000000000000000000G2';
+    t.component.grant();
+    expect(t.groups.updates[0]).toMatchObject({
+      id: '01H000000000000000000000G2',
+      patch: { roleIds: ['editor'] },
+    });
+
+    // Revoking a group is the same PATCH with the role taken out.
+    t.groups.updates[0]?.result.next({
+      id: '01H000000000000000000000G2',
+      name: 'Sport',
+      version: 2,
+    });
+    t.component.revokeGroup('01H000000000000000000000G1');
+    expect(t.groups.updates[1]?.patch).toEqual({ roleIds: [] });
+  });
+
+  it('a platform-wide role: IAM refuses its holders, and the page says why rather than erroring', () => {
+    const t = open({ id: 'viewer', name: 'Viewer', rules: [], version: 1 }, 'refuse');
+    expect(t.component.holdersError()).toBe('admin.holdersPlatformWide');
+    expect(t.root.textContent).toContain('admin.holdersPlatformWide');
+    expect(t.root.textContent).not.toContain('admin.loadError');
   });
 
   it('deleting: a held role says so (409) and the tab stays; a free one closes the tab', () => {

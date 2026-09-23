@@ -457,6 +457,9 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
   app.delete<{ Params: P }>('/api/v1/roles/:id', (req, reply) =>
     handle(req, reply, 204, (caller) => admin.deleteRole(caller, req.params.id)),
   );
+  app.get<{ Params: P }>('/api/v1/roles/:id/holders', (req, reply) =>
+    handle(req, reply, 200, (caller) => admin.roleHolders(caller, req.params.id)),
+  );
 
   app.setErrorHandler((err, req, reply) => {
     const p = toProblem(err, req.correlationId);

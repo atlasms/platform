@@ -28,6 +28,7 @@ export {
   type RoleInput,
   type GroupInput,
   type AssignmentInput,
+  type RoleHolders,
 } from './admin.ts';
 export {
   KeyRing,

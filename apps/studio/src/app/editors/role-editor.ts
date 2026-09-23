@@ -8,9 +8,12 @@ import {
   type OnInit,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import type { Role, Rule } from '../core/generated/iam.types.ts';
+import type { Observable } from 'rxjs';
+import type { Group, Role, RoleHolders, Rule, UserPage } from '../core/generated/iam.types.ts';
+import { GroupsService } from '../core/groups.service.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { RolesService } from '../core/roles.service.ts';
+import { UsersService } from '../core/users.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { ulid } from '../core/ulid.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
@@ -111,6 +114,72 @@ import { parsePermissions } from './user-editor.ts';
         }
       </section>
 
+      <section>
+        <h3>{{ locale.t('admin.holders') }}</h3>
+        <p class="muted">{{ locale.t('admin.holdersWhy') }}</p>
+        @if (holdersError()) {
+          <p class="muted">{{ holdersError() }}</p>
+        } @else if (!holders()) {
+          <p class="muted">{{ locale.t('admin.loading') }}</p>
+        } @else if (holders()!.users.length === 0 && holders()!.groups.length === 0) {
+          <p class="muted">{{ locale.t('admin.noHolders') }}</p>
+        } @else {
+          <ul class="grants">
+            @for (group of holders()!.groups; track group.id) {
+              <li>
+                <span class="kind">{{ locale.t('admin.group') }}</span>
+                <span class="what">{{ group.name }}</span>
+                @if (!readOnly()) {
+                  <button
+                    type="button"
+                    class="link"
+                    [disabled]="busy()"
+                    (click)="revokeGroup(group.id)"
+                  >
+                    {{ locale.t('admin.remove') }}
+                  </button>
+                }
+              </li>
+            }
+            @for (user of holders()!.users; track user.id) {
+              <li>
+                <span class="kind">{{ locale.t('admin.user') }}</span>
+                <span class="what">{{ user.username }}{{ viaSuffix(user) }}</span>
+                @if (!readOnly() && user.assignmentId) {
+                  <button
+                    type="button"
+                    class="link"
+                    [disabled]="busy()"
+                    (click)="revokeUser(user.id, user.assignmentId!)"
+                  >
+                    {{ locale.t('admin.remove') }}
+                  </button>
+                }
+              </li>
+            }
+          </ul>
+        }
+        @if (!readOnly()) {
+          <form class="row" (ngSubmit)="grant()">
+            <label>
+              <span>{{ locale.t('admin.grantTo') }}</span>
+              <select name="holder" [(ngModel)]="holderRef">
+                <option value="">—</option>
+                @for (group of grantableGroups(); track group.id) {
+                  <option [value]="'group:' + group.id">{{ group.name }}</option>
+                }
+                @for (user of grantableUsers(); track user.id) {
+                  <option [value]="'user:' + user.id">{{ user.username }}</option>
+                }
+              </select>
+            </label>
+            <button type="submit" [disabled]="busy() || holderRef === ''">
+              {{ locale.t('admin.add') }}
+            </button>
+          </form>
+        }
+      </section>
+
       @if (!readOnly()) {
         <section>
           <h3>{{ locale.t('admin.danger') }}</h3>
@@ -131,6 +200,8 @@ export class RoleEditor implements OnInit {
   readonly tabId = input.required<string>();
 
   private readonly api = inject(RolesService);
+  private readonly groupsApi = inject(GroupsService);
+  private readonly usersApi = inject(UsersService);
   private readonly editors = inject(EditorStore);
   private readonly session = inject(SessionStore);
   protected readonly locale = inject(LocaleService);
@@ -144,6 +215,29 @@ export class RoleEditor implements OnInit {
   protected readonly dirty = signal(false);
   protected permissions = '';
 
+  /** Who holds the role; `null` until read. See {@link loadHolders} for why it can stay null. */
+  protected readonly holders = signal<RoleHolders | null>(null);
+  protected readonly holdersError = signal<string | null>(null);
+  protected readonly groups = signal<Group[]>([]);
+  protected readonly users = signal<UserPage['items']>([]);
+  /** The select's value: `user:<id>` or `group:<id>`, one control for two kinds of holder. */
+  protected holderRef = '';
+
+  /** Only what does not already hold it — granting twice is a second grant, not a no-op. */
+  protected readonly grantableGroups = computed(() => {
+    const held = new Set(this.holders()?.groups.map((g) => g.id) ?? []);
+    return this.groups().filter((g) => !held.has(g.id));
+  });
+  protected readonly grantableUsers = computed(() => {
+    // A user the role reaches only through a group CAN still be granted it directly, and
+    // sometimes should be — the direct grant survives them leaving the group. So the filter is
+    // on the direct grant, not on reachability.
+    const granted = new Set(
+      (this.holders()?.users ?? []).filter((u) => u.assignmentId).map((u) => u.id),
+    );
+    return this.users().filter((u) => !granted.has(u.id));
+  });
+
   protected readonly rules = computed(() => this.role()?.rules ?? []);
   /** Platform-wide roles are shown, not edited: they are no channel's, and IAM would refuse. */
   protected readonly readOnly = computed(() => {
@@ -153,6 +247,97 @@ export class RoleEditor implements OnInit {
 
   ngOnInit(): void {
     this.reload();
+    this.loadHolders();
+    this.groupsApi.list().subscribe({ next: (groups) => this.groups.set(groups) });
+    this.usersApi.list({ limit: 200 }).subscribe({ next: (page) => this.users.set(page.items) });
+  }
+
+  /**
+   * Who holds the role.
+   *
+   * A platform-wide role's holders span every channel, so IAM answers this one only to an
+   * unscoped `user:admin` and reports 404 to anyone else — the same answer it gives for a role
+   * that does not exist, because "which roles exist elsewhere" is itself a leak. A channel
+   * administrator therefore sees the role and its rules (which are not secret from the people
+   * they are granted to) and a line saying why the holders are not listed, rather than an error.
+   */
+  protected loadHolders(): void {
+    this.api.holders(this.roleId()).subscribe({
+      next: (holders) => {
+        this.holders.set(holders);
+        this.holdersError.set(null);
+      },
+      error: (err: { status?: number }) => {
+        this.holders.set(null);
+        // A 404 here means one thing, because the role itself loaded a moment ago: this is a
+        // platform-wide role and the caller administers a channel. Any other failure is reported
+        // as one rather than explained away.
+        this.holdersError.set(
+          this.locale.t(
+            err.status === 404 && this.readOnly() ? 'admin.holdersPlatformWide' : 'admin.loadError',
+          ),
+        );
+      },
+    });
+  }
+
+  protected viaSuffix(user: RoleHolders['users'][number]): string {
+    const names = (user.viaGroupIds ?? [])
+      .map((id) => this.holders()?.groups.find((g) => g.id === id)?.name ?? id)
+      .join(', ');
+    if (names === '') return '';
+    return ` — ${this.locale.t('admin.viaGroup')} ${names}`;
+  }
+
+  /** Grant the role to whichever kind of holder the one select names. */
+  protected grant(): void {
+    const [kind, id] = this.holderRef.split(':');
+    if (!id) return;
+    if (kind === 'user') {
+      this.act(this.usersApi.grant(id, { roleId: this.roleId() }));
+      return;
+    }
+    const group = this.groups().find((g) => g.id === id);
+    if (!group) return;
+    this.act(this.groupsApi.update(id, { roleIds: [...(group.roleIds ?? []), this.roleId()] }));
+  }
+
+  protected revokeUser(userId: string, assignmentId: string): void {
+    this.act(this.usersApi.revoke(userId, assignmentId));
+  }
+
+  protected revokeGroup(groupId: string): void {
+    const group = this.groups().find((g) => g.id === groupId);
+    if (!group) return;
+    this.act(
+      this.groupsApi.update(groupId, {
+        roleIds: (group.roleIds ?? []).filter((r) => r !== this.roleId()),
+      }),
+    );
+  }
+
+  /**
+   * One write against IAM, then re-read the holders rather than patching them locally.
+   *
+   * The answer is a join across assignments, groups and memberships — reconstructing it in the
+   * browser would be a second implementation of the thing being displayed, and it is one request.
+   */
+  private act(call: Observable<unknown>): void {
+    if (this.busy()) return;
+    this.busy.set(true);
+    this.error.set(null);
+    call.subscribe({
+      next: () => {
+        this.busy.set(false);
+        this.holderRef = '';
+        this.loadHolders();
+        this.groupsApi.list().subscribe({ next: (groups) => this.groups.set(groups) });
+      },
+      error: (err: { error?: { message?: string } }) => {
+        this.error.set(err?.error?.message ?? this.locale.t('admin.writeError'));
+        this.busy.set(false);
+      },
+    });
   }
 
   protected reload(): void {

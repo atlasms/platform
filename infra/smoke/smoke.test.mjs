@@ -595,10 +595,24 @@ test('smoke: EP-10.6 — a grant reaches the spine: permissions.changed and grou
   assert.equal(me.status, 200, `policy failed: ${me.text}`);
   const before = json(me).permVersion;
 
+  // A role of this run's own, in the seeded channel. The starter roles are platform-wide, and
+  // the seed account administers ONE channel by design (apps/iam/src/main.ts says why) — so a
+  // channel role is what this caller may both carry and inspect.
+  const roleId = `smoke-${Date.now().toString(36)}`;
+  const role = await get('/api/v1/roles', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ id: roleId, name: 'Smoke', rules: [] }),
+  });
+  assert.equal(role.status, 201, `role create failed: ${role.text}`);
+
   const group = await get('/api/v1/groups', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ name: `smoke ${Date.now().toString(36)}`, roleIds: ['viewer'] }),
+    body: JSON.stringify({
+      name: `smoke ${Date.now().toString(36)}`,
+      roleIds: ['viewer', roleId],
+    }),
   });
   assert.equal(group.status, 201, `group create failed: ${group.text}`);
   const groupId = json(group).id;
@@ -635,10 +649,48 @@ test('smoke: EP-10.6 — a grant reaches the spine: permissions.changed and grou
   const changed = page.items.find((e) => e.type === 'permissions.changed');
   assert.equal(changed.payload.permVersion, before + 1);
 
+  // The same grant, read back from the other end: who holds the role now includes this group and,
+  // through it, the seeded user. A join across assignments, groups and memberships, answered by
+  // the deployment rather than by a unit test's double.
+  const holders = await get(`/api/v1/roles/${roleId}/holders`, { headers });
+  assert.equal(holders.status, 200, `holders failed: ${holders.text}`);
+  const held = json(holders);
+  assert.ok(
+    held.groups.some((g) => g.id === groupId),
+    'the group that carries the role is listed',
+  );
+  const reached = held.users.find((u) => u.id === json(me).subjectId);
+  assert.ok(reached, 'the member the role now reaches is listed');
+  assert.ok(
+    (reached.viaGroupIds ?? []).includes(groupId),
+    'and the row says which group it comes through',
+  );
+
+  // A PLATFORM-WIDE role's holders span every channel, so a channel administrator is refused
+  // them — 404, the same answer as for a role that does not exist, because "which roles exist
+  // elsewhere" is itself a leak. This caller carries `viewer` through the group it just made and
+  // still may not see who else does. The seed grant is channel-scoped precisely so that this
+  // boundary is testable in a real deployment rather than only against a double.
+  const platformWide = await get('/api/v1/roles/viewer/holders', { headers });
+  assert.equal(platformWide.status, 404, `expected the tenant boundary: ${platformWide.text}`);
+
   // Leave the seed user as it was found: the next run bumps from wherever it is, but a group per
   // run would accumulate.
   const left = await get(`/api/v1/groups/${groupId}`, { method: 'DELETE', headers });
   assert.equal(left.status, 204, `group delete failed: ${left.text}`);
+
+  const afterLeaving = await get(`/api/v1/roles/${roleId}/holders`, { headers });
+  assert.equal(afterLeaving.status, 200);
+  assert.deepEqual(
+    json(afterLeaving),
+    { users: [], groups: [] },
+    'the deleted group takes its holders with it',
+  );
+
+  // Which is also the precondition for deleting the role: nothing holds it now, so this is a 204
+  // rather than the 409 it would have been a moment ago.
+  const removed = await get(`/api/v1/roles/${roleId}`, { method: 'DELETE', headers });
+  assert.equal(removed.status, 204, `role delete failed: ${removed.text}`);
 });
 
 test('smoke: EP-15.1 — a chunked upload through the gateway: parts out of order, resumed, assembled, hashed, audited', async () => {

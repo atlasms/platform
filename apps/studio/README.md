@@ -57,7 +57,16 @@ reaches every member at once); deleting it closes the tab. A role
 ([`role-editor.ts`](src/app/editors/role-editor.ts)) has its profile and its rules, PATCHed the
 same way; a **platform-wide** role (the starter roles, no `channelId`) is shown, not offered for
 editing, since IAM would refuse; deleting a role something still holds is IAM's 409, shown as
-such. Field schemas and theme are the panel's later views.
+such. It also shows **who holds it** — the groups that carry it and every person it reaches,
+each listed once with the groups they come through — because a rule change above reaches all of
+them at once. A role is granted and revoked from here too: one select offers both users and
+groups, a group is a PATCH of its roles and a user is a grant, and only a **direct** grant is
+revocable here (someone the role reaches through a group is unpicked at the group row, which is
+where that fact lives). The holders are re-read after each write rather than patched in the
+browser: the answer is IAM's join across assignments, groups and memberships, and reproducing it
+client-side would be a second implementation of the thing on screen. A platform-wide role's
+holders span every channel, so IAM answers only an unscoped `user:admin` — the page says that
+instead of showing an error. Field schemas and theme are the panel's later views.
 **EP-20.6** — the dashboard: an editor tab opened as the default landing view — system-state
 counts and what's-new against real MAM, live-refreshed. State counts page the channel with a
 1000-asset cap; a real counts endpoint is a follow-up.

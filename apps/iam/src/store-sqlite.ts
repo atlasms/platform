@@ -99,6 +99,12 @@ export const sqliteMigrations: Migration[] = [
          );
          CREATE INDEX IF NOT EXISTS assignments_user_idx ON assignments (user_id);`,
   },
+  {
+    // "Who holds this role" is asked on every role edit and every role delete; without this it is
+    // a scan of the assignments table.
+    id: 'iam_assignments_by_role',
+    up: `CREATE INDEX IF NOT EXISTS assignments_role_idx ON assignments (role_id);`,
+  },
 ];
 
 // `version: 1` under the document: a record written before EP-10.4 (part 2) added the field reads
@@ -339,6 +345,20 @@ export function sqliteIamStore(path = ':memory:'): IamStore & { db: Db } {
           data: string;
         }[]
       ).map((r) => JSON.parse(r.data) as Assignment);
+    },
+    async roleHolders(roleId) {
+      const assignments = (
+        db.prepare('SELECT data FROM assignments WHERE role_id = ? ORDER BY id').all(roleId) as {
+          data: string;
+        }[]
+      ).map((r) => JSON.parse(r.data) as Assignment);
+      // A group's roles live inside its document, and sqlite has no index into one. Scanning is
+      // honest here and nowhere else: groups are an administrative set — tens per channel, not
+      // the millions of rows every other query is shaped around.
+      const groups = (db.prepare('SELECT data FROM groups ORDER BY id').all() as { data: string }[])
+        .map((r) => JSON.parse(r.data) as Group)
+        .filter((g) => g.roleIds?.includes(roleId));
+      return { assignments, groups };
     },
     async close() {
       db.close();

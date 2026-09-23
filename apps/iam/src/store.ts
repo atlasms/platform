@@ -133,6 +133,19 @@ export interface IamStore {
   role(id: string): Promise<StoredRole | undefined>;
   roles(options?: { channelId?: string }): Promise<StoredRole[]>;
   assignments(userId: string): Promise<Assignment[]>;
+  /**
+   * Everything that carries one role: the direct assignments, and the groups whose `roleIds`
+   * include it.
+   *
+   * A method rather than a walk in the service, because the service's walk WAS the implementation
+   * — every user in the channel, their assignments, their memberships, each membership's group —
+   * and the question is asked on every role edit (to bump the holders' `permVersion`) and every
+   * delete (to refuse a role something still carries). Both adapters answer it from an index.
+   *
+   * The users a group reaches are NOT resolved here: `members(groupId)` already answers that, and
+   * folding it in would make the store return a shape only one caller wants.
+   */
+  roleHolders(roleId: string): Promise<{ assignments: Assignment[]; groups: Group[] }>;
 
   close(): Promise<void>;
 }

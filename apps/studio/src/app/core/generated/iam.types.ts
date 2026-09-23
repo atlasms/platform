@@ -6,6 +6,12 @@
 
 export type Ulid = string;
 
+/** Who a role reaches. `groups` are the groups that carry it; `users` is every person it reaches, whether by their own grant, through a group, or both — flattened, because the question "who gets this rule change" has one answer per person, not one per path. */
+export interface RoleHolders {
+  users: { id: Ulid; username: string; assignmentId?: string; viaGroupIds?: string[] }[];
+  groups: { id: Ulid; name: string }[];
+}
+
 export interface TokenPair {
   accessToken: string;
   refreshToken: string;

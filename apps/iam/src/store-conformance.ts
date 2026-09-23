@@ -199,6 +199,73 @@ export function iamStoreConformance(name: string, harness: IamStoreHarness): voi
     });
   });
 
+  test(`[${name}] roleHolders answers from the assignment and the group document, and nothing else`, async () => {
+    await withService(async (service, store) => {
+      const jo = await service.createUser({
+        username: 'jo2',
+        password: PASSWORD,
+        channelId: 'ch12',
+      });
+      const sam = await service.createUser({
+        username: 'sam',
+        password: PASSWORD,
+        channelId: 'ch12',
+      });
+      await store.transaction(async (tx) => {
+        await tx.putRole({
+          id: 'reporter',
+          channelId: 'ch12',
+          name: 'Reporter',
+          rules: [],
+          version: 1,
+        });
+        await tx.putRole({ id: 'other', channelId: 'ch12', name: 'Other', rules: [], version: 1 });
+        await tx.putAssignment({ id: 'a1', userId: jo.id, roleId: 'reporter' });
+        // A rule assignment carries no role and must not be mistaken for one.
+        await tx.putAssignment({
+          id: 'a2',
+          userId: sam.id,
+          rule: { id: 'r', permissions: ['asset:read'] },
+        });
+        await tx.putAssignment({ id: 'a3', userId: sam.id, roleId: 'other' });
+        await tx.putGroup({
+          id: 'g1',
+          channelId: 'ch12',
+          name: 'Desk',
+          roleIds: ['reporter'],
+          version: 1,
+        });
+        await tx.putGroup({
+          id: 'g2',
+          channelId: 'ch12',
+          name: 'Sport',
+          roleIds: ['other'],
+          version: 1,
+        });
+        await tx.putGroup({ id: 'g3', channelId: 'ch12', name: 'Empty', version: 1 });
+      });
+
+      const held = await store.roleHolders('reporter');
+      assert.deepEqual(
+        held.assignments.map((a) => a.id),
+        ['a1'],
+      );
+      assert.deepEqual(
+        held.groups.map((g) => g.id),
+        ['g1'],
+      );
+      // The members a group reaches are the caller's to resolve, and `members` is how.
+      assert.deepEqual(await store.roleHolders('nothing-holds-this'), {
+        assignments: [],
+        groups: [],
+      });
+      assert.deepEqual(
+        (await store.roleHolders('other')).assignments.map((a) => a.id),
+        ['a3'],
+      );
+    });
+  });
+
   test(`[${name}] the login trail is APPEND-ONLY, in the database`, async () => {
     await withService(async (service, store) => {
       await service.createUser({ username: 'jo', password: PASSWORD });

@@ -39,6 +39,15 @@ connection.
 `users` (columns for what is queried — `username` unique, `state`, `perm_version`, `channel_id` —
 and the record as JSON), `credentials` (argon2id PHC strings, never plaintext), `refresh_tokens`
 (the hash, the family, `revoked_at`, `rotated_from`; the token itself is never stored),
+**"Who holds this role" is an indexed read, not a walk.** It used to be: every user in the estate,
+then each one's assignments, then each one's memberships, then each membership's group — so the
+cost of editing a role grew with how many people existed rather than with how many held it, and
+the `limit: 10_000` in the middle of it was a silent ceiling where user 10,001 kept a grant nobody
+could see. `IamStore.roleHolders` replaces it with the assignment index and, for groups, a
+containment query on the group document (`data @> {"roleIds":[...]}`, GIN-indexed) in Postgres and
+a scan of the groups table in sqlite — honest there and nowhere else, because groups are an
+administrative set of tens per channel.
+
 `login_events` (append-only), `roles`, `groups`, `memberships`, `assignments` (addressable, so a
 grant can be revoked by id), and the `outbox` for EP-10.6.
 
@@ -65,6 +74,14 @@ the channel of the row it touches**, checked with `canEnforce` and the full reso
   group takes the channel's users.
 - Deleting a role that is still granted, directly or through a group, is **409**: revoke first, so
   no permission disappears without being named in a request.
+- **`GET /roles/{id}/holders`** answers the question that 409 already decides internally, and the
+  one an administrator needs before editing a role's rules: a rule change reaches every holder at
+  once, so "who" is the blast radius. Users are flattened — a person reached both directly and
+  through a group is one row carrying both facts — and a direct holder's row carries the
+  **assignment id**, so revoking is one call rather than a read of that user's grants first. A
+  **platform-wide** role's holders span every channel, so this one needs an unscoped `user:admin`
+  even though reading the role itself does not: what a role grants is not secret from the people
+  it is granted to, but who else in the estate holds it is another tenant's business.
 
 Group ids are ULIDs (they travel in `group.membership.changed`, whose schema says so); role ids are
 kebab-case names (`editor`), minted as a ULID when not given. Adding a member twice is one
