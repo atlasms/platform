@@ -103,9 +103,10 @@ jobs:
           kubectl -n atlas rollout status statefulset/opensearch --timeout=300s
 
       # Available, not yet necessarily reachable: `rollout status` returns when the pod is Ready,
-      # and kube-proxy programs its endpoint a moment later. The suite's third test waits for each
-      # proxied upstream to actually answer through the gateway, so that gap is its problem to
-      # absorb, not a flake here.
+      # and kube-proxy programs its endpoint a moment later. That gap is the suite's to absorb,
+      # at BOTH hops — its first test waits for the NodePort to start serving, and its third waits
+      # for each proxied upstream to answer through the gateway. Adding a `kubectl wait` here
+      # would only move the race, since `npm run smoke` after `npm run k8s:up` has the same one.
       - name: Wait for the services
         run: |
           for d in iam mam websocket api-gateway logging scheduling rim; do

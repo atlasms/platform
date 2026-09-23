@@ -17,6 +17,8 @@ import assert from 'node:assert/strict';
 
 const BASE = process.env.ATLAS_BASE_URL ?? 'http://localhost:30080';
 const TIMEOUT = Number(process.env.ATLAS_SMOKE_TIMEOUT_MS ?? 10_000);
+/** How long the FIRST request waits for the origin to start serving at all. See below. */
+const REACHABLE_BUDGET = Number(process.env.ATLAS_SMOKE_REACHABLE_BUDGET_MS ?? 30_000);
 
 // A SECOND origin, because the socket does not go through the gateway: the gateway proxies with
 // `fetch`, which cannot perform a protocol upgrade, so `/ws` is routed straight to the service.
@@ -41,6 +43,28 @@ async function get(path, init = {}) {
   });
   const text = await response.text();
   return { status: response.status, headers: response.headers, text };
+}
+
+/**
+ * `get`, retried while the origin refuses the CONNECTION — the first request of the run only.
+ *
+ * Deliberately narrow: an HTTP response of any status ends the wait, because a service that
+ * answers 503 is a service that is answering and that is the suite's business to judge. Only a
+ * transport failure (connection refused, reset, DNS) is retried, and only until the budget runs
+ * out, at which point the original error is thrown rather than swallowed into a timeout with no
+ * cause. Here rather than in the workflow because `npm run smoke` straight after `npm run k8s:up`
+ * has exactly the same race on a laptop.
+ */
+async function getWhenServing(path, init = {}, budgetMs = REACHABLE_BUDGET) {
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    try {
+      return await get(path, init);
+    } catch (err) {
+      if (Date.now() > deadline) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
 }
 
 const json = (result) => {
@@ -70,7 +94,18 @@ async function seedToken() {
 }
 
 test(`smoke: ${BASE} is reachable and live`, async () => {
-  const res = await get('/healthz');
+  // WAIT FOR THE ORIGIN ITSELF, not just for what it answers.
+  //
+  // The third test below absorbs the gap between "pod Ready" and "kube-proxy has programmed the
+  // endpoint" for each upstream BEHIND the gateway. The same gap exists one hop earlier, between
+  // the runner and the gateway's own Service, and nothing was absorbing it: `rollout status`
+  // returns when the pod is Ready, and the NodePort starts serving a moment later.
+  //
+  // Measured on CI: the gateway rolled out at 18:29:54.756, this suite's first request left at
+  // 18:29:55.168, and the six tests that run before the upstream gate all died on `fetch failed`
+  // / ECONNRESET — 412ms of not-yet-serving, on a commit that changed nothing deployable. A
+  // transport error is not an answer, so it is not a verdict either.
+  const res = await getWhenServing('/healthz');
   assert.equal(res.status, 200, `gateway not live: ${res.text}`);
   assert.equal(json(res).status, 'ok');
 });
