@@ -269,8 +269,13 @@ export class RoleEditor implements OnInit {
       },
       error: (err: { status?: number }) => {
         this.holders.set(null);
+        // A 404 here means one thing, because the role itself loaded a moment ago: this is a
+        // platform-wide role and the caller administers a channel. Any other failure is reported
+        // as one rather than explained away.
         this.holdersError.set(
-          this.locale.t(err.status === 404 ? 'admin.holdersPlatformWide' : 'admin.loadError'),
+          this.locale.t(
+            err.status === 404 && this.readOnly() ? 'admin.holdersPlatformWide' : 'admin.loadError',
+          ),
         );
       },
     });
