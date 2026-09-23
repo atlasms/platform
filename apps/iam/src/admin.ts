@@ -80,6 +80,18 @@ export interface GroupInput {
 
 export type AssignmentInput = { roleId: string; rule?: never } | { rule: Rule; roleId?: never };
 
+/**
+ * What `GET /roles/{id}/holders` answers — `RoleHolders` in iam.yaml.
+ *
+ * `users` is flattened across paths: a person who holds the role directly AND through a group is
+ * one row carrying both facts, because "who does this rule change reach" has one answer per
+ * person.
+ */
+export interface RoleHolders {
+  users: { id: string; username: string; assignmentId?: string; viaGroupIds: string[] }[];
+  groups: { id: string; name: string }[];
+}
+
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export class IamAdmin {
@@ -485,6 +497,49 @@ export class IamAdmin {
     return after;
   }
 
+  /**
+   * Who the role reaches: the groups that carry it, and every user it reaches by any path.
+   *
+   * The same question `deleteRole` asks to decide its 409 and `updateRole` asks to decide whose
+   * `permVersion` to bump — surfaced, because an administrator about to change a role's rules is
+   * entitled to see the blast radius first. A direct holder carries the id of the grant itself,
+   * so revoking it needs no second request to read the user's assignments.
+   */
+  async roleHolders(caller: AdminCaller, id: string): Promise<RoleHolders> {
+    const policy = await this.policy(caller);
+    await this.roleFor(policy, id);
+    const { assignments, groups } = await this.store.roleHolders(id);
+
+    const users = new Map<string, RoleHolders['users'][number]>();
+    const add = async (userId: string): Promise<RoleHolders['users'][number] | undefined> => {
+      const existing = users.get(userId);
+      if (existing) return existing;
+      const user = await this.store.user(userId);
+      // A membership or an assignment whose user is gone is not an error to report here; the row
+      // is simply nobody. Deleting a user cascades both, so this is belt and braces.
+      if (!user) return undefined;
+      const entry = { id: user.id, username: user.username, viaGroupIds: [] as string[] };
+      users.set(userId, entry);
+      return entry;
+    };
+
+    for (const assignment of assignments) {
+      const entry = await add(assignment.userId);
+      if (entry) entry.assignmentId = assignment.id;
+    }
+    for (const group of groups) {
+      for (const membership of await this.store.members(group.id)) {
+        const entry = await add(membership.userId);
+        entry?.viaGroupIds.push(group.id);
+      }
+    }
+
+    return {
+      users: [...users.values()].sort((a, b) => a.username.localeCompare(b.username)),
+      groups: groups.map((g) => ({ id: g.id, name: g.name })),
+    };
+  }
+
   async deleteRole(caller: AdminCaller, id: string): Promise<void> {
     const policy = await this.policy(caller);
     const role = await this.roleFor(policy, id);
@@ -582,21 +637,20 @@ export class IamAdmin {
     }
   }
 
-  /** Users who hold the role directly or through a group. */
+  /**
+   * Users who hold the role directly or through a group.
+   *
+   * This used to walk every user in the estate — `users({ limit: 10_000 })`, then each one's
+   * assignments, then each one's memberships, then each membership's group — which made the cost
+   * of editing or deleting a role a function of how many people exist rather than of how many
+   * hold it. It is now two indexed reads and the members of the groups that actually carry it.
+   * The 10_000 was also a silent ceiling: user 10_001 kept a grant nobody could see.
+   */
   private async holdersOf(roleId: string): Promise<string[]> {
-    const holders = new Set<string>();
-    for (const user of await this.store.users({ limit: 10_000 })) {
-      if ((await this.store.assignments(user.id)).some((a) => a.roleId === roleId)) {
-        holders.add(user.id);
-        continue;
-      }
-      for (const m of await this.store.memberships(user.id)) {
-        const group = await this.store.group(m.groupId);
-        if (group?.roleIds?.includes(roleId)) {
-          holders.add(user.id);
-          break;
-        }
-      }
+    const { assignments, groups } = await this.store.roleHolders(roleId);
+    const holders = new Set(assignments.map((a) => a.userId));
+    for (const group of groups) {
+      for (const membership of await this.store.members(group.id)) holders.add(membership.userId);
     }
     return [...holders];
   }

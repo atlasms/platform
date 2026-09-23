@@ -291,11 +291,59 @@ paths:
       responses:
         '204': { description: Deleted }
         '409': { $ref: '#/components/responses/Error' }
+  /roles/{id}/holders:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listRoleHolders
+      tags: [admin]
+      # The question `DELETE /roles/{id}` already answers internally to decide its 409, and the
+      # one an administrator has to answer before editing a role's rules: a rule change reaches
+      # every holder at once, so "who" is the blast radius. Same authorization as reading the
+      # role itself.
+      summary: Who holds this role — directly, and through which groups
+      responses:
+        '200': { description: Holders, content: { application/json: { schema: { $ref: '#/components/schemas/RoleHolders' } } } }
+        '404': { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   schemas:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    RoleHolders:
+      type: object
+      required: [users, groups]
+      description: >-
+        Who a role reaches. `groups` are the groups that carry it; `users` is every person it
+        reaches, whether by their own grant, through a group, or both — flattened, because the
+        question "who gets this rule change" has one answer per person, not one per path.
+      properties:
+        users:
+          type: array
+          items:
+            type: object
+            required: [id, username]
+            properties:
+              id: { $ref: '#/components/schemas/Ulid' }
+              username: { type: string }
+              assignmentId:
+                type: string
+                description: >-
+                  The direct grant's id, absent when the role reaches this user only through a
+                  group. It is what `DELETE /users/{id}/assignments/{assignmentId}` revokes — so a
+                  caller never has to read the user's assignments to take a role back.
+              viaGroupIds:
+                type: array
+                description: The groups that carry the role to this user. Empty for a direct-only holder.
+                items: { type: string }
+        groups:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { $ref: '#/components/schemas/Ulid' }
+              name: { type: string }
     TokenPair:
       type: object
       # `permVersion`, not `permissionVersion`. This stub said the latter while FR-IAM-14, the JWT

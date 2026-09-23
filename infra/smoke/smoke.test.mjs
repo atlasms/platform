@@ -635,10 +635,35 @@ test('smoke: EP-10.6 — a grant reaches the spine: permissions.changed and grou
   const changed = page.items.find((e) => e.type === 'permissions.changed');
   assert.equal(changed.payload.permVersion, before + 1);
 
+  // The same grant, read back from the other end: who holds `viewer` now includes this group and,
+  // through it, the seeded user. A join across assignments, groups and memberships, answered by
+  // the deployment rather than by a unit test's double. The seed account holds an unscoped
+  // user:admin, which a platform-wide role's holders require.
+  const holders = await get('/api/v1/roles/viewer/holders', { headers });
+  assert.equal(holders.status, 200, `holders failed: ${holders.text}`);
+  const held = json(holders);
+  assert.ok(
+    held.groups.some((g) => g.id === groupId),
+    'the group that carries the role is listed',
+  );
+  const reached = held.users.find((u) => u.id === json(me).subjectId);
+  assert.ok(reached, 'the member the role now reaches is listed');
+  assert.ok(
+    (reached.viaGroupIds ?? []).includes(groupId),
+    'and the row says which group it comes through',
+  );
+
   // Leave the seed user as it was found: the next run bumps from wherever it is, but a group per
   // run would accumulate.
   const left = await get(`/api/v1/groups/${groupId}`, { method: 'DELETE', headers });
   assert.equal(left.status, 204, `group delete failed: ${left.text}`);
+
+  const afterLeaving = await get('/api/v1/roles/viewer/holders', { headers });
+  assert.equal(afterLeaving.status, 200);
+  assert.ok(
+    !json(afterLeaving).groups.some((g) => g.id === groupId),
+    'and the deleted group is gone from the holders',
+  );
 });
 
 test('smoke: EP-15.1 — a chunked upload through the gateway: parts out of order, resumed, assembled, hashed, audited', async () => {

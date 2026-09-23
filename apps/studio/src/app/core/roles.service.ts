@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { ApiClient } from './api-client.ts';
-import type { Role, RoleInput } from './generated/iam.types.ts';
+import type { Role, RoleHolders, RoleInput } from './generated/iam.types.ts';
 import { IamOperations as ops } from './generated/iam.operations.ts';
 
 /**
@@ -27,6 +27,16 @@ export class RolesService {
 
   update(id: string, patch: RoleInput) {
     return this.api.call(ops.updateRole, { params: { id }, body: patch }).as<Role>();
+  }
+
+  /**
+   * Who the role reaches — the groups that carry it, and every user, by any path.
+   *
+   * A direct holder's row carries the id of the grant itself, so revoking one is a single call
+   * and never a read of that user's whole assignment list first.
+   */
+  holders(id: string) {
+    return this.api.call(ops.listRoleHolders, { params: { id } }).as<RoleHolders>();
   }
 
   /** 409 while an assignment or a group still carries it. */

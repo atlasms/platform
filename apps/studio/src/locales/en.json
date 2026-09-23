@@ -304,6 +304,14 @@
     "deleteRole": "Delete role",
     "deleteRoleWhy": "Refused while a user or a group still holds it.",
     "roleHeld": "Something still holds this role; revoke it there first.",
-    "platformWideRole": "platform-wide — shown, not editable here"
+    "platformWideRole": "platform-wide — shown, not editable here",
+    "holders": "Holders",
+    "holdersWhy": "Everyone this role reaches, by any path. A rule change above reaches all of them at once.",
+    "noHolders": "Nothing holds this role.",
+    "holdersPlatformWide": "A platform-wide role's holders span every channel, so they are shown only to a platform administrator.",
+    "grantTo": "Grant to a user or a group",
+    "viaGroup": "via",
+    "group": "Group",
+    "user": "User"
   }
 }

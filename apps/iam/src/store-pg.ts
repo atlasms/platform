@@ -97,6 +97,14 @@ export const pgMigrations: Migration[] = [
          );
          CREATE INDEX IF NOT EXISTS assignments_user_idx ON assignments (user_id);`,
   },
+  {
+    // The two indexes "who holds this role" needs: the assignment's own column, and a GIN index
+    // over the group document, which is what makes the containment query below an index lookup
+    // rather than a scan of every group in the estate.
+    id: 'iam_assignments_by_role',
+    up: `CREATE INDEX IF NOT EXISTS assignments_role_idx ON assignments (role_id);
+         CREATE INDEX IF NOT EXISTS groups_data_gin ON groups USING gin (data jsonb_path_ops);`,
+  },
 ];
 
 export function pgIamStore(pool: PgPool): IamStore {
@@ -340,6 +348,19 @@ export function pgIamStore(pool: PgPool): IamStore {
       return docs<Assignment>(pool, 'SELECT data FROM assignments WHERE user_id = $1 ORDER BY id', [
         userId,
       ]);
+    },
+    async roleHolders(roleId) {
+      const [assignments, groups] = await Promise.all([
+        docs<Assignment>(pool, 'SELECT data FROM assignments WHERE role_id = $1 ORDER BY id', [
+          roleId,
+        ]),
+        // `@>` containment, which the GIN index above serves. Built as a parameter rather than
+        // interpolated: a role id reaches this from a URL path.
+        docs<Group>(pool, 'SELECT data FROM groups WHERE data @> $1::jsonb ORDER BY id', [
+          JSON.stringify({ roleIds: [roleId] }),
+        ]),
+      ]);
+      return { assignments, groups };
     },
     async close() {
       await pool.end();

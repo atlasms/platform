@@ -67,6 +67,8 @@ export const IamOperations = {
   updateRole: { method: 'PATCH', path: '/api/v1/roles/{id}', params: ['id'] },
   /** Delete a role that nothing holds; 409 while an assignment or group still carries it */
   deleteRole: { method: 'DELETE', path: '/api/v1/roles/{id}', params: ['id'] },
+  /** Who holds this role — directly, and through which groups */
+  listRoleHolders: { method: 'GET', path: '/api/v1/roles/{id}/holders', params: ['id'] },
 } as const;
 
 export type IamOperation = keyof typeof IamOperations;
