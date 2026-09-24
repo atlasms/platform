@@ -102,7 +102,7 @@ components:
           type: array
           description: Set once completed — one per preset, in the order produced. What `transcode.completed` carries, plus the preset.
           items: { $ref: '#/components/schemas/RenditionResult' }
-        reason: { type: string, description: Why the last attempt failed, or why it was dead-lettered. }
+        reason: { type: string, description: 'Why the last attempt failed, or why it was dead-lettered.' }
         retryAt: { type: string, format: date-time, description: A failed job is not leased again before this. }
         workerId: { type: string, description: The worker holding (or last holding) it — a pod name. }
         priority: { type: integer }
@@ -126,10 +126,25 @@ components:
         sizeBytes: { type: integer, minimum: 0 }
         durationSec: { type: number, minimum: 0, description: Absent for a still. }
     Error:
+      description: >-
+        RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept:
+        `code` is the machine key (a closed enum — VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND,
+        CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, UNAVAILABLE, INTERNAL), `message` the text. The RFC members are
+        derived from them: `type` is https://atlas.example/problems/<code>, `title` is constant per
+        code, `detail` equals `message`, `instance` is urn:atlas:correlation:<correlationId>.
       type: object
-      required: [code, message]
-      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+      required: [type, title, status, detail, code, message]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        detail: { type: string }
+        instance: { type: string, format: uri }
+        code: { type: string, enum: [VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, UNAVAILABLE, INTERNAL] }
+        message: { type: string }
+        details: {}
+        correlationId: { type: string }
   responses:
     Error:
       description: Error response
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } }

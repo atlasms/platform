@@ -11,13 +11,19 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AssetsService } from '../core/assets.service.ts';
 import type { Asset, FileRef, UpdateAssetInput } from '../core/generated/mam.types.ts';
+import type { Job } from '../core/generated/mts.types.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { WebSocketService } from '../core/websocket.service.ts';
+import { TranscodeJobs } from './transcode-jobs.ts';
 
 type EditorSection = 'basic' | 'files';
+
+/** After a transcode completes: how often, and how many times, to look for its rows in MAM. */
+const RENDITION_WAIT_MS = 1_000;
+const RENDITION_WAIT_ATTEMPTS = 15;
 type EditableField = keyof UpdateAssetInput;
 type FieldGroup = 'core' | 'taxonomy' | 'rights';
 type Draft = Record<EditableField, string>;
@@ -43,6 +49,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
 @Component({
   selector: 'atlas-asset-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [TranscodeJobs],
   template: `
     @if (loading()) {
       <div class="state">
@@ -322,6 +329,8 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
               </tbody>
             </table>
           }
+          <!-- EP-16: what MTS is doing to produce these rows. -->
+          <atlas-transcode-jobs [assetId]="current.id" (completed)="renditionsProduced($event)" />
           <p class="files-note">
             {{ locale.t('assetEditor.filesNote') }}
           </p>
@@ -400,11 +409,44 @@ export class AssetEditor {
     this.reload();
   }
 
-  private loadFiles(id: string): void {
+  private loadFiles(id: string, then?: (rows: FileRef[]) => void): void {
     this.filesError.set(null);
     this.assetsApi.files(id).subscribe({
-      next: (rows) => this.files.set(rows),
+      next: (rows) => {
+        this.files.set(rows);
+        then?.(rows);
+      },
       error: () => this.filesError.set(this.locale.t('assetEditor.filesError')),
+    });
+  }
+
+  private mirrorTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly mirrorCleanup = inject(DestroyRef).onDestroy(() =>
+    clearTimeout(this.mirrorTimer),
+  );
+
+  /**
+   * A transcode finished: re-read the file rows until they carry what it produced.
+   *
+   * MAM's FileRef mirror and MTS's completion are two ends of one event with a broker between
+   * them, so the first read after a completion can still be the old rows. The renditions'
+   * CHECKSUMS are the test — a row of the same kind could be a previous transcode's — and the wait
+   * is bounded: if the mirror is down, the rows say so by not changing, and the next visit to the
+   * tab reads them again.
+   */
+  protected renditionsProduced(job: Job, attempt = 0): void {
+    const asset = this.asset();
+    if (!asset) return;
+    const wanted = new Set((job.renditions ?? []).map((r) => r.checksum.value));
+    this.loadFiles(asset.id, (rows) => {
+      const have = new Set(rows.map((f) => f.checksum.value));
+      const arrived = [...wanted].every((c) => have.has(c));
+      if (arrived || attempt >= RENDITION_WAIT_ATTEMPTS) return;
+      clearTimeout(this.mirrorTimer);
+      this.mirrorTimer = setTimeout(
+        () => this.renditionsProduced(job, attempt + 1),
+        RENDITION_WAIT_MS,
+      );
     });
   }
 
