@@ -46,7 +46,7 @@ paths:
       tags: [schedules]
       summary: A program table with its reel (scope schedule:read)
       responses:
-        '200': { description: The schedule and its items, in reel order, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleWithItems' } } } }
+        '200': { description: 'The schedule and its items, in reel order', content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleWithItems' } } } }
         '404': { $ref: '#/components/responses/Error' }
     patch:
       operationId: updateSchedule
@@ -66,7 +66,7 @@ paths:
       tags: [schedules]
       summary: The reel, in order (scope schedule:read)
       responses:
-        '200': { description: Items ordered by seq, sub-schedule items after their parent, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScheduleItem' } } } } }
+        '200': { description: 'Items ordered by seq, sub-schedule items after their parent', content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScheduleItem' } } } } }
     put:
       operationId: replaceScheduleItems
       tags: [schedules]
@@ -190,7 +190,7 @@ components:
         id: { $ref: '#/components/schemas/Ulid' }
         scheduleId: { $ref: '#/components/schemas/Ulid' }
         parentItemId: { $ref: '#/components/schemas/Ulid' }
-        seq: { type: integer, minimum: 0, description: Order within the reel, or within the parent's sub-reel. }
+        seq: { type: integer, minimum: 0, description: 'Order within the reel, or within the parent''s sub-reel.' }
         start: { type: string, format: date-time, description: Materialized; locked when `fixed`. }
         durationSec: { type: number, minimum: 0 }
         end: { type: string, format: date-time, description: Computed by the service — start + duration. Read-only. }

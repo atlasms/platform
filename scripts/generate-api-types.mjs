@@ -73,6 +73,42 @@ const EVENTS = {
 const check = process.argv.includes('--check');
 let stale = 0;
 
+/**
+ * Every contract, not only the ones in SPECS: a key with NO value.
+ *
+ * In a YAML flow mapping an unquoted comma ENDS the value, so
+ * `{ type: string, description: Why it failed, or why not. }` is a description of "Why it failed"
+ * plus a key named "or why not." whose value is null. Nothing breaks: JSON Schema ignores a keyword
+ * it does not know, and OpenAPI tooling mostly does too. So the contract a reader sees, and every
+ * doc comment generated from it, silently says half of what was written. Seventeen of these sat in
+ * four contracts until `mts.yaml` joined SPECS and one surfaced as a truncated comment in Studio.
+ * No OpenAPI field here is legitimately null, so a null is always this.
+ */
+function valuelessKeys(node, path = [], found = []) {
+  if (Array.isArray(node)) node.forEach((item, i) => valuelessKeys(item, [...path, i], found));
+  else if (node && typeof node === 'object') {
+    for (const [key, value] of Object.entries(node)) {
+      if (value === null) found.push([...path, key].join('.'));
+      else valuelessKeys(value, [...path, key], found);
+    }
+  }
+  return found;
+}
+
+let malformed = 0;
+const contracts = join(ROOT, 'docs/architecture/openapi');
+for (const file of readdirSync(contracts)
+  .filter((f) => f.endsWith('.yaml'))
+  .sort()) {
+  for (const where of valuelessKeys(parse(readFileSync(join(contracts, file), 'utf8')))) {
+    console.error(
+      `MALFORMED: ${file}: ${where} has no value — an unquoted comma inside a { … } flow ` +
+        'mapping ended the value before it; quote the text.',
+    );
+    malformed += 1;
+  }
+}
+
 /** Format with the repo's prettier config, then write or compare. See the note in the loop below. */
 async function emit(target, raw, { name, source, summary }) {
   const content = await prettier.format(raw, {
@@ -208,6 +244,11 @@ for (const spec of SPECS) {
     source: EVENTS.dir,
     summary: `${files.length} events, ${Object.keys(common.$defs ?? {}).length} shared types`,
   });
+}
+
+if (malformed > 0) {
+  console.error(`\n${malformed} key(s) with no value in the OpenAPI contracts.`);
+  process.exit(1);
 }
 
 if (check) {

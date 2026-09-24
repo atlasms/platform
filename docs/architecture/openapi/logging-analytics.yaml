@@ -31,7 +31,7 @@ paths:
         present; that is normal, not the end of the log. Keyset on `seq`: pass `nextCursor` back as
         `before`.
       parameters:
-        - { name: type, in: query, description: Event type(s), comma-separated., schema: { type: string } }
+        - { name: type, in: query, description: 'Event type(s), comma-separated.', schema: { type: string } }
         - { name: correlationId, in: query, schema: { type: string } }
         - { name: actorId, in: query, schema: { type: string } }
         - { name: from, in: query, schema: { type: string, format: date-time } }
@@ -120,8 +120,8 @@ components:
       type: object
       required: [hotDays, coldDays]
       properties:
-        hotDays: { type: integer, minimum: 1, maximum: 36500, description: How long a record stays in the search index. Older records are read from the system of record — slower, never gone. }
-        coldDays: { type: integer, minimum: 0, maximum: 36500, description: How long a record is kept after it leaves the hot tier; 0 is forever. Recorded, and acted on once there is a cold tier to move records to (object storage, EP-14) — until then every record is kept. }
+        hotDays: { type: integer, minimum: 1, maximum: 36500, description: 'How long a record stays in the search index. Older records are read from the system of record — slower, never gone.' }
+        coldDays: { type: integer, minimum: 0, maximum: 36500, description: 'How long a record is kept after it leaves the hot tier; 0 is forever. Recorded, and acted on once there is a cold tier to move records to (object storage, EP-14) — until then every record is kept.' }
         legalHold: { type: boolean, default: false, description: Pauses every tier move for the channel while set. }
     RetentionPolicy:
       allOf:
@@ -188,7 +188,7 @@ components:
       required: [revision, action, at, delta, messageId]
       properties:
         revision: { type: integer, minimum: 1, description: Monotonic per entity; an asset's `version`. }
-        action: { type: string, description: The domain event audited, or the operation for a silent mutation. }
+        action: { type: string, description: 'The domain event audited, or the operation for a silent mutation.' }
         actorKind: { type: string, enum: [service, user] }
         actorId: { type: string }
         at: { type: string, format: date-time }
