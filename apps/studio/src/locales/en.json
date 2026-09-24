@@ -148,6 +148,21 @@
       "restoring": "Restoring",
       "missing": "Missing",
       "quarantined": "Quarantined"
+    },
+    "jobs": "Transcode jobs",
+    "jobsLoading": "Reading transcode jobs…",
+    "noJobs": "No transcode jobs for this asset.",
+    "jobsError": "Could not read the transcode jobs.",
+    "jobProgress": "Transcode progress",
+    "jobAttempt": "attempt",
+    "jobRenditions": "renditions",
+    "jobRetryAt": "retrying at",
+    "jobStates": {
+      "queued": "Queued",
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Waiting to retry",
+      "dead-letter": "Gave up"
     }
   },
   "editor": {

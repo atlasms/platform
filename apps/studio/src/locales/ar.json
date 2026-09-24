@@ -148,6 +148,21 @@
       "restoring": "قيد الاستعادة",
       "missing": "مفقود",
       "quarantined": "محجور"
+    },
+    "jobs": "مهام التحويل",
+    "jobsLoading": "جارٍ قراءة مهام التحويل…",
+    "noJobs": "لا مهام تحويل لهذا الأصل.",
+    "jobsError": "تعذّرت قراءة مهام التحويل.",
+    "jobProgress": "تقدّم التحويل",
+    "jobAttempt": "المحاولة",
+    "jobRenditions": "نُسخ",
+    "jobRetryAt": "إعادة المحاولة عند",
+    "jobStates": {
+      "queued": "في الانتظار",
+      "running": "قيد التنفيذ",
+      "completed": "اكتملت",
+      "failed": "بانتظار إعادة المحاولة",
+      "dead-letter": "توقّفت"
     }
   },
   "editor": {

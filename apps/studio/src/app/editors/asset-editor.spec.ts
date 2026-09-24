@@ -1,8 +1,10 @@
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssetsService } from '../core/assets.service.ts';
 import type { Asset, FileRef, UpdateAssetInput } from '../core/generated/mam.types.ts';
+import type { Job } from '../core/generated/mts.types.ts';
+import { TranscodeJobsService } from '../core/transcode-jobs.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { LocaleService } from '../core/locale.service.ts';
@@ -123,13 +125,29 @@ function emitAssetEvent(
   });
 }
 
+/**
+ * The Files tab now renders the transcode jobs (EP-16). Without this double the child reaches the
+ * real HttpClient — resolvable at the root in this Angular — and fires a request from jsdom that
+ * fails quietly, which is how this spec ran for its first cut.
+ */
+class FakeTranscodeJobs {
+  readonly reads: Array<{ assetId: string; result: Subject<Job[]> }> = [];
+  forAsset(assetId: string) {
+    const result = new Subject<Job[]>();
+    this.reads.push({ assetId, result });
+    return result;
+  }
+}
+
 function setup(fieldGroups: string[] = ['core', 'taxonomy', 'rights']) {
   localStorage.clear();
   const fake = new FakeAssets();
+  const jobs = new FakeTranscodeJobs();
   TestBed.configureTestingModule({
     providers: [
       EditorStore,
       { provide: AssetsService, useValue: fake },
+      { provide: TranscodeJobsService, useValue: jobs },
       { provide: LocaleService, useClass: FakeLocale },
     ],
   });
@@ -153,6 +171,7 @@ function setup(fieldGroups: string[] = ['core', 'taxonomy', 'rights']) {
     fixture,
     component: fixture.componentInstance as unknown as InternalEditor,
     fake,
+    jobs,
     editors,
   };
 }
@@ -280,6 +299,94 @@ describe('AssetEditor', () => {
     fake.gets[0]?.result.next(record({ hasRenditions: true, version: 2 }));
     fixture.detectChanges();
     expect(fake.fileLists).toHaveLength(2);
+  });
+
+  describe('a transcode that completes while the Files tab is open', () => {
+    afterEach(() => vi.useRealTimers());
+
+    const job = (state: Job['state'], checksums: string[] = []): Job => ({
+      id: '01J00000000000000000000001',
+      channelId: 'ch12',
+      assetId: '01K00000000000000000000000',
+      presetIds: ['proxy'],
+      inputPath: '/work/in.mp4',
+      state,
+      attempts: 1,
+      priority: 0,
+      createdBy: 'u1',
+      createdAt: '2026-09-24T10:00:00.000Z',
+      updatedAt: '2026-09-24T10:00:00.000Z',
+      version: 1,
+      ...(checksums.length > 0
+        ? {
+            renditions: checksums.map((value) => ({
+              presetId: 'proxy',
+              kind: 'proxy',
+              path: '/work/renditions/proxy.mp4',
+              checksum: { algorithm: 'sha256', value },
+              sizeBytes: 10,
+            })),
+          }
+        : {}),
+    });
+    const row = (checksum: string): FileRef => ({
+      id: `01F0000000000000000000000${checksum.length}`,
+      channelId: 'ch12',
+      assetId: '01K00000000000000000000000',
+      kind: 'proxy',
+      storage: { path: '/work/renditions/proxy.mp4', tier: 'online', status: 'available' },
+      checksum: { algorithm: 'sha256', value: checksum },
+      sourceMessageId: '01M00000000000000000000001',
+      version: 1,
+      updatedAt: '2026-09-24T10:00:00.000Z',
+    });
+
+    it('re-reads the rows until they carry what it produced — by checksum, not by kind', () => {
+      vi.useFakeTimers();
+      const { component, fake, jobs, fixture } = setup();
+      fake.gets[0]?.result.next(record());
+      component.section.set('files');
+      fixture.detectChanges();
+      // An OLD proxy row is already there: same kind, a previous transcode's bytes.
+      fake.fileLists[0]?.result.next([row('old')]);
+      jobs.reads[0]?.result.next([job('running')]);
+      fixture.detectChanges();
+
+      // The child polls; the job completes; the editor re-reads the rows.
+      vi.advanceTimersByTime(2_000);
+      jobs.reads[1]?.result.next([job('completed', ['fresh'])]);
+      expect(fake.fileLists).toHaveLength(2);
+      // MAM has not caught up: the old row alone, so it looks again a second later…
+      fake.fileLists[1]?.result.next([row('old')]);
+      vi.advanceTimersByTime(1_000);
+      expect(fake.fileLists).toHaveLength(3);
+      // …and stops once the fresh checksum is there.
+      fake.fileLists[2]?.result.next([row('old'), row('fresh')]);
+      vi.advanceTimersByTime(5_000);
+      expect(fake.fileLists).toHaveLength(3);
+      fixture.detectChanges();
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelectorAll('.file-rows tbody tr'),
+      ).toHaveLength(2);
+    });
+
+    it('gives up after a bounded wait when the mirror never catches up', () => {
+      vi.useFakeTimers();
+      const { component, fake, jobs, fixture } = setup();
+      fake.gets[0]?.result.next(record());
+      component.section.set('files');
+      fixture.detectChanges();
+      fake.fileLists[0]?.result.next([]);
+      jobs.reads[0]?.result.next([job('running')]);
+      vi.advanceTimersByTime(2_000);
+      jobs.reads[1]?.result.next([job('completed', ['never'])]);
+      for (let i = 0; i < 40; i++) {
+        fake.fileLists.at(-1)?.result.next([]);
+        vi.advanceTimersByTime(1_000);
+      }
+      // One read on entering, one on completion, then fifteen more — and no sixteenth.
+      expect(fake.fileLists).toHaveLength(17);
+    });
   });
 
   it('a live event for THIS asset refetches it — for another asset it does nothing', () => {

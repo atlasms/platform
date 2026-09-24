@@ -32,7 +32,8 @@ and [Every colour is a token, and every token is declared](#every-colour-is-a-to
 **EP-20.1** — the Media panel: real recent/search/tag-filter reads from MAM.
 **EP-20.2** — the asset editor: real Basic-info reads and minimal PATCHes,
 dirty-state tracking, independent `core`/`taxonomy`/`rights` field-group rendering, and the Files
-rendition-readiness view. Per-file rows await the MAM FileRef projection (EP-17.8).
+tab: the asset's **file rows** from MAM's FileRef mirror (EP-17.8), and its **transcode jobs** from
+MTS (EP-16) — see [The Files tab](#the-files-tab-file-rows-and-transcode-jobs).
 **EP-20.3** — the Ingest panel: **upload**, queue, quarantine accept/reject, against RIM through
 the gateway (EP-15.1/15.3/15.4/15.6). Upload hands each picked file to the uploader
 ([`upload.service.ts`](src/app/core/upload.service.ts)); when its job has a verdict, the row joins
@@ -160,9 +161,28 @@ only after MAM returns successfully. A failed save leaves the edits and dirty st
 
 The Basic-info form asks `PermissionService` separately for `core`, `taxonomy`, and `rights`, so a
 role can edit a title without also changing expiry or classification. These checks are affordances;
-MAM repeats them server-side with strict resource context. The Files tab shows the core record's
-container and rendition readiness today. Individual checksums, storage tiers and technical rows
-wait for the FileRef mirror (EP-17.8) rather than being synthesized in Studio.
+MAM repeats them server-side with strict resource context.
+
+### The Files tab: file rows and transcode jobs
+
+The **rows** are MAM's FileRef mirror (EP-17.8) — kind, tier, status, size, checksum, path — read on
+entering the tab and again on a live event for the asset. Under them, the asset's **transcode jobs**
+([`transcode-jobs.ts`](src/app/editors/transcode-jobs.ts)) from MTS (EP-16): queued, running with a
+progress bar, waiting to retry with the reason and the retry time, given up with the reason, or done
+with its rendition count, newest first.
+
+- **Polled, and only while something is moving.** MTS keeps progress on the job row rather than
+  broadcasting it, so `GET /jobs?assetId=` every 2 s is how the bar moves. The poll stops by itself
+  once every job is completed or dead-lettered, skips a tick while the page is hidden, and dies with
+  the tab.
+- **A completion is followed through to MAM.** When a job the view watched completes, the editor
+  re-reads the rows until they carry the job's rendition **checksums** — not its kinds, because a
+  row of the same kind may be a previous transcode's — once a second, fifteen times at most. MTS's
+  completion and MAM's mirror are two consumers of one event with a broker between them, so the
+  first read after it may still be the old rows.
+- **Read-only.** Starting a transcode needs an input path in MTS's work area, which nothing in the
+  browser knows until HSM (EP-14) resolves inputs. A caller without `asset:read` on `files` does not
+  see the section at all (a 403 hides it).
 
 Workspace persistence ([FR-UI-3](../../docs/requirements/05-functional-requirements.md#studio)) is
 localStorage for now; the requirement is server-side, which needs an endpoint that does not exist

@@ -41,6 +41,8 @@ const SPECS = [
   { file: 'iam.yaml', out: 'iam.types.ts', ops: 'iam.operations.ts', title: 'IAM' },
   { file: 'mam.yaml', out: 'mam.types.ts', ops: 'mam.operations.ts', title: 'MAM' },
   { file: 'rim.yaml', out: 'rim.types.ts', ops: 'rim.operations.ts', title: 'RIM' },
+  // The asset editor's Files tab reads an asset's transcode jobs (EP-16).
+  { file: 'mts.yaml', out: 'mts.types.ts', ops: 'mts.operations.ts', title: 'MTS' },
   {
     file: 'scheduling.yaml',
     out: 'scheduling.types.ts',
