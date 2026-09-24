@@ -44,7 +44,7 @@ export interface ScheduleItem {
   id: Ulid;
   scheduleId: Ulid;
   parentItemId?: Ulid;
-  /** Order within the reel */
+  /** Order within the reel, or within the parent's sub-reel. */
   seq: number;
   /** Materialized; locked when `fixed`. */
   start: string;

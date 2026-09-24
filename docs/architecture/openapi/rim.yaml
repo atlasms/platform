@@ -108,7 +108,7 @@ paths:
         - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
         - { name: cursor, in: query, required: false, schema: { $ref: '#/components/schemas/Ulid' }, description: The last id from the previous page. }
         - { name: state, in: query, required: false, schema: { type: string, enum: [detected, validating, rejected, quarantined, accepted, registered] }, description: Only jobs in this state — `quarantined` is the review queue. }
-        - { name: order, in: query, required: false, schema: { type: string, enum: [asc, desc], default: desc }, description: ULID order; newest first by default, because the page is about what just arrived. }
+        - { name: order, in: query, required: false, schema: { type: string, enum: [asc, desc], default: desc }, description: 'ULID order; newest first by default, because the page is about what just arrived.' }
       responses:
         '200': { description: One page of jobs, content: { application/json: { schema: { $ref: '#/components/schemas/IngestQueuePage' } } } }
         '4XX': { $ref: '#/components/responses/Error' }
@@ -234,7 +234,7 @@ components:
           maxLength: 255
           description: The client's file name, kept as the received file's name after sanitising (no path, no control characters).
         sizeBytes: { type: integer, minimum: 1, description: The whole file's length. What the parts must add up to. }
-        contentType: { type: string, description: The client's idea of the media type; acceptance (EP-15.3) decides from the bytes, not from this. }
+        contentType: { type: string, description: 'The client''s idea of the media type; acceptance (EP-15.3) decides from the bytes, not from this.' }
     Upload:
       type: object
       required: [uploadId, channelId, filename, sizeBytes, partSizeBytes, partCount, received, state, expiresAt]
@@ -246,12 +246,12 @@ components:
         contentType: { type: string }
         partSizeBytes: { type: integer, description: Chosen by the server (ATLAS_UPLOAD_PART_BYTES). Every part but the last is exactly this long. }
         partCount: { type: integer, description: '`ceil(sizeBytes / partSizeBytes)`; parts are numbered 1..partCount.' }
-        received: { type: array, items: { type: integer }, description: The part numbers the server holds, ascending. Resume by sending the rest. }
+        received: { type: array, items: { type: integer }, description: 'The part numbers the server holds, ascending. Resume by sending the rest.' }
         state: { type: string, enum: [open, completed] }
         jobId: { $ref: '#/components/schemas/Ulid' }
         createdBy: { type: string }
         createdAt: { type: string, format: date-time }
-        expiresAt: { type: string, format: date-time, description: An open upload not completed by then is swept, parts and all (ATLAS_UPLOAD_TTL_MS). }
+        expiresAt: { type: string, format: date-time, description: 'An open upload not completed by then is swept, parts and all (ATLAS_UPLOAD_TTL_MS).' }
     IngestJob:
       type: object
       # `channelId` is required because it is required of EVERY row and every message on this
@@ -311,7 +311,7 @@ components:
       # silently passed. The parameter a kind needs is required for that kind (422 otherwise).
       required: [kind, onFail]
       properties:
-        id: { $ref: '#/components/schemas/Ulid', description: Server-minted when omitted; a client that supplies one keeps a stable id across replacements, so a job's `ruleId` still names it. }
+        id: { $ref: '#/components/schemas/Ulid', description: 'Server-minted when omitted; a client that supplies one keeps a stable id across replacements, so a job''s `ruleId` still names it.' }
         kind: { type: string, enum: [container, minSizeBytes, maxSizeBytes, aspectRatio] }
         onFail: { type: string, enum: [reject, quarantine], description: What failing this rule does to the job. `reject` beats `quarantine` when several rules fail. }
         label: { type: string, maxLength: 200, description: For the reason an operator reads. }

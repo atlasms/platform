@@ -11,7 +11,7 @@ export interface StartUpload {
   filename: string;
   /** The whole file's length. What the parts must add up to. */
   sizeBytes: number;
-  /** The client's idea of the media type; acceptance (EP-15.3) decides from the bytes */
+  /** The client's idea of the media type; acceptance (EP-15.3) decides from the bytes, not from this. */
   contentType?: string;
 }
 
@@ -25,13 +25,13 @@ export interface Upload {
   partSizeBytes: number;
   /** `ceil(sizeBytes / partSizeBytes)`; parts are numbered 1..partCount. */
   partCount: number;
-  /** The part numbers the server holds */
+  /** The part numbers the server holds, ascending. Resume by sending the rest. */
   received: number[];
   state: 'open' | 'completed';
   jobId?: Ulid;
   createdBy?: string;
   createdAt?: string;
-  /** An open upload not completed by then is swept */
+  /** An open upload not completed by then is swept, parts and all (ATLAS_UPLOAD_TTL_MS). */
   expiresAt: string;
 }
 
@@ -84,7 +84,7 @@ export interface IngestQueuePage {
 }
 
 export interface AcceptanceRuleInput {
-  /** Server-minted when omitted; a client that supplies one keeps a stable id across replacements */
+  /** Server-minted when omitted; a client that supplies one keeps a stable id across replacements, so a job's `ruleId` still names it. */
   id?: Ulid;
   kind: 'container' | 'minSizeBytes' | 'maxSizeBytes' | 'aspectRatio';
   /** What failing this rule does to the job. `reject` beats `quarantine` when several rules fail. */

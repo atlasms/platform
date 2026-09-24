@@ -226,7 +226,7 @@ paths:
     parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
     # The extensible metadata is read and written on its own (EP-17.2): governed by its field
     # schema, authorized on its own, and unbounded in size — so a catalogue listing never carries it.
-    get: { operationId: getAssetExtended, tags: [assets], summary: The asset's extended values with the field definitions that govern them (scope asset:read), parameters: [{ $ref: '#/components/parameters/CacheControl' }], responses: { '200': { description: Extended values, fields and orphaned keys } } }
+    get: { operationId: getAssetExtended, tags: [assets], summary: The asset's extended values with the field definitions that govern them (scope asset:read), parameters: [{ $ref: '#/components/parameters/CacheControl' }], responses: { '200': { description: 'Extended values, fields and orphaned keys' } } }
     patch: { operationId: updateAssetExtended, tags: [assets], summary: Merge extended values; each is validated against its field definition (scope asset:write), responses: { '200': { description: The extended values after the merge }, '4XX': { $ref: '#/components/responses/Error' } } }
   /assets/{id}/files:
     parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
@@ -239,7 +239,7 @@ paths:
       # entry each row mirrors. Scope asset:read on the `files` field group.
       summary: The asset's files as mirrored from the HSM ledger (scope asset:read / files)
       responses:
-        '200': { description: Files, by kind then variant, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/FileRef' } } } } }
+        '200': { description: 'Files, by kind then variant', content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/FileRef' } } } } }
         '404': { $ref: '#/components/responses/Error' }
   /assets/{id}/tags:
     parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
@@ -269,7 +269,7 @@ paths:
                 tags: { type: array, items: { type: string, maxLength: 64 }, maxItems: 50 }
       responses:
         '200': { description: The resolved tag set, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Tag' } } } } }
-        '422': { description: A blank, over-long or non-string tag - nothing is written }
+        '422': { description: 'A blank, over-long or non-string tag - nothing is written' }
   /tags:
     # The READ is taxonomy:read, not taxonomy:admin: gating it behind admin would make tag
     # autocomplete an administrator-only feature and defeat free-form tagging for every editor it
@@ -427,7 +427,7 @@ components:
         channelId: { type: string }
         assetId: { $ref: '#/components/schemas/Ulid' }
         kind: { type: string, enum: [original, proxy, broadcast, thumbnail, vtt-filmstrip, hover-preview] }
-        variant: { type: string, description: A subtitle language, a thumbnail index — what tells two files of one kind apart. }
+        variant: { type: string, description: 'A subtitle language, a thumbnail index — what tells two files of one kind apart.' }
         storage:
           type: object
           required: [path, tier, status]

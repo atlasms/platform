@@ -12,7 +12,7 @@ export interface FileRef {
   channelId: string;
   assetId: Ulid;
   kind: 'original' | 'proxy' | 'broadcast' | 'thumbnail' | 'vtt-filmstrip' | 'hover-preview';
-  /** A subtitle language */
+  /** A subtitle language, a thumbnail index — what tells two files of one kind apart. */
   variant?: string;
   storage: {
     path: string;
