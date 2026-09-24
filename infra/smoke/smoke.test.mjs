@@ -150,6 +150,7 @@ test('smoke: every PROXIED upstream answers through the gateway before anything 
     ['logging', '/api/v1/history/asset/01H000000000000000000000'],
     ['scheduling', '/api/v1/schedules?limit=1'],
     ['rim', '/api/v1/uploads/01H00000000000000000000000'],
+    ['mts', '/api/v1/jobs?limit=1'],
   ];
   const budgetMs = Number(process.env.ATLAS_SMOKE_UPSTREAM_BUDGET_MS ?? 30_000);
 
@@ -1138,6 +1139,100 @@ test('smoke: EP-18 — a program table is written thinly, read back in reel orde
     'the sink saw both writes',
   );
   assert.ok(history.revisions[1].delta.items, 'the reel change rode in the delta');
+});
+
+test('smoke: EP-16 — a real transcode: enqueued through the gateway, run by FFmpeg, announced, and mirrored into the asset’s files by MAM', async () => {
+  // The path the FileRef mirror (EP-17.8) had never run on in a deployment, because nothing
+  // produced `transcode.completed`: an asset in MAM, a job in MTS over its sample clip (the dev
+  // overlay renders one into MTS's work area, since until HSM nothing can hand MTS an input), the
+  // worker leasing it and running the real FFmpeg in the real image, the event crossing the
+  // broker, and MAM's consumer turning it into file rows with the checksums MTS computed.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ title: 'Smoke transcode', mediaType: 'video', fileType: 'mp4' }),
+  });
+  assert.equal(created.status, 201, `asset create failed: ${created.text}`);
+  const assetId = json(created).id;
+
+  // Refused before anything is written: a path outside the work root, and one that is not there.
+  const outside = await get('/api/v1/jobs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId, presetIds: ['proxy'], inputPath: '../../etc/passwd' }),
+  });
+  assert.equal(outside.status, 422, `expected the work-root refusal: ${outside.text}`);
+  const missing = await get('/api/v1/jobs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId, presetIds: ['proxy'], inputPath: 'samples/not-there.mp4' }),
+  });
+  assert.equal(missing.status, 422, `expected the missing-input refusal: ${missing.text}`);
+
+  const enqueued = await get('/api/v1/jobs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      assetId,
+      presetIds: ['proxy', 'thumbnail'],
+      inputPath: 'samples/smoke.mp4',
+    }),
+  });
+  assert.equal(enqueued.status, 202, `enqueue failed: ${enqueued.text}`);
+  const jobId = json(enqueued).id;
+
+  // The worker polls its table once a second; a 3-second 320×240 clip encodes in well under that
+  // on any runner. The budget is for a slow node, not a slow encoder.
+  const deadline = Date.now() + 60_000;
+  let job;
+  for (;;) {
+    const res = await get(`/api/v1/jobs/${jobId}`, { headers });
+    assert.equal(res.status, 200, `job read failed: ${res.text}`);
+    job = json(res);
+    if (['completed', 'dead-letter'].includes(job.state) || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.equal(job.state, 'completed', `the job did not complete: ${JSON.stringify(job)}`);
+  assert.deepEqual(
+    job.renditions.map((r) => r.kind),
+    ['proxy', 'thumbnail'],
+  );
+  for (const r of job.renditions) {
+    assert.equal(r.checksum.algorithm, 'sha256');
+    assert.match(r.checksum.value, /^[0-9a-f]{64}$/);
+    assert.ok(r.sizeBytes > 0, `${r.kind} is not empty`);
+  }
+
+  // MAM's side of it, over the broker: the renditions are the asset's files now, with the SAME
+  // checksums — the mirror copies what the producer computed rather than inventing its own.
+  const mirrorDeadline = Date.now() + 30_000;
+  let files = [];
+  for (;;) {
+    const res = await get(`/api/v1/assets/${assetId}/files`, { headers });
+    assert.equal(res.status, 200, `files read failed: ${res.text}`);
+    files = json(res);
+    if (files.length >= 2 || Date.now() > mirrorDeadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  const byKind = Object.fromEntries(files.map((f) => [f.kind, f]));
+  for (const r of job.renditions) {
+    assert.ok(byKind[r.kind], `MAM has no ${r.kind} file for the asset: ${JSON.stringify(files)}`);
+    assert.equal(
+      byKind[r.kind].checksum.value,
+      r.checksum.value,
+      `${r.kind} checksum carried over`,
+    );
+  }
+
+  // And the asset knows it has renditions — the mirror's bump, from the same event.
+  const asset = await get(`/api/v1/assets/${assetId}`, {
+    headers: { ...headers, 'cache-control': 'no-cache' },
+  });
+  assert.equal(json(asset).hasRenditions, true);
 });
 
 test('smoke: the state-counts aggregate answers, and is not read as an asset id', async () => {

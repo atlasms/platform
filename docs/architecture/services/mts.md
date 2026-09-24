@@ -166,6 +166,28 @@ workers); retry/backoff + max attempts; cloud-burst enable (connected only).
   prefer explicit args for control.
 - Idempotent, content-addressed output paths so retries/duplicates converge.
 
+### 13.1 As built — EP-16 first slice (the decisions that differ from the sketch above)
+
+Details and reasons: [`apps/mts/README.md`](../../../apps/mts/README.md).
+
+- **Fastify, from `nx g service`, not NestJS** — the same shape as every other Atlas service.
+- **The queue is a table.** `transcode.job.create` becomes a `queued` row (with its seen-mark and
+  audit, one transaction) and is acked at once; workers lease rows by compare-and-set. A job that
+  lived only as an unacked message could not be read by `GET /jobs/{id}`, counted or resumed, and
+  an encode inside the message handler outlives any sane ack deadline.
+- **The worker runs in the service's pod**, one job at a time — scaling is more pods (§8), not a
+  second deployment. Pinned to **one replica** for now, because inputs and renditions live on a
+  ReadWriteOnce work volume until HSM provides shared storage; the code already scales.
+- **Retries by cause**: a refusal of the input dead-letters at once, a tool/machine fault backs off
+  (30 s doubling) and dead-letters after 3 attempts, a drain requeues with the attempt returned.
+  `transcode.failed` only when the platform gives up.
+- **Progress is kept on the job row, not emitted** as `transcode.progress` (still best-effort by
+  contract): a per-tick event through the transactional outbox costs what a domain event costs.
+- **Outputs are named by job and preset** (`renditions/<jobId>/<preset>.<ext>`), which gives the
+  convergence this section asks of content addressing without hashing a file before it exists.
+- **Until HSM**, `inputPath` must resolve inside MTS's own work root; the dev overlay renders a
+  sample clip there so the smoke suite can transcode end to end.
+
 ## 14. Open questions / future
 
 - Per-scene/segment parallel transcode for very long files.

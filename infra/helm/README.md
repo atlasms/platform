@@ -88,10 +88,11 @@ opensearch:
 
 ## What is deliberately not configurable
 
-`replicas` lists only the workloads that can scale. IAM, RIM and the data plane are pinned in the
-manifests, each for a stated reason — IAM generates its signing key ring per process, RIM's
-staging area is a ReadWriteOnce volume, the data plane is single-writer — and a value that let you
-raise them would be a value that breaks the install. Scaling IAM is [EP-10](../../docs/roadmap/21-epic-breakdown.md)
+`replicas` lists only the workloads that can scale. IAM, RIM, MTS and the data plane are pinned in
+the manifests, each for a stated reason — IAM generates its signing key ring per process, RIM's
+staging area and MTS's work area are ReadWriteOnce volumes until HSM provides shared storage, the
+data plane is single-writer — and a value that let you raise them would be a value that breaks the
+install. Scaling IAM is [EP-10](../../docs/roadmap/21-epic-breakdown.md)
 work, not a values change.
 
 A deployment with more than one replica gets a PodDisruptionBudget, by a rule rather than a list;

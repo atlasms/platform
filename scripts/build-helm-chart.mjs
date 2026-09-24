@@ -41,26 +41,23 @@ const BASE = join(ROOT, 'infra/k8s/base');
 const CHART = join(ROOT, 'infra/helm/atlas');
 const CHECK = process.argv.includes('--check');
 
-/** The platform's own services: their image tag follows the chart's appVersion. */
-const ATLAS_SERVICES = new Set([
-  'iam',
-  'mam',
-  'websocket',
-  'api-gateway',
-  'rim',
-  'scheduling',
-  'logging',
-]);
+/**
+ * The platform's own images — `atlas/<service>` — whose tag follows the chart's appVersion.
+ * Derived from the repository rather than listed: a list here was one more place a new service
+ * (`nx g service`) had to be remembered, and forgetting it would ship that service at `:dev`.
+ */
+const isAtlasImage = (repository) => repository.startsWith('atlas/');
 
 /**
  * Workloads whose replica count is NOT a value.
  *
  * Each is a correctness constraint rather than a capacity choice, and the base says why: IAM
- * generates its signing key ring per process; RIM's staging area is a ReadWriteOnce volume; the
- * data plane is single-writer. A chart that let you raise these would be a chart that lets you
+ * generates its signing key ring per process; RIM's staging area and MTS's work area are
+ * ReadWriteOnce volumes (until HSM, EP-14, provides shared storage); the data plane is
+ * single-writer. A chart that let you raise these would be a chart that lets you
  * break the install from values.yaml.
  */
-const PINNED_REPLICAS = new Set(['iam', 'rim', 'postgres', 'nats', 'opensearch']);
+const PINNED_REPLICAS = new Set(['iam', 'rim', 'mts', 'postgres', 'nats', 'opensearch']);
 
 /** The data-plane components a customer may point at their own estate instead. */
 const DATA_PLANE = new Set(['postgres', 'nats', 'opensearch']);
@@ -132,7 +129,7 @@ function imageValue(image) {
   // An Atlas image's default tag is the chart's appVersion, expressed as an empty string here so
   // a release does not have to rewrite values.yaml. A third-party image keeps its pinned tag:
   // `opensearch:<atlas version>` would not exist.
-  values.images[component] = { repository, tag: ATLAS_SERVICES.has(component) ? '' : tag };
+  values.images[component] = { repository, tag: isAtlasImage(repository) ? '' : tag };
   return component;
 }
 
@@ -388,9 +385,10 @@ ${yaml(values.images)}
 
 # --- scale -------------------------------------------------------------------
 #
-# Only the workloads that CAN scale appear here. IAM (one signing key ring per process), RIM (a
-# ReadWriteOnce staging volume) and the data plane (single writer) are pinned in the manifests,
-# and a value that let you raise them would be a value that breaks the install.
+# Only the workloads that CAN scale appear here. IAM (one signing key ring per process), RIM and
+# MTS (ReadWriteOnce volumes, until HSM provides shared storage) and the data plane (single writer)
+# are pinned in the manifests, and a value that let you raise them would be a value that breaks
+# the install.
 #
 # A deployment listed here with more than one replica also gets a PodDisruptionBudget.
 replicas:

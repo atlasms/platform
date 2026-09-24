@@ -24,7 +24,9 @@ infra/k8s/base/<name>.yaml                       Deployment + Service, non-root,
 
 And four one-line edits in files a new service's author has no reason to open:
 `k8s:build` and `k8s:load` in `package.json`, the manifest in `infra/k8s/base/kustomization.yaml`,
-the image tag in `infra/k8s/overlays/dev/kustomization.yaml`. **That list is why this exists.** #296
+the image tag in `infra/k8s/overlays/dev/kustomization.yaml`. Then run `npm run helm:build`: the
+Helm chart is generated from `infra/k8s/base` (ADR-0006), and `npm run k8s:check` fails until the
+new manifest is in it. **That list is why this exists.** #296
 shipped a manifest for a service whose image `k8s:build` never built; `npm run k8s:up` deployed an
 `ImagePullBackOff`, and every unit test was green.
 

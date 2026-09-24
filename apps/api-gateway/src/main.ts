@@ -19,6 +19,7 @@ const config = loadConfig({
   mamOrigin: { env: 'ATLAS_MAM_ORIGIN', type: 'string', default: 'http://mam:3000' },
   loggingOrigin: { env: 'ATLAS_LOGGING_ORIGIN', type: 'string', default: 'http://logging:3000' },
   rimOrigin: { env: 'ATLAS_RIM_ORIGIN', type: 'string', default: 'http://rim:3000' },
+  mtsOrigin: { env: 'ATLAS_MTS_ORIGIN', type: 'string', default: 'http://mts:3000' },
   // A part of a chunked upload (EP-15.1) is 8 MiB by default (RIM's ATLAS_UPLOAD_PART_BYTES);
   // the gateway must let one through on the upload prefix without raising its cap everywhere.
   uploadBodyLimit: {
@@ -95,6 +96,9 @@ const routes: RoutingTable = [
   // default cap.
   { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/ingest' },
   { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/acceptance-rules' },
+  // MTS (EP-16.1): enqueue a transcode and poll it. Normally a broker command from BMS/RIM; this
+  // is the same enqueue for an operator, a tool and the smoke suite.
+  { service: 'mts', origin: config.mtsOrigin, prefix: '/api/v1/jobs' },
 ];
 
 // ⚠️ THIS is the production routing table — not `defaultRoutes` in routing.ts, which is the test

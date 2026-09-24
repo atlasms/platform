@@ -20,25 +20,46 @@ paths:
     post:
       operationId: enqueueJob
       tags: [internal]
-      summary: Enqueue a transcode job (normally from BMS/RIM)
+      # EP-16.1. The same enqueue `transcode.job.create` performs over the broker, for an operator,
+      # a tool or the smoke suite. 202: the job is accepted, not done; the body is the job so the
+      # caller has the id to poll. Refused (422) before anything is written when it can never run:
+      # an unknown preset, an input outside MTS's work root, or an input that does not exist.
+      summary: Enqueue a transcode job (normally a broker command from BMS/RIM)
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [assetId, presetIds]
+              required: [assetId, presetIds, inputPath]
               properties:
                 assetId: { $ref: '#/components/schemas/Ulid' }
-                presetIds: { type: array, items: { type: string }, minItems: 1 }
-                inputPath: { type: string }
+                presetIds:
+                  type: array
+                  minItems: 1
+                  description: Built-in presets are `proxy`, `thumbnail` and `audio-proxy` (EP-16.3); run in the order given.
+                  items: { type: string }
+                inputPath:
+                  type: string
+                  description: A path inside MTS's work root, until HSM (EP-14) resolves inputs. Relative paths resolve against the root.
+                priority: { type: integer, description: 'Higher runs sooner; equal priorities run oldest first. Default 0.' }
       responses:
         '202': { description: Job queued, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+    get:
+      operationId: listJobs
+      tags: [jobs]
+      summary: The caller's channel's jobs, oldest first, optionally one asset's
+      parameters:
+        - { name: assetId, in: query, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200': { description: Jobs, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Job' } } } } }
   /jobs/{id}:
     get:
       operationId: getJob
       tags: [jobs]
-      summary: Job status/progress (scope asset:read)
+      summary: Job status, progress and — once completed — its renditions. Another channel's job is 404.
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
       responses:
@@ -63,13 +84,47 @@ components:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
     Job:
       type: object
-      required: [id, assetId, state]
+      description: >-
+        A transcode job (mts.md §3.1). `failed` is not terminal — the job is leased again after
+        `retryAt`; `dead-letter` is, and happens at once for a refusal of the INPUT (bytes FFmpeg
+        will not decode) and after the last attempt for anything else.
+      required: [id, channelId, assetId, presetIds, inputPath, state, attempts, priority, createdBy, createdAt, updatedAt, version]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
         assetId: { $ref: '#/components/schemas/Ulid' }
+        presetIds: { type: array, items: { type: string } }
+        inputPath: { type: string }
         state: { type: string, enum: [queued, running, completed, failed, dead-letter] }
-        percent: { type: number }
-        attempts: { type: integer }
+        attempts: { type: integer, minimum: 0, description: 'Attempts started. An attempt interrupted by a drain is given back.' }
+        percent: { type: number, minimum: 0, maximum: 100, description: Best-effort progress across the job's presets. Never a state. }
+        renditions:
+          type: array
+          description: Set once completed — one per preset, in the order produced. What `transcode.completed` carries, plus the preset.
+          items: { $ref: '#/components/schemas/RenditionResult' }
+        reason: { type: string, description: Why the last attempt failed, or why it was dead-lettered. }
+        retryAt: { type: string, format: date-time, description: A failed job is not leased again before this. }
+        workerId: { type: string, description: The worker holding (or last holding) it — a pod name. }
+        priority: { type: integer }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+    RenditionResult:
+      type: object
+      required: [presetId, kind, path, checksum, sizeBytes]
+      properties:
+        presetId: { type: string }
+        kind: { type: string, description: 'A RenditionKind (common.schema.json) — defined once there, not repeated here.' }
+        path: { type: string }
+        checksum:
+          type: object
+          required: [algorithm, value]
+          properties: { algorithm: { type: string }, value: { type: string } }
+        sizeBytes: { type: integer, minimum: 0 }
+        durationSec: { type: number, minimum: 0, description: Absent for a still. }
     Error:
       type: object
       required: [code, message]
