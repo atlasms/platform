@@ -82,6 +82,10 @@ const REFUSAL_PATTERNS = [
   /does not contain any stream/i,
   /Output file (is empty|does not contain any stream)/i,
   /moov atom not found/i,
+  // MXF's own refusals (the broadcast preset): a frame rate no broadcast format uses, and an
+  // input with no picture to put in the one video track MXF requires. Both are the input's.
+  /Unsupported frame rate/i,
+  /there must be exactly one video stream/i,
 ];
 
 export function ffmpegTranscoder(options: FfmpegOptions = {}): Transcoder {

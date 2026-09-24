@@ -37,7 +37,7 @@ paths:
                 presetIds:
                   type: array
                   minItems: 1
-                  description: Built-in presets are `proxy`, `thumbnail` and `audio-proxy` (EP-16.3); run in the order given.
+                  description: Built-in presets are `proxy`, `thumbnail`, `audio-proxy` and `broadcast` (EP-16.3); run in the order given.
                   items: { type: string }
                 inputPath:
                   type: string
