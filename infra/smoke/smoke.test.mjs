@@ -1178,7 +1178,8 @@ test('smoke: EP-16 — a real transcode: enqueued through the gateway, run by FF
     headers,
     body: JSON.stringify({
       assetId,
-      presetIds: ['proxy', 'thumbnail'],
+      // The broadcast rendition too (EP-16.3): an MPEG-2 4:2:2 MXF at 50 Mb/s, the real one.
+      presetIds: ['proxy', 'thumbnail', 'broadcast'],
       inputPath: 'samples/smoke.mp4',
     }),
   });
@@ -1199,7 +1200,7 @@ test('smoke: EP-16 — a real transcode: enqueued through the gateway, run by FF
   assert.equal(job.state, 'completed', `the job did not complete: ${JSON.stringify(job)}`);
   assert.deepEqual(
     job.renditions.map((r) => r.kind),
-    ['proxy', 'thumbnail'],
+    ['proxy', 'thumbnail', 'broadcast'],
   );
   for (const r of job.renditions) {
     assert.equal(r.checksum.algorithm, 'sha256');
@@ -1215,7 +1216,7 @@ test('smoke: EP-16 — a real transcode: enqueued through the gateway, run by FF
     const res = await get(`/api/v1/assets/${assetId}/files`, { headers });
     assert.equal(res.status, 200, `files read failed: ${res.text}`);
     files = json(res);
-    if (files.length >= 2 || Date.now() > mirrorDeadline) break;
+    if (files.length >= 3 || Date.now() > mirrorDeadline) break;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   const byKind = Object.fromEntries(files.map((f) => [f.kind, f]));

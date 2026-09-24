@@ -1,4 +1,4 @@
-// The built-in transcode profiles (EP-16.3, Tier-1) — what a preset IS, and the three that ship.
+// The built-in transcode profiles (EP-16.3, Tier-1) — what a preset IS, and the four that ship.
 //
 // A preset is a rendition kind, the encoder arguments that produce it, and what the input must
 // carry for those arguments to mean anything. Asking for a thumbnail of an audio file is a request
@@ -16,7 +16,7 @@ export type PresetRequires = 'video' | 'audio';
 export interface Preset {
   id: string;
   /** The rendition kind this produces — `common.schema.json#/$defs/RenditionKind`. */
-  kind: 'proxy' | 'thumbnail';
+  kind: 'proxy' | 'thumbnail' | 'broadcast';
   /** What the input must have. A request for a preset the input cannot satisfy is refused. */
   requires: PresetRequires;
   /** The output file's extension, which also decides the container. */
@@ -79,6 +79,63 @@ export const BUILT_IN_PRESETS: readonly Preset[] = [
     requires: 'audio',
     extension: 'm4a',
     args: ['-vn', '-c:a', 'aac', '-b:a', '128k'],
+  },
+  {
+    // The rendition that goes to air (EP-16.3). XDCAM HD422-class: MPEG-2 4:2:2 long-GOP at a
+    // constant 50 Mb/s, 1920×1080, PCM 24-bit at 48 kHz, in MXF OP1a — the format playout servers
+    // ingest natively, and one FFmpeg writes without a licensed codec, which matters for an
+    // air-gapped install that cannot fetch one.
+    //
+    // What it does NOT do, on purpose:
+    //  - conform the frame rate. MXF refuses a rate no broadcast format uses (15 fps), and that is
+    //    a refusal of the INPUT; converting it to the channel's house rate is an editorial choice
+    //    per channel, which is the profile registry's (16.6), not a built-in's.
+    //  - interlace. The output is progressive; a channel airing 1080i sets that in its profile.
+    //  - claim a specific XDCAM flavour (no `-vtag`): the fourcc names a frame rate and scan
+    //    type, and stamping 1080i50's on a 1080p25 file would be a lie a playout server believes.
+    // A smaller picture is letterboxed or pillarboxed into 1920×1080, never stretched.
+    id: 'broadcast',
+    kind: 'broadcast',
+    requires: 'video',
+    extension: 'mxf',
+    args: [
+      '-vf',
+      'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1',
+      '-c:v',
+      'mpeg2video',
+      '-pix_fmt',
+      'yuv422p',
+      // Constant bit rate, as a playout server's decoder budget assumes: min = max = target, with
+      // the VBV buffer XDCAM HD422 declares.
+      '-b:v',
+      '50M',
+      '-minrate',
+      '50M',
+      '-maxrate',
+      '50M',
+      '-bufsize',
+      '36408333',
+      '-g',
+      '12',
+      '-bf',
+      '2',
+      '-dc',
+      '10',
+      '-intra_vlc',
+      '1',
+      '-non_linear_quant',
+      '1',
+      '-qmin',
+      '1',
+      '-qmax',
+      '12',
+      '-c:a',
+      'pcm_s24le',
+      '-ar',
+      '48000',
+      '-f',
+      'mxf',
+    ],
   },
 ];
 

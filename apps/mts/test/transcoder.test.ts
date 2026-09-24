@@ -139,6 +139,85 @@ test('a video preset on an audio-only input is a refusal, not an empty success',
   });
 });
 
+test('the broadcast preset: MPEG-2 4:2:2 at 50 Mb/s, 1920×1080, PCM 24/48 in MXF — and what it refuses', async (t) => {
+  if (!(await haveFfmpeg(t))) return;
+  await withDir(async (dir) => {
+    const input = await clip(dir);
+    const broadcast = presetById('broadcast')!;
+    const outputPath = join(dir, 'air.mxf');
+    await ffmpegTranscoder().run({ inputPath: input, outputPath, args: broadcast.args });
+    // Read the file back with ffprobe: the claim is about the bytes, not the arguments.
+    const { stdout } = await run('ffprobe', [
+      '-v',
+      'error',
+      '-show_entries',
+      'stream=codec_name,pix_fmt,width,height,sample_rate,bits_per_raw_sample:format=format_name',
+      '-of',
+      'json',
+      outputPath,
+    ]);
+    const probe = JSON.parse(stdout) as {
+      streams: Record<string, string | number>[];
+      format: { format_name: string };
+    };
+    assert.equal(probe.format.format_name, 'mxf');
+    const video = probe.streams.find((s) => s['codec_name'] === 'mpeg2video');
+    assert.ok(video, 'an MPEG-2 video track');
+    assert.equal(video['pix_fmt'], 'yuv422p', '4:2:2, not 4:2:0');
+    // 320×240 in, pillarboxed into 1920×1080 rather than stretched.
+    assert.equal(video['width'], 1920);
+    assert.equal(video['height'], 1080);
+    const audio = probe.streams.find((s) => s['codec_name'] === 'pcm_s24le');
+    assert.ok(audio, 'PCM 24-bit audio');
+    assert.equal(audio['sample_rate'], '48000');
+
+    // A frame rate no broadcast format uses is the INPUT's fault: refused, not retried.
+    const odd = join(dir, 'odd.mp4');
+    await run('ffmpeg', [
+      '-nostdin',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=size=320x240:rate=15:duration=1',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      odd,
+    ]);
+    await assert.rejects(
+      ffmpegTranscoder().run({
+        inputPath: odd,
+        outputPath: join(dir, 'odd.mxf'),
+        args: broadcast.args,
+      }),
+      (err: unknown) => err instanceof TranscodeRefusal,
+    );
+    // So is an input with no picture at all.
+    const tone = join(dir, 'tone.wav');
+    await run('ffmpeg', [
+      '-nostdin',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=duration=1',
+      tone,
+    ]);
+    await assert.rejects(
+      ffmpegTranscoder().run({
+        inputPath: tone,
+        outputPath: join(dir, 'tone.mxf'),
+        args: broadcast.args,
+      }),
+      (err: unknown) => err instanceof TranscodeRefusal,
+    );
+  });
+});
+
 test('cancellation kills the encoder, and the error is not a refusal (the job is requeued, not dead)', async (t) => {
   if (!(await haveFfmpeg(t))) return;
   await withDir(async (dir) => {
