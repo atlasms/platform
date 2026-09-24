@@ -13,6 +13,7 @@ export {
   follow,
   validateMessage,
   subjectFor,
+  liveSubjectFor,
   type Envelope,
   type BuildEnvelopeInput,
 } from './envelope.ts';

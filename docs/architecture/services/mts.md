@@ -181,8 +181,11 @@ Details and reasons: [`apps/mts/README.md`](../../../apps/mts/README.md).
 - **Retries by cause**: a refusal of the input dead-letters at once, a tool/machine fault backs off
   (30 s doubling) and dead-letters after 3 attempts, a drain requeues with the attempt returned.
   `transcode.failed` only when the platform gives up.
-- **Progress is kept on the job row, not emitted** as `transcode.progress` (still best-effort by
-  contract): a per-tick event through the transactional outbox costs what a domain event costs.
+- **Progress is a Progress message, not an Event** (EP-16.4): `transcode.progress` on
+  `live.<channel>.transcode.progress`, core NATS, outside the durable stream — never stored,
+  replayed or audited (messaging §1.1) — throttled to about one per job per second; and `percent`
+  on the job row for anyone who polls. Never through the outbox: a per-tick message there would
+  cost what a domain event costs and be hash-chained into the audit log once per tick.
 - **Outputs are named by job and preset** (`renditions/<jobId>/<preset>.<ext>`), which gives the
   convergence this section asks of content addressing without hashing a file before it exists.
 - **Until HSM**, `inputPath` must resolve inside MTS's own work root; the dev overlay renders a

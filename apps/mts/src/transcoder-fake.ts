@@ -30,8 +30,12 @@ export function fakeTranscoder(options: { available?: boolean } = {}): FakeTrans
       if (name.includes('toolfail')) {
         throw Object.assign(new Error('spawn ffmpeg ENOENT'), { code: 'ENOENT' });
       }
+      // Progress only with a known duration — the adapter's own rule. A fake that reported it
+      // regardless is what let a service that never asked for the duration look fine (#349).
+      const report = (percent: number) =>
+        spec.durationSec !== undefined ? runOptions.onProgress?.(percent, 2.5) : undefined;
       if (name.includes('slow')) {
-        runOptions.onProgress?.(10);
+        report(10);
         await new Promise<void>((resolve, reject) => {
           if (runOptions.signal?.aborted) {
             reject(new Error('transcode cancelled'));
@@ -44,7 +48,7 @@ export function fakeTranscoder(options: { available?: boolean } = {}): FakeTrans
           );
         });
       }
-      runOptions.onProgress?.(100);
+      report(100);
       const body = `fake rendition of ${spec.inputPath} at ${spec.outputPath}`;
       await mkdir(dirname(spec.outputPath), { recursive: true });
       await writeFile(spec.outputPath, body);
@@ -52,6 +56,9 @@ export function fakeTranscoder(options: { available?: boolean } = {}): FakeTrans
     },
     async available() {
       return options.available ?? true;
+    },
+    async probeDuration(inputPath) {
+      return inputPath.toLowerCase().includes('noduration') ? undefined : 12.5;
     },
   };
 }

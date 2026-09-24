@@ -171,10 +171,13 @@ entering the tab and again on a live event for the asset. Under them, the asset'
 progress bar, waiting to retry with the reason and the retry time, given up with the reason, or done
 with its rendition count, newest first.
 
-- **Polled, and only while something is moving.** MTS keeps progress on the job row rather than
-  broadcasting it, so `GET /jobs?assetId=` every 2 s is how the bar moves. The poll stops by itself
-  once every job is completed or dead-lettered, skips a tick while the page is hidden, and dies with
-  the tab.
+- **The bar moves live; the state is polled.** MTS announces progress on
+  `live.<channel>.transcode.progress` (EP-16.4) — kept by nothing, so the tab applies each frame to
+  the job it names (forward only: frames are at most once and may arrive late) and shows FFmpeg's
+  realtime factor beside it; a frame for a job the view has not seen reads the list at once. The
+  poll reports STATE (queued → running → completed) — every 2 s while the socket is down, every
+  10 s while it is live — only while a job is moving, skipping a tick while the page is hidden, and
+  dies with the tab. A tab opened after the ticks went by reads `percent` from the job row.
 - **A completion is followed through to MAM.** When a job the view watched completes, the editor
   re-reads the rows until they carry the job's rendition **checksums** — not its kinds, because a
   row of the same kind may be a previous transcode's — once a second, fifteen times at most. MTS's

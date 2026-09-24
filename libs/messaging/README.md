@@ -43,6 +43,13 @@ await new OutboxRelay(store, broker).drain();
     unaffected, and everything that did publish **is marked sent** before `RelayPartialFailure` is
     thrown, so a retry does not republish it.
 - **`idempotent`**: dedupes redelivered messages by id — process-once under at-least-once delivery.
+- **`publishLive(msg)` and `live.` patterns** (EP-16.4): PROGRESS, the message kind messaging §1.1
+  keeps apart from events — `live.<channel>.<type>`, a core NATS publish no stream captures, so it
+  reaches whoever is subscribed NOW, at most once, and is kept by nothing (and so never reaches the
+  audit sink's `atlas.>`). `subscribe` on a `live.` pattern is a plain subscription: no retry, no dead
+  letter. Each publish refuses the other's subjects — progress sent into the stream would be kept
+  and audited; an event sent to `live.` would be kept by nothing. `liveSubjectFor` is in
+  `@atlas/contracts`. Pinned by the conformance suite on both brokers.
 - **`subscribe(pattern, handler, { broadcast: true })`** (EP-17.7): every instance gets every
   message, from now on, once. The default subscription is a SHARED cursor — instances of one
   service split the work, a failure is retried then dead-lettered, a restart resumes. A cache

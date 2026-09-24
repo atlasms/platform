@@ -6,6 +6,7 @@ import { compile, type EffectivePolicy } from '@atlas/policy';
 import {
   ConnectionRegistry,
   mayReceive,
+  maySubscribe,
   parseSubject,
   privateSubjectOwner,
   startBridge,
@@ -235,6 +236,77 @@ test('the bridge carries broker messages to eligible sockets', async () => {
 
   assert.equal(events(c).length, 1);
   assert.deepEqual(events(c)[0]?.payload, { assetId: 'a1' });
+});
+
+test('LIVE subjects pass the SAME gates as events: tenant, then the domain read', () => {
+  const sub = { userId: 'user-1', channelId: 'ch12', policy: policyFor('user-1', ['*:read']) };
+  assert.deepEqual(parseSubject('live.ch12.transcode.progress'), {
+    channelId: 'ch12',
+    domain: 'transcode',
+    rest: ['progress'],
+  });
+  // A progress message of another tenant is as foreign as its events: a broad grant does not
+  // carry across, whichever root the subject is under.
+  assert.equal(mayReceive(sub, 'live.ch99.transcode.progress').allowed, false);
+  assert.equal(maySubscribe(sub, 'live.ch99.transcode.progress').allowed, false);
+  assert.equal(maySubscribe(sub, 'live.*.transcode.progress').allowed, false);
+  // Any other root is still refused rather than defaulted open.
+  assert.equal(mayReceive(sub, 'kept.ch12.transcode.progress').allowed, false);
+});
+
+test('transcode messages read under asset:read on the files group — the grant MTS enforces', () => {
+  const librarian = {
+    userId: 'u',
+    channelId: 'ch12',
+    policy: compile({
+      subjectId: 'u',
+      permVersion: 1,
+      rules: [{ id: 'r', permissions: ['asset:read'], fieldGroups: ['files'] }],
+    }),
+  };
+  const coreOnly = {
+    userId: 'u',
+    channelId: 'ch12',
+    policy: compile({
+      subjectId: 'u',
+      permVersion: 1,
+      rules: [{ id: 'r', permissions: ['asset:read'], fieldGroups: ['core'] }],
+    }),
+  };
+  const transcodeRead = {
+    userId: 'u',
+    channelId: 'ch12',
+    policy: policyFor('u', ['transcode:read']),
+  };
+  for (const subject of ['live.ch12.transcode.progress', 'atlas.ch12.transcode.completed']) {
+    assert.equal(mayReceive(librarian, subject).allowed, true, subject);
+    // A reader of the core fields only does not see the file set's work in progress.
+    assert.equal(mayReceive(coreOnly, subject).allowed, false, subject);
+    // And `transcode:read` — in no role, in no catalogue — grants nothing here.
+    assert.equal(mayReceive(transcodeRead, subject).allowed, false, subject);
+  }
+  assert.equal(maySubscribe(librarian, 'live.ch12.transcode.progress').allowed, true);
+  assert.equal(maySubscribe(coreOnly, 'live.ch12.transcode.progress').allowed, false);
+  // Other domains keep the default rule.
+  assert.equal(mayReceive(librarian, 'atlas.ch12.schedule.updated').allowed, false);
+});
+
+test('the bridge relays progress from live.> to an eligible socket — once, and it is kept by nothing', async () => {
+  const broker = new InMemoryBroker();
+  const reg = new ConnectionRegistry();
+  startBridge({ broker, registry: reg });
+  const c = fakeConn();
+  reg.add(c);
+  reg.subscribe('c1', 'live.ch12.transcode.progress');
+
+  await broker.publishLive({
+    id: 'p1',
+    subject: 'live.ch12.transcode.progress',
+    body: { jobId: 'j1', percent: 40 },
+  });
+  assert.equal(events(c).length, 1);
+  assert.deepEqual(events(c)[0]?.payload, { jobId: 'j1', percent: 40 });
+  assert.equal(broker.published.length, 0, 'nothing went into the durable path');
 });
 
 test('the bridge asks for a fresh policy on permissions.changed, then re-checks', async () => {

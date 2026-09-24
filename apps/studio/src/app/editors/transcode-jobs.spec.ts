@@ -7,7 +7,9 @@ import { Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Job } from '../core/generated/mts.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { SessionStore } from '../core/session.store.ts';
 import { TranscodeJobsService } from '../core/transcode-jobs.service.ts';
+import { WebSocketService } from '../core/websocket.service.ts';
 import { TranscodeJobs } from './transcode-jobs.ts';
 
 const ASSET = '01K00000000000000000000000';
@@ -163,6 +165,75 @@ describe('TranscodeJobs', () => {
     vi.advanceTimersByTime(2_000);
     expect(t.fake.reads).toHaveLength(2);
     visibility.mockRestore();
+  });
+
+  describe('live progress (EP-16.4)', () => {
+    const frame = (payload: Record<string, unknown>) => ({
+      subject: 'live.ch12.transcode.progress',
+      payload: { type: 'transcode.progress', channelId: 'ch12', payload },
+    });
+    function live() {
+      const t = setup();
+      TestBed.inject(SessionStore).signIn({
+        userId: 'u1',
+        channelId: 'ch12',
+        policy: { subjectId: 'u1', permVersion: 1, rules: [] },
+      });
+      t.fixture.detectChanges();
+      return { ...t, ws: TestBed.inject(WebSocketService) };
+    }
+
+    it('subscribes to the channel’s progress stream once signed in', () => {
+      const t = live();
+      expect(t.ws.isSubscribed('live.ch12.transcode.progress')).toBe(true);
+    });
+
+    it('a frame moves the bar of the running job it names, shows the speed, and never goes backwards', () => {
+      const t = live();
+      t.fake.reads[0]?.result.next([job('01J1', 'running', { percent: 10 })]);
+      t.ws.events$.next(frame({ jobId: '01J1', assetId: ASSET, percent: 55, speed: 2.46 }));
+      t.fixture.detectChanges();
+      expect(t.rows()[0]?.text).toContain('55%');
+      expect(t.rows()[0]?.text).toContain('2.5×');
+      // A late, lower frame does not pull the bar back.
+      t.ws.events$.next(frame({ jobId: '01J1', assetId: ASSET, percent: 30 }));
+      t.fixture.detectChanges();
+      expect(t.rows()[0]?.text).toContain('55%');
+    });
+
+    it('frames for another asset, or for a job already done, change nothing', () => {
+      const t = live();
+      t.fake.reads[0]?.result.next([
+        job('01J1', 'running', { percent: 10 }),
+        job('01J2', 'completed'),
+      ]);
+      t.ws.events$.next(
+        frame({ jobId: '01J1', assetId: '01KOTHER000000000000000000', percent: 90 }),
+      );
+      t.ws.events$.next(frame({ jobId: '01J2', assetId: ASSET, percent: 90 }));
+      t.fixture.detectChanges();
+      expect(t.rows().find((r) => r.state === 'running')?.text).toContain('10%');
+      expect(t.fake.reads).toHaveLength(1);
+    });
+
+    it('a frame for a job this view has not seen reads the list now — once, however many frames arrive', () => {
+      const t = live();
+      t.fake.reads[0]?.result.next([]);
+      t.ws.events$.next(frame({ jobId: '01JNEW', assetId: ASSET, percent: 5 }));
+      t.ws.events$.next(frame({ jobId: '01JNEW', assetId: ASSET, percent: 9 }));
+      expect(t.fake.reads).toHaveLength(2);
+    });
+
+    it('while the socket is live the poll slows to 10 s — it only has STATE left to report', () => {
+      const t = live();
+      t.ws.state.set('connected');
+      t.fake.reads[0]?.result.next([job('01J1', 'running')]);
+      vi.advanceTimersByTime(2_000);
+      expect(t.fake.reads).toHaveLength(1);
+      vi.advanceTimersByTime(8_000);
+      expect(t.fake.reads).toHaveLength(2);
+      t.ws.state.set('disconnected');
+    });
   });
 
   it('closing the tab stops the poll', () => {

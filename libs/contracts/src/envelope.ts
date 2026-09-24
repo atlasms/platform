@@ -65,3 +65,11 @@ export function validateMessage(msg: Envelope): CheckResult {
 
 /** Broker subject for a message: atlas.<channel>.<type> (e.g. atlas.ch12.asset.approved). */
 export const subjectFor = (channelId: string, type: string): string => `atlas.${channelId}.${type}`;
+
+/**
+ * The subject of a PROGRESS message (messaging §1.1): `live.<channelId>.<type>`, outside the durable
+ * stream's `atlas.>` — so it is never stored, replayed or audited. For a message whose loss costs a
+ * progress bar one tick; never for state.
+ */
+export const liveSubjectFor = (channelId: string, type: string): string =>
+  `live.${channelId}.${type}`;

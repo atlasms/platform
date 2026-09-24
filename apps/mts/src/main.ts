@@ -58,6 +58,8 @@ const config = loadConfig({
   staleAfterMs: { env: 'ATLAS_TRANSCODE_STALE_MS', type: 'number', default: 5 * 60_000 },
   // A worker polls its own table; this is the pause after finding nothing to do.
   idleMs: { env: 'ATLAS_TRANSCODE_IDLE_MS', type: 'number', default: 1_000 },
+  // EP-16.4: at most one `transcode.progress` per job per this interval.
+  progressIntervalMs: { env: 'ATLAS_TRANSCODE_PROGRESS_MS', type: 'number', default: 1_000 },
 });
 
 const log = createLogger('mts');
@@ -123,6 +125,10 @@ const service = new MtsService({
   workRoot: config.workRoot,
   maxAttempts: config.maxAttempts,
   workerId,
+  // EP-16.4: progress on `live.<channel>.transcode.progress`, core NATS, never stored. While the
+  // broker is away progress is simply not announced — the row still carries `percent`.
+  publishLive: (msg) => (broker ? broker.publishLive(msg) : Promise.resolve()),
+  progressIntervalMs: config.progressIntervalMs,
 });
 
 const health = new HealthRegistry()

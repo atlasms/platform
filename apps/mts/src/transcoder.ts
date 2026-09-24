@@ -48,8 +48,21 @@ export interface Transcoder {
    */
   run(
     spec: TranscodeSpec,
-    options?: { signal?: AbortSignal; onProgress?: (percent: number) => void },
+    options?: {
+      signal?: AbortSignal;
+      /** `speed` is the realtime factor FFmpeg reports (2.0 = twice realtime), when it reports one. */
+      onProgress?: (percent: number, speed?: number) => void;
+    },
   ): Promise<TranscodeOutput>;
+  /**
+   * The input's duration in seconds, or undefined when it cannot be read.
+   *
+   * What turns FFmpeg's `out_time` into a percentage. Without it there is no progress to report —
+   * which is what shipped in #349: the service never asked, the adapter never reported, and the
+   * job's `percent` sat at 0 until it jumped to 100. Undefined is not an error: a transcode without
+   * a progress bar is still a transcode.
+   */
+  probeDuration(inputPath: string): Promise<number | undefined>;
   /** Is the binary there — for readiness, so a deploy without FFmpeg is visible before a job is. */
   available(): Promise<boolean>;
 }
@@ -57,6 +70,8 @@ export interface Transcoder {
 export interface FfmpegOptions {
   /** The binary; `ffmpeg` on the PATH by default. */
   binary?: string;
+  /** For the input's duration; `ffprobe` on the PATH by default — the same package ships both. */
+  probeBinary?: string;
   /**
    * The ceiling on one output. Past it the process is killed and the attempt is RETRYABLE: a
    * transcode that ran out of time may be the machine's fault, unlike one FFmpeg refused.
@@ -90,6 +105,7 @@ const REFUSAL_PATTERNS = [
 
 export function ffmpegTranscoder(options: FfmpegOptions = {}): Transcoder {
   const binary = options.binary ?? 'ffmpeg';
+  const probeBinary = options.probeBinary ?? 'ffprobe';
   const timeoutMs = options.timeoutMs ?? DEFAULT_TRANSCODE_TIMEOUT_MS;
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
 
@@ -113,6 +129,7 @@ export function ffmpegTranscoder(options: FfmpegOptions = {}): Transcoder {
 
       const stderr: string[] = [];
       let outputDurationSec: number | undefined;
+      let speed: number | undefined;
 
       const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -148,11 +165,25 @@ export function ffmpegTranscoder(options: FfmpegOptions = {}): Transcoder {
             // `out_time_us`. Reading it as milliseconds makes every progress report 1000x too
             // small, which looks like a stuck job rather than a wrong unit.
             const seconds = Number(value) / 1_000_000;
-            if (Number.isFinite(seconds)) {
-              outputDurationSec = seconds;
-              if (spec.durationSec && spec.durationSec > 0 && runOptions.onProgress) {
-                runOptions.onProgress(Math.min(100, (seconds / spec.durationSec) * 100));
-              }
+            if (Number.isFinite(seconds)) outputDurationSec = seconds;
+          } else if (key === 'speed') {
+            // `speed=2.34x`, or `N/A` until FFmpeg has timed enough frames to say.
+            const factor = Number.parseFloat(value ?? '');
+            speed = Number.isFinite(factor) ? factor : undefined;
+          } else if (key === 'progress') {
+            // Each block ENDS with `progress=continue|end`, and that is when to report: `speed`
+            // comes AFTER `out_time` within a block, so reporting on `out_time` always carried the
+            // previous block's speed — `N/A` on a short job. The real-binary test caught it.
+            if (
+              outputDurationSec !== undefined &&
+              spec.durationSec &&
+              spec.durationSec > 0 &&
+              runOptions.onProgress
+            ) {
+              runOptions.onProgress(
+                Math.min(100, (outputDurationSec / spec.durationSec) * 100),
+                speed,
+              );
             }
           }
         }
@@ -192,6 +223,24 @@ export function ffmpegTranscoder(options: FfmpegOptions = {}): Transcoder {
         sizeBytes: info.size,
         ...(outputDurationSec !== undefined ? { durationSec: outputDurationSec } : {}),
       };
+    },
+
+    async probeDuration(inputPath) {
+      return new Promise<number | undefined>((resolve) => {
+        let out = '';
+        const child = spawn(
+          probeBinary,
+          ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', inputPath],
+          { stdio: ['ignore', 'pipe', 'ignore'] },
+        );
+        child.stdout?.setEncoding('utf8');
+        child.stdout?.on('data', (chunk: string) => (out += chunk));
+        child.on('error', () => resolve(undefined));
+        child.on('close', (code) => {
+          const seconds = Number.parseFloat(out.trim());
+          resolve(code === 0 && Number.isFinite(seconds) && seconds > 0 ? seconds : undefined);
+        });
+      });
     },
 
     async available() {

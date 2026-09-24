@@ -152,7 +152,7 @@ async function startBroker(): Promise<void> {
     },
   });
 
-  log.info('bridge started', { patterns: 'atlas.>, user.>' });
+  log.info('bridge started', { patterns: 'atlas.>, user.>, live.>' });
 }
 
 void startBroker();

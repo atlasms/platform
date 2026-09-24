@@ -10,9 +10,12 @@ import {
   signal,
   untracked,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import type { Job } from '../core/generated/mts.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { SessionStore } from '../core/session.store.ts';
 import { TranscodeJobsService } from '../core/transcode-jobs.service.ts';
+import { WebSocketService } from '../core/websocket.service.ts';
 
 /** States in which a job may still change — and therefore the page should keep asking. */
 const ACTIVE: ReadonlySet<Job['state']> = new Set(['queued', 'running', 'failed']);
@@ -22,11 +25,12 @@ const ACTIVE: ReadonlySet<Job['state']> = new Set(['queued', 'running', 'failed'
  * the rows above it will hold — queued, running with its progress, waiting to retry and why, given
  * up and why, or done.
  *
- * POLLED, while anything is still moving, and only then. MTS keeps progress on the job row rather
- * than broadcasting it (a per-tick event through the transactional outbox would cost what a domain
- * event costs — apps/mts/README.md), so `GET /jobs` is how a progress bar learns anything. The
- * poll stops by itself once every job is completed or dead-lettered, skips a tick while the page
- * is hidden, and dies with the component: a closed tab does not keep asking MTS about an asset.
+ * LIVE where it can be, POLLED always. MTS announces progress on `live.<channel>.transcode.progress`
+ * (EP-16.4) — kept by nothing, so a tab listening now sees the bar move and a tab opened later
+ * reads the row. The poll is what reports STATE (queued → running → completed), and it runs every
+ * 2 s while the socket is down but every 10 s while it is live, since the bar no longer needs it.
+ * It stops by itself once every job is completed or dead-lettered, skips a tick while the page is
+ * hidden, and dies with the component: a closed tab does not keep asking MTS about an asset.
  *
  * When a job it watched completes, `completed` tells the editor, which then waits for MAM's
  * FileRef mirror to catch up — a separate consumer of the same event, with no order between them.
@@ -58,6 +62,9 @@ const ACTIVE: ReadonlySet<Job['state']> = new Set(['queued', 'running', 'failed'
                     [attr.aria-label]="locale.t('assetEditor.jobProgress')"
                   ></progress>
                   <span class="figure">{{ percent(job) }}%</span>
+                  @if (speeds()[job.id]; as speed) {
+                    <span class="figure">{{ speed }}×</span>
+                  }
                 }
                 @if (job.attempts > 1 || job.state === 'failed') {
                   <span class="figure">
@@ -148,13 +155,19 @@ const ACTIVE: ReadonlySet<Job['state']> = new Set(['queued', 'running', 'failed'
 })
 export class TranscodeJobs {
   readonly assetId = input.required<string>();
-  /** How often to ask while a job is moving. An input so a test can drive it. */
+  /** How often to ask while a job is moving and the socket is down. An input so a test can drive it. */
   readonly pollMs = input(2_000);
+  /** How often while the socket is live: progress arrives by itself, only STATE is polled for. */
+  readonly livePollMs = input(10_000);
   /** A job this component watched moved to `completed`. */
   readonly completed = output<Job>();
 
   private readonly api = inject(TranscodeJobsService);
+  private readonly ws = inject(WebSocketService);
+  private readonly session = inject(SessionStore);
   protected readonly locale = inject(LocaleService);
+  /** The realtime factor each job last reported, live. Never polled: the row does not carry it. */
+  protected readonly speeds = signal<Record<string, string>>({});
 
   protected readonly jobs = signal<Job[] | null>(null);
   protected readonly error = signal<string | null>(null);
@@ -165,12 +178,25 @@ export class TranscodeJobs {
 
   private timer: ReturnType<typeof setTimeout> | undefined;
   private destroyed = false;
+  /** A read is outstanding — so a burst of frames for a new job asks MTS once, not per frame. */
+  private reading = false;
 
   constructor() {
-    inject(DestroyRef).onDestroy(() => {
+    const destroyRef = inject(DestroyRef);
+    destroyRef.onDestroy(() => {
       this.destroyed = true;
       clearTimeout(this.timer);
     });
+    // The channel's progress stream. Not unsubscribed on destroy — the pattern is shared by every
+    // open asset tab of the channel (the client keeps one desired set), and a frame for a job this
+    // view does not show is simply ignored below. The same rule the asset editor follows.
+    effect(() => {
+      const channelId = this.session.channelId();
+      if (channelId) void this.ws.subscribe(`live.${channelId}.transcode.progress`);
+    });
+    this.ws.events$
+      .pipe(takeUntilDestroyed(destroyRef))
+      .subscribe(({ subject, payload }) => this.onLive(subject, payload));
     // A new asset (the same tab reused) starts from nothing: no stale rows, no stale timer.
     effect(() => {
       const assetId = this.assetId();
@@ -185,8 +211,10 @@ export class TranscodeJobs {
   }
 
   private load(assetId: string): void {
+    this.reading = true;
     this.api.forAsset(assetId).subscribe({
       next: (jobs) => {
+        this.reading = false;
         if (this.destroyed || assetId !== this.assetId()) return;
         const before = new Map((this.jobs() ?? []).map((j) => [j.id, j.state]));
         this.jobs.set(jobs);
@@ -200,6 +228,7 @@ export class TranscodeJobs {
         if (jobs.some((j) => ACTIVE.has(j.state))) this.schedule(assetId);
       },
       error: (err: { status?: number }) => {
+        this.reading = false;
         if (this.destroyed) return;
         if (err.status === 403) {
           this.hidden.set(true);
@@ -212,17 +241,53 @@ export class TranscodeJobs {
     });
   }
 
+  /**
+   * A progress frame: move the bar of the job it names, if this view shows it and it is running.
+   *
+   * Forward only — frames are at most once and unordered across a reconnect, and a late 40% must
+   * not pull back a bar the poll already put at 70. A job this view has not seen yet means one was
+   * enqueued since the last read: ask now rather than at the next tick.
+   */
+  private onLive(subject: string, payload: unknown): void {
+    if (!subject.startsWith('live.') || !subject.endsWith('.transcode.progress')) return;
+    const progress = (
+      payload as {
+        payload?: { jobId?: string; assetId?: string; percent?: number; speed?: number };
+      }
+    )?.payload;
+    if (!progress?.jobId || progress.assetId !== this.assetId()) return;
+    const jobs = this.jobs();
+    const job = jobs?.find((j) => j.id === progress.jobId);
+    if (!job) {
+      if (!this.reading) this.load(this.assetId());
+      return;
+    }
+    if (job.state !== 'running' && job.state !== 'queued') return;
+    const percent = progress.percent ?? 0;
+    if (percent > (job.percent ?? 0)) {
+      this.jobs.set(
+        (jobs ?? []).map((j) => (j.id === job.id ? { ...j, state: 'running', percent } : j)),
+      );
+    }
+    if (progress.speed !== undefined) {
+      this.speeds.set({ ...this.speeds(), [job.id]: progress.speed.toFixed(1) });
+    }
+  }
+
   private schedule(assetId: string): void {
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      if (this.destroyed) return;
-      // Nobody is looking: skip the request, keep the cadence.
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-        this.schedule(assetId);
-        return;
-      }
-      this.load(assetId);
-    }, this.pollMs());
+    this.timer = setTimeout(
+      () => {
+        if (this.destroyed) return;
+        // Nobody is looking: skip the request, keep the cadence.
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+          this.schedule(assetId);
+          return;
+        }
+        this.load(assetId);
+      },
+      this.ws.state() === 'connected' ? this.livePollMs() : this.pollMs(),
+    );
   }
 
   protected percent(job: Job): number {

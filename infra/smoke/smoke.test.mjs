@@ -1236,6 +1236,71 @@ test('smoke: EP-16 — a real transcode: enqueued through the gateway, run by FF
   assert.equal(json(asset).hasRenditions, true);
 });
 
+test('smoke: EP-16.4 — transcode progress arrives live on a real socket, from live.<channel>, kept by nothing', async () => {
+  // Progress is its own kind of message (messaging §1.1): core NATS under `live.`, which no stream
+  // captures and the audit sink never sees. This holds a socket open, subscribes to the channel's
+  // progress, runs a real transcode, and waits for a frame naming the job — MTS → core NATS → the
+  // WebSocket bridge's `live.>` subscription → the same tenant and permission gates as an event →
+  // this socket. Nothing else can prove the four hops together.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+
+  const socket = new WebSocket(`${WS_BASE}/ws?token=${encodeURIComponent(token)}`);
+  const frames = [];
+  socket.addEventListener('message', (event) => frames.push(JSON.parse(String(event.data))));
+  try {
+    await new Promise((resolve, reject) => {
+      socket.addEventListener('open', resolve, { once: true });
+      socket.addEventListener('error', () => reject(new Error(`no socket at ${WS_BASE}/ws`)), {
+        once: true,
+      });
+      setTimeout(() => reject(new Error('socket did not open')), TIMEOUT).unref?.();
+    });
+    const pattern = `live.${claims.channelId}.transcode.progress`;
+    socket.send(JSON.stringify({ type: 'subscribe', pattern }));
+    assert.ok(
+      await waitFor(() => frames.some((f) => f.type === 'subscribed' && f.subject === pattern)),
+      `the live subscription was not confirmed: ${JSON.stringify(frames)}`,
+    );
+
+    const created = await get('/api/v1/assets', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ title: 'Smoke progress', mediaType: 'video', fileType: 'mp4' }),
+    });
+    assert.equal(created.status, 201, `asset create failed: ${created.text}`);
+    const assetId = json(created).id;
+    // The broadcast rendition: the heaviest preset, so FFmpeg reports at least one block.
+    const enqueued = await get('/api/v1/jobs', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ assetId, presetIds: ['broadcast'], inputPath: 'samples/smoke.mp4' }),
+    });
+    assert.equal(enqueued.status, 202, `enqueue failed: ${enqueued.text}`);
+    const jobId = json(enqueued).id;
+
+    const heard = await waitFor(
+      () =>
+        frames.some(
+          (f) =>
+            f.type === 'event' &&
+            f.subject === pattern &&
+            f.payload?.type === 'transcode.progress' &&
+            f.payload?.payload?.jobId === jobId,
+        ),
+      60_000,
+    );
+    assert.ok(heard, `no progress frame for job ${jobId}: ${JSON.stringify(frames.slice(-5))}`);
+    const progress = frames.find((f) => f.payload?.payload?.jobId === jobId).payload.payload;
+    assert.equal(progress.assetId, assetId);
+    assert.ok(progress.percent >= 0 && progress.percent <= 100);
+  } finally {
+    socket.close();
+  }
+});
+
 test('smoke: the state-counts aggregate answers, and is not read as an asset id', async () => {
   // Two things no unit test covers. The gateway routes `/api/v1/assets` by PREFIX, so this reaches
   // MAM only if that still holds for a deeper path; and `/assets/counts` must resolve to the static
