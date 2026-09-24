@@ -1,0 +1,46 @@
+# A sample input for MTS, rendered into its work area on start — DEV ONLY, like the seed user.
+#
+# Until HSM (EP-14) places files where MTS can read them, nothing in a cluster can hand MTS an
+# input: RIM's staging area is its own volume and a staged path is never on the wire. So the dev
+# overlay makes one, with the same FFmpeg the service uses, and the smoke suite transcodes it end
+# to end — enqueue through the gateway, the worker leases it, `transcode.completed` crosses the
+# broker, and MAM's FileRef mirror (EP-17.8) turns it into the asset's file rows. That is the one
+# path the mirror had never run on in a deployment.
+#
+# `-n` and the existence test make it idempotent: a pod restart keeps the file it made before.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mts
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: sample
+          image: atlas/mts:dev
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - >-
+              mkdir -p /var/lib/atlas/mts/samples &&
+              [ -s /var/lib/atlas/mts/samples/smoke.mp4 ] ||
+              ffmpeg -nostdin -loglevel error -n
+              -f lavfi -i testsrc=size=320x240:rate=25:duration=3
+              -f lavfi -i sine=frequency=440:duration=3
+              -c:v libx264 -preset ultrafast -c:a aac -shortest
+              /var/lib/atlas/mts/samples/smoke.mp4
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: work
+              mountPath: /var/lib/atlas/mts

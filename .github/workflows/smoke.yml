@@ -109,7 +109,7 @@ jobs:
       # would only move the race, since `npm run smoke` after `npm run k8s:up` has the same one.
       - name: Wait for the services
         run: |
-          for d in iam mam websocket api-gateway logging scheduling rim; do
+          for d in iam mam websocket api-gateway logging scheduling rim mts; do
             kubectl -n atlas rollout status "deployment/$d" --timeout=180s
           done
 
@@ -128,7 +128,7 @@ jobs:
           echo "::group::events"
           kubectl -n atlas get events --sort-by=.lastTimestamp | tail -50 || true
           echo "::endgroup::"
-          for d in iam mam websocket api-gateway logging scheduling rim; do
+          for d in iam mam websocket api-gateway logging scheduling rim mts; do
             echo "::group::logs $d"
             kubectl -n atlas logs "deployment/$d" --tail=100 --all-containers || true
             echo "::endgroup::"

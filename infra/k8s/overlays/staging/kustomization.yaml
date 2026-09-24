@@ -47,6 +47,9 @@ images:
   - name: atlas/rim
     newName: registry.example/atlas/rim
     newTag: 0.1.0
+  - name: atlas/mts
+    newName: registry.example/atlas/mts
+    newTag: 0.1.0
 
 # The credentials come from a file kustomize reads at render time and git never sees
 # (`*.env` in this directory is ignored; the `.example` is committed). A secrets backend — vault,
@@ -101,3 +104,11 @@ patches:
       - op: replace
         path: /spec/resources/requests/storage
         value: 200Gi
+  # MTS's work area: every rendition until HSM moves it to its tier.
+  - target:
+      kind: PersistentVolumeClaim
+      name: mts-work
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 500Gi

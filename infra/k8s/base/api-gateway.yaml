@@ -49,6 +49,8 @@ spec:
               value: http://scheduling:3000
             - name: ATLAS_RIM_ORIGIN
               value: http://rim:3000
+            - name: ATLAS_MTS_ORIGIN
+              value: http://mts:3000
             - name: ATLAS_ISSUER
               value: atlas-iam
             - name: ATLAS_AUDIENCE

@@ -36,6 +36,8 @@ images:
     newTag: dev
   - name: atlas/rim
     newTag: dev
+  - name: atlas/mts
+    newTag: dev
 
 # The base declares no credentials at all — it names a Secret and stops there, so nothing in the
 # environment-independent layer can leak one. This generator is the dev value, and it is committed
@@ -57,6 +59,8 @@ patches:
   # A bootstrap account, so a fresh cluster is usable and the smoke suite can prove the whole
   # token path rather than only that a wrong password is refused. Dev only — see the file.
   - path: seed-user.yaml
+  # A sample clip in MTS's work area, so smoke can run a real transcode (see the file).
+  - path: mts-sample.yaml
 
   # One replica: a laptop does not need two, and a single pod makes `kubectl logs` legible.
   - target:

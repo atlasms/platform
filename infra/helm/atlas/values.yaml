@@ -31,6 +31,9 @@ images:
   mam:
     repository: atlas/mam
     tag: ""
+  mts:
+    repository: atlas/mts
+    tag: ""
   nats:
     repository: nats
     tag: 2.12-alpine
@@ -52,9 +55,10 @@ images:
 
 # --- scale -------------------------------------------------------------------
 #
-# Only the workloads that CAN scale appear here. IAM (one signing key ring per process), RIM (a
-# ReadWriteOnce staging volume) and the data plane (single writer) are pinned in the manifests,
-# and a value that let you raise them would be a value that breaks the install.
+# Only the workloads that CAN scale appear here. IAM (one signing key ring per process), RIM and
+# MTS (ReadWriteOnce volumes, until HSM provides shared storage) and the data plane (single writer)
+# are pinned in the manifests, and a value that let you raise them would be a value that breaks
+# the install.
 #
 # A deployment listed here with more than one replica also gets a PodDisruptionBudget.
 replicas:
@@ -89,6 +93,12 @@ resources:
       memory: 192Mi
     limits:
       memory: 512Mi
+  mts:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
   nats:
     requests:
       cpu: 50m
@@ -132,6 +142,7 @@ resources:
 # `storageClass` applies to every claim; leave it empty to take the cluster's default.
 storageClass: ""
 storage:
+  mtsWork: 5Gi
   nats: 4Gi
   opensearch: 2Gi
   postgres: 2Gi
