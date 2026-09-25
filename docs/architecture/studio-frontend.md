@@ -66,7 +66,7 @@ Each Activity-Bar icon opens a container; views inside are collapsible sub-panel
 | **Workflows** | Flow definitions, Running instances | Workflow **designer** (Foblex Flow) |
 | **People & Taxonomy** | People register, Categories, Subjects, Tags | Person / vocabulary editor |
 | **Feeds & Integration** | Inbound feeds, Outbound APIs, Connectors | Feed / connector editor |
-| **Admin** | Users, Groups, Roles/Rules, Field schemas, Theme | Admin editors |
+| **Admin** | Users, Groups, Roles/Rules, Transcode profiles, Field schemas, Theme — each view revealed by its own permission, the panel by any of them | Admin editors |
 | **Logs & Analytics** | Audit log, Reports, Statistics, **History/Diff** | Report / **diff** viewer |
 
 ### 2.1 The asset editor (tabs)

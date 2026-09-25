@@ -61,6 +61,26 @@ export class PermissionService {
     return this.decideStrict(permission, resource).allowed;
   }
 
+  /** `true` if the user holds ANY of these — for a container whose views need different grants. */
+  canAny(permissions: string | readonly string[], resource?: ResourceContext): boolean {
+    const list = typeof permissions === 'string' ? [permissions] : permissions;
+    return list.some((permission) => this.can(permission, resource));
+  }
+
+  /**
+   * `true` only for a grant that reaches beyond the channel on screen — an UNSCOPED rule.
+   *
+   * The one place the signed-in channel must NOT be supplied: a platform-wide write (a starter
+   * role, a platform transcode profile) is authorized by the service with no channel in the
+   * context, strictly, so a channel-scoped rule cannot meet it. Asked the everyday way, a channel
+   * administrator would be offered a control the service is certain to refuse.
+   */
+  canPlatformWide(permission: string): boolean {
+    const policy = this.session.policy();
+    if (!policy) return false;
+    return can(policy, permission, {}, { strict: true }).allowed;
+  }
+
   /**
    * Default the resource to the signed-in channel.
    *

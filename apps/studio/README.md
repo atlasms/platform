@@ -68,6 +68,26 @@ browser: the answer is IAM's join across assignments, groups and memberships, an
 client-side would be a second implementation of the thing on screen. A platform-wide role's
 holders span every channel, so IAM answers only an unscoped `user:admin` — the page says that
 instead of showing an error. Field schemas and theme are the panel's later views.
+**Transcode profiles** (EP-16.6) — the Admin panel's fourth view, over MTS's profile registry.
+Each view is revealed by its OWN permission and the panel by any of them
+([`panels.ts`](src/app/workbench/panels.ts) `ADMIN_PERMISSIONS`): people by `user:admin`,
+profiles by `config:read`/`config:admin`, so a channel's engineering lead need not administer
+its people to tune its renditions. The list is in resolution order — the channel's profile of an
+id before the platform's — and says what resolution will do: a platform profile the channel
+redefines, a disabled one, an id that redefines a built-in. A new profile starts from its
+kind's target (so the first save is valid) and opens as an editor tab
+([`profile-editor.ts`](src/app/editors/profile-editor.ts)), which edits the STRUCTURED target —
+there is no FFmpeg arguments field, by the registry's design. The page does not re-check the
+grammar: MTS's 422 names each rule, and [`profile.model.ts`](src/app/editors/profile.model.ts)
+places a rule about one field under that field and a rule about a combination (`mp4 carries
+h264 video`) above the form, text unchanged. The option lists are `keys` of a `Record` over the
+GENERATED contract unions, so a value the contract gains or loses is a compile error. A save
+carries the version the tab loaded; a 409 says someone else saved and offers a reload — never a
+retry, which would overwrite their change with one made without seeing it. A platform-wide
+profile is read-only unless the grant is UNSCOPED (`PermissionService.canPlatformWide`, the
+strict no-channel check MTS itself makes); a channel administrator is offered **Redefine for
+this channel** instead, which copies it into the channel's registry (and opens the existing copy
+if there is one).
 **EP-20.6** — the dashboard: an editor tab opened as the default landing view — system-state
 counts and what's-new against real MAM, live-refreshed. State counts page the channel with a
 1000-asset cap; a real counts endpoint is a follow-up.

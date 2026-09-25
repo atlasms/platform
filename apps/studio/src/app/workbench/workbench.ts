@@ -194,7 +194,7 @@ export class Workbench {
    */
   protected readonly visiblePanels = computed<readonly PanelDefinition[]>(() => {
     this.session.policy(); // establish the dependency; the check reads it internally
-    return PANELS.filter((panel) => this.permissions.can(panel.permission));
+    return PANELS.filter((panel) => this.permissions.canAny(panel.permission));
   });
 
   /** The icon's tooltip: the translated name, and for an unbuilt panel, why it does nothing. */

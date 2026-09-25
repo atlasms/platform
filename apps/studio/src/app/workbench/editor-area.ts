@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { AssetEditor } from '../editors/asset-editor.ts';
 import { ScheduleEditor } from '../editors/schedule-editor.ts';
 import { GroupEditor } from '../editors/group-editor.ts';
+import { ProfileEditor } from '../editors/profile-editor.ts';
 import { RoleEditor } from '../editors/role-editor.ts';
 import { UserEditor } from '../editors/user-editor.ts';
 import { Dashboard } from '../panels/dashboard.ts';
@@ -30,6 +31,7 @@ import { EditorStore } from './editor.store.ts';
     UserEditor,
     GroupEditor,
     RoleEditor,
+    ProfileEditor,
   ],
   template: `
     @if (store.isEmpty()) {
@@ -113,6 +115,9 @@ import { EditorStore } from './editor.store.ts';
                     }
                     @case ('role') {
                       <atlas-role-editor [roleId]="tab.resourceId" [tabId]="tab.id" />
+                    }
+                    @case ('profile') {
+                      <atlas-profile-editor [profileRef]="tab.resourceId" [tabId]="tab.id" />
                     }
                     @default {
                       <h2>{{ tab.title }}</h2>
