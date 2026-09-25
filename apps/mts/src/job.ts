@@ -67,6 +67,14 @@ export interface TranscodeJob {
   startedAt?: string;
   finishedAt?: string;
   version: number;
+  /**
+   * The chain the job belongs to (EP-03.5): the request's correlation id, or the command's —
+   * opened from the command's own id when it carried none. KEPT on the row because most of what
+   * a job announces is emitted by the worker, long after the request or message is gone.
+   */
+  correlationId?: string;
+  /** The `transcode.job.create` message that created it; absent when a request did. */
+  causationId?: string;
 }
 
 /**

@@ -94,6 +94,8 @@ export interface Caller {
   policy?: EffectivePolicy;
   actorKind?: 'user' | 'service';
   correlationId?: string;
+  /** The message this write answers (EP-03.5) — set on the platform's own writes, never a request's. */
+  causationId?: string;
 }
 
 /**
@@ -153,6 +155,7 @@ export class MtsService {
       createdAt: at,
       updatedAt: at,
       version: 1,
+      ...(caller.correlationId !== undefined ? { correlationId: caller.correlationId } : {}),
     };
 
     await this.options.store.transaction(async (tx) => {
@@ -183,6 +186,8 @@ export class MtsService {
     const resolved = this.resolveInput(inputPath);
 
     const at = this.now().toISOString();
+    // follow()'s rule (@atlas/contracts): the chain continues, or starts at the command.
+    const correlationId = envelope.correlationId ?? envelope.messageId;
     const job: TranscodeJob = {
       id: ulid(),
       channelId: envelope.channelId,
@@ -196,12 +201,15 @@ export class MtsService {
       createdAt: at,
       updatedAt: at,
       version: 1,
+      correlationId,
+      causationId: envelope.messageId,
     };
     const caller: Caller = {
       userId: job.createdBy,
       channelId: envelope.channelId,
       actorKind: 'service',
-      ...(envelope.correlationId !== undefined ? { correlationId: envelope.correlationId } : {}),
+      correlationId,
+      causationId: envelope.messageId,
     };
 
     let outcome: 'applied' | 'duplicate' = 'applied';
@@ -463,6 +471,8 @@ export class MtsService {
       channelId: job.channelId,
       payload,
       actor: { kind: 'service', id: 'mts' },
+      ...(job.correlationId !== undefined ? { correlationId: job.correlationId } : {}),
+      ...(job.causationId !== undefined ? { causationId: job.causationId } : {}),
     });
     void publish({
       id: envelope.messageId,
@@ -802,8 +812,19 @@ export class MtsService {
     if (!decision.allowed) throw new Forbidden(decision.reason ?? `missing ${permission}`);
   }
 
+  /**
+   * The worker's hands on a job. It carries the job's chain: without it, everything the worker
+   * announces — started, completed, failed, and their audit — would start a new trace exactly
+   * where the minutes of work happen, and "what did this request cause" would stop at `queued`.
+   */
   private callerFor(job: TranscodeJob): Caller {
-    return { userId: 'mts', channelId: job.channelId, actorKind: 'service' };
+    return {
+      userId: 'mts',
+      channelId: job.channelId,
+      actorKind: 'service',
+      ...(job.correlationId !== undefined ? { correlationId: job.correlationId } : {}),
+      ...(job.causationId !== undefined ? { causationId: job.causationId } : {}),
+    };
   }
 
   private audit(
@@ -839,6 +860,7 @@ export class MtsService {
       payload: payload as Record<string, unknown>,
       actor: { kind: caller.actorKind ?? 'user', id: caller.userId },
       ...(caller.correlationId !== undefined ? { correlationId: caller.correlationId } : {}),
+      ...(caller.causationId !== undefined ? { causationId: caller.causationId } : {}),
     });
     const headers = this.traceHeaders();
     return {

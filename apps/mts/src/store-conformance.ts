@@ -362,6 +362,68 @@ export function jobStoreConformance(name: string, harness: JobStoreHarness): voi
     });
   });
 
+  test(`[${name}] CAUSATION (EP-03.5): a command's chain reaches every event the job causes, the worker's included`, async () => {
+    await withService(async ({ service, store, input, drain }) => {
+      const path = await input('chain.mxf');
+      const command = (correlationId?: string): Message => {
+        const envelope = buildEnvelope({
+          type: 'transcode.job.create',
+          channelId: CH,
+          payload: { assetId: ulid(), presetIds: ['proxy'], inputPath: path },
+          actor: { kind: 'service', id: 'bms' },
+          ...(correlationId !== undefined ? { correlationId } : {}),
+        });
+        return {
+          id: envelope.messageId,
+          subject: `atlas.${CH}.transcode.job.create`,
+          body: envelope,
+        };
+      };
+
+      // A command carrying a chain: every envelope continues it, and names the command as cause —
+      // including started/completed and their audits, which the WORKER emits minutes later with
+      // no message in hand. That is why the chain is kept on the row.
+      const chain = ulid();
+      const msg = command(chain);
+      await service.consumeJobCreate(msg);
+      const [job] = await store.jobs({ channelId: CH });
+      assert.equal(job?.correlationId, chain);
+      assert.equal(job?.causationId, msg.id);
+      assert.equal(await service.runNext(), 'completed');
+      const events = await drain();
+      assert.deepEqual([...new Set(events.map((e) => e.type))].sort(), [
+        'audit.recorded',
+        'transcode.completed',
+        'transcode.started',
+      ]);
+      for (const e of events) {
+        assert.equal(e.correlationId, chain, `${e.type} continues the chain`);
+        assert.equal(e.causationId, msg.id, `${e.type} names the command as its cause`);
+      }
+
+      // A command carrying none: the chain STARTS at the command (follow()'s rule), so the
+      // command and everything after it are still one query.
+      const bare = command();
+      await service.consumeJobCreate(bare);
+      const queued = (await drain()).find((e) => e.type === 'audit.recorded')!;
+      assert.equal(queued.correlationId, bare.id);
+      assert.equal(queued.causationId, bare.id);
+
+      // A request: its correlation rides on the job to completion; no message caused it.
+      const requestChain = ulid();
+      const requested = await service.enqueue(
+        { ...caller, correlationId: requestChain },
+        { assetId: ulid(), presetIds: ['proxy'], inputPath: path },
+      );
+      assert.equal((await store.job(requested.id))?.correlationId, requestChain);
+      await drain();
+      while ((await service.runNext()) !== 'idle');
+      const done = (await drain()).filter((e) => e.correlationId === requestChain);
+      assert.ok(done.some((e) => e.type === 'transcode.completed'));
+      assert.ok(done.every((e) => e.causationId === undefined));
+    });
+  });
+
   test(`[${name}] transcode.job.create: queued once, a redelivery is a duplicate, and a bad command is refused`, async () => {
     await withService(async ({ service, store, input, drain, root }) => {
       const path = await input('from-bms.mxf');

@@ -33,6 +33,10 @@ export interface Job {
   startedAt?: string;
   finishedAt?: string;
   version: number;
+  /** The request or message chain the job belongs to. Every event the job causes carries it, including the ones the worker emits minutes later. */
+  correlationId?: string;
+  /** The transcode.job.create message that created the job. Absent for a job created over HTTP, which no message caused. */
+  causationId?: string;
 }
 
 /** A transcode profile as an administrator writes it. Structured, never raw FFmpeg arguments — every value is an enum or a bounded number (the grammar in apps/mts/src/profile.ts), and a combination FFmpeg would refuse is a 422 naming the rule. At least one of `video` / `audio`. */

@@ -84,6 +84,16 @@ Contracts are versioned (`schemaVersion`); additive changes only within a major 
 Consumers ignore unknown fields (tolerant reader). Schema:
 [envelope.schema.json](schemas/envelope.schema.json).
 
+**Correlation and causation are kept, not just passed** (EP-03.5). A request's correlation id is
+adopted at the gateway (only when it is a ULID) and carried by everything the request writes. A
+consumer that PRODUCES follows `follow()`'s rule (`@atlas/contracts`): every envelope its handling
+emits — audit records included — continues the cause's `correlationId`, or starts one at the
+cause's `messageId` when it carried none, and names the cause as `causationId`. Work that outlives
+the message keeps the chain on its own row: an MTS job stores both ids, because `started`,
+`completed`, `failed` and their audit are emitted by the worker minutes later with no message in
+hand — without that, every trace would stop at `queued`, exactly where the work begins. A write a
+person requested has a correlation and no causation: no message caused it.
+
 ## 2. Broker topology
 
 ```mermaid
