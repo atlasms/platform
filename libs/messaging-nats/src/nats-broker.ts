@@ -37,6 +37,7 @@ import type {
   SubscribeOptions,
   Subscription,
 } from '@atlas/messaging';
+import { assertSubjectKind, isLiveSubject } from '@atlas/messaging';
 
 export interface NatsBrokerOptions {
   /** e.g. `nats://localhost:4222`. */
@@ -138,6 +139,7 @@ export class NatsBroker implements Broker, DeadLetterQueue {
   }
 
   async publish(msg: Message): Promise<void> {
+    assertSubjectKind(msg.subject, false);
     const js = this.js;
     if (!js) throw new Error('NatsBroker: not connected');
     await js.publish(msg.subject, encode(msg.body), {
@@ -146,7 +148,24 @@ export class NatsBroker implements Broker, DeadLetterQueue {
     });
   }
 
+  /**
+   * Progress (messaging §1.1): a CORE NATS publish on a `live.` subject. No stream captures
+   * `live.>`, so the server delivers it to the subscriptions attached now and keeps nothing — no
+   * ack, no dedupe window, no redelivery, which is the whole contract.
+   */
+  async publishLive(msg: Message): Promise<void> {
+    assertSubjectKind(msg.subject, true);
+    const nc = this.nc;
+    if (!nc) throw new Error('NatsBroker: not connected');
+    // The id rides as `Nats-Msg-Id`, as it does on a JetStream publish, so a subscriber reads the
+    // same `Message.id` either way — though nothing dedupes on it here.
+    nc.publish(msg.subject, encode(msg.body), {
+      headers: toHeaders({ ...msg.headers, 'Nats-Msg-Id': msg.id }),
+    });
+  }
+
   subscribe(pattern: string, handler: Handler, opts: SubscribeOptions = {}): Subscription {
+    if (isLiveSubject(pattern)) return this.subscribeLive(pattern, handler);
     if (opts.broadcast) return this.subscribeBroadcast(pattern, handler);
     const maxAttempts = opts.maxAttempts ?? 3;
     const durable = durableName(this.options.service, pattern);
@@ -190,6 +209,32 @@ export class NatsBroker implements Broker, DeadLetterQueue {
         messages?.stop();
       },
     };
+  }
+
+  /**
+   * A `live.` pattern: a core NATS subscription, because there is no stream to attach a consumer
+   * to. Each message once, while subscribed; a handler failure is dropped with the message.
+   */
+  private subscribeLive(pattern: string, handler: Handler): Subscription {
+    const nc = this.nc;
+    if (!nc) throw new Error('NatsBroker: not connected');
+    const sub = nc.subscribe(pattern, {
+      callback: (err, m) => {
+        if (err) return;
+        const headers = storedHeaders(m.headers);
+        void Promise.resolve()
+          .then(() =>
+            handler({
+              id: m.headers?.get('Nats-Msg-Id') || `${m.subject}#${m.sid}`,
+              subject: m.subject,
+              body: decode(m.data),
+              ...(headers !== undefined ? { headers } : {}),
+            }),
+          )
+          .catch(() => undefined);
+      },
+    });
+    return { unsubscribe: () => sub.unsubscribe() };
   }
 
   /**

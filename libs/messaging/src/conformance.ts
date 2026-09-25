@@ -202,6 +202,69 @@ export function brokerConformance(name: string, harness: ConformanceHarness): vo
     });
   });
 
+  test(`[${name}] LIVE: progress reaches who is subscribed now, and nobody who comes later`, async () => {
+    await withBroker(async (broker, chan) => {
+      const early: Message[] = [];
+      broker.subscribe(`live.${chan}.>`, (m) => {
+        early.push(m);
+      });
+      await sleep(harness.timeoutMs ? 500 : 0);
+
+      const id = mid();
+      await broker.publishLive({
+        id,
+        subject: `live.${chan}.transcode.progress`,
+        body: { jobId: 'j1', percent: 42 },
+      });
+      assert.ok(await waitFor(() => early.length === 1), 'the attached subscriber got it');
+      assert.equal(early[0]?.id, id, 'with its id');
+      assert.deepEqual(early[0]?.body, { jobId: 'j1', percent: 42 });
+
+      // Nothing kept it: a subscriber attaching afterwards gets nothing. This is the property
+      // that keeps progress out of the stream and out of the audit log.
+      const late: Message[] = [];
+      broker.subscribe(`live.${chan}.>`, (m) => {
+        late.push(m);
+      });
+      await sleep(harness.timeoutMs ? 1_000 : 20);
+      assert.equal(late.length, 0);
+    });
+  });
+
+  test(`[${name}] LIVE: a failing handler is not retried, and nothing is dead-lettered`, async () => {
+    await withBroker(async (broker, chan) => {
+      const deadBefore = (await harness.deadLetterCount?.(broker)) ?? 0;
+      let calls = 0;
+      broker.subscribe(
+        `live.${chan}.>`,
+        () => {
+          calls++;
+          throw new Error('nope');
+        },
+        { maxAttempts: 5 },
+      );
+      await sleep(harness.timeoutMs ? 500 : 0);
+      await broker.publishLive({ id: mid(), subject: `live.${chan}.x.progress`, body: {} });
+      assert.ok(await waitFor(() => calls >= 1));
+      await sleep(harness.timeoutMs ? 1_000 : 50);
+      assert.equal(calls, 1);
+      if (harness.deadLetterCount) assert.equal(await harness.deadLetterCount(broker), deadBefore);
+    });
+  });
+
+  test(`[${name}] LIVE and durable do not mix: each publish refuses the other's subjects`, async () => {
+    await withBroker(async (broker, chan) => {
+      await assert.rejects(
+        broker.publishLive({ id: mid(), subject: `atlas.${chan}.transcode.progress`, body: {} }),
+        /not a live\. subject/,
+      );
+      await assert.rejects(
+        broker.publish({ id: mid(), subject: `live.${chan}.transcode.progress`, body: {} }),
+        /is a live\. subject/,
+      );
+    });
+  });
+
   test(`[${name}] unsubscribe stops delivery`, async () => {
     await withBroker(async (broker, chan) => {
       const got: Message[] = [];

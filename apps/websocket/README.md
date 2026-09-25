@@ -158,3 +158,17 @@ handshake, so a client `close()` there never fires the server's `close` event. O
 binds an ephemeral port and uses Node's built-in `WebSocket` client (the same API the browser gives
 Studio, and no new dependency) to prove the full lifecycle including a graceful disconnect.
 Asserting registry drainage under `injectWS` would have been asserting the mock.
+
+## Progress over the socket (EP-16.4)
+
+The bridge relays `live.>` beside `atlas.>` and `user.>`. A `live.` subject is PROGRESS
+(messaging §1.1) — kept by nothing, so a replica relays what arrives while it is up — but it is
+channel-scoped and permissioned exactly like an event: `live.<channel>.<domain>.…` passes the SAME
+three gates in `eligibility.ts`, tenant before permission, and any other root is refused. No
+tracing span per progress tick.
+
+`transcode` messages — progress and `transcode.completed` alike — read under **`asset:read` on the
+`files` group**, the grant MTS enforces for its jobs, rather than `<domain>:read`: there is no
+`transcode:read` in the catalogue or any role, so under the default rule every transcode message
+reached nobody. `DOMAIN_READ` in `eligibility.ts` is where a domain's read rule differs from its
+name; it is correctness-critical, and a change there wants a second reviewer.

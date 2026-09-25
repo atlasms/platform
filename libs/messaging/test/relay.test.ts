@@ -42,6 +42,9 @@ function recordingBroker(options: { delayFor?: (m: Message) => number; failOn?: 
       if (options.failOn?.includes(msg.id)) throw new Error(`publish failed for ${msg.id}`);
       published.push(msg.id);
     },
+    async publishLive() {
+      throw new Error('the outbox relay never publishes progress');
+    },
     subscribe() {
       return { unsubscribe() {} };
     },

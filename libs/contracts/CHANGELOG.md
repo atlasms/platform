@@ -21,6 +21,12 @@ release is a statement of what changed, not a deploy step.
 
 ## [Unreleased]
 
+### Added
+
+- `liveSubjectFor(channelId, type)` → `live.<channelId>.<type>`: the subject of a PROGRESS message,
+  outside the durable stream's `atlas.>` so it is never stored, replayed or audited (messaging §1.1,
+  EP-16.4). First user: `transcode.progress`.
+
 ## [0.2.0] — 2026-09-13
 
 ### Breaking

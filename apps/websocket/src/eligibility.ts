@@ -6,7 +6,31 @@
 
 import { can, type EffectivePolicy } from '@atlas/policy';
 
-/** Broker subjects are `atlas.<channelId>.<domain>.<entity>.<action>` (messaging §1.1). */
+/**
+ * Broker subjects are `atlas.<channelId>.<domain>.<entity>.<action>` (messaging §1.1), and PROGRESS
+ * is the same shape under `live.` (EP-16.4) — kept by nothing, but channel-scoped and permissioned
+ * exactly like an event. The two roots differ in what the BROKER keeps, never in who may see them,
+ * so they share every gate below.
+ */
+const ROOTS = new Set(['atlas', 'live']);
+
+/**
+ * The permission a domain's messages are read under, where it is not simply `<domain>:read`.
+ *
+ * `transcode` is MTS's: its jobs are read under `asset:read` on the `files` field group (the file
+ * set is the Librarian's half — authorization-model.md §3.1), and there is no `transcode:read` in
+ * the permission catalogue or in any starter role. Left to the default, every transcode message —
+ * `transcode.completed` as much as progress — reached nobody, which is safe and useless. Mapped
+ * here to the SAME grant MTS enforces, so the socket cannot disagree with the API.
+ */
+const DOMAIN_READ: Readonly<Record<string, { permission: string; fieldGroup?: string }>> = {
+  transcode: { permission: 'asset:read', fieldGroup: 'files' },
+};
+
+function readRuleFor(domain: string): { permission: string; fieldGroup?: string } {
+  return DOMAIN_READ[domain] ?? { permission: `${domain}:read` };
+}
+
 export interface ParsedSubject {
   channelId: string;
   domain: string;
@@ -18,7 +42,7 @@ const PRIVATE_PREFIX = 'user.';
 
 export function parseSubject(subject: string): ParsedSubject | undefined {
   const parts = subject.split('.');
-  if (parts.length < 4 || parts[0] !== 'atlas') return undefined;
+  if (parts.length < 4 || !ROOTS.has(parts[0] ?? '')) return undefined;
   return { channelId: parts[1] ?? '', domain: parts[2] ?? '', rest: parts.slice(3) };
 }
 
@@ -73,10 +97,15 @@ export function mayReceive(sub: Subscriber, subject: string): EligibilityDecisio
     return { allowed: false, reason: 'subject belongs to another channel' };
   }
 
-  const permission = `${parsed.domain}:read`;
+  const { permission, fieldGroup } = readRuleFor(parsed.domain);
   // STRICT: the full context is known here, so an unsatisfiable predicate must not pass
   // (authorization-model.md §5.1 — lenient mode would widen the grant).
-  const decision = can(sub.policy, permission, { channelId: parsed.channelId }, { strict: true });
+  const decision = can(
+    sub.policy,
+    permission,
+    { channelId: parsed.channelId, ...(fieldGroup !== undefined ? { fieldGroup } : {}) },
+    { strict: true },
+  );
 
   return decision.allowed
     ? { allowed: true }
@@ -110,7 +139,7 @@ export function maySubscribe(sub: Subscriber, pattern: string): EligibilityDecis
   }
 
   const parts = pattern.split('.');
-  if (parts[0] !== 'atlas' || parts.length < 3) {
+  if (!ROOTS.has(parts[0] ?? '') || parts.length < 3) {
     return { allowed: false, reason: `unrecognised subscription pattern "${pattern}"` };
   }
 
@@ -128,8 +157,13 @@ export function maySubscribe(sub: Subscriber, pattern: string): EligibilityDecis
     return { allowed: true };
   }
 
-  const permission = `${domainToken}:read`;
-  const decision = can(sub.policy, permission, { channelId: channelToken }, { strict: true });
+  const { permission, fieldGroup } = readRuleFor(domainToken);
+  const decision = can(
+    sub.policy,
+    permission,
+    { channelId: channelToken, ...(fieldGroup !== undefined ? { fieldGroup } : {}) },
+    { strict: true },
+  );
   return decision.allowed
     ? { allowed: true }
     : { allowed: false, reason: decision.reason ?? `missing ${permission}` };

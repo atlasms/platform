@@ -89,6 +89,37 @@ test('every built-in preset produces a non-empty output from a real clip, with p
   });
 });
 
+test('the input’s duration comes from ffprobe, and speed rides along with progress', async (t) => {
+  if (!(await haveFfmpeg(t))) return;
+  await withDir(async (dir) => {
+    const input = await clip(dir);
+    const transcoder = ffmpegTranscoder();
+    const duration = await transcoder.probeDuration(input);
+    assert.ok(duration !== undefined && Math.abs(duration - 3) < 0.2, `duration ${duration}`);
+
+    // What the service now does: ask first, then hand it to the run so progress has a total.
+    const speeds: (number | undefined)[] = [];
+    await transcoder.run(
+      {
+        inputPath: input,
+        outputPath: join(dir, 'p.mp4'),
+        args: presetById('proxy')!.args,
+        durationSec: duration!,
+      },
+      { onProgress: (_p, speed) => speeds.push(speed) },
+    );
+    assert.ok(
+      speeds.some((s) => typeof s === 'number' && s > 0),
+      `a realtime factor was reported: ${JSON.stringify(speeds)}`,
+    );
+
+    // Not media: no duration, and no error — a transcode without a bar is still a transcode.
+    const text = join(dir, 'text.mxf');
+    await writeFile(text, 'not media');
+    assert.equal(await transcoder.probeDuration(text), undefined);
+  });
+});
+
 test('bytes that are not media are a REFUSAL — the job dead-letters rather than retrying them', async (t) => {
   if (!(await haveFfmpeg(t))) return;
   await withDir(async (dir) => {

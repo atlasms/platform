@@ -38,6 +38,10 @@ class RecordingBroker implements Broker {
   async publish(msg: Message): Promise<void> {
     this.published.push(msg);
   }
+  /** The relay never sends progress; a call here would be a bug worth failing on. */
+  async publishLive(msg: Message): Promise<void> {
+    throw new Error(`the outbox relay published live: ${msg.subject}`);
+  }
   subscribe(): { unsubscribe: () => void } {
     return { unsubscribe: () => {} };
   }

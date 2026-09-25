@@ -10,6 +10,7 @@ import type {
   ReplayResult,
 } from './types.ts';
 import { matchSubject } from './subject.ts';
+import { assertSubjectKind, isLiveSubject } from './types.ts';
 
 interface Sub {
   pattern: string;
@@ -26,6 +27,8 @@ export class InMemoryBroker implements Broker, DeadLetterQueue {
   private subs: Sub[] = [];
   readonly deadLetters: DeadLetter[] = [];
   readonly published: Message[] = [];
+  /** What went out as progress — kept apart, since the outbox tests read `published`. */
+  readonly publishedLive: Message[] = [];
   /** When each dead letter was given up on, parallel to `deadLetters`. */
   private readonly failedAt: string[] = [];
   private readonly clock: () => number;
@@ -35,14 +38,27 @@ export class InMemoryBroker implements Broker, DeadLetterQueue {
   }
 
   async publish(msg: Message): Promise<void> {
+    assertSubjectKind(msg.subject, false);
     this.published.push(msg);
     for (const sub of this.subs.filter((s) => matchSubject(s.pattern, msg.subject))) {
       await this.deliver(sub, msg);
     }
   }
 
+  /** Once, to who is subscribed now; a failing handler is its own business. Never kept. */
+  async publishLive(msg: Message): Promise<void> {
+    assertSubjectKind(msg.subject, true);
+    this.publishedLive.push(msg);
+    for (const sub of this.subs.filter((s) => matchSubject(s.pattern, msg.subject))) {
+      await Promise.resolve()
+        .then(() => sub.handler(msg))
+        .catch(() => undefined);
+    }
+  }
+
   subscribe(pattern: string, handler: Handler, opts: SubscribeOptions = {}): Subscription {
-    const broadcast = opts.broadcast ?? false;
+    // A live pattern is at-most-once whatever was asked: nothing is stored to retry from.
+    const broadcast = isLiveSubject(pattern) || (opts.broadcast ?? false);
     const sub: Sub = {
       pattern,
       handler,

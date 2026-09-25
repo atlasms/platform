@@ -31,9 +31,45 @@ export interface Subscription {
   unsubscribe(): void;
 }
 
+/**
+ * The PROGRESS subject space (messaging §1.1): outside the durable stream's `atlas.>`, so what is
+ * published here is never stored, replayed or audited. `live.<channelId>.<type>`.
+ */
+export const LIVE_PREFIX = 'live.';
+
+export const isLiveSubject = (subject: string): boolean => subject.startsWith(LIVE_PREFIX);
+
 export interface Broker {
+  /**
+   * An EVENT or a COMMAND: durable, at-least-once, replayable. Refuses a `live.` subject — a
+   * message meant to be kept must not be sent where nothing keeps it.
+   */
   publish(msg: Message): Promise<void>;
+  /**
+   * A PROGRESS message (messaging §1.1): to whoever is subscribed NOW, at most once, never stored,
+   * never retried. `live.` subjects only — anywhere else it would be captured by the stream and
+   * kept, which is the one thing progress must not be.
+   */
+  publishLive(msg: Message): Promise<void>;
+  /**
+   * A `live.` pattern subscribes to progress: at most once, from now on, no retry, no dead
+   * letter — `maxAttempts` and `broadcast` do not apply, since nothing is stored to redeliver.
+   */
   subscribe(pattern: string, handler: Handler, opts?: SubscribeOptions): Subscription;
+}
+
+/** The refusal both brokers give for a message sent to the wrong kind of subject. */
+export function assertSubjectKind(subject: string, live: boolean): void {
+  if (live && !isLiveSubject(subject)) {
+    throw new Error(
+      `publishLive: "${subject}" is not a live. subject — progress sent into the durable stream would be kept and audited`,
+    );
+  }
+  if (!live && isLiveSubject(subject)) {
+    throw new Error(
+      `publish: "${subject}" is a live. subject — nothing stores it; use publishLive for progress`,
+    );
+  }
 }
 
 export interface DeadLetter {

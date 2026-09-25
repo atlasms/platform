@@ -5,7 +5,7 @@
 // the in-memory broker for NATS/RabbitMQ changes nothing here.
 
 import type { Envelope, EventPayloads } from '@atlas/contracts';
-import type { Broker, Message } from '@atlas/messaging';
+import { isLiveSubject, type Broker, type Message } from '@atlas/messaging';
 import type { Tracer } from '@atlas/service-kit';
 import type { ConnectionRegistry } from './registry.ts';
 
@@ -36,7 +36,11 @@ export interface BridgeOptions {
   onDelivered?: (subject: string, count: number) => void;
 }
 
-export const DEFAULT_BRIDGE_PATTERNS = ['atlas.>', 'user.>'];
+/**
+ * Events, private streams, and — since EP-16.4 — PROGRESS (`live.>`): a core subscription, since no
+ * stream keeps `live.`, so a replica relays what arrives while it is up and nothing else.
+ */
+export const DEFAULT_BRIDGE_PATTERNS = ['atlas.>', 'user.>', 'live.>'];
 
 /**
  * Subscribe the registry to the broker.
@@ -67,7 +71,9 @@ export function startBridge(options: BridgeOptions): void {
         options.onDelivered?.(msg.subject, delivered);
       };
 
-      if (!options.tracer) return deliver();
+      // Not a span per progress tick: a bar moving twice a second is not an operation anyone
+      // traces, and it would drown the ones they do.
+      if (!options.tracer || isLiveSubject(msg.subject)) return deliver();
       // The SUBJECT as the span name, not the message id — a subject is a bounded set, an id is one
       // value per message. The same cardinality rule as a route template.
       return options.tracer.consumer(`consume ${msg.subject}`, msg.headers, async (span) => {

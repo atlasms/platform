@@ -7,7 +7,10 @@ import type { Broker } from '@atlas/messaging';
  * comparison stays honest: both candidates are exercised through exactly the interface the
  * platform actually programs against.
  */
-export interface SpikeBroker extends Broker {
+// Without `publishLive`: the spike behind ADR-0001 compared DURABLE delivery, and the Progress
+// kind (messaging §1.1, EP-16.4) arrived after it. Kept out rather than bolted on, so the harness
+// still measures what the ADR's evidence says it measured.
+export interface SpikeBroker extends Omit<Broker, 'publishLive'> {
   readonly name: string;
   connect(): Promise<void>;
   /**

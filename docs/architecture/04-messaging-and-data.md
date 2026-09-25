@@ -35,6 +35,23 @@ Commands use a `cmd.` prefixed subject bound to a durable queue group so any ins
 target service (e.g. one of many MTS workers) can pick them up:
 - `atlas.ch12.cmd.transcode.job.create`
 
+**Progress lives in its own subject space: `live.<channelId>.<domain>.<action>`** (decided with
+EP-16.4). Everything under `atlas.>` is captured by the durable stream — kept, replayable, and
+appended to the audit log by the logging sink, which consumes `atlas.>` durably. That is what an
+Event is for and exactly what a Progress message must not be: a per-tick "42%" is high-volume,
+lossy-tolerant and worthless a minute later, and in `atlas.>` it would be stored for as long as the
+stream keeps anything and hash-chained into compliance history once per tick. So Progress is
+published on core NATS under `live.`, which no stream captures:
+
+- **never stored, never replayed** — a subscriber that attaches after a message missed it, by design;
+- **never audited** — the sink's `atlas.>` does not match it;
+- **delivered only to who is connected**, at most once, no retry, no dead letter;
+- still an **envelope** whose payload validates against its schema, and still channel-scoped — the
+  WebSocket bridge relays `live.<ch>.…` through the same tenant and permission gates as `atlas.<ch>.…`.
+
+Example: `live.ch12.transcode.progress`. State never travels this way: the job row, `GET /jobs/{id}`
+and `transcode.completed` are the truth; progress only moves a bar between them.
+
 ### 1.2 Delivery guarantees & idempotency
 
 - **At-least-once** for commands and events; consumers **must be idempotent** keyed on

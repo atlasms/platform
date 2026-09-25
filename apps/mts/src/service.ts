@@ -20,6 +20,7 @@ import {
   buildEnvelope,
   delta,
   envelopeShapeErrors,
+  liveSubjectFor,
   subjectFor,
   ulid,
   validatePayload,
@@ -57,6 +58,15 @@ export interface MtsOptions {
   workerId?: string;
   now?: () => Date;
   traceHeaders?: () => Record<string, string> | undefined;
+  /**
+   * Where `transcode.progress` goes (EP-16.4): the broker's `publishLive`, on
+   * `live.<channel>.transcode.progress` — never the outbox, never the durable stream, never the
+   * audit log (messaging §1.1). Absent, or the broker away, and progress is simply not announced;
+   * the job row still carries `percent` for anyone who polls.
+   */
+  publishLive?: (msg: Message) => Promise<void>;
+  /** At most one progress message per job per this interval. Default 1 s. */
+  progressIntervalMs?: number;
 }
 
 export interface EnqueueInput {
@@ -271,7 +281,21 @@ export class MtsService {
 
   /** Run every preset of a leased job, then commit what happened. */
   private async execute(job: TranscodeJob, signal?: AbortSignal): Promise<RunOutcome> {
+    try {
+      return await this.executePresets(job, signal);
+    } finally {
+      // However it ended, the throttle has nothing more to remember about this job.
+      this.announced.delete(job.id);
+    }
+  }
+
+  private async executePresets(job: TranscodeJob, signal?: AbortSignal): Promise<RunOutcome> {
     const renditions: RenditionResult[] = [];
+    // Once per job, before the first preset: what turns FFmpeg's `out_time` into a percentage.
+    // Unreadable is not a failure — the job runs without a progress bar.
+    const durationSec = await this.options.transcoder
+      .probeDuration(job.inputPath)
+      .catch(() => undefined);
     try {
       for (const presetId of job.presetIds) {
         // Checked again here rather than trusted from the enqueue: a preset can be removed
@@ -279,7 +303,7 @@ export class MtsService {
         // so rather than throw a TypeError deep in the loop.
         const preset = presetById(presetId);
         if (!preset) throw new TranscodeRefusal(`unknown preset ${presetId}`);
-        renditions.push(await this.produce(job, preset, signal));
+        renditions.push(await this.produce(job, preset, durationSec, signal));
       }
     } catch (err) {
       if (signal?.aborted) {
@@ -321,6 +345,7 @@ export class MtsService {
   private async produce(
     job: TranscodeJob,
     preset: Preset,
+    durationSec: number | undefined,
     signal?: AbortSignal,
   ): Promise<RenditionResult> {
     // Named by job and preset, so a retry of the same job overwrites its own previous output
@@ -335,10 +360,15 @@ export class MtsService {
     await mkdir(dirname(outputPath), { recursive: true });
 
     const output = await this.options.transcoder.run(
-      { inputPath: job.inputPath, outputPath, args: preset.args },
+      {
+        inputPath: job.inputPath,
+        outputPath,
+        args: preset.args,
+        ...(durationSec !== undefined ? { durationSec } : {}),
+      },
       {
         ...(signal ? { signal } : {}),
-        onProgress: (percent) => void this.progress(job, preset, percent),
+        onProgress: (percent, speed) => void this.progress(job, preset, percent, speed),
       },
     );
 
@@ -366,10 +396,16 @@ export class MtsService {
    * A write that loses its compare-and-set is dropped in silence: the job has moved on, and
    * progress about a job that already finished is noise, not news.
    */
-  private async progress(job: TranscodeJob, preset: Preset, percent: number): Promise<void> {
+  private async progress(
+    job: TranscodeJob,
+    preset: Preset,
+    percent: number,
+    speed?: number,
+  ): Promise<void> {
     const index = job.presetIds.indexOf(preset.id);
     const share = 100 / Math.max(job.presetIds.length, 1);
     const overall = Math.min(100, Math.round(index * share + (percent / 100) * share));
+    this.announce(job, overall, speed);
     const current = await this.options.store.job(job.id);
     if (!current || current.state !== 'running') return;
     if ((current.percent ?? 0) >= overall) return;
@@ -378,6 +414,50 @@ export class MtsService {
         tx.putJob({ ...current, percent: overall, updatedAt: this.now().toISOString() }, 'running'),
       )
       .catch(() => undefined);
+  }
+
+  /** When each job last announced progress, and at what percentage — the throttle's memory. */
+  private readonly announced = new Map<string, { at: number; percent: number }>();
+
+  /**
+   * `transcode.progress` on `live.<channel>.transcode.progress` (EP-16.4), throttled.
+   *
+   * The first report of a job always goes — a short job may have no second — and after that at
+   * most one per `progressIntervalMs`, and only when the whole-number percentage moved: FFmpeg
+   * reports twice a second, and a progress bar needs neither. Fire-and-forget by contract: a
+   * failed publish is dropped, never retried, never an error for the job.
+   */
+  private announce(job: TranscodeJob, percent: number, speed?: number): void {
+    const publish = this.options.publishLive;
+    if (!publish) return;
+    const now = this.now().getTime();
+    const last = this.announced.get(job.id);
+    const interval = this.options.progressIntervalMs ?? 1_000;
+    if (last && (now - last.at < interval || percent <= last.percent)) return;
+    this.announced.set(job.id, { at: now, percent });
+    // A long-lived worker must not grow a map entry per job it ever ran; the entry is only
+    // needed while the job runs, and 100 is its last word.
+    if (percent >= 100) this.announced.delete(job.id);
+
+    const payload = {
+      jobId: job.id,
+      assetId: job.assetId,
+      percent,
+      ...(speed !== undefined ? { speed } : {}),
+    } satisfies EventPayloads['transcode.progress'];
+    const check = validatePayload('transcode.progress', payload);
+    if (!check.valid) return;
+    const envelope = buildEnvelope({
+      type: 'transcode.progress',
+      channelId: job.channelId,
+      payload,
+      actor: { kind: 'service', id: 'mts' },
+    });
+    void publish({
+      id: envelope.messageId,
+      subject: liveSubjectFor(job.channelId, 'transcode.progress'),
+      body: envelope,
+    }).catch(() => undefined);
   }
 
   /** An attempt that did not work: retried, or dead-lettered when it never will be. */
