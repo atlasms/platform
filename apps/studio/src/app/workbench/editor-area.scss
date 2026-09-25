@@ -129,6 +129,11 @@
   font-size: 0.8125rem;
 }
 
+.error {
+  color: var(--color-danger);
+  font-size: 0.8125rem;
+}
+
 /* CDK drag feedback */
 .cdk-drag-preview {
   display: flex;

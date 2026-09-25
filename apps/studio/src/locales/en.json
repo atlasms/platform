@@ -174,7 +174,9 @@
     "unpin": "Unpin",
     "pinned": "pinned",
     "empty": "No editors open.",
-    "emptyHint": "Open something from a panel — tabs, splits and layout are restored next time."
+    "emptyHint": "Open something from a panel — tabs, splits and layout are restored next time.",
+    "loading": "Opening…",
+    "loadFailed": "This editor could not be loaded. Studio may have been updated since this page opened — reload to fetch the current version."
   },
   "common": {
     "retry": "Retry",

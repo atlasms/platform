@@ -14,6 +14,12 @@ import { EditorStore } from './editor.store.ts';
  * The editor area: tabbed groups side by side, with tabs draggable between them
  * ([studio-frontend.md §1.2](../../../../../docs/architecture/studio-frontend.md)).
  *
+ * Each editor KIND is `@defer`red: its code — and what only editors use, `@angular/forms` among it —
+ * is a chunk fetched when a tab of that kind first renders, not part of the initial bundle every
+ * session downloads before it can sign in. The dashboard stays eager: it is the landing tab. A chunk
+ * that fails to load (a redeploy replaced it under an open Studio) says so rather than rendering an
+ * empty pane.
+ *
  * Every tab pane remains mounted while another tab is focused. Destroying an inactive asset editor
  * would discard its unsaved form while the tab still showed a dirty dot — an especially dangerous
  * lie in a multi-tab workbench.
@@ -110,25 +116,61 @@ import { EditorStore } from './editor.store.ts';
                 <div class="editor-pane" [hidden]="tab.id !== group.activeTabId">
                   @switch (tab.type) {
                     @case ('asset') {
-                      <atlas-asset-editor [assetId]="tab.resourceId" [tabId]="tab.id" />
+                      @defer (on immediate) {
+                        <atlas-asset-editor [assetId]="tab.resourceId" [tabId]="tab.id" />
+                      } @placeholder {
+                        <p class="muted">{{ locale.t('editor.loading') }}</p>
+                      } @error {
+                        <p class="error" role="alert">{{ locale.t('editor.loadFailed') }}</p>
+                      }
                     }
                     @case ('dashboard') {
                       <atlas-dashboard />
                     }
                     @case ('schedule') {
-                      <atlas-schedule-editor [scheduleId]="tab.resourceId" [tabId]="tab.id" />
+                      @defer (on immediate) {
+                        <atlas-schedule-editor [scheduleId]="tab.resourceId" [tabId]="tab.id" />
+                      } @placeholder {
+                        <p class="muted">{{ locale.t('editor.loading') }}</p>
+                      } @error {
+                        <p class="error" role="alert">{{ locale.t('editor.loadFailed') }}</p>
+                      }
                     }
                     @case ('user') {
-                      <atlas-user-editor [userId]="tab.resourceId" [tabId]="tab.id" />
+                      @defer (on immediate) {
+                        <atlas-user-editor [userId]="tab.resourceId" [tabId]="tab.id" />
+                      } @placeholder {
+                        <p class="muted">{{ locale.t('editor.loading') }}</p>
+                      } @error {
+                        <p class="error" role="alert">{{ locale.t('editor.loadFailed') }}</p>
+                      }
                     }
                     @case ('group') {
-                      <atlas-group-editor [groupId]="tab.resourceId" [tabId]="tab.id" />
+                      @defer (on immediate) {
+                        <atlas-group-editor [groupId]="tab.resourceId" [tabId]="tab.id" />
+                      } @placeholder {
+                        <p class="muted">{{ locale.t('editor.loading') }}</p>
+                      } @error {
+                        <p class="error" role="alert">{{ locale.t('editor.loadFailed') }}</p>
+                      }
                     }
                     @case ('role') {
-                      <atlas-role-editor [roleId]="tab.resourceId" [tabId]="tab.id" />
+                      @defer (on immediate) {
+                        <atlas-role-editor [roleId]="tab.resourceId" [tabId]="tab.id" />
+                      } @placeholder {
+                        <p class="muted">{{ locale.t('editor.loading') }}</p>
+                      } @error {
+                        <p class="error" role="alert">{{ locale.t('editor.loadFailed') }}</p>
+                      }
                     }
                     @case ('profile') {
-                      <atlas-profile-editor [profileRef]="tab.resourceId" [tabId]="tab.id" />
+                      @defer (on immediate) {
+                        <atlas-profile-editor [profileRef]="tab.resourceId" [tabId]="tab.id" />
+                      } @placeholder {
+                        <p class="muted">{{ locale.t('editor.loading') }}</p>
+                      } @error {
+                        <p class="error" role="alert">{{ locale.t('editor.loadFailed') }}</p>
+                      }
                     }
                     @default {
                       <h2>{{ tab.title }}</h2>

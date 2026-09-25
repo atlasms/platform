@@ -3,6 +3,8 @@
 // the same keys on its close button close it without re-selecting it on the way.
 
 import { TestBed } from '@angular/core/testing';
+import { Subject } from 'rxjs';
+import { ProfilesService } from '../core/profiles.service.ts';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { LocaleService } from '../core/locale.service.ts';
 import { EditorArea } from './editor-area.ts';
@@ -60,5 +62,37 @@ describe('EditorArea tabs', () => {
     key(close, 'Enter');
     fixture.detectChanges();
     expect(store.activeTab()?.resourceId).toBe('b');
+  });
+});
+
+describe('EditorArea editors', () => {
+  beforeEach(() => TestBed.resetTestingModule());
+
+  // Each editor kind is `@defer`red out of the initial bundle. The risk of that is quiet: a
+  // wrapper that never resolves still compiles, and the pane shows "Opening…" forever.
+  it('render a deferred editor once its chunk has loaded, with a placeholder meanwhile', async () => {
+    TestBed.configureTestingModule({
+      providers: [
+        EditorStore,
+        { provide: LocaleService, useValue: { t: (k: string) => k } },
+        { provide: ProfilesService, useValue: { get: () => new Subject() } },
+      ],
+    });
+    TestBed.inject(EditorStore).open({
+      type: 'profile',
+      resourceId: 'channel/broadcast',
+      title: 'Broadcast',
+      icon: '⚙',
+    });
+    const fixture = TestBed.createComponent(EditorArea);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('atlas-profile-editor')).toBeNull();
+    expect(root.textContent).toContain('editor.loading');
+
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(root.querySelector('atlas-profile-editor')).not.toBeNull();
+    expect(root.textContent).not.toContain('editor.loading');
   });
 });

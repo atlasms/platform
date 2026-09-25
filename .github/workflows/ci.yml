@@ -176,14 +176,17 @@ jobs:
         run: npm run lint:scripts
 
       # --- PR: only what this change affects -------------------------------
-      - name: Affected (lint, typecheck, test)
+      # `build` too: only Studio has one, and it is the production AOT compile plus the bundle
+      # budgets in its angular.json — neither of which lint, typecheck or the unit tests run. Until
+      # this step existed the initial bundle sat over its budget and nothing but a local build said so.
+      - name: Affected (lint, typecheck, test, build)
         if: github.event_name == 'pull_request'
-        run: npx nx affected -t lint typecheck test --base=origin/${{ github.base_ref }} --head=HEAD
+        run: npx nx affected -t lint typecheck test build --base=origin/${{ github.base_ref }} --head=HEAD
 
       # --- main: everything, no exceptions ---------------------------------
-      - name: All projects (lint, typecheck, test)
+      - name: All projects (lint, typecheck, test, build)
         if: github.event_name == 'push'
-        run: npx nx run-many -t lint typecheck test
+        run: npx nx run-many -t lint typecheck test build
 
       # EP-04.9. The generator's own tests run above against a virtual tree; this is the other
       # half: run it for REAL, then hold what it wrote to the same lint, strict typecheck and tests
