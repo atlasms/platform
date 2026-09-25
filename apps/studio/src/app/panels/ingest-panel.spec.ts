@@ -9,12 +9,14 @@
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { IngestJob, IngestQueuePage } from '../core/generated/rim.types.ts';
+import type { IngestJob, IngestQueuePage, Watcher } from '../core/generated/rim.types.ts';
 import { IngestService } from '../core/ingest.service.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import type { Transfer } from '../core/transfer.store.ts';
 import { UploadService } from '../core/upload.service.ts';
+import { WatchersService } from '../core/watchers.service.ts';
+import { EditorStore } from '../workbench/editor.store.ts';
 import { IngestPanel } from './ingest-panel.ts';
 
 const job = (over: Partial<IngestJob> = {}): IngestJob => ({
@@ -87,12 +89,41 @@ class FakeUploads {
   }
 }
 
-/** The panel's own template gates on `ingest:*`; these tests drive the class, not the gate. */
+/**
+ * The panel's own template gates on `ingest:*`; most tests drive the class, not the gate, and
+ * hold everything. `withoutAdmin` is the operator who may review but not administer sources.
+ */
 class FakePermissions {
-  can(): boolean {
-    return true;
+  denied = new Set<string>();
+  can(permission: string): boolean {
+    return !this.denied.has(permission);
   }
 }
+
+/** Always faked: the panel lists watchers when it may, and a real client would really call. */
+class FakeWatchers {
+  lists: Subject<Watcher[]>[] = [];
+  list() {
+    const subject = new Subject<Watcher[]>();
+    this.lists.push(subject);
+    return subject;
+  }
+}
+
+const watcher = (over: Partial<Watcher> = {}): Watcher => ({
+  id: '01WATCHER0000000000000000A',
+  channelId: 'ch12',
+  name: 'Playout drops',
+  path: 'playout',
+  settleSeconds: 10,
+  afterPickup: 'delete',
+  enabled: true,
+  createdBy: 'admin',
+  createdAt: '2026-09-26T10:00:00.000Z',
+  updatedAt: '2026-09-26T10:00:00.000Z',
+  version: 1,
+  ...over,
+});
 
 interface InternalIngestPanel {
   jobs: () => IngestJob[];
@@ -103,17 +134,23 @@ interface InternalIngestPanel {
   formatTech(tech: NonNullable<IngestJob['technicalMetadata']>): string;
   accept(job: IngestJob): void;
   reject(job: IngestJob, reason: string): void;
+  sourceLabel(job: IngestJob): string;
 }
 
-function setup() {
+function setup(options: { withoutAdmin?: boolean } = {}) {
   const fake = new FakeIngest();
   const uploads = new FakeUploads();
+  const watchers = new FakeWatchers();
+  const permissions = new FakePermissions();
+  if (options.withoutAdmin) permissions.denied.add('ingest:admin');
   TestBed.configureTestingModule({
     providers: [
+      EditorStore,
       { provide: IngestService, useValue: fake },
       { provide: UploadService, useValue: uploads },
+      { provide: WatchersService, useValue: watchers },
       { provide: LocaleService, useClass: FakeLocale },
-      { provide: PermissionService, useClass: FakePermissions },
+      { provide: PermissionService, useValue: permissions },
     ],
   });
   const fixture = TestBed.createComponent(IngestPanel);
@@ -122,6 +159,7 @@ function setup() {
     component: fixture.componentInstance as unknown as InternalIngestPanel,
     fake,
     uploads,
+    watchers,
   };
 }
 
@@ -213,7 +251,7 @@ describe('IngestPanel', () => {
     const { component, fake } = setup();
     fake.lists[0]?.error(new Error('502 upstream "rim" unreachable'));
 
-    expect(component.error()).toBe('Could not load ingest queue.');
+    expect(component.error()).toBe('ingest.loadError');
     expect(component.loading()).toBe(false);
   });
 
@@ -251,5 +289,49 @@ describe('IngestPanel', () => {
     await Promise.resolve();
     expect(component.jobs()).toHaveLength(2);
     expect(fake.listCalls).toHaveLength(1);
+  });
+
+  // EP-15.2: the Watchers view, and a watched job's source in words.
+  it('an administrator gets a Watchers tab; an operator without ingest:admin gets the queue only', () => {
+    const admin = setup();
+    admin.fixture.detectChanges();
+    const root = admin.fixture.nativeElement as HTMLElement;
+    const tabs = Array.from(root.querySelectorAll<HTMLButtonElement>('[role=tab]'));
+    expect(tabs.map((t) => t.textContent?.trim())).toEqual([
+      'ingest.view.queue',
+      'ingest.view.watchers',
+    ]);
+    expect(admin.watchers.lists).toHaveLength(1);
+    tabs[1]!.click();
+    admin.fixture.detectChanges();
+    expect(root.querySelector('atlas-watchers-view')).not.toBeNull();
+    // The upload button belongs to the queue.
+    expect(root.textContent).not.toContain('ingest.upload');
+
+    TestBed.resetTestingModule();
+    const operator = setup({ withoutAdmin: true });
+    operator.fixture.detectChanges();
+    const plain = operator.fixture.nativeElement as HTMLElement;
+    expect(plain.querySelector('[role=tablist]')).toBeNull();
+    expect(operator.watchers.lists).toHaveLength(0);
+  });
+
+  it("names a job's source: the web upload, a watcher by name — or by kind when it cannot be listed", () => {
+    const { component, watchers } = setup();
+    const w = watcher();
+    watchers.lists[0]?.next([w]);
+    expect(component.sourceLabel(job({ sourceKind: 'upload', source: 'upload' }))).toBe(
+      'ingest.source.upload',
+    );
+    expect(component.sourceLabel(job({ sourceKind: 'watch', source: w.id }))).toBe('Playout drops');
+    expect(component.sourceLabel(job({ sourceKind: 'watch', source: '01GONE' }))).toBe(
+      'ingest.source.watch',
+    );
+
+    TestBed.resetTestingModule();
+    const operator = setup({ withoutAdmin: true });
+    expect(operator.component.sourceLabel(job({ sourceKind: 'watch', source: w.id }))).toBe(
+      'ingest.source.watch',
+    );
   });
 });

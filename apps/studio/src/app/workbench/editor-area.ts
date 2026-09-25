@@ -6,6 +6,7 @@ import { GroupEditor } from '../editors/group-editor.ts';
 import { ProfileEditor } from '../editors/profile-editor.ts';
 import { RoleEditor } from '../editors/role-editor.ts';
 import { UserEditor } from '../editors/user-editor.ts';
+import { WatcherEditor } from '../editors/watcher-editor.ts';
 import { Dashboard } from '../panels/dashboard.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { EditorStore } from './editor.store.ts';
@@ -38,6 +39,7 @@ import { EditorStore } from './editor.store.ts';
     GroupEditor,
     RoleEditor,
     ProfileEditor,
+    WatcherEditor,
   ],
   template: `
     @if (store.isEmpty()) {
@@ -166,6 +168,15 @@ import { EditorStore } from './editor.store.ts';
                     @case ('profile') {
                       @defer (on immediate) {
                         <atlas-profile-editor [profileRef]="tab.resourceId" [tabId]="tab.id" />
+                      } @placeholder {
+                        <p class="muted">{{ locale.t('editor.loading') }}</p>
+                      } @error {
+                        <p class="error" role="alert">{{ locale.t('editor.loadFailed') }}</p>
+                      }
+                    }
+                    @case ('watcher') {
+                      @defer (on immediate) {
+                        <atlas-watcher-editor [watcherId]="tab.resourceId" [tabId]="tab.id" />
                       } @placeholder {
                         <p class="muted">{{ locale.t('editor.loading') }}</p>
                       } @error {

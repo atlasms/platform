@@ -1,16 +1,23 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   inject,
   signal,
   viewChild,
   type ElementRef,
 } from '@angular/core';
 import { IngestService } from '../core/ingest.service.ts';
-import type { IngestJob } from '../core/generated/rim.types.ts';
+import type { IngestJob, Watcher } from '../core/generated/rim.types.ts';
 import { IfCanDirective } from '../core/if-can.directive.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { PermissionService } from '../core/permission.service.ts';
+import { SessionStore } from '../core/session.store.ts';
 import { UploadService } from '../core/upload.service.ts';
+import { WatchersService } from '../core/watchers.service.ts';
+import { WatchersView } from './ingest/watchers-view.ts';
+
+type IngestView = 'queue' | 'watchers';
 
 /**
  * The Ingest/Import panel (EP-20.3) — upload, queue, quarantine accept/reject.
@@ -20,15 +27,41 @@ import { UploadService } from '../core/upload.service.ts';
  * operator with `ingest:approve` accepts or rejects it, and Upload hands files to the uploader
  * (upload.service.ts) — chunked, resumable, against EP-15.1 — whose progress the transfer tray
  * shows. When an upload's job settles, its row joins the queue here without a refetch.
+ *
+ * The Watchers view (EP-15.2) is the channel's folder watchers, revealed by `ingest:admin`. The
+ * panel holds the list because the queue needs it too: a watched job's `source` is its watcher's
+ * id, and a row saying "Playout drops" is an answer where a ULID is a question. Someone without
+ * `ingest:admin` cannot list watchers, and their queue says "Folder watcher" instead.
  */
 @Component({
   selector: 'atlas-ingest-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [IfCanDirective],
+  imports: [IfCanDirective, WatchersView],
   template: `
     <h2 class="panel-title">{{ locale.t('ingest.title') }}</h2>
+    @if (views().length > 1) {
+      <nav class="views" role="tablist" [attr.aria-label]="locale.t('ingest.title')">
+        @for (v of views(); track v) {
+          <button
+            type="button"
+            role="tab"
+            [attr.aria-selected]="current() === v"
+            [class.active]="current() === v"
+            (click)="view.set(v)"
+          >
+            {{ locale.t('ingest.view.' + v) }}
+          </button>
+        }
+      </nav>
+    }
 
-    @if (error()) {
+    @if (current() === 'watchers') {
+      <atlas-watchers-view
+        [watchers]="watchers()"
+        [error]="watchersError()"
+        (created)="watchers.update((list) => [...list, $event])"
+      />
+    } @else if (error()) {
       <p class="error" role="alert">{{ error() }}</p>
     } @else if (loading()) {
       <p class="muted">{{ locale.t('ingest.loading') }}</p>
@@ -43,7 +76,7 @@ import { UploadService } from '../core/upload.service.ts';
               <!-- Both are optional in the contract: a detected job exists before the watcher has
                    named its source or finished sizing the file. An em dash says "not known yet";
                    the previous code rendered a raw undefined and "NaN GB". -->
-              <span class="job-source">{{ job.source || '—' }}</span>
+              <span class="job-source" [title]="job.source ?? ''">{{ sourceLabel(job) }}</span>
               <span class="job-size">{{ formatSize(job.sizeBytes) }}</span>
               <span class="job-state" [attr.data-state]="job.state">{{
                 locale.t('ingest.state.' + job.state)
@@ -95,11 +128,13 @@ import { UploadService } from '../core/upload.service.ts';
       (change)="onFilesPicked($event)"
       [attr.aria-label]="locale.t('ingest.upload')"
     />
-    <div class="actions">
-      <button type="button" *atlasIfCan="'ingest:write'" (click)="picker.click()">
-        {{ locale.t('ingest.upload') }}
-      </button>
-    </div>
+    @if (current() === 'queue') {
+      <div class="actions">
+        <button type="button" *atlasIfCan="'ingest:write'" (click)="picker.click()">
+          {{ locale.t('ingest.upload') }}
+        </button>
+      </div>
+    }
   `,
   styles: `
     :host {
@@ -113,6 +148,29 @@ import { UploadService } from '../core/upload.service.ts';
       margin: 0;
       font-size: 1rem;
       font-weight: 600;
+    }
+    .views {
+      display: flex;
+      gap: var(--space-1);
+      border-block-end: 1px solid var(--color-border);
+    }
+    .views button {
+      padding: var(--space-1) var(--space-2);
+      color: var(--color-fg-muted);
+      background: none;
+      border: none;
+      border-block-end: 2px solid transparent;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.8125rem;
+    }
+    .views button.active {
+      color: var(--color-fg);
+      border-block-end-color: var(--color-accent);
+    }
+    .views button:focus-visible {
+      outline: 2px solid var(--color-focus);
+      outline-offset: -2px;
     }
     .muted {
       color: var(--color-fg-muted);
@@ -254,16 +312,65 @@ import { UploadService } from '../core/upload.service.ts';
 })
 export class IngestPanel {
   private readonly ingestApi = inject(IngestService);
+  private readonly watchersApi = inject(WatchersService);
   private readonly uploads = inject(UploadService);
+  private readonly permissions = inject(PermissionService);
+  private readonly session = inject(SessionStore);
   protected readonly locale = inject(LocaleService);
   private readonly picker = viewChild<ElementRef<HTMLInputElement>>('picker');
 
   protected readonly jobs = signal<IngestJob[]>([]);
   protected readonly loading = signal(false);
   protected readonly error = signal<string | null>(null);
+  protected readonly watchers = signal<Watcher[]>([]);
+  protected readonly watchersError = signal<string | null>(null);
+
+  /** UX only — RIM enforces `ingest:admin` on every watcher call. */
+  private readonly canAdmin = computed(() => {
+    this.session.policy(); // the dependency; the check reads it internally
+    return this.permissions.can('ingest:admin');
+  });
+  protected readonly views = computed<readonly IngestView[]>(() =>
+    this.canAdmin() ? ['queue', 'watchers'] : ['queue'],
+  );
+  protected readonly view = signal<IngestView>('queue');
+  /** The chosen view, or the queue when the chosen one is no longer offered. */
+  protected readonly current = computed<IngestView>(() =>
+    this.views().includes(this.view()) ? this.view() : 'queue',
+  );
+  private readonly watcherNames = computed(
+    () => new Map(this.watchers().map((w) => [w.id, w.name])),
+  );
 
   constructor() {
     this.load();
+    if (this.canAdmin()) this.loadWatchers();
+  }
+
+  private loadWatchers(): void {
+    this.watchersApi.list().subscribe({
+      next: (list) => {
+        this.watchers.set(list);
+        this.watchersError.set(null);
+      },
+      error: () => this.watchersError.set(this.locale.t('watchers.loadError')),
+    });
+  }
+
+  /**
+   * Where a job came from, in words: the web upload; a watcher by NAME when this session may list
+   * watchers, "Folder watcher" when it may not; the raw id for a kind Studio does not know yet.
+   * The id stays on the cell's title, for whoever needs to quote it.
+   */
+  protected sourceLabel(job: IngestJob): string {
+    if (job.sourceKind === 'upload') return this.locale.t('ingest.source.upload');
+    if (job.sourceKind === 'watch') {
+      return (
+        (job.source ? this.watcherNames().get(job.source) : undefined) ??
+        this.locale.t('ingest.source.watch')
+      );
+    }
+    return job.source || '—';
   }
 
   protected load(): void {
@@ -276,7 +383,7 @@ export class IngestPanel {
         this.loading.set(false);
       },
       error: () => {
-        this.error.set('Could not load ingest queue.');
+        this.error.set(this.locale.t('ingest.loadError'));
         this.loading.set(false);
       },
     });
@@ -313,7 +420,7 @@ export class IngestPanel {
         this.jobs.update((list) => list.map((j) => (j.id === job.id ? updated : j)));
       },
       error: () => {
-        this.error.set('Could not accept job.');
+        this.error.set(this.locale.t('ingest.acceptError'));
       },
     });
   }
@@ -331,7 +438,7 @@ export class IngestPanel {
         this.jobs.update((list) => list.map((j) => (j.id === job.id ? updated : j)));
       },
       error: () => {
-        this.error.set('Could not reject job.');
+        this.error.set(this.locale.t('ingest.rejectError'));
       },
     });
   }
