@@ -414,6 +414,31 @@ Two rules that follow from the palette inverting between themes:
   danger is dark and the dark palette's is bright, so one hard-coded foreground fails WCAG in one of
   the two. Status buttons are outlined in `currentColor`.
 
+## Lint: Angular's rules, templates included
+
+Studio is linted by the root [`eslint.config.mjs`](../../eslint.config.mjs) (`npm run lint -w
+@atlas/studio`, and CI) with [angular-eslint](https://github.com/angular-eslint/angular-eslint) on
+top of the repo's TypeScript rules: the recommended component/directive rules, the house style made
+errors (`prefer-on-push-component-change-detection`, `prefer-inject`, the `atlas` selector prefix),
+and the template rules — **recommended and accessibility**.
+
+Every component's template is INLINE, so the config runs `angular.processInlineTemplates`, which
+lifts each `template:` into a virtual `.html` file for the template rules. Without the processor
+those rules have nothing to read and the template half of the config passes silently.
+
+What switching them on found, fixed rather than suppressed:
+
+- **Editor tabs could not be reached from the keyboard** — clickable `div`s with no `tabindex`. They
+  are `role="tab"` in a `role="tablist"` now, focusable, selected by Enter and Space
+  (`editor-area.spec.ts`); the same keys on a tab's close button close it without re-selecting it.
+- **The Search panel's `autofocus` only ever worked on a cold load of `/search`** — a browser
+  honours the attribute once per document, and the panel is usually opened later. It focuses its
+  field when it opens instead.
+
+Two suppressions carry their reason next to them: the sign-in page's `autofocus` (the page is the
+form), and the editor GROUP's click (a pointer convenience whose keyboard equivalent is `focusin`,
+so the group is not itself a control).
+
 ## Toolchain divergence, on purpose
 
 Studio is the one project that **emits**, and it ships its own toolchain:

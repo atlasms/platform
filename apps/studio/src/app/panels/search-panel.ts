@@ -1,4 +1,12 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  afterNextRender,
+  inject,
+  signal,
+  viewChild,
+  type ElementRef,
+} from '@angular/core';
 import { AssetsService } from '../core/assets.service.ts';
 import type { Asset } from '../core/generated/mam.types.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
@@ -18,7 +26,7 @@ import { LocaleService } from '../core/locale.service.ts';
         [value]="query()"
         (input)="onQuery($any($event.target).value)"
         (keydown.enter)="onEnter()"
-        autofocus
+        #queryField
       />
     </label>
 
@@ -144,6 +152,14 @@ export class SearchPanel {
   private readonly assetsApi = inject(AssetsService);
   private readonly editors = inject(EditorStore);
   protected readonly locale = inject(LocaleService);
+  private readonly queryInput = viewChild<ElementRef<HTMLInputElement>>('queryField');
+
+  constructor() {
+    // Opening the Search panel is asking to type a query, so the field takes focus — as VS Code's
+    // does. Not `autofocus`: a browser honours that once per document load, so it only ever worked
+    // when Studio happened to load straight onto /search, never when the panel was opened.
+    afterNextRender(() => this.queryInput()?.nativeElement.focus());
+  }
 
   protected readonly assets = signal<Asset[]>([]);
   protected readonly query = signal('');

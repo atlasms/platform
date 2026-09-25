@@ -7,6 +7,7 @@ import {
   inject,
   input,
   signal,
+  type OnInit,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AssetsService } from '../core/assets.service.ts';
@@ -340,7 +341,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
   `,
   styleUrl: './asset-editor.scss',
 })
-export class AssetEditor {
+export class AssetEditor implements OnInit {
   readonly assetId = input.required<string>();
   readonly tabId = input.required<string>();
 

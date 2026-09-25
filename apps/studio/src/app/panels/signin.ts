@@ -18,6 +18,9 @@ import { LocaleService } from '../core/locale.service.ts';
       <h1>{{ locale.t('app.title') }}</h1>
 
       <label for="username">{{ locale.t('auth.username') }}</label>
+      <!-- A full-screen page whose only purpose is this form: focusing its first field is what the
+           user came for, and nothing precedes it that focus would skip. -->
+      <!-- eslint-disable @angular-eslint/template/no-autofocus -->
       <input
         id="username"
         name="username"
@@ -27,6 +30,7 @@ import { LocaleService } from '../core/locale.service.ts';
         [disabled]="auth.busy()"
         required
       />
+      <!-- eslint-enable @angular-eslint/template/no-autofocus -->
 
       <label for="password">{{ locale.t('auth.password') }}</label>
       <input
