@@ -182,6 +182,9 @@ if (seedUser && seedPassword) {
           'ingest:admin',
           // EP-19.4: the audit log's retention policy, so the smoke suite can set and read it.
           'compliance:admin',
+          // EP-16.6: the channel's transcode profile registry. Channel-scoped, so the smoke suite
+          // can write a channel profile and is refused a platform-wide one.
+          'config:admin',
         ],
         scope: { channelIds: [channelId] },
       },

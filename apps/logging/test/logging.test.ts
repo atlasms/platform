@@ -11,6 +11,8 @@ import {
   INTERNAL_HEADERS,
   ingest,
   requiredPermission,
+  requiredRule,
+  visible,
   sqliteAuditStore,
 } from '../src/index.ts';
 
@@ -271,6 +273,42 @@ test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENT
     requiredPermission({ ...base, type: 'audit.recorded', payload: null }),
     'audit:read',
   );
+  // The file set (EP-16.6 found them readable by nobody): MTS's jobs and events and MAM's file
+  // rows read under asset:read on `files` — the grant their own services enforce.
+  for (const entry of [
+    { ...base, type: 'transcode.completed' },
+    { ...base, type: 'audit.recorded', payload: { entityType: 'transcode-job' } },
+    { ...base, type: 'audit.recorded', payload: { entityType: 'file' } },
+  ]) {
+    assert.deepEqual(requiredRule(entry), { permission: 'asset:read', fieldGroup: 'files' });
+  }
+  // A transcode profile's history: whoever administers the registry.
+  assert.deepEqual(
+    requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'transcode-profile' } }),
+    { permission: 'config:admin' },
+  );
+});
+
+test('the file set is visible to a files reader and hidden from a core-only one', () => {
+  const entry = {
+    messageId: ulid(),
+    channelId: 'ch12',
+    type: 'audit.recorded',
+    actor: { kind: 'service', id: 'mts' },
+    occurredAt: 'now',
+    seq: 1,
+    prevHash: '',
+    hash: '',
+    payload: { entityType: 'transcode-job' },
+  } as Parameters<typeof visible>[2];
+  const withGroups = (groups: string[]) =>
+    compile({
+      subjectId: 'u',
+      permVersion: 1,
+      rules: [{ id: 'r', permissions: ['logs:read', 'asset:read'], fieldGroups: groups }],
+    });
+  assert.equal(visible(withGroups(['files']), 'ch12', entry), true);
+  assert.equal(visible(withGroups(['core']), 'ch12', entry), false);
 });
 
 test('logs: permission-FILTERED — some entries visible to some users, all retained', async () => {

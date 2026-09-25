@@ -11,6 +11,7 @@ import {
   type PgPool,
 } from '@atlas/data-pg';
 import type { TranscodeJob } from './job.ts';
+import type { TranscodeProfile } from './profile.ts';
 import type { JobStore, JobTx } from './store.ts';
 
 export const pgMigrations: Migration[] = [
@@ -38,6 +39,19 @@ export const pgMigrations: Migration[] = [
          -- A channel's jobs, and one asset's.
          CREATE INDEX IF NOT EXISTS transcode_jobs_channel_idx ON transcode_jobs (channel_id, id);
          CREATE INDEX IF NOT EXISTS transcode_jobs_asset_idx ON transcode_jobs (asset_id, id)`,
+  },
+  {
+    // EP-16.6: the transcode profile registry. `scope` is the channel id, or '' for a
+    // platform-wide profile — the same id may exist in both, so the scope is part of the key.
+    id: 'mts_profiles',
+    up: `CREATE TABLE IF NOT EXISTS transcode_profiles (
+           scope      text NOT NULL,
+           id         text NOT NULL,
+           channel_id text,
+           version    integer NOT NULL,
+           data       jsonb NOT NULL,
+           PRIMARY KEY (scope, id)
+         )`,
   },
 ];
 
@@ -93,6 +107,28 @@ export function pgJobStore(pool: PgPool): JobStore {
           async markSeen(messageId) {
             return seen.mark(client, messageId);
           },
+          async putProfile(profile, ifVersion) {
+            const scope = profile.channelId ?? '';
+            if (ifVersion !== undefined) {
+              const result = await client.query(
+                'UPDATE transcode_profiles SET version = $1, data = $2 WHERE scope = $3 AND id = $4 AND version = $5',
+                [profile.version, JSON.stringify(profile), scope, profile.id, ifVersion],
+              );
+              return result.rowCount === 1;
+            }
+            const result = await client.query(
+              `INSERT INTO transcode_profiles (scope, id, channel_id, version, data) VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (scope, id) DO NOTHING`,
+              [
+                scope,
+                profile.id,
+                profile.channelId ?? null,
+                profile.version,
+                JSON.stringify(profile),
+              ],
+            );
+            return result.rowCount === 1;
+          },
         };
         return fn(tx);
       });
@@ -142,6 +178,20 @@ export function pgJobStore(pool: PgPool): JobStore {
       const { rows } = await pool.query<{ data: TranscodeJob }>(
         `SELECT data FROM transcode_jobs WHERE state = 'running' AND updated_at < $1 ORDER BY id`,
         [before],
+      );
+      return rows.map((r) => r.data);
+    },
+    async profile(id, channelId) {
+      const { rows } = await pool.query<{ data: TranscodeProfile }>(
+        'SELECT data FROM transcode_profiles WHERE scope = $1 AND id = $2',
+        [channelId ?? '', id],
+      );
+      return rows[0]?.data;
+    },
+    async profiles(channelId) {
+      const { rows } = await pool.query<{ data: TranscodeProfile }>(
+        `SELECT data FROM transcode_profiles WHERE scope = $1 OR scope = '' ORDER BY id, scope DESC`,
+        [channelId],
       );
       return rows.map((r) => r.data);
     },

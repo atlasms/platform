@@ -11,6 +11,7 @@
 
 import type { OutboxRecord } from '@atlas/messaging';
 import type { JobState, TranscodeJob } from './job.ts';
+import type { TranscodeProfile } from './profile.ts';
 
 export interface JobQuery {
   channelId?: string;
@@ -45,6 +46,15 @@ export interface JobStore {
    */
   stale(before: string): Promise<TranscodeJob[]>;
 
+  /**
+   * One profile, in exactly one scope: a channel's (`channelId`), or the platform-wide one
+   * (`null`). The same id may exist in both — the channel's redefines the platform's for that
+   * channel — so the scope is part of the key, never inferred.
+   */
+  profile(id: string, channelId: string | null): Promise<TranscodeProfile | undefined>;
+  /** A channel's profiles AND the platform-wide ones, enabled or not — what an admin page lists. */
+  profiles(channelId: string): Promise<TranscodeProfile[]>;
+
   close(): Promise<void>;
 }
 
@@ -63,4 +73,11 @@ export interface JobTx {
    * consumed and nothing must be done. The claim commits with the effect or rolls back with it.
    */
   markSeen(messageId: string): Promise<boolean>;
+  /**
+   * Write a profile. With `ifVersion`, only when the stored row is still at that version — the
+   * compare-and-set a PUT carries, so a stale write is refused instead of silently replacing
+   * another administrator's change; returns whether it wrote. Without, an insert that returns
+   * false when the (scope, id) already exists.
+   */
+  putProfile(profile: TranscodeProfile, ifVersion?: number): Promise<boolean>;
 }

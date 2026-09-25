@@ -35,6 +35,46 @@ export interface Job {
   version: number;
 }
 
+/** A transcode profile as an administrator writes it. Structured, never raw FFmpeg arguments — every value is an enum or a bounded number (the grammar in apps/mts/src/profile.ts), and a combination FFmpeg would refuse is a 422 naming the rule. At least one of `video` / `audio`. */
+export interface ProfileInput {
+  id: string;
+  /** Omit for the caller's channel; null for platform-wide (unscoped config:admin). */
+  channelId?: string | null;
+  name: string;
+  description?: string;
+  kind: 'proxy' | 'broadcast' | 'thumbnail';
+  container: 'mp4' | 'mov' | 'mxf' | 'm4a' | 'jpg';
+  video?: {
+    codec: 'h264' | 'mpeg2' | 'prores';
+    width: number;
+    height: number;
+    fit?: 'pad' | 'fit';
+    frameRate?: '23.976' | '24' | '25' | '29.97' | '30' | '50' | '59.94' | '60';
+    scan?: 'progressive' | 'tff' | 'bff';
+    chroma?: '420' | '422';
+    bitrateMbps?: number;
+    quality?: number;
+    gpu?: 'none' | 'nvenc' | 'qsv';
+  };
+  audio?: {
+    codec: 'aac' | 'pcm_s16le' | 'pcm_s24le';
+    sampleRate?: number;
+    channels?: number;
+    bitrateKbps?: number;
+  };
+  /** false hides it from new jobs; profiles are disabled, never deleted. */
+  enabled: boolean;
+}
+
+export type ProfileReplace = ProfileInput & { version: number };
+
+export type Profile = ProfileInput & {
+  version: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export interface RenditionResult {
   presetId: string;
   /** A RenditionKind (common.schema.json) — defined once there, not repeated here. */
@@ -44,6 +84,10 @@ export interface RenditionResult {
   sizeBytes: number;
   /** Absent for a still. */
   durationSec?: number;
+  /** The FFmpeg encoder that produced it, e.g. libx264 or h264_nvenc. */
+  encoder?: string;
+  /** The profile asked for a GPU this node could not use; the CPU encoded it. */
+  fallback?: boolean;
 }
 
 /** RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept: `code` is the machine key (a closed enum — VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, UNAVAILABLE, INTERNAL), `message` the text. The RFC members are derived from them: `type` is https://atlas.example/problems/<code>, `title` is constant per code, `detail` equals `message`, `instance` is urn:atlas:correlation:<correlationId>. */

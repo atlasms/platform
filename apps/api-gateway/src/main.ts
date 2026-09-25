@@ -99,6 +99,8 @@ const routes: RoutingTable = [
   // MTS (EP-16.1): enqueue a transcode and poll it. Normally a broker command from BMS/RIM; this
   // is the same enqueue for an operator, a tool and the smoke suite.
   { service: 'mts', origin: config.mtsOrigin, prefix: '/api/v1/jobs' },
+  // EP-16.6: the transcode profile registry (config:admin).
+  { service: 'mts', origin: config.mtsOrigin, prefix: '/api/v1/profiles' },
 ];
 
 // ⚠️ THIS is the production routing table — not `defaultRoutes` in routing.ts, which is the test

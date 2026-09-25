@@ -16,6 +16,7 @@
   "nullableChannelId": {
     "users": "NULL is a platform-wide account (an operator), the exception iam.md §13 records. A channel user has the channel the token is minted for.",
     "roles": "NULL is platform-wide: the starter roles (EP-10.7) ship that way for an operator to narrow; a channel admin's own roles carry the channel.",
-    "groups": "NULL is a platform group, which takes users from any channel; a channel group takes the channel's users only (IamAdmin.addMember)."
+    "groups": "NULL is a platform group, which takes users from any channel; a channel group takes the channel's users only (IamAdmin.addMember).",
+    "transcode_profiles": "NULL is a platform-wide profile (EP-16.6), which every channel resolves against unless it defines the same id; only an unscoped config:admin writes one. The primary key is (scope, id) with scope '' for platform-wide, so a channel's and the platform's profile of one id coexist."
   }
 }

@@ -45,3 +45,21 @@ export {
   type TranscodeSpec,
 } from './transcoder.ts';
 export { fakeTranscoder, type FakeTranscoder } from './transcoder-fake.ts';
+export {
+  AUDIO_CODECS,
+  CHROMAS,
+  CONTAINERS,
+  FITS,
+  FRAME_RATES,
+  GPUS,
+  PROFILE_KINDS,
+  SAMPLE_RATES,
+  SCANS,
+  VIDEO_CODECS,
+  compileProfile,
+  gpuEncoderFor,
+  profileErrors,
+  type CompiledProfile,
+  type ProfileInput,
+  type TranscodeProfile,
+} from './profile.ts';

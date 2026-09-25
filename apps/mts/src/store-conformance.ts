@@ -22,6 +22,7 @@ import {
 } from '@atlas/contracts';
 import { InMemoryBroker, OutboxRelay, type Message, type OutboxStore } from '@atlas/messaging';
 import { compile, type Rule } from '@atlas/policy';
+import type { ProfileInput } from './profile.ts';
 import { MtsService, type Caller } from './service.ts';
 import type { JobStore } from './store.ts';
 import { fakeTranscoder } from './transcoder-fake.ts';
@@ -452,6 +453,222 @@ export function jobStoreConformance(name: string, harness: JobStoreHarness): voi
       // …and reading needs asset:read, which that grant does not carry.
       await assert.rejects(service.get(librarian, job.id), { status: 403 });
       assert.equal((await service.get(reader, job.id)).id, job.id);
+    });
+  });
+
+  // --- the profile registry (EP-16.6) -----------------------------------------------------------
+
+  const as = (rules: Rule[], channelId = CH): Caller => ({
+    userId: 'admin-1',
+    channelId,
+    policy: compile({ subjectId: 'admin-1', permVersion: 1, rules }),
+  });
+  /** config:admin in ch12 only — a channel administrator. */
+  const channelAdmin = as([
+    {
+      id: 'c',
+      permissions: ['config:admin', 'asset:read', 'asset:write'],
+      scope: { channelIds: [CH] },
+    },
+  ]);
+  /** config:admin with no scope — a deployment administrator. */
+  const platformAdmin = as([
+    { id: 'p', permissions: ['config:admin', 'asset:read', 'asset:write'] },
+  ]);
+  const houseBroadcast = (over: Partial<ProfileInput> = {}): ProfileInput => ({
+    id: 'broadcast',
+    name: 'House broadcast 1080i25',
+    kind: 'broadcast',
+    container: 'mxf',
+    video: {
+      codec: 'mpeg2',
+      width: 1920,
+      height: 1080,
+      bitrateMbps: 50,
+      chroma: '422',
+      frameRate: '25',
+      scan: 'tff',
+    },
+    audio: { codec: 'pcm_s24le', sampleRate: 48000 },
+    enabled: true,
+    ...over,
+  });
+
+  test(`[${name}] PROFILES: a channel administrator writes its channel's registry; the platform's needs an unscoped grant; each write is audited`, async () => {
+    await withService(async ({ service, store, drain }) => {
+      const created = await service.createProfile(channelAdmin, houseBroadcast());
+      assert.equal(created.channelId, CH);
+      assert.equal(created.version, 1);
+      assert.equal((await store.profile('broadcast', CH))?.name, 'House broadcast 1080i25');
+      const audit = (await drain()).find((e) => e.type === 'audit.recorded')!;
+      const payload = audit.payload as unknown as EventPayloads['audit.recorded'];
+      assert.equal(payload.entityType, 'transcode-profile');
+      assert.equal(payload.entityId, 'broadcast');
+      assert.equal(payload.action, 'transcode-profile.created');
+
+      // The same (scope, id) twice is a conflict, not an overwrite.
+      await assert.rejects(service.createProfile(channelAdmin, houseBroadcast()), { status: 409 });
+      // Platform-wide needs an UNSCOPED config:admin; a channel's grant cannot reach it.
+      await assert.rejects(
+        service.createProfile(channelAdmin, houseBroadcast({ channelId: null })),
+        { status: 403 },
+      );
+      const platform = await service.createProfile(
+        platformAdmin,
+        houseBroadcast({ channelId: null, name: 'Platform broadcast' }),
+      );
+      assert.equal(platform.channelId, undefined);
+      assert.equal((await store.profile('broadcast', null))?.name, 'Platform broadcast');
+      assert.equal(
+        ((await drain()).find((e) => e.type === 'audit.recorded')!.payload as { entityId: string })
+          .entityId,
+        'platform:broadcast',
+        'the scope is part of the identity',
+      );
+      // Another channel's registry is not a channel admin's to write.
+      await assert.rejects(
+        service.createProfile(channelAdmin, houseBroadcast({ id: 'x', channelId: 'ch99' })),
+        { status: 403 },
+      );
+      // A combination FFmpeg would refuse is a 422 naming the rule, and nothing is written.
+      await assert.rejects(
+        service.createProfile(channelAdmin, houseBroadcast({ id: 'bad', container: 'mp4' })),
+        /mp4 carries h264/,
+      );
+      assert.equal(await store.profile('bad', CH), undefined);
+      // Without config grants: neither read nor write.
+      await assert.rejects(service.listProfiles(caller), { status: 403 });
+      await assert.rejects(service.createProfile(caller, houseBroadcast({ id: 'y' })), {
+        status: 403,
+      });
+      // A reader with config:read sees the channel's and the platform's.
+      const reader = as([{ id: 'r', permissions: ['config:read'], scope: { channelIds: [CH] } }]);
+      const listed = await service.listProfiles(reader);
+      assert.deepEqual(listed.map((p) => `${p.channelId ?? 'platform'}/${p.id}`).sort(), [
+        'ch12/broadcast',
+        'platform/broadcast',
+      ]);
+      assert.deepEqual(
+        await service
+          .listProfiles(as([{ id: 'r', permissions: ['config:read'] }], 'ch99'))
+          .then((l) => l.map((p) => p.channelId ?? 'platform')),
+        ['platform'],
+      );
+    });
+  });
+
+  test(`[${name}] PROFILES: a replace is a compare-and-set on version — a stale write is 409, not a silent overwrite`, async () => {
+    await withService(async ({ service, store }) => {
+      await service.createProfile(channelAdmin, houseBroadcast());
+      const replaced = await service.replaceProfile(channelAdmin, 'broadcast', {
+        ...houseBroadcast({ name: 'House broadcast v2' }),
+        version: 1,
+      });
+      assert.equal(replaced.version, 2);
+      assert.equal(replaced.createdBy, 'admin-1');
+      // Another administrator still holding version 1.
+      await assert.rejects(
+        service.replaceProfile(channelAdmin, 'broadcast', {
+          ...houseBroadcast({ name: 'Stale' }),
+          version: 1,
+        }),
+        { status: 409 },
+      );
+      assert.equal((await store.profile('broadcast', CH))?.name, 'House broadcast v2');
+      await assert.rejects(
+        service.replaceProfile(channelAdmin, 'broadcast', {
+          ...houseBroadcast({ id: 'other' }),
+          version: 2,
+        }),
+        /must match the path/,
+      );
+      await assert.rejects(
+        service.replaceProfile(channelAdmin, 'nope', {
+          ...houseBroadcast({ id: 'nope' }),
+          version: 1,
+        }),
+        { status: 404 },
+      );
+    });
+  });
+
+  test(`[${name}] RESOLUTION: the channel's profile, then the platform's, then the built-in — and a disabled one is skipped`, async () => {
+    await withService(async ({ service }) => {
+      const b = () => service.resolvePreset(CH, 'broadcast');
+      assert.equal((await b())?.args.includes('fps=25'), false, 'the built-in: no conform');
+
+      await service.createProfile(
+        platformAdmin,
+        houseBroadcast({
+          channelId: null,
+          video: { codec: 'mpeg2', width: 1920, height: 1080, bitrateMbps: 50, frameRate: '29.97' },
+        }),
+      );
+      assert.match((await b())!.args.join(' '), /fps=30000\/1001/, 'the platform redefines it');
+
+      await service.createProfile(channelAdmin, houseBroadcast());
+      assert.match(
+        (await b())!.args.join(' '),
+        /fps=25,setfield=tff/,
+        'the channel redefines it again',
+      );
+      // Another channel still sees the platform's.
+      assert.match((await service.resolvePreset('ch99', 'broadcast'))!.args.join(' '), /fps=30000/);
+
+      // Disabling the channel's override puts the channel back on the platform's — "retire my override".
+      await service.replaceProfile(channelAdmin, 'broadcast', {
+        ...houseBroadcast({ enabled: false }),
+        version: 1,
+      });
+      assert.match((await b())!.args.join(' '), /fps=30000/);
+    });
+  });
+
+  test(`[${name}] RESOLUTION at enqueue and at run: a custom profile is a preset id; disabled, it is unknown; a GPU it cannot have falls back and says so`, async () => {
+    await withService(async ({ service, store, input, drain }) => {
+      await service.createProfile(channelAdmin, {
+        id: 'fast-proxy',
+        name: 'Fast proxy',
+        kind: 'proxy',
+        container: 'mp4',
+        video: { codec: 'h264', width: 640, height: 360, quality: 28, gpu: 'nvenc' },
+        audio: { codec: 'aac', bitrateKbps: 96 },
+        enabled: true,
+      });
+      const path = await input('clip.mxf');
+      const job = await service.enqueue(caller, {
+        assetId: ulid(),
+        presetIds: ['fast-proxy'],
+        inputPath: path,
+      });
+      await drain();
+      assert.equal(await service.runNext(), 'completed');
+      const done = (await store.job(job.id))!;
+      const r = done.renditions![0]!;
+      assert.equal(r.presetId, 'fast-proxy');
+      assert.equal(r.kind, 'proxy');
+      assert.equal(r.encoder, 'libx264', 'no GPU on this node');
+      assert.equal(r.fallback, true, 'and the rendition says so');
+      // The wire rendition is the closed common schema: what only MTS knows stays on the job.
+      const completed = (await drain()).find((e) => e.type === 'transcode.completed')!;
+      assert.ok(validatePayload('transcode.completed', completed.payload).valid);
+      assert.ok(!('encoder' in (completed.payload as { renditions: object[] }).renditions[0]!));
+
+      // Disabled, a custom id with nothing beneath it is unknown to a new job.
+      await service.replaceProfile(channelAdmin, 'fast-proxy', {
+        id: 'fast-proxy',
+        name: 'Fast proxy',
+        kind: 'proxy',
+        container: 'mp4',
+        video: { codec: 'h264', width: 640, height: 360, quality: 28, gpu: 'nvenc' },
+        audio: { codec: 'aac', bitrateKbps: 96 },
+        enabled: false,
+        version: 1,
+      });
+      await assert.rejects(
+        service.enqueue(caller, { assetId: ulid(), presetIds: ['fast-proxy'], inputPath: path }),
+        /unknown preset\(s\): fast-proxy/,
+      );
     });
   });
 

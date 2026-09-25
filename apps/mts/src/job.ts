@@ -28,6 +28,10 @@ export interface RenditionResult extends Rendition {
   checksum: Checksum;
   sizeBytes: number;
   durationSec?: number;
+  /** The FFmpeg encoder that produced it (EP-16.6), e.g. `libx264`, `h264_nvenc`. */
+  encoder?: string;
+  /** The profile asked for a GPU this node could not use, and the CPU encoded it. */
+  fallback?: boolean;
 }
 
 export interface TranscodeJob {
@@ -88,5 +92,8 @@ export function canTransition(from: JobState, to: JobState): boolean {
 
 /** A job's renditions as the `transcode.completed` payload carries them (no `presetId` there). */
 export function renditionsFor(job: TranscodeJob): Rendition[] {
-  return (job.renditions ?? []).map(({ presetId: _presetId, ...rendition }) => rendition);
+  // `Rendition` is closed (additionalProperties: false): what only MTS knows stays on the job.
+  return (job.renditions ?? []).map(
+    ({ presetId: _presetId, encoder: _encoder, fallback: _fallback, ...rendition }) => rendition,
+  );
 }

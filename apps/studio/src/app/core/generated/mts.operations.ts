@@ -15,10 +15,14 @@ export const MtsOperations = {
   enqueueJob: { method: 'POST', path: '/api/v1/jobs', params: [] },
   /** Job status, progress and — once completed — its renditions. Another channel's job is 404. */
   getJob: { method: 'GET', path: '/api/v1/jobs/{id}', params: ['id'] },
-  /** List transcode profiles */
+  /** The profiles the caller's channel resolves against — its own and the platform-wide ones (config:read) */
   listProfiles: { method: 'GET', path: '/api/v1/profiles', params: [] },
-  /** Create a transcode profile per channel/type */
+  /** Create a profile; the same id as a built-in preset redefines it for the channel (config:admin) */
   createProfile: { method: 'POST', path: '/api/v1/profiles', params: [] },
+  /** One profile (config:read) */
+  getProfile: { method: 'GET', path: '/api/v1/profiles/{id}', params: ['id'] },
+  /** Replace a profile; `version` must be the current one, or 409 (config:admin) */
+  replaceProfile: { method: 'PUT', path: '/api/v1/profiles/{id}', params: ['id'] },
   /** Current worker topology (for dashboards) */
   getWorkers: { method: 'GET', path: '/api/v1/workers', params: [] },
 } as const;
