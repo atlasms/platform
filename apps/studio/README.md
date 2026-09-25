@@ -430,6 +430,22 @@ Two rules that follow from the palette inverting between themes:
   danger is dark and the dark palette's is bright, so one hard-coded foreground fails WCAG in one of
   the two. Status buttons are outlined in `currentColor`.
 
+## Folder watchers in the Ingest panel (EP-15.2)
+
+The Ingest panel has two views when the session holds `ingest:admin`: the **Queue** and the
+**Watchers** — the channel's folder watchers, each opening as an editor tab
+([`watcher-editor.ts`](src/app/editors/watcher-editor.ts), deferred like every editor). The form
+sends the whole watcher, as RIM replaces it; RIM's 422 is placed under the field it names and its
+409 — a folder another enabled watcher has — above the form, by the same
+[`core/problems.ts`](src/app/core/problems.ts) the transcode-profile form uses. The page says what
+the settings MEAN (when a file counts as settled, what happens to it after), because `delete`
+acts on another team's folder. There is no delete: a watcher is disabled, since its jobs name it.
+
+The panel holds the watcher list because the queue needs it too: a watched job's `source` is its
+watcher's id, and the row now says the watcher's NAME (the id stays on the cell's title). Without
+`ingest:admin` the list cannot be read, so the row says "Folder watcher". The panel's three
+hard-coded English errors are locale keys now.
+
 ## Lint: Angular's rules, templates included
 
 Studio is linted by the root [`eslint.config.mjs`](../../eslint.config.mjs) (`npm run lint -w

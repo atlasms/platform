@@ -74,6 +74,17 @@
       "rejected": "Rejected",
       "accepted": "Accepted",
       "registered": "Registered"
+    },
+    "loadError": "Could not load the ingest queue.",
+    "acceptError": "Could not accept the job.",
+    "rejectError": "Could not reject the job.",
+    "view": {
+      "queue": "Queue",
+      "watchers": "Watchers"
+    },
+    "source": {
+      "upload": "Web upload",
+      "watch": "Folder watcher"
     }
   },
   "dashboard": {
@@ -394,5 +405,29 @@
     "mtsDefault": "MTS default",
     "channels": "Channels",
     "bitrateKbps": "Bit rate (kb/s)"
+  },
+  "watchers": {
+    "new": "New watcher",
+    "none": "No folder watchers. Files reach this channel by upload only.",
+    "loadError": "Could not load the watchers.",
+    "name": "Name",
+    "path": "Folder",
+    "pathHint": "Relative to this channel's directory of the watch share — a watcher never reaches another channel's drops.",
+    "settleSeconds": "Settle time (seconds)",
+    "settleHint": "A file is taken once its size and time have not changed for this long, so a copy still in progress is left alone.",
+    "extensions": "Extensions",
+    "extensionsHint": "Only these, comma-separated. Empty is every file. Hidden and partial-transfer files are always ignored.",
+    "afterPickup": "After pickup",
+    "after": {
+      "delete": "Remove the file",
+      "keep": "Leave the file"
+    },
+    "afterHint": {
+      "delete": "Removed from the folder once its ingest job is recorded — never before.",
+      "keep": "Left in the folder. The same bytes are never taken twice; a changed file is taken again."
+    },
+    "enabled": "Enabled",
+    "enabledWhy": "Watchers are disabled, never deleted: the jobs they made name them as their source.",
+    "disabled": "disabled"
   }
 }

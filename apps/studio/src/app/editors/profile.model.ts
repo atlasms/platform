@@ -1,4 +1,5 @@
 import type { Profile, ProfileInput } from '../core/generated/mts.types.ts';
+import { placeProblems, type Problems } from '../core/problems.ts';
 
 /**
  * The transcode profile form's model (EP-16.6), pure so it is tested without a DOM.
@@ -252,32 +253,11 @@ export function toInput(id: string, d: ProfileDraft): ProfileInput {
   };
 }
 
-/** MTS's 422, placed: the messages about one field under it, the rest above the form. */
-export interface Problems {
-  readonly fields: Readonly<Record<string, readonly string[]>>;
-  readonly general: readonly string[];
-}
+export { NO_PROBLEMS, type Problems } from '../core/problems.ts';
 
-export const NO_PROBLEMS: Problems = { fields: {}, general: [] };
+const TOP_LEVEL = new Set(['id', 'name', 'kind', 'container', 'enabled']);
 
-/**
- * Split MTS's refusal into its rules and place each one.
- *
- * The service joins its reasons with `; ` and starts a rule about one field with that field's
- * path (`video.width must be…`, `name is required`). A rule about a COMBINATION (`mp4 carries
- * h264 video`) belongs to no single control and is shown above the form. Placement is a
- * convenience; the text is MTS's, unchanged — it is the authority.
- */
+/** MTS's refusal, placed: `video.*`/`audio.*` and the top-level fields; combinations above. */
 export function splitProblems(message: string): Problems {
-  const fields: Record<string, string[]> = {};
-  const general: string[] = [];
-  for (const rule of message
-    .split('; ')
-    .map((r) => r.trim())
-    .filter(Boolean)) {
-    const path = /^((?:video|audio)\.[a-zA-Z]+|id|name|kind|container|enabled)\b/.exec(rule)?.[1];
-    if (path) (fields[path] ??= []).push(rule);
-    else general.push(rule);
-  }
-  return { fields, general };
+  return placeProblems(message, (path) => TOP_LEVEL.has(path) || /^(video|audio)\./.test(path));
 }
