@@ -57,6 +57,10 @@ export function fakeTranscoder(options: { available?: boolean } = {}): FakeTrans
     async available() {
       return options.available ?? true;
     },
+    // No GPU, like CI and most laptops: a profile asking for one falls back to the CPU.
+    async encoderUsable(encoder) {
+      return !/nvenc|qsv/.test(encoder);
+    },
     async probeDuration(inputPath) {
       return inputPath.toLowerCase().includes('noduration') ? undefined : 12.5;
     },

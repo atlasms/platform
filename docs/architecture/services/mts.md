@@ -63,7 +63,8 @@ Deliberately thin — MTS is queue-driven, not user-facing:
 |--------|------|---------|-------|
 | `POST` | `/jobs` | Enqueue a transcode (normally from BMS/RIM, not users). | Service |
 | `GET` | `/jobs/{id}` | Job status/progress. | `asset:read` / service |
-| `GET/POST` | `/profiles` | Manage transcode profiles per channel/type. | `transcode:admin` |
+| `GET/POST` | `/profiles` | Manage transcode profiles per channel/type. | `config:admin` (read: `config:read`) |
+| `GET/PUT` | `/profiles/{id}` | Read or replace one profile; `enabled: false` retires it — never deleted. | `config:admin` |
 | `GET` | `/workers` | Current worker topology (for dashboards). | ops |
 
 ## 5. Messaging
@@ -150,6 +151,37 @@ graph rendered here server-side; output lands on the Import page as a new asset 
 Profiles per channel/media type (codec/resolution/bitrate/container); the default rendition set;
 GPU vs CPU selection + concurrency per worker; autoscale thresholds (queue depth, min/max
 workers); retry/backoff + max attempts; cloud-burst enable (connected only).
+
+### 11.1 The profile registry (EP-16.6) — decided
+
+Transcode profiles are a **Tier-1 registry**
+([configuration §2.2](../configuration-and-reference-data.md#22-tier-1--registries-the-important-middle)):
+the code owns the FFmpeg runner and a **parameter grammar**; an administrator owns the catalogue.
+
+- **Authority is `config:admin`**, scoped by level (configuration §8) — a channel administrator
+  writes that channel's profiles; only an unscoped grant writes a platform-wide one (no
+  `channelId`). Reading needs `config:read`. This replaces the `transcode:admin` this document
+  once named: that permission was in no catalogue and no role, and configuration §8 lists the
+  per-area grants that stay finer-grained — transcode is not among them.
+- **A profile is a STRUCTURED target, never raw FFmpeg arguments**: a `RenditionKind` (Tier 0 —
+  a write naming a kind the code does not declare fails), a container, a video target (codec,
+  frame size and fit, frame rate, scan, chroma, bit rate or quality, GPU encoder) and an audio
+  target. MTS compiles it to arguments from an allowlist. Raw arguments in an admin-editable field
+  would let a profile add an input (`-i /etc/…`), change the muxer or write a side file anywhere
+  the process can — an admin page is not a place to hand out a shell.
+- **Resolution** when a job names a preset id: the channel's profile of that id, then a
+  platform-wide one, then the built-in preset. So `broadcast` can be redefined per channel — a
+  house frame rate and 1080i — without the built-in changing for anyone else.
+- **Disabled, never deleted**: `enabled: false` hides a profile from new jobs; an enqueue naming
+  it is refused. A job resolves its presets when it RUNS, so an edited profile applies to jobs
+  still queued, as a re-run would.
+- **GPU with CPU fallback**: a profile may ask for an NVENC or QSV encoder. Whether the node can
+  actually use it is tested once per process with a one-frame encode (a build that LISTS
+  `h264_nvenc` on a node without the card is the common case); if not, the job encodes on the
+  CPU and says so in its rendition — mts.md §9's fallback, made visible.
+- Every write is audited (`entityType: transcode-profile`) in the transaction of the change.
+- **Scaling** past one replica still waits on shared storage (HSM, EP-14): the work area is
+  ReadWriteOnce. The lease already lets N workers share the queue.
 
 ## 12. Observability
 

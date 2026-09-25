@@ -63,6 +63,12 @@ export interface Transcoder {
    * a progress bar is still a transcode.
    */
   probeDuration(inputPath: string): Promise<number | undefined>;
+  /**
+   * Can this node actually encode with `encoder` (e.g. `h264_nvenc`)? Decided by a one-frame test
+   * encode, not by `-encoders`: a build that LISTS NVENC on a node without the card is the normal
+   * case, and it fails only when used. Cached per encoder for the life of the process.
+   */
+  encoderUsable(encoder: string): Promise<boolean>;
   /** Is the binary there — for readiness, so a deploy without FFmpeg is visible before a job is. */
   available(): Promise<boolean>;
 }
@@ -106,6 +112,7 @@ const REFUSAL_PATTERNS = [
 export function ffmpegTranscoder(options: FfmpegOptions = {}): Transcoder {
   const binary = options.binary ?? 'ffmpeg';
   const probeBinary = options.probeBinary ?? 'ffprobe';
+  const usable = new Map<string, Promise<boolean>>();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TRANSCODE_TIMEOUT_MS;
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
 
@@ -241,6 +248,38 @@ export function ffmpegTranscoder(options: FfmpegOptions = {}): Transcoder {
           resolve(code === 0 && Number.isFinite(seconds) && seconds > 0 ? seconds : undefined);
         });
       });
+    },
+
+    encoderUsable(encoder) {
+      let answer = usable.get(encoder);
+      if (!answer) {
+        answer = new Promise<boolean>((resolve) => {
+          const child = spawn(
+            binary,
+            [
+              '-nostdin',
+              '-loglevel',
+              'error',
+              '-f',
+              'lavfi',
+              '-i',
+              'color=size=256x144:rate=25:duration=0.04',
+              '-frames:v',
+              '1',
+              '-c:v',
+              encoder,
+              '-f',
+              'null',
+              '-',
+            ],
+            { stdio: 'ignore' },
+          );
+          child.on('error', () => resolve(false));
+          child.on('close', (code) => resolve(code === 0));
+        });
+        usable.set(encoder, answer);
+      }
+      return answer;
     },
 
     async available() {

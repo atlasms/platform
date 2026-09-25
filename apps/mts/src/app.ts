@@ -10,6 +10,7 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { isUlid, ulid } from '@atlas/contracts';
 import type { EffectivePolicy } from '@atlas/policy';
+import type { ProfileInput } from './profile.ts';
 import type { MtsService } from './service.ts';
 import {
   accessRecord,
@@ -260,6 +261,42 @@ export async function buildMtsApp(options: MtsAppOptions): Promise<FastifyInstan
   app.get<{ Params: { id: string } }>('/api/v1/jobs/:id', async (req) =>
     options.service.get(await caller(req), req.params.id),
   );
+
+  // --- the profile registry (EP-16.6) -------------------------------------------------------------
+  //
+  // Validation of the SHAPE is the grammar's (`profileErrors`), run by the service; the routes only
+  // pass the body through and read `scope`. `version` rides in the PUT body — it is the CAS.
+  const scopeOf = (req: FastifyRequest): 'channel' | 'platform' => {
+    const scope = (req.query as Record<string, string | undefined>)['scope'];
+    if (scope === undefined || scope === 'channel') return 'channel';
+    if (scope === 'platform') return 'platform';
+    throw new ValidationError('scope must be channel or platform');
+  };
+
+  app.get('/api/v1/profiles', async (req) => options.service.listProfiles(await caller(req)));
+
+  app.post('/api/v1/profiles', async (req, reply) => {
+    const created = await options.service.createProfile(
+      await caller(req),
+      (req.body ?? {}) as ProfileInput,
+    );
+    return reply.code(201).send(created);
+  });
+
+  app.get<{ Params: { id: string } }>('/api/v1/profiles/:id', async (req) =>
+    options.service.getProfile(await caller(req), req.params.id, scopeOf(req)),
+  );
+
+  app.put<{ Params: { id: string } }>('/api/v1/profiles/:id', async (req) => {
+    const body = (req.body ?? {}) as ProfileInput & { version?: unknown };
+    if (typeof body.version !== 'number') throw new ValidationError('version is required');
+    return options.service.replaceProfile(
+      await caller(req),
+      req.params.id,
+      body as ProfileInput & { version: number },
+      scopeOf(req),
+    );
+  });
 
   /** A channel's jobs, optionally one asset's. */
   app.get<{ Querystring: Record<string, string | undefined> }>('/api/v1/jobs', async (req) => {

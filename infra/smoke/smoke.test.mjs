@@ -1301,6 +1301,108 @@ test('smoke: EP-16.4 — transcode progress arrives live on a real socket, from 
   }
 });
 
+test('smoke: EP-16.6 — a channel profile is a preset id: written, run on the real FFmpeg (GPU fallback), then retired', async () => {
+  // The registry on a real cluster: a channel administrator writes a STRUCTURED profile (no raw
+  // arguments exist to write), a job names it, the worker compiles and runs it, and — asked for
+  // NVENC on a node with no GPU — the rendition says the CPU made it. Then it is disabled, the
+  // registry's only way to retire an entry. A stable id, so repeated runs replace rather than pile up.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const profile = {
+    id: 'smoke-proxy',
+    name: 'Smoke proxy',
+    kind: 'proxy',
+    container: 'mp4',
+    video: { codec: 'h264', width: 640, height: 360, quality: 28, gpu: 'nvenc' },
+    audio: { codec: 'aac', bitrateKbps: 96 },
+    enabled: true,
+  };
+
+  // Create, or — on a cluster that has run this before — re-enable by replacing at the current version.
+  let res = await get('/api/v1/profiles', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(profile),
+  });
+  if (res.status === 409) {
+    const current = json(await get('/api/v1/profiles/smoke-proxy', { headers }));
+    res = await get('/api/v1/profiles/smoke-proxy', {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ ...profile, version: current.version }),
+    });
+  }
+  assert.ok([200, 201].includes(res.status), `profile write failed: ${res.status} ${res.text}`);
+
+  // What the grammar refuses never reaches FFmpeg: mp4 does not carry mpeg2.
+  const bad = await get('/api/v1/profiles', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      ...profile,
+      id: 'smoke-bad',
+      video: { ...profile.video, codec: 'mpeg2', gpu: 'none' },
+    }),
+  });
+  assert.equal(bad.status, 422, `expected the grammar's refusal: ${bad.text}`);
+  // A platform-wide profile needs an UNSCOPED config:admin; the seed account's is channel-scoped.
+  const platform = await get('/api/v1/profiles', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ ...profile, id: 'smoke-platform', channelId: null }),
+  });
+  assert.equal(platform.status, 403, `expected the scope refusal: ${platform.text}`);
+
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ title: 'Smoke profile', mediaType: 'video', fileType: 'mp4' }),
+  });
+  const assetId = json(created).id;
+  const enqueued = await get('/api/v1/jobs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId, presetIds: ['smoke-proxy'], inputPath: 'samples/smoke.mp4' }),
+  });
+  assert.equal(enqueued.status, 202, `enqueue failed: ${enqueued.text}`);
+  const jobId = json(enqueued).id;
+
+  const deadline = Date.now() + 60_000;
+  let job;
+  for (;;) {
+    job = json(await get(`/api/v1/jobs/${jobId}`, { headers }));
+    if (['completed', 'dead-letter'].includes(job.state) || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.equal(
+    job.state,
+    'completed',
+    `the profile's job did not complete: ${JSON.stringify(job)}`,
+  );
+  const rendition = job.renditions[0];
+  assert.equal(rendition.presetId, 'smoke-proxy');
+  assert.equal(rendition.kind, 'proxy');
+  // The kind cluster has no GPU: the one-frame test said so, and the CPU encoded it.
+  assert.equal(rendition.encoder, 'libx264');
+  assert.equal(rendition.fallback, true);
+
+  // Retired, never deleted: disabled, a custom id with nothing beneath it is unknown to a new job.
+  const current = json(await get('/api/v1/profiles/smoke-proxy', { headers }));
+  const disabled = await get('/api/v1/profiles/smoke-proxy', {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ ...profile, enabled: false, version: current.version }),
+  });
+  assert.equal(disabled.status, 200, `disable failed: ${disabled.text}`);
+  const refused = await get('/api/v1/jobs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId, presetIds: ['smoke-proxy'], inputPath: 'samples/smoke.mp4' }),
+  });
+  assert.equal(refused.status, 422, `a disabled profile should be unknown: ${refused.text}`);
+});
+
 test('smoke: the state-counts aggregate answers, and is not read as an asset id', async () => {
   // Two things no unit test covers. The gateway routes `/api/v1/assets` by PREFIX, so this reaches
   // MAM only if that still holds for a deeper path; and `/assets/counts` must resolve to the static

@@ -181,3 +181,13 @@ kubectl -n atlas logs deployment/logging -f
 
 Metrics: `atlas_audit_events_appended_total`, `_duplicate_total`, `_refused_total` — by service
 only, never by subject (a subject carries the channel id).
+
+## Who reads the file set's history (EP-16.6)
+
+An entity's history and its browse entries are read under `<type>:read` by default. Three entity
+types had no such permission anywhere — `transcode`, `transcode-job` (MTS) and `file` (MAM's FileRef
+rows) — so their history was readable by nobody. They read under **`asset:read` on the `files`
+group**, the grant MTS and MAM enforce for the same data and the websocket service applies to the
+same subjects (`entityRule` in `visibility.ts`, which now carries a field group into the strict
+check). A transcode profile's history reads under `config:admin`: a registry's audience is its
+administrators, the retention policy's rule.

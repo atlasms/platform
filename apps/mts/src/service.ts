@@ -29,9 +29,17 @@ import {
 } from '@atlas/contracts';
 import type { Message, OutboxRecord } from '@atlas/messaging';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
-import { Forbidden, NotFound, ValidationError } from '@atlas/service-kit';
+import { Conflict, Forbidden, NotFound, ValidationError } from '@atlas/service-kit';
 import { canTransition, renditionsFor, type RenditionResult, type TranscodeJob } from './job.ts';
-import { presetById, unknownPresets, type Preset } from './preset.ts';
+import { presetById, type Preset } from './preset.ts';
+import {
+  compileProfile,
+  gpuEncoderFor,
+  profileErrors,
+  type CompiledProfile,
+  type ProfileInput,
+  type TranscodeProfile,
+} from './profile.ts';
 import type { JobStore } from './store.ts';
 import { TranscodeRefusal, type Transcoder } from './transcoder.ts';
 
@@ -125,8 +133,8 @@ export class MtsService {
    */
   async enqueue(caller: Caller, input: EnqueueInput): Promise<TranscodeJob> {
     this.authorize(caller, 'asset:write');
-    const unknown = unknownPresets(input.presetIds);
     if (input.presetIds.length === 0) throw new ValidationError('presetIds must not be empty');
+    const unknown = await this.unresolvable(caller.channelId, input.presetIds);
     if (unknown.length > 0) throw new ValidationError(`unknown preset(s): ${unknown.join(', ')}`);
     const inputPath = this.resolveInput(input.inputPath);
     await this.requireInput(inputPath, input.inputPath);
@@ -170,7 +178,7 @@ export class MtsService {
     if (inputPath === undefined) {
       throw new ValidationError(`message ${msg.id}: inputPath is required until HSM resolves one`);
     }
-    const unknown = unknownPresets(presetIds);
+    const unknown = await this.unresolvable(envelope.channelId, presetIds);
     if (unknown.length > 0) throw new ValidationError(`unknown preset(s): ${unknown.join(', ')}`);
     const resolved = this.resolveInput(inputPath);
 
@@ -298,10 +306,10 @@ export class MtsService {
       .catch(() => undefined);
     try {
       for (const presetId of job.presetIds) {
-        // Checked again here rather than trusted from the enqueue: a preset can be removed
-        // between the command and the run, and a job holding an id nothing implements should say
-        // so rather than throw a TypeError deep in the loop.
-        const preset = presetById(presetId);
+        // Resolved again at RUN time, not trusted from the enqueue: a profile can be edited or
+        // disabled between the two, and the job uses the channel's CURRENT definition — as a
+        // re-run would. One that no longer resolves is a refusal, not a TypeError in the loop.
+        const preset = await this.resolvePreset(job.channelId, presetId);
         if (!preset) throw new TranscodeRefusal(`unknown preset ${presetId}`);
         renditions.push(await this.produce(job, preset, durationSec, signal));
       }
@@ -344,7 +352,7 @@ export class MtsService {
   /** One preset: run the encoder, then checksum what it wrote. */
   private async produce(
     job: TranscodeJob,
-    preset: Preset,
+    preset: Preset | CompiledProfile,
     durationSec: number | undefined,
     signal?: AbortSignal,
   ): Promise<RenditionResult> {
@@ -378,6 +386,9 @@ export class MtsService {
       path: outputPath,
       checksum: { algorithm: 'sha256', value: await sha256(outputPath) },
       sizeBytes: output.sizeBytes,
+      // Which encoder made it, and whether a GPU the profile asked for was unusable here.
+      ...('encoder' in preset && preset.encoder !== undefined ? { encoder: preset.encoder } : {}),
+      ...('fallback' in preset && preset.fallback ? { fallback: true } : {}),
       // A still has no duration, and reporting 0 for one would put a zero-length clip in MAM.
       ...(!preset.still && output.durationSec !== undefined
         ? { durationSec: output.durationSec }
@@ -388,8 +399,8 @@ export class MtsService {
   /**
    * Best-effort progress: the percentage of THIS preset, scaled across the job's presets.
    *
-   * Written to the row, not emitted as an event. `transcode.progress` (EP-16.4) is a per-tick
-   * broadcast, and putting one through the outbox — which is a durable, ordered, audited log —
+   * Announced live (`announce`, EP-16.4) and written to the row for whoever polls. Never through
+   * the outbox — a durable, ordered, audited log —
    * would make a progress bar cost what a domain event costs. The row is what `GET /jobs/{id}`
    * reads, and it is enough for a progress bar to poll.
    *
@@ -587,6 +598,200 @@ export class MtsService {
    * the safe direction. Such a writer's transcodes arrive as broker commands from the service
    * that does know the asset (BMS/RIM), which is the normal path anyway.
    */
+  // --- the profile registry (EP-16.6; mts.md §11.1) -------------------------------------------------
+
+  /**
+   * What a preset id means for a channel: its own enabled profile of that id, else the
+   * platform-wide one, else the built-in. A DISABLED profile is skipped, not refused — disabling a
+   * channel's override of `broadcast` puts the channel back on the default, which is what
+   * "retire my override" means; a disabled custom id with nothing beneath it is unknown.
+   *
+   * A GPU the profile asks for is tested on this node (a one-frame encode, cached) before the
+   * profile is compiled; an unusable one compiles to the CPU encoder and the rendition says so.
+   */
+  async resolvePreset(
+    channelId: string,
+    id: string,
+  ): Promise<Preset | CompiledProfile | undefined> {
+    for (const scope of [channelId, null]) {
+      const profile = await this.options.store.profile(id, scope);
+      if (!profile?.enabled) continue;
+      const encoder = gpuEncoderFor(profile);
+      const usable = encoder ? await this.options.transcoder.encoderUsable(encoder) : false;
+      return compileProfile(profile, usable);
+    }
+    return presetById(id);
+  }
+
+  private async unresolvable(channelId: string, ids: readonly string[]): Promise<string[]> {
+    const missing: string[] = [];
+    for (const id of ids) if (!(await this.resolvePreset(channelId, id))) missing.push(id);
+    return missing;
+  }
+
+  /** The channel's profiles and the platform-wide ones — what the channel resolves against. */
+  async listProfiles(caller: Caller): Promise<TranscodeProfile[]> {
+    this.authorizeConfig(caller, 'read', caller.channelId);
+    return this.options.store.profiles(caller.channelId);
+  }
+
+  async getProfile(
+    caller: Caller,
+    id: string,
+    scope: 'channel' | 'platform' = 'channel',
+  ): Promise<TranscodeProfile> {
+    const channelId = scope === 'platform' ? null : caller.channelId;
+    // Read with the CALLER's channel as the context even for a platform-wide one: every channel
+    // resolves against it, so a channel's reader may see it — writing it is what needs more.
+    this.authorizeConfig(caller, 'read', caller.channelId);
+    const profile = await this.options.store.profile(id, channelId);
+    if (!profile) throw new NotFound(`no ${scope} profile ${id}`);
+    return profile;
+  }
+
+  /**
+   * Create a profile. `channelId: null` is platform-wide, and needs an UNSCOPED `config:admin`
+   * (a strict check with no channel cannot be met by a channel-scoped rule); anything else is the
+   * caller's channel — a channel administrator cannot write another channel's registry.
+   */
+  async createProfile(caller: Caller, input: ProfileInput): Promise<TranscodeProfile> {
+    const channelId = this.profileScope(caller, input.channelId);
+    this.authorizeConfig(caller, 'admin', channelId);
+    const errors = profileErrors(input);
+    if (errors.length > 0) throw new ValidationError(errors.join('; '));
+
+    const at = this.now().toISOString();
+    const profile = this.profileRecord(input, channelId, {
+      version: 1,
+      createdBy: caller.userId,
+      createdAt: at,
+      updatedAt: at,
+    });
+    const created = await this.options.store.transaction(async (tx) => {
+      if (!(await tx.putProfile(profile))) return false;
+      await tx.enqueue(this.profileAudit(caller, undefined, profile, 'transcode-profile.created'));
+      return true;
+    });
+    if (!created) {
+      throw new Conflict(
+        `profile ${input.id} already exists ${channelId ? 'in this channel' : 'platform-wide'} — replace it instead`,
+      );
+    }
+    return profile;
+  }
+
+  /**
+   * Replace a profile, compare-and-set on `version`: a stale write is 409, never a silent
+   * overwrite of another administrator's change. There is no delete — `enabled: false`.
+   */
+  async replaceProfile(
+    caller: Caller,
+    id: string,
+    input: ProfileInput & { version: number },
+    scope: 'channel' | 'platform' = 'channel',
+  ): Promise<TranscodeProfile> {
+    const channelId = scope === 'platform' ? undefined : caller.channelId;
+    this.authorizeConfig(caller, 'admin', channelId);
+    const before = await this.options.store.profile(id, channelId ?? null);
+    if (!before) throw new NotFound(`no ${scope} profile ${id}`);
+    if (input.id !== id) throw new ValidationError('the id in the body must match the path');
+    const errors = profileErrors(input);
+    if (errors.length > 0) throw new ValidationError(errors.join('; '));
+
+    const after = this.profileRecord(input, channelId, {
+      version: before.version + 1,
+      createdBy: before.createdBy,
+      createdAt: before.createdAt,
+      updatedAt: this.now().toISOString(),
+    });
+    const replaced = await this.options.store.transaction(async (tx) => {
+      if (!(await tx.putProfile(after, input.version))) return false;
+      await tx.enqueue(this.profileAudit(caller, before, after, 'transcode-profile.replaced'));
+      return true;
+    });
+    if (!replaced) {
+      throw new Conflict(
+        `profile ${id} is at version ${before.version}, not ${input.version} — re-read it and apply the change again`,
+      );
+    }
+    return after;
+  }
+
+  /** `null` is platform-wide; absent is the caller's channel; another channel is refused. */
+  private profileScope(caller: Caller, requested: string | null | undefined): string | undefined {
+    if (requested === null) return undefined;
+    if (requested === undefined || requested === caller.channelId) return caller.channelId;
+    throw new Forbidden('a profile belongs to your channel, or (unscoped) to the platform');
+  }
+
+  private profileRecord(
+    input: ProfileInput,
+    channelId: string | undefined,
+    meta: Pick<TranscodeProfile, 'version' | 'createdBy' | 'createdAt' | 'updatedAt'>,
+  ): TranscodeProfile {
+    // Field by field from the grammar, not a spread of the body: a key the grammar does not know
+    // is not stored, so nothing an admin page sends can ride into the registry unvalidated.
+    return {
+      id: input.id,
+      ...(channelId !== undefined ? { channelId } : {}),
+      name: input.name.trim(),
+      ...(input.description !== undefined ? { description: input.description } : {}),
+      kind: input.kind,
+      container: input.container,
+      ...(input.video !== undefined ? { video: { ...input.video } } : {}),
+      ...(input.audio !== undefined ? { audio: { ...input.audio } } : {}),
+      enabled: input.enabled,
+      ...meta,
+    };
+  }
+
+  /**
+   * `config:read` or `config:admin` to read (configuration §8: read is implied by the admin
+   * grant); `config:admin` to write — in `channelId`, or with none for a platform-wide profile,
+   * which only an unscoped grant satisfies (strict).
+   */
+  private authorizeConfig(
+    caller: Caller,
+    need: 'read' | 'admin',
+    channelId: string | undefined,
+  ): void {
+    if (!caller.policy) throw new Forbidden('no policy for the caller');
+    const context =
+      channelId !== undefined
+        ? { type: 'transcode-profile', channelId }
+        : { type: 'transcode-profile' };
+    const permissions = need === 'read' ? ['config:read', 'config:admin'] : ['config:admin'];
+    const allowed = permissions.some((perm) => canEnforce(caller.policy!, perm, context).allowed);
+    if (!allowed) {
+      throw new Forbidden(
+        need === 'admin' && channelId === undefined
+          ? 'an unscoped config:admin is required for a platform-wide profile'
+          : `config:${need} required`,
+      );
+    }
+  }
+
+  private profileAudit(
+    caller: Caller,
+    before: TranscodeProfile | undefined,
+    after: TranscodeProfile,
+    action: string,
+  ): OutboxRecord {
+    return this.record(caller, caller.channelId, 'audit.recorded', {
+      entityType: 'transcode-profile',
+      // The scope is part of the identity: a channel's `broadcast` and the platform's are two
+      // profiles with two histories.
+      entityId: after.channelId ? after.id : `platform:${after.id}`,
+      revision: after.version,
+      action,
+      origin: { service: 'mts' },
+      delta: delta(
+        before as unknown as Record<string, unknown> | undefined,
+        after as unknown as Record<string, unknown>,
+      ),
+    } satisfies EventPayloads['audit.recorded']);
+  }
+
   private authorize(caller: Caller, permission: 'asset:read' | 'asset:write'): void {
     if (!caller.policy) throw new Forbidden('no policy for the caller');
     const decision = canEnforce(caller.policy, permission, {

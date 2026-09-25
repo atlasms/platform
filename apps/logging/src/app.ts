@@ -19,7 +19,7 @@ import {
 } from './retention.ts';
 import { appendEnvelope } from './sink.ts';
 import type { AuditStore, LogBrowser, LogFilter, RetentionPolicy } from './store.ts';
-import { entityPermission, visible } from './visibility.ts';
+import { entityRule, visible } from './visibility.ts';
 import {
   accessRecord,
   Forbidden,
@@ -247,8 +247,17 @@ export async function buildLoggingApp(options: LoggingAppOptions): Promise<Fasti
       if (!policy) throw new Unauthorized('no policy for subject');
 
       const { entityType, id } = req.params;
-      const context = { channelId: caller.channelId };
-      for (const permission of ['logs:read', entityPermission(entityType)]) {
+      const rule = entityRule(entityType);
+      for (const [permission, context] of [
+        ['logs:read', { channelId: caller.channelId }],
+        [
+          rule.permission,
+          {
+            channelId: caller.channelId,
+            ...(rule.fieldGroup !== undefined ? { fieldGroup: rule.fieldGroup } : {}),
+          },
+        ],
+      ] as const) {
         const decision = canEnforce(policy, permission, context);
         if (!decision.allowed) throw new Forbidden(decision.reason ?? `missing ${permission}`);
       }

@@ -13,6 +13,7 @@ import {
   type Migration,
 } from '@atlas/data';
 import type { TranscodeJob } from './job.ts';
+import type { TranscodeProfile } from './profile.ts';
 import type { JobStore, JobTx } from './store.ts';
 
 export const sqliteMigrations: Migration[] = [
@@ -42,6 +43,19 @@ export const sqliteMigrations: Migration[] = [
          -- A channel's jobs, and one asset's.
          CREATE INDEX IF NOT EXISTS transcode_jobs_channel_idx ON transcode_jobs (channel_id, id);
          CREATE INDEX IF NOT EXISTS transcode_jobs_asset_idx ON transcode_jobs (asset_id, id)`,
+  },
+  {
+    // EP-16.6: the transcode profile registry. `scope` is the channel id, or '' for a
+    // platform-wide profile — the same id may exist in both, so the scope is part of the key.
+    id: 'mts_profiles',
+    up: `CREATE TABLE IF NOT EXISTS transcode_profiles (
+           scope      TEXT NOT NULL,
+           id         TEXT NOT NULL,
+           channel_id TEXT,
+           version    INTEGER NOT NULL,
+           data       TEXT NOT NULL,
+           PRIMARY KEY (scope, id)
+         )`,
   },
 ];
 
@@ -94,6 +108,30 @@ export function sqliteJobStore(path = ':memory:'): JobStore & { db: Db } {
     },
     async markSeen(messageId) {
       return seen.mark(db, messageId);
+    },
+    async putProfile(profile, ifVersion) {
+      const scope = profile.channelId ?? '';
+      if (ifVersion !== undefined) {
+        const result = db
+          .prepare(
+            'UPDATE transcode_profiles SET version = ?, data = ? WHERE scope = ? AND id = ? AND version = ?',
+          )
+          .run(profile.version, JSON.stringify(profile), scope, profile.id, ifVersion);
+        return Number(result.changes) === 1;
+      }
+      const result = db
+        .prepare(
+          `INSERT INTO transcode_profiles (scope, id, channel_id, version, data) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (scope, id) DO NOTHING`,
+        )
+        .run(
+          scope,
+          profile.id,
+          profile.channelId ?? null,
+          profile.version,
+          JSON.stringify(profile),
+        );
+      return Number(result.changes) === 1;
     },
   };
 
@@ -150,6 +188,20 @@ export function sqliteJobStore(path = ':memory:'): JobStore & { db: Db } {
         )
         .all(before) as { data: string }[];
       return rows.map((r) => parse(r) as TranscodeJob);
+    },
+    async profile(id, channelId) {
+      const row = db
+        .prepare('SELECT data FROM transcode_profiles WHERE scope = ? AND id = ?')
+        .get(channelId ?? '', id) as { data: string } | undefined;
+      return row ? (JSON.parse(row.data) as TranscodeProfile) : undefined;
+    },
+    async profiles(channelId) {
+      const rows = db
+        .prepare(
+          `SELECT data FROM transcode_profiles WHERE scope = ? OR scope = '' ORDER BY id, scope DESC`,
+        )
+        .all(channelId) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as TranscodeProfile);
     },
     async close() {
       db.close();

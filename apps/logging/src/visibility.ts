@@ -18,13 +18,24 @@
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import type { AuditEvent } from './store.ts';
 
-/** The permission an entry requires, beyond `logs:read`. */
-export function requiredPermission(event: AuditEvent): string {
+/** What reading an entity type's entries takes: a permission, and sometimes a field group. */
+export interface ReadRule {
+  permission: string;
+  fieldGroup?: string;
+}
+
+/** The rule an entry requires, beyond `logs:read`. */
+export function requiredRule(event: AuditEvent): ReadRule {
   if (event.type === 'audit.recorded') {
     const entityType = (event.payload as { entityType?: unknown } | null)?.entityType;
-    return entityPermission(typeof entityType === 'string' ? entityType : 'audit');
+    return entityRule(typeof entityType === 'string' ? entityType : 'audit');
   }
-  return entityPermission(event.type.split('.')[0] ?? event.type);
+  return entityRule(event.type.split('.')[0] ?? event.type);
+}
+
+/** The permission an entry requires, beyond `logs:read` — {@link requiredRule} without its group. */
+export function requiredPermission(event: AuditEvent): string {
+  return requiredRule(event).permission;
 }
 
 /**
@@ -34,13 +45,33 @@ export function requiredPermission(event: AuditEvent): string {
  * governance (`compliance:admin` — a retention policy's history is read by whoever may set it).
  */
 export function entityPermission(entityType: string): string {
-  if (IAM_DOMAINS.has(entityType)) return 'user:admin';
-  if (GOVERNANCE.has(entityType)) return 'compliance:admin';
-  return `${entityType}:read`;
+  return entityRule(entityType).permission;
+}
+
+/**
+ * The full read rule of an entity type.
+ *
+ * The file set's entities — MTS's jobs and events (`transcode`, `transcode-job`) and MAM's file
+ * rows (`file`) — read under `asset:read` on the `files` group, the grant MTS enforces for its
+ * jobs and MAM for `GET /assets/{id}/files`, and the one the websocket service applies to the
+ * same subjects. Under the `<type>:read` default they were readable by nobody: no role holds a
+ * `transcode:read` or a `file:read`, and the catalogue defines neither.
+ *
+ * A transcode PROFILE's history is read by whoever may write the registry (`config:admin`), the
+ * retention policy's rule: a Tier-1 entry's audience is its administrators.
+ */
+export function entityRule(entityType: string): ReadRule {
+  if (IAM_DOMAINS.has(entityType)) return { permission: 'user:admin' };
+  if (GOVERNANCE.has(entityType)) return { permission: 'compliance:admin' };
+  if (CONFIG_REGISTRIES.has(entityType)) return { permission: 'config:admin' };
+  if (FILE_SET.has(entityType)) return { permission: 'asset:read', fieldGroup: 'files' };
+  return { permission: `${entityType}:read` };
 }
 
 const IAM_DOMAINS: ReadonlySet<string> = new Set(['user', 'group', 'role', 'permissions']);
 const GOVERNANCE: ReadonlySet<string> = new Set(['retention-policy']);
+const CONFIG_REGISTRIES: ReadonlySet<string> = new Set(['transcode-profile']);
+const FILE_SET: ReadonlySet<string> = new Set(['transcode', 'transcode-job', 'file']);
 
 /**
  * STRICT evaluation with the full context. The channel is known and the permission is derived
@@ -48,5 +79,9 @@ const GOVERNANCE: ReadonlySet<string> = new Set(['retention-policy']);
  * is a refusal — lenient mode would widen the grant (authorization-model.md §5.1).
  */
 export function visible(policy: EffectivePolicy, channelId: string, event: AuditEvent): boolean {
-  return canEnforce(policy, requiredPermission(event), { channelId }).allowed;
+  const { permission, fieldGroup } = requiredRule(event);
+  return canEnforce(policy, permission, {
+    channelId,
+    ...(fieldGroup !== undefined ? { fieldGroup } : {}),
+  }).allowed;
 }

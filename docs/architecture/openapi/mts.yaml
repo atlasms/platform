@@ -66,8 +66,48 @@ paths:
         '200': { description: Job, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
         '404': { $ref: '#/components/responses/Error' }
   /profiles:
-    get: { operationId: listProfiles, tags: [admin], summary: List transcode profiles, responses: { '200': { description: Profiles } } }
-    post: { operationId: createProfile, tags: [admin], summary: Create a transcode profile per channel/type, responses: { '201': { description: Created } } }
+    # EP-16.6 — the Tier-1 registry (mts.md §11.1). A profile is a STRUCTURED target MTS compiles to
+    # FFmpeg arguments from an allowlist; there is no raw-arguments field, by design. `config:admin`
+    # in the profile's channel writes; a platform-wide profile (no channelId) needs an unscoped grant.
+    get:
+      operationId: listProfiles
+      tags: [admin]
+      summary: The profiles the caller's channel resolves against — its own and the platform-wide ones (config:read)
+      responses:
+        '200': { description: Profiles, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Profile' } } } } }
+    post:
+      operationId: createProfile
+      tags: [admin]
+      summary: 'Create a profile; the same id as a built-in preset redefines it for the channel (config:admin)'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ProfileInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Profile' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+  /profiles/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - name: scope
+        in: query
+        description: '`channel` (the default) for the caller''s channel''s profile of this id; `platform` for the platform-wide one.'
+        schema: { type: string, enum: [channel, platform] }
+    get:
+      operationId: getProfile
+      tags: [admin]
+      summary: One profile (config:read)
+      responses:
+        '200': { description: Profile, content: { application/json: { schema: { $ref: '#/components/schemas/Profile' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: replaceProfile
+      tags: [admin]
+      # Whole-profile replacement with `version` as the compare-and-set: a stale write is 409, not a
+      # silent overwrite of another administrator's change. There is no DELETE — a Tier-1 entry is
+      # disabled (`enabled: false`), never removed (configuration §2.2).
+      summary: 'Replace a profile; `version` must be the current one, or 409 (config:admin)'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ProfileReplace' } } } }
+      responses:
+        '200': { description: Replaced, content: { application/json: { schema: { $ref: '#/components/schemas/Profile' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
   /workers:
     get:
       operationId: getWorkers
@@ -112,6 +152,60 @@ components:
         startedAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time }
         version: { type: integer, minimum: 1 }
+    ProfileInput:
+      type: object
+      required: [id, name, kind, container, enabled]
+      description: >-
+        A transcode profile as an administrator writes it. Structured, never raw FFmpeg arguments —
+        every value is an enum or a bounded number (the grammar in apps/mts/src/profile.ts), and a
+        combination FFmpeg would refuse is a 422 naming the rule. At least one of `video` / `audio`.
+      properties:
+        id: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        channelId: { type: string, nullable: true, description: 'Omit for the caller''s channel; null for platform-wide (unscoped config:admin).' }
+        name: { type: string, minLength: 1 }
+        description: { type: string }
+        kind: { type: string, enum: [proxy, broadcast, thumbnail] }
+        container: { type: string, enum: [mp4, mov, mxf, m4a, jpg] }
+        video:
+          type: object
+          required: [codec, width, height]
+          properties:
+            codec: { type: string, enum: [h264, mpeg2, prores] }
+            width: { type: integer, minimum: 16, maximum: 7680 }
+            height: { type: integer, minimum: 16, maximum: 4320 }
+            fit: { type: string, enum: [pad, fit], description: '`pad` letter/pillarboxes to exactly width×height; `fit` scales within it.' }
+            frameRate: { type: string, enum: ['23.976', '24', '25', '29.97', '30', '50', '59.94', '60'], description: 'Conform to this rate. Absent keeps the source rate.' }
+            scan: { type: string, enum: [progressive, tff, bff] }
+            chroma: { type: string, enum: ['420', '422'] }
+            bitrateMbps: { type: number, minimum: 0.1, maximum: 400, description: 'Constant for mpeg2; capped for h264. Or `quality`, not both.' }
+            quality: { type: integer, minimum: 0, maximum: 51 }
+            gpu: { type: string, enum: [none, nvenc, qsv], description: 'h264 only. Tested on the node; if unusable the CPU encodes and the rendition says so.' }
+        audio:
+          type: object
+          required: [codec]
+          properties:
+            codec: { type: string, enum: [aac, pcm_s16le, pcm_s24le] }
+            sampleRate: { type: integer, enum: [44100, 48000] }
+            channels: { type: integer, minimum: 1, maximum: 16 }
+            bitrateKbps: { type: integer, minimum: 32, maximum: 512 }
+        enabled: { type: boolean, description: 'false hides it from new jobs; profiles are disabled, never deleted.' }
+    ProfileReplace:
+      allOf:
+        - $ref: '#/components/schemas/ProfileInput'
+        - type: object
+          required: [version]
+          properties:
+            version: { type: integer, minimum: 1, description: The version being replaced — the compare-and-set. }
+    Profile:
+      allOf:
+        - $ref: '#/components/schemas/ProfileInput'
+        - type: object
+          required: [version, createdBy, createdAt, updatedAt]
+          properties:
+            version: { type: integer, minimum: 1 }
+            createdBy: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
     RenditionResult:
       type: object
       required: [presetId, kind, path, checksum, sizeBytes]
@@ -125,6 +219,8 @@ components:
           properties: { algorithm: { type: string }, value: { type: string } }
         sizeBytes: { type: integer, minimum: 0 }
         durationSec: { type: number, minimum: 0, description: Absent for a still. }
+        encoder: { type: string, description: 'The FFmpeg encoder that produced it, e.g. libx264 or h264_nvenc.' }
+        fallback: { type: boolean, description: 'The profile asked for a GPU this node could not use; the CPU encoded it.' }
     Error:
       description: >-
         RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept:
