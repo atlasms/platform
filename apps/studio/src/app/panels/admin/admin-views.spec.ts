@@ -7,7 +7,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Group, GroupInput, Role, RoleInput } from '../../core/generated/iam.types.ts';
 import { GroupsService } from '../../core/groups.service.ts';
 import { LocaleService } from '../../core/locale.service.ts';
+import { ProfilesService } from '../../core/profiles.service.ts';
 import { RolesService } from '../../core/roles.service.ts';
+import { SessionStore } from '../../core/session.store.ts';
 import { UsersService } from '../../core/users.service.ts';
 import { EditorStore } from '../../workbench/editor.store.ts';
 import { AdminPanel } from '../admin-panel.ts';
@@ -56,16 +58,33 @@ function providers() {
     { provide: GroupsService, useValue: new FakeGroups() },
     { provide: RolesService, useValue: new FakeRoles() },
     { provide: UsersService, useValue: new FakeUsers() },
+    { provide: ProfilesService, useValue: { list: () => new Subject() } },
     { provide: LocaleService, useValue: { t: (k: string) => k } },
   ];
 }
 
+function signIn(permissions: string[], scope?: { channelIds: string[] }) {
+  TestBed.inject(SessionStore).signIn({
+    userId: 'admin',
+    channelId: 'ch12',
+    policy: {
+      subjectId: 'admin',
+      permVersion: 1,
+      rules: [{ id: 'r', permissions, ...(scope ? { scope } : {}) }],
+    },
+  });
+}
+
+const tabNames = (root: HTMLElement) =>
+  Array.from(root.querySelectorAll('[role=tab]')).map((t) => t.textContent?.trim());
+
 describe('AdminPanel', () => {
   beforeEach(() => TestBed.resetTestingModule());
 
-  it('switches between the three views; Users is the first', () => {
+  it('switches between the views; Users is the first', () => {
     localStorage.clear();
     TestBed.configureTestingModule({ providers: providers() });
+    signIn(['user:admin']);
     const fixture = TestBed.createComponent(AdminPanel);
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;
@@ -84,6 +103,43 @@ describe('AdminPanel', () => {
     (tabs[2] as HTMLButtonElement).click();
     fixture.detectChanges();
     expect(root.querySelector('atlas-roles-view')).not.toBeNull();
+  });
+
+  it('shows each view by its own permission: config alone shows Transcode profiles, and opens on it', () => {
+    localStorage.clear();
+    TestBed.configureTestingModule({ providers: providers() });
+    signIn(['config:read'], { channelIds: ['ch12'] });
+    const fixture = TestBed.createComponent(AdminPanel);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    // No user:admin: the people views are not offered, and the panel lands on what IS.
+    expect(tabNames(root)).toEqual(['admin.profiles']);
+    expect(root.querySelector('atlas-profiles-view')).not.toBeNull();
+    expect(root.querySelector('atlas-users-view')).toBeNull();
+  });
+
+  it('shows all four to someone holding both, and drops a view when its grant goes mid-session', () => {
+    localStorage.clear();
+    TestBed.configureTestingModule({ providers: providers() });
+    signIn(['user:admin', 'config:admin']);
+    const fixture = TestBed.createComponent(AdminPanel);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    expect(tabNames(root)).toEqual([
+      'admin.users',
+      'admin.groups',
+      'admin.roles',
+      'admin.profiles',
+    ]);
+    (root.querySelectorAll('[role=tab]')[3] as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(root.querySelector('atlas-profiles-view')).not.toBeNull();
+
+    // A policy that no longer carries config:*: the chosen view is gone, the first one shows.
+    signIn(['user:admin']);
+    fixture.detectChanges();
+    expect(tabNames(root)).toEqual(['admin.users', 'admin.groups', 'admin.roles']);
+    expect(root.querySelector('atlas-users-view')).not.toBeNull();
   });
 });
 

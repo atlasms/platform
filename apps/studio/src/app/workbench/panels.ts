@@ -20,11 +20,18 @@ export interface PanelDefinition {
   readonly titleKey: string;
   /** Single glyph; a real icon set is EP-11.6. */
   readonly icon: string;
-  /** Seeing the panel at all requires this. Views inside gate themselves further. */
-  readonly permission: string;
+  /**
+   * Seeing the panel at all requires this — or, given a list, ANY of it: a container whose views
+   * need different grants (Admin: people under `user:admin`, the transcode profiles under
+   * `config:*`) is revealed by each of them. Views inside gate themselves further.
+   */
+  readonly permission: string | readonly string[];
   readonly route: string;
   readonly available: boolean;
 }
+
+/** What reveals the Admin panel: any of its views' permissions (admin-panel.ts). */
+export const ADMIN_PERMISSIONS: readonly string[] = ['user:admin', 'config:read', 'config:admin'];
 
 export const PANELS: readonly PanelDefinition[] = [
   {
@@ -104,10 +111,11 @@ export const PANELS: readonly PanelDefinition[] = [
     id: 'admin',
     titleKey: 'workbench.panels.admin',
     icon: '⚙',
-    // `user:admin` — the permission every operation on the first view (Users, EP-20.7) needs.
-    // Groups, roles, field schemas and theme are the panel's later views; each will reveal
-    // itself by its own permission when it exists.
-    permission: 'user:admin',
+    // Each view reveals itself by its own permission, and the panel by any of them: Users,
+    // Groups and Roles by `user:admin`; Transcode profiles (EP-16.6) by `config:read` or
+    // `config:admin` — a channel's engineering lead need not administer its people to tune its
+    // renditions. Keep this list in step with `AdminPanel`'s views and the route's guard.
+    permission: ADMIN_PERMISSIONS,
     route: '/admin',
     available: true,
   },

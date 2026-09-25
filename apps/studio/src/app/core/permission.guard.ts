@@ -17,7 +17,7 @@ function toSignIn(router: Router) {
 }
 
 /**
- * Refuse a route the user has no permission for.
+ * Refuse a route the user has no permission for — given a list, one they hold none of.
  *
  * `CanMatch` rather than `CanActivate` on purpose: a non-matching route is skipped entirely, so
  * the router falls through to the next match instead of navigating and then bouncing. Lazy chunks
@@ -26,7 +26,7 @@ function toSignIn(router: Router) {
  * Like every check in Studio this is UX, not enforcement — the panel's data comes from services
  * that authorize independently.
  */
-export function requirePermission(permission: string): CanMatchFn {
+export function requirePermission(permission: string | readonly string[]): CanMatchFn {
   return () => {
     const session = inject(SessionStore);
     const permissions = inject(PermissionService);
@@ -37,7 +37,7 @@ export function requirePermission(permission: string): CanMatchFn {
     }
     // No redirect on a permission failure: falling through lets a later route match, and the
     // catch-all renders "not available" rather than pretending the URL does not exist.
-    return permissions.can(permission);
+    return permissions.canAny(permission);
   };
 }
 

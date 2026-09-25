@@ -1,6 +1,7 @@
 import type { Routes } from '@angular/router';
 import { Workbench } from './workbench/workbench.ts';
 import { redirectSignedIn, requirePermission, requireSession } from './core/permission.guard.ts';
+import { ADMIN_PERMISSIONS } from './workbench/panels.ts';
 
 /**
  * Two top-level routes: the sign-in screen, and the workbench — which is the ONLY thing a session
@@ -49,7 +50,7 @@ export const routes: Routes = [
       },
       {
         path: 'admin',
-        canMatch: [requirePermission('user:admin')],
+        canMatch: [requirePermission(ADMIN_PERMISSIONS)],
         loadComponent: () => import('./panels/admin-panel.ts').then((m) => m.AdminPanel),
       },
       {

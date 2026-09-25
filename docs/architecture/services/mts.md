@@ -180,6 +180,9 @@ the code owns the FFmpeg runner and a **parameter grammar**; an administrator ow
   `h264_nvenc` on a node without the card is the common case); if not, the job encodes on the
   CPU and says so in its rendition — mts.md §9's fallback, made visible.
 - Every write is audited (`entityType: transcode-profile`) in the transaction of the change.
+- **Studio** edits it in the Admin panel's Transcode profiles view: the structured form, MTS's 422
+  placed under the field each rule names, a 409 offered as a reload rather than retried, and
+  "Redefine for this channel" on a platform profile a channel administrator cannot write.
 - **Scaling** past one replica still waits on shared storage (HSM, EP-14): the work area is
   ReadWriteOnce. The lease already lets N workers share the queue.
 

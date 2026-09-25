@@ -327,6 +327,70 @@
     "grantTo": "Grant to a user or a group",
     "viaGroup": "via",
     "group": "Group",
-    "user": "User"
+    "user": "User",
+    "profiles": "Transcode profiles",
+    "profilesWhy": "A job's preset resolves to this channel's enabled profile, then the platform-wide one, then the built-in — when the job runs.",
+    "newProfile": "New profile",
+    "profileId": "Id (kebab-case)",
+    "profileIdHint": "proxy, thumbnail, audio-proxy or broadcast redefines that built-in; any other id is a new preset.",
+    "profileIdTaken": "A profile with that id already exists in that scope.",
+    "profileKind": "Kind",
+    "kind": {
+      "proxy": "Proxy",
+      "broadcast": "Broadcast",
+      "thumbnail": "Thumbnail"
+    },
+    "profileScope": "Scope",
+    "scopeChannel": "this channel",
+    "noProfiles": "No profiles — every preset is the built-in.",
+    "profileDisabled": "disabled",
+    "profileOverridden": "redefined by this channel",
+    "profileBuiltIn": "redefines the built-in",
+    "profileReadOnly": "A platform-wide profile — shown, not editable here.",
+    "profileRedefine": "Redefine for this channel",
+    "profileRedefineWhy": "Copies it into this channel's registry, where it can be changed without affecting other channels.",
+    "profileConflict": "Someone saved this profile since you opened it. Reload to see their change; your edits here are not kept.",
+    "reload": "Reload",
+    "revert": "Revert",
+    "container": "Container",
+    "profileEnabled": "Enabled",
+    "profileEnabledWhy": "Profiles are disabled, never deleted. A disabled channel profile puts the channel back on the platform's, or the built-in.",
+    "video": "Video",
+    "audio": "Audio",
+    "codec": "Codec",
+    "width": "Width",
+    "height": "Height",
+    "fit": "Fit",
+    "fitMode": {
+      "pad": "Pad to size",
+      "fit": "Fit inside"
+    },
+    "frameRate": "Frame rate",
+    "asSource": "As source",
+    "scan": "Scan",
+    "scanMode": {
+      "progressive": "Progressive",
+      "tff": "Interlaced, top field first",
+      "bff": "Interlaced, bottom field first"
+    },
+    "chroma": "Chroma",
+    "rateMode": "Rate control",
+    "rate": {
+      "bitrate": "Constant bit rate",
+      "quality": "Quality target"
+    },
+    "bitrateMbps": "Bit rate (Mb/s)",
+    "quality": "Quality (lower is better)",
+    "gpu": "GPU",
+    "gpuMode": {
+      "none": "None (CPU)",
+      "nvenc": "NVIDIA NVENC",
+      "qsv": "Intel Quick Sync"
+    },
+    "gpuWhy": "Tested on the node before use; where it cannot run, the CPU encodes and the rendition records the fallback.",
+    "sampleRate": "Sample rate",
+    "mtsDefault": "MTS default",
+    "channels": "Channels",
+    "bitrateKbps": "Bit rate (kb/s)"
   }
 }
