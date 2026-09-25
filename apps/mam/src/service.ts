@@ -195,6 +195,8 @@ export interface Caller {
   channelId: string;
   policy: EffectivePolicy;
   correlationId?: string;
+  /** The message this write answers (EP-03.5) — set by the mirror, never by a request. */
+  causationId?: string;
   /** Who the envelope names as actor. A person by default; this service for what it does itself. */
   actorKind?: 'user' | 'service';
 }
@@ -205,12 +207,19 @@ export interface Caller {
  * through `authorize`, which is exactly why it is a separate constructor rather than a grant.
  */
 const SYSTEM_POLICY = compile({ subjectId: 'mam', permVersion: 0, rules: [] });
-export const systemCaller = (channelId: string, correlationId?: string): Caller => ({
+export const systemCaller = (
+  channelId: string,
+  cause?: Pick<Envelope, 'messageId' | 'correlationId'>,
+): Caller => ({
   userId: 'mam',
   channelId,
   policy: SYSTEM_POLICY,
   actorKind: 'service',
-  ...(correlationId !== undefined ? { correlationId } : {}),
+  // follow()'s rule (@atlas/contracts, EP-03.5): the cause's chain continues — or starts at the
+  // cause when it carried none — and every record this write emits names the message it answers.
+  ...(cause
+    ? { correlationId: cause.correlationId ?? cause.messageId, causationId: cause.messageId }
+    : {}),
 });
 
 export type MirrorOutcome = 'applied' | 'duplicate';
@@ -622,7 +631,7 @@ export class MamService {
       version: existing.version + 1,
       updatedAt: now,
     };
-    const caller = systemCaller(envelope.channelId, envelope.correlationId);
+    const caller = systemCaller(envelope.channelId, envelope);
     const assetAudit = this.auditRecord(caller, updated, existing, 'asset.attachRenditions');
     const fileAudits = files.map((f) =>
       this.fileAudit(caller, f, current.get(fileKey(f.kind, f.variant)), 'transcode.completed'),
@@ -661,7 +670,7 @@ export class MamService {
       now: this.now().toISOString(),
       ...defined({ existing }),
     });
-    const caller = systemCaller(envelope.channelId, envelope.correlationId);
+    const caller = systemCaller(envelope.channelId, envelope);
     const audit = this.fileAudit(caller, file, existing, 'file.placed');
     let outcome: MirrorOutcome = 'applied';
     await this.options.store.transaction(async (tx) => {
@@ -1298,7 +1307,7 @@ export class MamService {
       // Validated against its schema two lines up, so the widening is earned rather than assumed.
       payload: payload as Record<string, unknown>,
       actor: { kind: caller.actorKind ?? 'user', id: caller.userId },
-      ...defined({ correlationId: caller.correlationId }),
+      ...defined({ correlationId: caller.correlationId, causationId: caller.causationId }),
     });
 
     return {

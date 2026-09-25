@@ -160,6 +160,14 @@ owns the catalogue ([`profile.ts`](src/profile.ts)). `GET/POST /api/v1/profiles`
   the rendition carries `encoder: libx264, fallback: true`; the closed `Rendition` on the wire does
   not change.
 
+## Correlation and causation (EP-03.5)
+
+A job keeps its chain on the row — `correlationId` (the request's, or the command's, opened from
+the command's own id when it had none) and `causationId` (the `transcode.job.create` that created
+it; absent for a request). The worker stamps both on everything the job announces — `started`,
+`completed`, `failed`, the audit, and the live progress — so "what did this request or command
+cause" is one query across the log, not one that stops at `queued`. Both are on the wire `Job`.
+
 ## Tests
 
 - **Conformance** ([`store-conformance.ts`](src/store-conformance.ts)), driven through the service

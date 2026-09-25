@@ -152,6 +152,8 @@ components:
         startedAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time }
         version: { type: integer, minimum: 1 }
+        correlationId: { type: string, description: 'The request or message chain the job belongs to. Every event the job causes carries it, including the ones the worker emits minutes later.' }
+        causationId: { type: string, description: 'The transcode.job.create message that created the job. Absent for a job created over HTTP, which no message caused.' }
     ProfileInput:
       type: object
       required: [id, name, kind, container, enabled]

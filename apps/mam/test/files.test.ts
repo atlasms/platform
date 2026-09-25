@@ -137,13 +137,35 @@ test('transcode.completed: every rendition becomes a FileRef, the asset has rend
   for (const e of events) {
     assert.ok(validatePayload(e.type, e.payload).valid, e.type);
     assert.deepEqual(e.actor, { kind: 'service', id: 'mam' });
-    assert.equal(e.correlationId, CORRELATION, 'the cause is carried');
+    assert.equal(e.correlationId, CORRELATION, 'the chain is carried');
+    assert.equal(e.causationId, msg.id, 'and each record names the message it answers (EP-03.5)');
   }
 
   // Redelivered — JetStream does that — and nothing happens twice.
   assert.equal(await service.mirrorTranscode(msg), 'duplicate');
   assert.equal((await store.get(asset.id))?.version, 2);
   assert.equal((await drain()).length, 0);
+});
+
+test("file.placed with no chain of its own STARTS one at itself — follow()'s rule, so its effects are still one query", async () => {
+  const { service, caller, drain } = harness();
+  const asset = await service.create(caller(), {
+    title: 'Bulletin',
+    mediaType: 'video',
+    fileType: 'mxf',
+  });
+  await drain();
+  const msg = placedMessage({
+    assetId: asset.id,
+    renditionKind: 'original',
+    tier: 'online',
+    path: '/online/bulletin.mxf',
+  });
+  assert.equal((msg.body as Envelope).correlationId, undefined);
+  await service.mirrorPlacement(msg);
+  const [audit] = await drain();
+  assert.equal(audit?.correlationId, msg.id);
+  assert.equal(audit?.causationId, msg.id);
 });
 
 test('a second transcode.completed REPLACES a kind (MTS re-ran) — same id, next version, the delta says what moved', async () => {
