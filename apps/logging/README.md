@@ -191,3 +191,8 @@ group**, the grant MTS and MAM enforce for the same data and the websocket servi
 same subjects (`entityRule` in `visibility.ts`, which now carries a field group into the strict
 check). A transcode profile's history reads under `config:admin`: a registry's audience is its
 administrators, the retention policy's rule.
+
+RIM's administration — an acceptance rule set, a folder watcher (EP-15.2) — reads under
+`ingest:admin`. Under the default they were `acceptance-rule-set:read` and `watcher:read`, which
+no catalogue defines and no role holds: the rule sets' history had been readable by nobody since
+EP-15.3. An ingest JOB stays under `ingest:read`.

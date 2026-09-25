@@ -4,11 +4,25 @@ export {
   DEFAULT_PART_BYTES,
   DEFAULT_UPLOAD_TTL_MS,
   DEFAULT_VALIDATE_AFTER_MS,
+  DEFAULT_WATCH_LEASE_MS,
   RimService,
   type Caller as ServiceCaller,
   type IngestQueuePage,
   type RimServiceOptions,
+  type WatchReport,
 } from './service.ts';
+export {
+  DEFAULT_SETTLE_SECONDS,
+  isCandidate,
+  normalisedPath,
+  parseWatcherInput,
+  watchDir,
+  watcherErrors,
+  type AfterPickup,
+  type Pickup,
+  type Watcher,
+  type WatcherInput,
+} from './watcher.ts';
 export {
   applies,
   evaluate,

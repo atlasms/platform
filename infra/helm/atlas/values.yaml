@@ -147,6 +147,7 @@ storage:
   opensearch: 2Gi
   postgres: 2Gi
   rimStaging: 5Gi
+  rimWatch: 1Gi
 
 # --- the data plane ----------------------------------------------------------
 #

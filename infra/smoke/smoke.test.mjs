@@ -1009,6 +1009,80 @@ test('smoke: EP-15.4 — the probe reads a real file: a WAV is accepted with its
   );
 });
 
+test('smoke: EP-15.2 — a folder watcher takes a settled file into ingest; its own history is readable', async () => {
+  // The dev overlay renders `smoke-watch.wav` into ch12's watch folder (rim-watch-sample.yaml).
+  // A watcher on it, scanned by the real loop in the pod, must turn the file into an ingest job —
+  // copied into staging, hashed, `ingest.detected`, then the probe and the verdict — without any
+  // request carrying the bytes. `keep` leaves the file for the next run; the ledger is per
+  // watcher, so this run's watcher takes it exactly once. Disabled at the end whatever happens.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const body = (over = {}) =>
+    JSON.stringify({
+      name: 'smoke watcher',
+      path: 'smoke-watch',
+      settleSeconds: 1,
+      extensions: ['wav'],
+      afterPickup: 'keep',
+      ...over,
+    });
+
+  // A path out of the channel's directory is refused before it is written.
+  const escaping = await get('/api/v1/watchers', {
+    method: 'POST',
+    headers,
+    body: body({ path: '../other-channel' }),
+  });
+  assert.equal(escaping.status, 422, escaping.text);
+
+  const created = await get('/api/v1/watchers', { method: 'POST', headers, body: body() });
+  assert.equal(created.status, 201, `watcher failed: ${created.text}`);
+  const watcher = json(created);
+  try {
+    // `waitFor` takes a SYNCHRONOUS condition — an async one is a Promise, always truthy — so the
+    // reads are polled by hand. Scans run every 5 s and the file must hold still for 1 s.
+    let job;
+    const deadline = Date.now() + 60_000;
+    for (;;) {
+      const page = json(await get('/api/v1/ingest/queue?limit=50', { headers }));
+      job = page.items.find((j) => j.source === watcher.id);
+      const done = job !== undefined && job.state !== 'detected' && job.state !== 'validating';
+      if (done || Date.now() > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+    assert.ok(job, `no job from watcher ${watcher.id} within 60 s`);
+    assert.equal(job.sourceKind, 'watch');
+    assert.equal(job.filename, 'smoke-watch.wav');
+    assert.equal(job.state, 'accepted', JSON.stringify(job));
+    assert.equal(job.technicalMetadata?.container, 'wav');
+    assert.match(job.checksum, /^[0-9a-f]{64}$/);
+  } finally {
+    const disabled = await get(`/api/v1/watchers/${watcher.id}`, {
+      method: 'PUT',
+      headers,
+      body: body({ enabled: false }),
+    });
+    assert.equal(disabled.status, 200, `watcher cleanup failed: ${disabled.text}`);
+  }
+
+  // The watcher's own trail, read through the logging service under ingest:admin — before
+  // EP-15.2 an administration entity's history was readable by nobody (no `watcher:read` exists).
+  let history;
+  const historyDeadline = Date.now() + 20_000;
+  for (;;) {
+    const res = await get(`/api/v1/history/watcher/${watcher.id}`, { headers });
+    assert.equal(res.status, 200, `watcher history: ${res.text}`);
+    history = json(res);
+    if (history.revisions.length >= 2 || Date.now() > historyDeadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.deepEqual(
+    history.revisions.slice(0, 2).map((r) => r.action),
+    ['watcher.created', 'watcher.replaced'],
+  );
+});
+
 test('smoke: EP-19.4 — the retention policy is governance: the defaults until set, replaced whole, and audited into the log it governs', async () => {
   // Through the gateway to the logging service: the policy in force for the seed channel, a
   // replacement with legal hold, and the keeper's own mutation read back from the audit history

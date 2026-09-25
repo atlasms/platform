@@ -60,6 +60,11 @@ const config = loadConfig({
   partSizeBytes: { env: 'ATLAS_UPLOAD_PART_BYTES', type: 'number', default: DEFAULT_PART_BYTES },
   uploadTtlMs: { env: 'ATLAS_UPLOAD_TTL_MS', type: 'number', default: DEFAULT_UPLOAD_TTL_MS },
   sweepIntervalMs: { env: 'ATLAS_UPLOAD_SWEEP_INTERVAL_MS', type: 'number', default: 60_000 },
+  // Folder watchers (EP-15.2): each channel's live under `<root>/<channelId>/`. Empty string is
+  // "no watch root" — watchers cannot be created, and nothing is scanned. The interval is how
+  // often every enabled watcher's folder is listed; a file is picked up once it has settled.
+  watchRoot: { env: 'ATLAS_RIM_WATCH_ROOT', type: 'string', default: '' },
+  watchIntervalMs: { env: 'ATLAS_WATCH_INTERVAL_MS', type: 'number', default: 5_000 },
   // A job still `detected` after this long is one whose validation was lost with the process
   // (EP-15.3); the sweep tick runs it. Longer than any request, shorter than an operator notices.
   validateAfterMs: {
@@ -140,6 +145,9 @@ const service = new RimService({
   partSizeBytes: config.partSizeBytes,
   uploadTtlMs: config.uploadTtlMs,
   validateAfterMs: config.validateAfterMs,
+  ...(config.watchRoot !== '' ? { watchRoot: config.watchRoot } : {}),
+  // The pod name: a watcher's lease names its holder, and two pods overlap in a rolling update.
+  holder: process.env['HOSTNAME'] ?? `rim-${process.pid}`,
   // The trace context is captured where the event is CREATED, inside the request (EP-13.3): the
   // relay publishes later on a timer with no ambient context at all.
   traceHeaders: () => {
@@ -245,6 +253,23 @@ const sweep = async (): Promise<void> => {
 };
 void sweep();
 
+// --- folder watchers (EP-15.2): one pass over every enabled watcher, then the next ------------------
+let watchTimer: NodeJS.Timeout | undefined;
+const watch = async (): Promise<void> => {
+  try {
+    const report = await service.scanWatchers();
+    if (report.pickedUp > 0 || report.duplicates > 0) {
+      log.info('watchers picked up files', { ...report, problems: report.problems.length });
+    }
+    // A missing folder is reported every pass until someone fixes it — that is the point.
+    for (const p of report.problems) log.warn('watcher cannot scan', p);
+  } catch (err) {
+    log.error('watch scan failed', { error: (err as Error).message });
+  }
+  watchTimer = setTimeout(() => void watch(), config.watchIntervalMs);
+};
+if (config.watchRoot !== '') void watch();
+
 await app.listen({ port: config.port, host: config.host });
 log.info('rim listening', { port: config.port, host: config.host });
 
@@ -256,6 +281,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     log.info(`${signal} received, draining`);
     if (retryTimer) clearTimeout(retryTimer);
     if (sweepTimer) clearTimeout(sweepTimer);
+    if (watchTimer) clearTimeout(watchTimer);
     void app
       .close()
       // After Fastify closes, so spans for in-flight requests make the final batch.

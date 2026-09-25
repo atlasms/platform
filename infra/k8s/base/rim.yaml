@@ -66,9 +66,15 @@ spec:
             # Every part but the last is exactly this long; the gateway allows it on /api/v1/uploads.
             - name: ATLAS_UPLOAD_PART_BYTES
               value: "8388608"
+            # Folder watchers (EP-15.2): each channel's watch folders live under <root>/<channelId>/.
+            # A facility binds this claim to its drop share; RIM reads it and removes what it took.
+            - name: ATLAS_RIM_WATCH_ROOT
+              value: /var/lib/atlas/watch
           volumeMounts:
             - name: staging
               mountPath: /var/lib/atlas/rim
+            - name: watch
+              mountPath: /var/lib/atlas/watch
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -107,6 +113,9 @@ spec:
         - name: staging
           persistentVolumeClaim:
             claimName: rim-staging
+        - name: watch
+          persistentVolumeClaim:
+            claimName: rim-watch
 ---
 # Staging survives a pod restart — an upload half-received when the pod went away is resumed,
 # not restarted — but it is not the asset store and needs no replication: what matters is
@@ -123,6 +132,23 @@ spec:
   resources:
     requests:
       storage: 5Gi
+---
+# The folder watchers' root (EP-15.2). In a facility this is the drop share — an NFS or SMB export
+# the playout and editing machines write to, bound through a PersistentVolume or a StorageClass
+# (the chart's `storageClass` and `storage.rimWatch`). A watcher scans by listing, not inotify,
+# precisely so a network mount works. Laptop-sized here: files pass through, they do not stay.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rim-watch
+  labels:
+    app.kubernetes.io/name: rim
+    app.kubernetes.io/part-of: atlas
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: Service

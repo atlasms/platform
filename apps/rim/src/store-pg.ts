@@ -11,6 +11,7 @@ import {
 import type { AcceptanceRuleSet } from './acceptance.ts';
 import type { RimStore, RimTx } from './store.ts';
 import type { IngestJob, Upload } from './upload.ts';
+import type { Pickup, Watcher } from './watcher.ts';
 
 export const pgMigrations: Migration[] = [
   outboxMigration,
@@ -57,6 +58,34 @@ export const pgMigrations: Migration[] = [
          );
          -- The engine's read: a channel's sets, every validation.
          CREATE INDEX IF NOT EXISTS acceptance_rule_sets_channel_idx ON acceptance_rule_sets (channel_id)`,
+  },
+  {
+    // EP-15.2: folder watchers, the ledger of what each took, and who scans which.
+    id: 'rim_watchers',
+    up: `CREATE TABLE IF NOT EXISTS watchers (
+           id         text PRIMARY KEY,
+           channel_id text NOT NULL,
+           enabled    boolean NOT NULL,
+           data       jsonb NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS watchers_channel_idx ON watchers (channel_id);
+         CREATE TABLE IF NOT EXISTS watch_pickups (
+           watcher_id text NOT NULL,
+           name       text NOT NULL,
+           sha256     text NOT NULL,
+           channel_id text NOT NULL,
+           at         timestamptz NOT NULL,
+           data       jsonb NOT NULL,
+           PRIMARY KEY (watcher_id, name, sha256)
+         );
+         -- The scan's read: the latest pickup of a name.
+         CREATE INDEX IF NOT EXISTS watch_pickups_name_idx ON watch_pickups (watcher_id, name, at DESC);
+         CREATE TABLE IF NOT EXISTS watcher_leases (
+           watcher_id text PRIMARY KEY,
+           channel_id text NOT NULL,
+           holder     text NOT NULL,
+           expires_at timestamptz NOT NULL
+         )`,
   },
 ];
 
@@ -108,6 +137,30 @@ export function pgRimStore(pool: PgPool): RimStore {
           },
           async deleteRuleSet(id) {
             await client.query('DELETE FROM acceptance_rule_sets WHERE id = $1', [id]);
+          },
+          async putWatcher(w) {
+            await client.query(
+              `INSERT INTO watchers (id, channel_id, enabled, data) VALUES ($1, $2, $3, $4)
+               ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, data = EXCLUDED.data`,
+              [w.id, w.channelId, w.enabled, JSON.stringify(w)],
+            );
+          },
+          async putPickup(p) {
+            const result = await client.query(
+              `INSERT INTO watch_pickups (watcher_id, name, sha256, channel_id, at, data) VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT (watcher_id, name, sha256) DO NOTHING`,
+              [p.watcherId, p.name, p.sha256, p.channelId, p.at, JSON.stringify(p)],
+            );
+            return result.rowCount === 1;
+          },
+          async leaseWatcher(watcherId, channelId, holder, now, until) {
+            const result = await client.query(
+              `INSERT INTO watcher_leases (watcher_id, channel_id, holder, expires_at) VALUES ($1, $2, $3, $4)
+               ON CONFLICT (watcher_id) DO UPDATE SET holder = EXCLUDED.holder, expires_at = EXCLUDED.expires_at
+               WHERE watcher_leases.holder = EXCLUDED.holder OR watcher_leases.expires_at <= $5`,
+              [watcherId, channelId, holder, until, now],
+            );
+            return result.rowCount === 1;
           },
           async enqueue(record) {
             await outbox.enqueue(client, record);
@@ -180,6 +233,33 @@ export function pgRimStore(pool: PgPool): RimStore {
       const { rows } = await pool.query<{ data: AcceptanceRuleSet }>(
         'SELECT data FROM acceptance_rule_sets WHERE id = $1',
         [id],
+      );
+      return rows[0]?.data;
+    },
+    async watchers(channelId) {
+      const { rows } = await pool.query<{ data: Watcher }>(
+        'SELECT data FROM watchers WHERE channel_id = $1 ORDER BY id',
+        [channelId],
+      );
+      return rows.map((r) => r.data);
+    },
+    async watcher(id) {
+      const { rows } = await pool.query<{ data: Watcher }>(
+        'SELECT data FROM watchers WHERE id = $1',
+        [id],
+      );
+      return rows[0]?.data;
+    },
+    async enabledWatchers() {
+      const { rows } = await pool.query<{ data: Watcher }>(
+        'SELECT data FROM watchers WHERE enabled ORDER BY id',
+      );
+      return rows.map((r) => r.data);
+    },
+    async pickup(watcherId, name) {
+      const { rows } = await pool.query<{ data: Pickup }>(
+        'SELECT data FROM watch_pickups WHERE watcher_id = $1 AND name = $2 ORDER BY at DESC LIMIT 1',
+        [watcherId, name],
       );
       return rows[0]?.data;
     },

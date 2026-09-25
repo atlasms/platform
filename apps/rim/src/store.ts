@@ -9,6 +9,7 @@
 import type { OutboxRecord } from '@atlas/messaging';
 import type { AcceptanceRuleSet } from './acceptance.ts';
 import type { IngestJob, IngestState, Upload, UploadPart } from './upload.ts';
+import type { Pickup, Watcher } from './watcher.ts';
 
 export interface JobQuery {
   limit: number;
@@ -35,6 +36,13 @@ export interface RimStore {
   expiredUploads(now: string, limit: number): Promise<Upload[]>;
   ruleSets(channelId: string): Promise<AcceptanceRuleSet[]>;
   ruleSet(id: string): Promise<AcceptanceRuleSet | undefined>;
+  /** A channel's watchers, enabled or not — what the admin API lists. */
+  watchers(channelId: string): Promise<Watcher[]>;
+  watcher(id: string): Promise<Watcher | undefined>;
+  /** Every enabled watcher, across channels — what the scan loop walks. */
+  enabledWatchers(): Promise<Watcher[]>;
+  /** The latest pickup of a file name by a watcher, if it ever took one. */
+  pickup(watcherId: string, name: string): Promise<Pickup | undefined>;
   close(): Promise<void>;
 }
 
@@ -52,5 +60,25 @@ export interface RimTx {
   putJob(job: IngestJob, ifState?: IngestState): Promise<boolean>;
   putRuleSet(set: AcceptanceRuleSet): Promise<void>;
   deleteRuleSet(id: string): Promise<void>;
+  putWatcher(watcher: Watcher): Promise<void>;
+  /**
+   * Record that a watcher took a file. Keyed by (watcher, name, checksum): the SAME bytes under
+   * the same name again are a duplicate — returns false and the caller creates nothing — while a
+   * changed file (a new checksum) is a new pickup.
+   */
+  putPickup(pickup: Pickup): Promise<boolean>;
+  /**
+   * Hold a watcher's lease until `until` — one owner per watched folder (rim.md §8). Granted when
+   * nobody holds it, the holder is the one asking (a renewal), or the lease ran out; returns
+   * whether it was granted. Two RIM pods overlap in a rolling update, and both would otherwise
+   * scan the same folder.
+   */
+  leaseWatcher(
+    watcherId: string,
+    channelId: string,
+    holder: string,
+    now: string,
+    until: string,
+  ): Promise<boolean>;
   enqueue(record: OutboxRecord): Promise<void>;
 }

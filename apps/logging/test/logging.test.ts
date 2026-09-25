@@ -282,6 +282,17 @@ test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENT
   ]) {
     assert.deepEqual(requiredRule(entry), { permission: 'asset:read', fieldGroup: 'files' });
   }
+  // RIM's administration (EP-15.2): rule sets and watchers, under ingest:admin.
+  for (const entityType of ['acceptance-rule-set', 'watcher']) {
+    assert.deepEqual(requiredRule({ ...base, type: 'audit.recorded', payload: { entityType } }), {
+      permission: 'ingest:admin',
+    });
+  }
+  // An ingest JOB is not administration: it stays under ingest:read.
+  assert.deepEqual(
+    requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'ingest' } }),
+    { permission: 'ingest:read' },
+  );
   // A transcode profile's history: whoever administers the registry.
   assert.deepEqual(
     requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'transcode-profile' } }),

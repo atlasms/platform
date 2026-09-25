@@ -1,6 +1,7 @@
 // The ingest path: the upload (EP-15.1) — start, parts, resume, complete — and the job the bytes
 // become; its validation against the channel's acceptance rules (EP-15.3); the queue and the
-// quarantine review (EP-15.6); the rule sets themselves.
+// quarantine review (EP-15.6); the rule sets themselves; and folder watchers (EP-15.2), whose
+// pickups become jobs the same way a completed upload does.
 //
 // AUTHORIZATION. `ingest:write` for the upload, `ingest:read` for the queue, `ingest:approve` for
 // the review, `ingest:admin` for the rules — in the caller's channel, enforced with `canEnforce`
@@ -25,6 +26,9 @@
 // What goes wrong with the TOOL (no binary) is not: the job stays `validating`, the failure is
 // logged and shown by readiness, and the loop tries again.
 
+import { rm, readdir, stat } from 'node:fs/promises';
+import { hostname } from 'node:os';
+import { join } from 'node:path';
 import {
   buildEnvelope,
   delta,
@@ -54,6 +58,16 @@ import {
 import { ProbeRefusal, type Probe } from './probe.ts';
 import type { Staging } from './staging.ts';
 import type { JobQuery, RimStore, RimTx } from './store.ts';
+import {
+  DEFAULT_SETTLE_SECONDS,
+  isCandidate,
+  normalisedPath,
+  watchDir,
+  watcherErrors,
+  type Pickup,
+  type Watcher,
+  type WatcherInput,
+} from './watcher.ts';
 import {
   expectedPartSize,
   missingParts,
@@ -93,6 +107,26 @@ export interface RimServiceOptions {
   defer?: (task: () => Promise<void>) => void;
   /** Where a deferred task's failure goes: main.ts logs it. The recovery loop retries the job. */
   onBackgroundError?: (err: unknown, context: Record<string, unknown>) => void;
+  /**
+   * The folder watchers' root (EP-15.2): each channel's watchers live under `<watchRoot>/<channelId>/`.
+   * Absent, watchers cannot be created — there would be nothing for them to watch.
+   */
+  watchRoot?: string;
+  /** Who this process is, for watcher leases. The pod name in a cluster. */
+  holder?: string;
+  /** How long a watcher lease lasts; renewed every scan, so this bounds a dead holder's hold. */
+  watchLeaseMs?: number;
+}
+
+/** What one pass over the watchers did — main.ts logs it when anything happened. */
+export interface WatchReport {
+  scanned: number;
+  pickedUp: number;
+  duplicates: number;
+  /** Watchers another process holds. */
+  skipped: number;
+  /** A watcher whose folder is missing or outside its channel's directory, with why. */
+  problems: { watcherId: string; problem: string }[];
 }
 
 export interface IngestQueuePage {
@@ -103,6 +137,7 @@ export interface IngestQueuePage {
 export const DEFAULT_PART_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_VALIDATE_AFTER_MS = 60 * 1000;
+export const DEFAULT_WATCH_LEASE_MS = 30 * 1000;
 
 const SERVICE_ACTOR = { kind: 'service', id: 'rim' } as const;
 
@@ -130,6 +165,18 @@ export class RimService {
   private readonly traceHeaders: () => Record<string, string> | undefined;
   private readonly defer: (task: () => Promise<void>) => void;
   private readonly onBackgroundError: (err: unknown, context: Record<string, unknown>) => void;
+  private readonly watchRoot: string | undefined;
+  private readonly holder: string;
+  private readonly watchLeaseMs: number;
+  /**
+   * What each watched file looked like when first seen, and since when — the settle clock. In
+   * memory on purpose: it only matters to the process holding the lease, and a new holder simply
+   * starts every clock again, which costs one settle interval, never a wrong pickup.
+   */
+  private readonly settling = new Map<
+    string,
+    { sizeBytes: number; mtimeMs: number; since: number }
+  >();
 
   constructor(options: RimServiceOptions) {
     this.store = options.store;
@@ -141,6 +188,9 @@ export class RimService {
     this.now = options.now ?? (() => new Date());
     this.traceHeaders = options.traceHeaders ?? (() => undefined);
     this.onBackgroundError = options.onBackgroundError ?? (() => undefined);
+    this.watchRoot = options.watchRoot;
+    this.holder = options.holder ?? `${hostname()}:${process.pid}`;
+    this.watchLeaseMs = options.watchLeaseMs ?? DEFAULT_WATCH_LEASE_MS;
     this.defer =
       options.defer ??
       ((task) => {
@@ -534,6 +584,298 @@ export class RimService {
     });
   }
 
+  // --- folder watchers (EP-15.2) ---------------------------------------------------------------------
+
+  async watchers(caller: Caller): Promise<Watcher[]> {
+    this.authorize(caller, 'ingest:admin');
+    return this.store.watchers(caller.channelId);
+  }
+
+  async watcher(caller: Caller, id: string): Promise<Watcher> {
+    this.authorize(caller, 'ingest:admin');
+    return this.watcherFor(caller, id);
+  }
+
+  /**
+   * A new watcher, refused before anything is written when it could never run: no watch root, a
+   * path out of the channel's directory (symlinks included), or a folder another enabled watcher
+   * of the channel already has — two watchers on one folder would each take every file.
+   */
+  async createWatcher(caller: Caller, input: WatcherInput): Promise<Watcher> {
+    this.authorize(caller, 'ingest:admin');
+    const at = this.now().toISOString();
+    const watcher = this.watcherRecord(input, caller.channelId, {
+      id: ulid(),
+      createdBy: caller.userId,
+      createdAt: at,
+      updatedAt: at,
+      version: 1,
+    });
+    await this.checkWatcher(watcher);
+    const origin = this.originOf(caller);
+    await this.store.transaction(async (tx) => {
+      await tx.putWatcher(watcher);
+      await tx.enqueue(this.auditWatcher(origin, watcher, undefined, watcher, 'watcher.created'));
+    });
+    return watcher;
+  }
+
+  /** The whole watcher, as given. `enabled: false` stops it; there is no delete — jobs name it. */
+  async replaceWatcher(caller: Caller, id: string, input: WatcherInput): Promise<Watcher> {
+    this.authorize(caller, 'ingest:admin');
+    const before = await this.watcherFor(caller, id);
+    const watcher = this.watcherRecord(input, caller.channelId, {
+      id,
+      createdBy: before.createdBy,
+      createdAt: before.createdAt,
+      updatedAt: this.now().toISOString(),
+      version: before.version + 1,
+    });
+    await this.checkWatcher(watcher);
+    const origin = this.originOf(caller);
+    await this.store.transaction(async (tx) => {
+      await tx.putWatcher(watcher);
+      await tx.enqueue(this.auditWatcher(origin, watcher, before, watcher, 'watcher.replaced'));
+    });
+    return watcher;
+  }
+
+  /**
+   * One pass over every enabled watcher — run on a timer by main.ts.
+   *
+   * Per watcher: take (or renew) its lease, or leave it to whoever holds it; then every candidate
+   * file in its folder goes through three gates. ALREADY TAKEN — the ledger has this name at this
+   * size and mtime — is not read again (with `delete`, it is a file a crash left behind after its
+   * job committed, and it is removed now). NOT SETTLED — its size or mtime moved since it was
+   * last seen, or has not held still for `settleSeconds` — is left for a later pass. Otherwise it
+   * is copied into staging and hashed, and if it did not change while being copied, the pickup,
+   * the job, `ingest.detected` and the audit commit together; the ledger's key (watcher, name,
+   * checksum) makes the same bytes a duplicate however they arrive. Only then is the source
+   * removed (`delete`), and validation follows as it does for an upload.
+   */
+  async scanWatchers(): Promise<WatchReport> {
+    const report: WatchReport = {
+      scanned: 0,
+      pickedUp: 0,
+      duplicates: 0,
+      skipped: 0,
+      problems: [],
+    };
+    if (this.watchRoot === undefined) return report;
+    for (const watcher of await this.store.enabledWatchers()) {
+      const nowMs = this.now().getTime();
+      const leased = await this.store.transaction((tx) =>
+        tx.leaseWatcher(
+          watcher.id,
+          watcher.channelId,
+          this.holder,
+          new Date(nowMs).toISOString(),
+          new Date(nowMs + this.watchLeaseMs).toISOString(),
+        ),
+      );
+      if (!leased) {
+        report.skipped += 1;
+        continue;
+      }
+      report.scanned += 1;
+      const where = await watchDir(this.watchRoot, watcher.channelId, watcher.path);
+      if ('missing' in where) {
+        report.problems.push({
+          watcherId: watcher.id,
+          problem: `folder ${where.missing} does not exist`,
+        });
+        continue;
+      }
+      if ('escapes' in where) {
+        report.problems.push({
+          watcherId: watcher.id,
+          problem: `folder resolves to ${where.escapes}, outside the channel's watch directory`,
+        });
+        continue;
+      }
+      await this.scanFolder(watcher, where.dir, report);
+    }
+    return report;
+  }
+
+  private async scanFolder(watcher: Watcher, dir: string, report: WatchReport): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const present = new Set<string>();
+    for (const entry of entries) {
+      // A regular file, directly in the folder. Not a symlink: its target could be anywhere.
+      if (!entry.isFile() || !isCandidate(entry.name, watcher.extensions)) continue;
+      present.add(entry.name);
+      const outcome = await this.considerFile(watcher, dir, entry.name);
+      if (outcome === 'picked-up') report.pickedUp += 1;
+      if (outcome === 'duplicate') report.duplicates += 1;
+    }
+    // A file that went away takes its settle clock with it.
+    const prefix = `${watcher.id}\u0000`;
+    for (const key of this.settling.keys()) {
+      if (key.startsWith(prefix) && !present.has(key.slice(prefix.length)))
+        this.settling.delete(key);
+    }
+  }
+
+  private async considerFile(
+    watcher: Watcher,
+    dir: string,
+    name: string,
+  ): Promise<'picked-up' | 'duplicate' | 'waiting'> {
+    const source = join(dir, name);
+    const seen = await statFile(source);
+    if (!seen) return 'waiting';
+
+    const taken = await this.store.pickup(watcher.id, name);
+    if (taken && taken.sizeBytes === seen.size && taken.mtimeMs === seen.mtimeMs) {
+      if (watcher.afterPickup === 'delete') await rm(source, { force: true });
+      return 'waiting';
+    }
+
+    const key = `${watcher.id}\u0000${name}`;
+    const nowMs = this.now().getTime();
+    const clock = this.settling.get(key);
+    if (!clock || clock.sizeBytes !== seen.size || clock.mtimeMs !== seen.mtimeMs) {
+      this.settling.set(key, { sizeBytes: seen.size, mtimeMs: seen.mtimeMs, since: nowMs });
+      return 'waiting';
+    }
+    if (nowMs - clock.since < watcher.settleSeconds * 1000) return 'waiting';
+
+    const jobId = ulid();
+    const staged = await this.staging.adopt(jobId, source, name);
+    const after = await statFile(source);
+    if (!after || after.size !== seen.size || after.mtimeMs !== seen.mtimeMs) {
+      // It changed while it was being copied: not settled after all. Start its clock again.
+      await this.staging.discardReceived(staged.path);
+      this.settling.delete(key);
+      return 'waiting';
+    }
+
+    const at = this.now().toISOString();
+    const job: IngestJob = {
+      id: jobId,
+      channelId: watcher.channelId,
+      source: watcher.id,
+      sourceKind: 'watch',
+      state: 'detected',
+      filename: name,
+      sizeBytes: staged.sizeBytes,
+      checksum: staged.sha256,
+      receivedPath: staged.path,
+      createdBy: 'rim',
+      createdAt: at,
+      updatedAt: at,
+      version: 1,
+    };
+    const pickup: Pickup = {
+      watcherId: watcher.id,
+      channelId: watcher.channelId,
+      name,
+      sha256: staged.sha256,
+      sizeBytes: seen.size,
+      mtimeMs: seen.mtimeMs,
+      jobId,
+      at,
+    };
+    const origin: Origin = { actor: SERVICE_ACTOR };
+    const created = await this.store.transaction(async (tx) => {
+      if (!(await tx.putPickup(pickup))) return false;
+      await tx.putJob(job);
+      await tx.enqueue(
+        this.record(origin, job.channelId, 'ingest.detected', {
+          source: job.source,
+          sourceKind: job.sourceKind,
+          path: staged.path,
+          sizeBytes: job.sizeBytes,
+        } satisfies EventPayloads['ingest.detected']),
+      );
+      await tx.enqueue(this.audit(origin, job, undefined, job, 'ingest.detected'));
+      return true;
+    });
+    this.settling.delete(key);
+    if (!created) {
+      // These bytes, under this name, were taken before (its mtime was touched, or the ledger
+      // row was written by a scan that crashed before removing the source). Nothing new.
+      await this.staging.discardReceived(staged.path);
+      if (watcher.afterPickup === 'delete') await rm(source, { force: true });
+      return 'duplicate';
+    }
+    if (watcher.afterPickup === 'delete') await rm(source, { force: true });
+    this.defer(() => this.validate(job.id).then(() => undefined));
+    return 'picked-up';
+  }
+
+  private watcherRecord(
+    input: WatcherInput,
+    channelId: string,
+    meta: Pick<Watcher, 'id' | 'createdBy' | 'createdAt' | 'updatedAt' | 'version'>,
+  ): Watcher {
+    const errors = watcherErrors(input);
+    if (errors.length > 0) throw new ValidationError(errors.join('; '));
+    // Field by field, not a spread: the body is the caller's, and a stray key must not be kept.
+    return {
+      id: meta.id,
+      channelId,
+      name: input.name.trim(),
+      path: normalisedPath(input.path),
+      settleSeconds: input.settleSeconds ?? DEFAULT_SETTLE_SECONDS,
+      ...(input.extensions !== undefined && input.extensions.length > 0
+        ? { extensions: [...input.extensions] }
+        : {}),
+      afterPickup: input.afterPickup ?? 'delete',
+      enabled: input.enabled ?? true,
+      createdBy: meta.createdBy,
+      createdAt: meta.createdAt,
+      updatedAt: meta.updatedAt,
+      version: meta.version,
+    };
+  }
+
+  private async checkWatcher(watcher: Watcher): Promise<void> {
+    if (this.watchRoot === undefined) {
+      throw new ValidationError(
+        'this RIM has no watch root (ATLAS_RIM_WATCH_ROOT); nothing can be watched',
+      );
+    }
+    const where = await watchDir(this.watchRoot, watcher.channelId, watcher.path);
+    if ('escapes' in where) {
+      throw new ValidationError("path resolves outside the channel's watch directory");
+    }
+    if (!watcher.enabled) return;
+    const clash = (await this.store.watchers(watcher.channelId)).find(
+      (w) => w.id !== watcher.id && w.enabled && w.path === watcher.path,
+    );
+    if (clash) {
+      throw new Conflict(`watcher ${clash.id} already watches ${watcher.path}; disable it first`);
+    }
+  }
+
+  private async watcherFor(caller: Caller, id: string): Promise<Watcher> {
+    const watcher = await this.store.watcher(id);
+    if (!watcher || watcher.channelId !== caller.channelId) throw new NotFound(`watcher ${id}`);
+    return watcher;
+  }
+
+  private auditWatcher(
+    origin: Origin,
+    at: Watcher,
+    before: Watcher | undefined,
+    after: Watcher,
+    action: string,
+  ): OutboxRecord {
+    return this.record(origin, at.channelId, 'audit.recorded', {
+      entityType: 'watcher',
+      entityId: at.id,
+      revision: at.version,
+      action,
+      origin: { service: 'rim' },
+      delta: delta(
+        before as unknown as Record<string, unknown> | undefined,
+        after as unknown as Record<string, unknown>,
+      ),
+    } satisfies EventPayloads['audit.recorded']);
+  }
+
   // --- internals -------------------------------------------------------------------------------------
 
   private authorize(caller: Caller, permission: string): void {
@@ -654,5 +996,16 @@ export class RimService {
         ...(headers !== undefined ? { headers } : {}),
       },
     };
+  }
+}
+
+/** A regular file's size and mtime, or undefined when it has gone (another process took it). */
+async function statFile(path: string): Promise<{ size: number; mtimeMs: number } | undefined> {
+  try {
+    const s = await stat(path);
+    return s.isFile() ? { size: s.size, mtimeMs: s.mtimeMs } : undefined;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
   }
 }
