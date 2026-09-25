@@ -7,6 +7,7 @@ import {
   inject,
   input,
   signal,
+  type OnInit,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import type { ItemType, Schedule } from '../core/generated/scheduling.types.ts';
@@ -308,7 +309,7 @@ const EMPTY_FORM: NewItemForm = {
   `,
   styleUrl: './schedule-editor.scss',
 })
-export class ScheduleEditor {
+export class ScheduleEditor implements OnInit {
   readonly scheduleId = input.required<string>();
   readonly tabId = input.required<string>();
 

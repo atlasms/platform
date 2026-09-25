@@ -75,6 +75,20 @@ function setup() {
 describe('SearchPanel', () => {
   beforeEach(() => TestBed.resetTestingModule());
 
+  it('takes focus when the panel opens — not via autofocus, which a browser honours once per load', async () => {
+    const { fixture } = setup();
+    document.body.appendChild(fixture.nativeElement as HTMLElement);
+    try {
+      fixture.detectChanges();
+      await fixture.whenStable();
+      const input = (fixture.nativeElement as HTMLElement).querySelector('input[type=search]');
+      expect(input?.hasAttribute('autofocus')).toBe(false);
+      expect(document.activeElement).toBe(input);
+    } finally {
+      (fixture.nativeElement as HTMLElement).remove();
+    }
+  });
+
   it('a slower earlier search cannot overwrite a newer one', () => {
     const { component, fake } = setup();
     component.onQuery('f');

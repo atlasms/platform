@@ -34,7 +34,8 @@ export class IfCanDirective {
     alias: 'atlasIfCanResource',
   });
   readonly strict = input(false, { alias: 'atlasIfCanStrict' });
-  readonly fallback = input<TemplateRef<unknown> | null>(null, { alias: 'atlasIfCanElse' });
+  /** `*atlasIfCan="…; else denied"` — the microsyntax names this input `atlasIfCanElse`. */
+  readonly else = input<TemplateRef<unknown> | null>(null, { alias: 'atlasIfCanElse' });
 
   constructor() {
     effect(() => {
@@ -50,7 +51,7 @@ export class IfCanDirective {
         this.container.createEmbeddedView(this.template);
         return;
       }
-      const fallback = this.fallback();
+      const fallback = this.else();
       if (fallback) this.container.createEmbeddedView(fallback);
     });
   }

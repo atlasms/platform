@@ -1,5 +1,6 @@
 // @ts-check
 import js from '@eslint/js';
+import angular from 'angular-eslint';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
@@ -34,6 +35,33 @@ export default tseslint.config(
       // with no transform and no build step (infra/docker/Dockerfile). Assign in the body instead.
       '@typescript-eslint/parameter-properties': ['error', { prefer: 'class-property' }],
     },
+  },
+  {
+    // Studio (Angular 22). Its components carry INLINE templates, so `processInlineTemplates`
+    // extracts each `template:` into a virtual `.html` file the template rules below then lint —
+    // without it the template half of this block would see nothing and pass.
+    files: ['apps/studio/src/**/*.ts'],
+    extends: [...angular.configs.tsRecommended],
+    processor: angular.processInlineTemplates,
+    rules: {
+      // The selector prefix is `atlas` (angular.json), elements kebab-case, attributes camelCase.
+      '@angular-eslint/component-selector': [
+        'error',
+        { type: 'element', prefix: 'atlas', style: 'kebab-case' },
+      ],
+      '@angular-eslint/directive-selector': [
+        'error',
+        { type: 'attribute', prefix: 'atlas', style: 'camelCase' },
+      ],
+      // The house style: OnPush everywhere (signals + zoneless), `inject()` not constructor DI.
+      '@angular-eslint/prefer-on-push-component-change-detection': 'error',
+      '@angular-eslint/prefer-inject': 'error',
+    },
+  },
+  {
+    files: ['apps/studio/src/**/*.html'],
+    extends: [...angular.configs.templateRecommended, ...angular.configs.templateAccessibility],
+    rules: {},
   },
   {
     // Tests may be looser: fixtures and deliberate bad input are normal here.

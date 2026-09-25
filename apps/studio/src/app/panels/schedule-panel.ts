@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal, type OnInit } from '@angular/core';
 import type { Schedule } from '../core/generated/scheduling.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
@@ -148,7 +148,7 @@ import { EditorStore } from '../workbench/editor.store.ts';
     }
   `,
 })
-export class SchedulePanel {
+export class SchedulePanel implements OnInit {
   private readonly schedulesApi = inject(SchedulesService);
   private readonly editors = inject(EditorStore);
   private readonly permissions = inject(PermissionService);

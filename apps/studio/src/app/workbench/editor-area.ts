@@ -44,13 +44,19 @@ import { EditorStore } from './editor.store.ts';
     } @else {
       <div class="groups" cdkDropListGroup>
         @for (group of store.groups(); track group.id) {
+          <!-- A click anywhere in a group makes it the active one — a pointer convenience. Its
+               keyboard equivalent is (focusin): focus moving into the group by any key does the
+               same, so the group itself is not a control and is not made focusable. -->
+          <!-- eslint-disable-next-line @angular-eslint/template/click-events-have-key-events, @angular-eslint/template/interactive-supports-focus -->
           <section
             class="group"
             [class.focused]="group.id === store.activeGroupId()"
             (click)="store.focusGroup(group.id)"
+            (focusin)="store.focusGroup(group.id)"
           >
             <div
               class="tab-bar"
+              role="tablist"
               cdkDropList
               cdkDropListOrientation="horizontal"
               [cdkDropListData]="group.id"
@@ -59,11 +65,16 @@ import { EditorStore } from './editor.store.ts';
               @for (tab of group.tabs; track tab.id) {
                 <div
                   class="tab"
+                  role="tab"
+                  tabindex="0"
+                  [attr.aria-selected]="tab.id === group.activeTabId"
                   cdkDrag
                   [cdkDragData]="tab.id"
                   [class.active]="tab.id === group.activeTabId"
                   [class.pinned]="tab.pinned"
                   (click)="store.focus(group.id, tab.id)"
+                  (keydown.enter)="onTabKey($event, group.id, tab.id)"
+                  (keydown.space)="onTabKey($event, group.id, tab.id)"
                   (dblclick)="store.togglePin(tab.id)"
                   [title]="tab.title + (tab.pinned ? ' (' + locale.t('editor.pinned') + ')' : '')"
                 >
@@ -139,6 +150,16 @@ import { EditorStore } from './editor.store.ts';
 export class EditorArea {
   protected readonly store = inject(EditorStore);
   protected readonly locale = inject(LocaleService);
+
+  /**
+   * Enter or Space on a tab shows it — the keyboard's click. Only when the TAB is the target: the
+   * same keys on its close button bubble here, and must close the tab, not also re-select it.
+   */
+  protected onTabKey(event: Event, groupId: string, tabId: string): void {
+    if (event.target !== event.currentTarget) return;
+    event.preventDefault(); // Space would otherwise scroll the editor area
+    this.store.focus(groupId, tabId);
+  }
 
   protected onClose(event: Event, groupId: string, tabId: string): void {
     // Without this the click also reaches the tab and focuses what is being removed.
