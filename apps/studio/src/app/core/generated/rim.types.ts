@@ -121,6 +121,32 @@ export type AcceptanceRuleSet = AcceptanceRuleSetInput & {
   version: number;
 };
 
+export interface WatcherInput {
+  name: string;
+  /** The folder, relative to the channel's own directory of RIM's watch root (`<watchRoot>/<channelId>/<path>`) — so a channel can only ever watch its own drops. Checked on the resolved real path, symlinks included. Only files directly in it are picked up. */
+  path: string;
+  /** A file is picked up once its size and mtime have not changed for this long — a copy still in progress is left alone. */
+  settleSeconds?: number;
+  /** Only these (lowercase, without the dot). Absent or empty is every file. Hidden files and partial-transfer names (.part, .tmp, .crdownload, ~) are always ignored. */
+  extensions?: string[];
+  /** What happens to the source file once its job is committed. `keep` leaves it; the pickup ledger stops it being taken twice, and a changed file (new checksum) is taken again. */
+  afterPickup?: 'delete' | 'keep';
+  /** A disabled watcher is kept and not scanned. */
+  enabled?: boolean;
+}
+
+export type Watcher = WatcherInput & {
+  id: Ulid;
+  channelId: string;
+  settleSeconds: number;
+  afterPickup: 'delete' | 'keep';
+  enabled: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+};
+
 /** RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept: `code` is the machine key (a closed enum — VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, UNAVAILABLE, INTERNAL), `message` the text. The RFC members are derived from them: `type` is https://atlas.example/problems/<code>, `title` is constant per code, `detail` equals `message`, `instance` is urn:atlas:correlation:<correlationId>. */
 export interface Error {
   type: string;

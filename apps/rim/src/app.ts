@@ -29,6 +29,7 @@ import {
   type Tracer,
 } from '@atlas/service-kit';
 import { parseRuleSetInput } from './acceptance.ts';
+import { parseWatcherInput } from './watcher.ts';
 import type { Caller as ServiceCaller, RimService } from './service.ts';
 import type { JobQuery } from './store.ts';
 import { INGEST_STATES, parseStartUpload, type IngestJob, type IngestState } from './upload.ts';
@@ -390,6 +391,25 @@ export async function buildRimApp(options: RimAppOptions): Promise<FastifyInstan
 
   app.delete<{ Params: P }>('/api/v1/acceptance-rules/:id', (req, reply) =>
     handle(req, reply, 204, (caller) => service.deleteRuleSet(caller, req.params.id)),
+  );
+
+  // Folder watchers (EP-15.2). No DELETE: jobs name their watcher as source — disable it instead.
+  app.get('/api/v1/watchers', (req, reply) =>
+    handle(req, reply, 200, (caller) => service.watchers(caller)),
+  );
+
+  app.post('/api/v1/watchers', (req, reply) =>
+    handle(req, reply, 201, (caller) => service.createWatcher(caller, parseWatcherInput(req.body))),
+  );
+
+  app.get<{ Params: P }>('/api/v1/watchers/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) => service.watcher(caller, req.params.id)),
+  );
+
+  app.put<{ Params: P }>('/api/v1/watchers/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      service.replaceWatcher(caller, req.params.id, parseWatcherInput(req.body)),
+    ),
   );
 
   return app;

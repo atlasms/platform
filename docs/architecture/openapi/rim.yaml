@@ -161,9 +161,51 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { description: Not quarantined, $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
+  # Folder watchers (EP-15.2; FR-ING-1). A watcher is a Source of kind `watch`: a folder under
+  # the channel's own directory of RIM's watch root, scanned on a timer. A file is picked up once it
+  # has SETTLED (size and mtime unchanged for `settleSeconds`), copied into staging with its
+  # checksum, and becomes an ingest job exactly as a completed upload does — `ingest.detected`,
+  # then validation against the channel's acceptance rules, which may scope to this watcher by id.
+  # Disabled, never deleted: jobs name their watcher as their source.
   /watchers:
-    get: { operationId: listWatchers, tags: [admin], summary: List folder watchers, responses: { '200': { description: Watchers } } }
-    post: { operationId: createWatcher, tags: [admin], summary: Create a folder watcher, responses: { '201': { description: Created } } }
+    get:
+      operationId: listWatchers
+      tags: [admin]
+      summary: The channel's folder watchers (scope ingest:admin)
+      responses:
+        '200': { description: Watchers, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Watcher' } } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createWatcher
+      tags: [admin]
+      summary: Create a folder watcher (scope ingest:admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/WatcherInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Watcher' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /watchers/{id}:
+    get:
+      operationId: getWatcher
+      tags: [admin]
+      summary: One watcher (scope ingest:admin)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: The watcher, content: { application/json: { schema: { $ref: '#/components/schemas/Watcher' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: replaceWatcher
+      tags: [admin]
+      summary: Replace a watcher — the whole thing, as given; `enabled` false stops it (scope ingest:admin)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/WatcherInput' } } } }
+      responses:
+        '200': { description: 'Replaced; `version` bumped', content: { application/json: { schema: { $ref: '#/components/schemas/Watcher' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /recorders:
     get: { operationId: listRecorders, tags: [admin], summary: List recorders, responses: { '200': { description: Recorders } } }
     post: { operationId: createRecorder, tags: [admin], summary: Create a recorder, responses: { '201': { description: Created } } }
@@ -347,6 +389,38 @@ components:
             id: { $ref: '#/components/schemas/Ulid' }
             channelId: { type: string }
             rules: { type: array, items: { $ref: '#/components/schemas/AcceptanceRule' } }
+            enabled: { type: boolean }
+            createdBy: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+            version: { type: integer, minimum: 1, description: The audit revision; every replacement bumps it. }
+    WatcherInput:
+      type: object
+      required: [name, path]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        path:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: >-
+            The folder, relative to the channel's own directory of RIM's watch root
+            (`<watchRoot>/<channelId>/<path>`) — so a channel can only ever watch its own drops. Checked
+            on the resolved real path, symlinks included. Only files directly in it are picked up.
+        settleSeconds: { type: integer, minimum: 1, maximum: 3600, default: 10, description: 'A file is picked up once its size and mtime have not changed for this long — a copy still in progress is left alone.' }
+        extensions: { type: array, maxItems: 50, items: { type: string, pattern: '^[a-z0-9]{1,10}$' }, description: 'Only these (lowercase, without the dot). Absent or empty is every file. Hidden files and partial-transfer names (.part, .tmp, .crdownload, ~) are always ignored.' }
+        afterPickup: { type: string, enum: [delete, keep], default: delete, description: 'What happens to the source file once its job is committed. `keep` leaves it; the pickup ledger stops it being taken twice, and a changed file (new checksum) is taken again.' }
+        enabled: { type: boolean, default: true, description: A disabled watcher is kept and not scanned. }
+    Watcher:
+      allOf:
+        - $ref: '#/components/schemas/WatcherInput'
+        - type: object
+          required: [id, channelId, settleSeconds, afterPickup, enabled, createdBy, createdAt, updatedAt, version]
+          properties:
+            id: { $ref: '#/components/schemas/Ulid' }
+            channelId: { type: string }
+            settleSeconds: { type: integer }
+            afterPickup: { type: string, enum: [delete, keep] }
             enabled: { type: boolean }
             createdBy: { type: string }
             createdAt: { type: string, format: date-time }

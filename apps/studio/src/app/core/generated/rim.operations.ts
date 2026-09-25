@@ -27,10 +27,14 @@ export const RimOperations = {
   acceptIngest: { method: 'POST', path: '/api/v1/ingest/{id}/accept', params: ['id'] },
   /** Reject a quarantined job — the operator discard (scope ingest:approve) */
   rejectIngest: { method: 'POST', path: '/api/v1/ingest/{id}/reject', params: ['id'] },
-  /** List folder watchers */
+  /** The channel's folder watchers (scope ingest:admin) */
   listWatchers: { method: 'GET', path: '/api/v1/watchers', params: [] },
-  /** Create a folder watcher */
+  /** Create a folder watcher (scope ingest:admin) */
   createWatcher: { method: 'POST', path: '/api/v1/watchers', params: [] },
+  /** One watcher (scope ingest:admin) */
+  getWatcher: { method: 'GET', path: '/api/v1/watchers/{id}', params: ['id'] },
+  /** Replace a watcher — the whole thing, as given; `enabled` false stops it (scope ingest:admin) */
+  replaceWatcher: { method: 'PUT', path: '/api/v1/watchers/{id}', params: ['id'] },
   /** List recorders */
   listRecorders: { method: 'GET', path: '/api/v1/recorders', params: [] },
   /** Create a recorder */

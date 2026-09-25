@@ -8,12 +8,15 @@
 // And past the upload (EP-15.3/15.4/15.6): the job taken to `validating` and the verdict
 // committed with its events, each under the state it read (two validators, one write), the
 // probe's metadata on the job and its refusal a quarantine, a rejected job's bytes gone, the
-// review's transitions, the queue's keyset page, the rule sets' audit trail.
+// review's transitions, the queue's keyset page, the rule sets' audit trail. And the folder
+// watchers (EP-15.2): a file taken once it has settled, exactly once however often it is seen,
+// its job the same as an upload's; one scanner per watcher by lease; a channel's watcher kept
+// inside the channel's own directory.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ulid, validatePayload, type Envelope, type EventPayloads } from '@atlas/contracts';
@@ -25,6 +28,7 @@ import { RimService, type Caller } from './service.ts';
 import { fsStaging } from './staging.ts';
 import type { RimStore } from './store.ts';
 import type { IngestJob } from './upload.ts';
+import type { WatcherInput } from './watcher.ts';
 
 export interface RimStoreHarness {
   /** A clean store, plus the outbox store the relay drains — both on the same database. */
@@ -64,25 +68,35 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       /** A completed upload of `size` random bytes, as the job the request answered with. */
       uploaded: (filename: string, size: number, who?: Caller) => Promise<IngestJob>;
       probe: ReturnType<typeof fakeProbe>;
+      /** RIM's watch root; channel ch12's watchers live under `<watchRoot>/ch12/`. */
+      watchRoot: string;
+      /** Another RIM process on the same store — a second pod, for the lease. */
+      serviceAs: (holder: string, options?: { watchRoot?: string }) => RimService;
     }) => Promise<void>,
   ): Promise<void> {
     const { store, outbox, cleanup } = await harness.make();
     const dir = await mkdtemp(join(tmpdir(), 'rim-staging-'));
+    const watchRoot = await mkdtemp(join(tmpdir(), 'rim-watch-'));
     const clock = { now: Date.parse('2026-09-14T12:00:00.000Z') };
     const broker = new InMemoryBroker();
     const relay = new OutboxRelay(outbox, broker);
     const deferred: (() => Promise<void>)[] = [];
     const probe = fakeProbe();
-    const service = new RimService({
-      store,
-      staging: fsStaging(dir),
-      probe,
-      partSizeBytes: PART,
-      uploadTtlMs: 60_000,
-      validateAfterMs: 5_000,
-      now: () => new Date(clock.now),
-      defer: (task) => deferred.push(task),
-    });
+    const serviceAs = (holder: string, options: { watchRoot?: string } = { watchRoot }) =>
+      new RimService({
+        store,
+        staging: fsStaging(dir),
+        probe,
+        partSizeBytes: PART,
+        uploadTtlMs: 60_000,
+        validateAfterMs: 5_000,
+        now: () => new Date(clock.now),
+        defer: (task) => deferred.push(task),
+        ...(options.watchRoot !== undefined ? { watchRoot: options.watchRoot } : {}),
+        holder,
+        watchLeaseMs: 30_000,
+      });
+    const service = serviceAs('pod-a');
     const drain = async (): Promise<Envelope[]> => {
       await relay.drain();
       return broker.published.map((m) => m.body as Envelope);
@@ -103,11 +117,23 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       return service.complete(who, u.uploadId);
     };
     try {
-      await fn({ service, store, dir, clock, drain, settle, uploaded, probe });
+      await fn({
+        service,
+        store,
+        dir,
+        clock,
+        drain,
+        settle,
+        uploaded,
+        probe,
+        watchRoot,
+        serviceAs,
+      });
     } finally {
       await cleanup?.();
       await store.close().catch(() => undefined);
       await rm(dir, { recursive: true, force: true });
+      await rm(watchRoot, { recursive: true, force: true });
     }
   }
 
@@ -675,6 +701,212 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       );
       assert.deepEqual(audits[1]!.delta['name'], { before: 'v1', after: 'v2' });
       assert.deepEqual(audits[2]!.delta['name'], { before: 'v2' });
+    });
+  });
+
+  // --- folder watchers (EP-15.2) -----------------------------------------------------------------
+
+  const drops = (root: string, ...rest: string[]) => join(root, CH, 'drops', ...rest);
+  const watcherInput = (over: Partial<WatcherInput> = {}): WatcherInput => ({
+    name: 'Playout drops',
+    path: 'drops',
+    settleSeconds: 10,
+    ...over,
+  });
+
+  test(`[${name}] WATCHERS: written under ingest:admin, audited, kept inside the channel's own directory`, async () => {
+    await withFixture(async ({ service, store, drain, watchRoot, serviceAs }) => {
+      const w = await service.createWatcher(caller(), watcherInput({ path: './drops/' }));
+      assert.equal(w.path, 'drops', 'normalised, so two spellings of one folder are one folder');
+      assert.equal(w.afterPickup, 'delete');
+      assert.equal(w.enabled, true);
+      assert.equal(w.version, 1);
+      const audit = (await drain()).find((e) => e.type === 'audit.recorded')!;
+      const payload = audit.payload as unknown as EventPayloads['audit.recorded'];
+      assert.deepEqual([payload.entityType, payload.action], ['watcher', 'watcher.created']);
+
+      // Two enabled watchers on one folder would each take every file.
+      await assert.rejects(service.createWatcher(caller(), watcherInput({ name: 'Again' })), {
+        status: 409,
+      });
+      // A disabled one is kept, not scanned — and does not clash.
+      await service.createWatcher(caller(), watcherInput({ name: 'Spare', enabled: false }));
+
+      // Out of the channel's directory, by any spelling, is refused before it is written.
+      for (const path of ['../ch99/drops', '/etc', 'a/../../x']) {
+        await assert.rejects(service.createWatcher(caller(), watcherInput({ path })), {
+          status: 422,
+        });
+      }
+      // …and by symlink: the check is on the REAL path.
+      await mkdir(join(watchRoot, CH), { recursive: true });
+      const outside = await mkdtemp(join(tmpdir(), 'rim-outside-'));
+      const linked = await symlink(outside, join(watchRoot, CH, 'link'), 'dir').then(
+        () => true,
+        () => false, // no symlink privilege (Windows without developer mode): the rest still runs
+      );
+      if (linked) {
+        await assert.rejects(service.createWatcher(caller(), watcherInput({ path: 'link' })), {
+          status: 422,
+        });
+      }
+      await rm(outside, { recursive: true, force: true });
+
+      // Another channel's watcher is not found; a RIM with no watch root cannot create one.
+      await assert.rejects(service.watcher(caller('ch99'), w.id), { status: 404 });
+      await assert.rejects(
+        serviceAs('pod-x', {}).createWatcher(caller(), watcherInput({ path: 'other' })),
+        /no watch root/,
+      );
+
+      const replaced = await service.replaceWatcher(
+        caller(),
+        w.id,
+        watcherInput({ afterPickup: 'keep', extensions: ['mxf'] }),
+      );
+      assert.equal(replaced.version, 2);
+      assert.equal(replaced.createdAt, w.createdAt);
+      assert.deepEqual((await store.watcher(w.id))?.extensions, ['mxf']);
+      assert.equal((await service.watchers(caller())).length, 2);
+    });
+  });
+
+  test(`[${name}] WATCHERS: a file is taken once it has SETTLED, as a job an upload would make, and removed after the commit`, async () => {
+    await withFixture(async ({ service, store, clock, drain, settle, watchRoot }) => {
+      const w = await service.createWatcher(caller(), watcherInput());
+      await drain();
+      await mkdir(drops(watchRoot), { recursive: true });
+      const bytes = randomBytes(3000);
+      await writeFile(drops(watchRoot, 'bulletin.mxf'), bytes);
+      await writeFile(drops(watchRoot, '.hidden.mxf'), 'x');
+      await writeFile(drops(watchRoot, 'copying.mxf.part'), 'x');
+
+      // First sight starts the clock; nothing is taken before it has held still for 10 s.
+      assert.equal((await service.scanWatchers()).pickedUp, 0);
+      clock.now += 5_000;
+      assert.equal((await service.scanWatchers()).pickedUp, 0);
+      // Still growing: the clock starts again.
+      await writeFile(drops(watchRoot, 'bulletin.mxf'), Buffer.concat([bytes, randomBytes(10)]));
+      clock.now += 6_000;
+      assert.equal((await service.scanWatchers()).pickedUp, 0);
+      clock.now += 10_000;
+      const report = await service.scanWatchers();
+      assert.equal(report.pickedUp, 1);
+
+      const [job] = (await store.jobs(CH, { limit: 10, order: 'asc' })).filter(
+        (j) => j.source === w.id,
+      );
+      assert.ok(job);
+      assert.equal(job.sourceKind, 'watch');
+      assert.equal(job.filename, 'bulletin.mxf');
+      assert.equal(job.sizeBytes, 3010);
+      assert.equal(job.checksum, sha256(await readFile(job.receivedPath!)));
+      // `delete`: the source goes once the job is committed. Hidden and partial files are untouched.
+      await assert.rejects(stat(drops(watchRoot, 'bulletin.mxf')), { code: 'ENOENT' });
+      await stat(drops(watchRoot, '.hidden.mxf'));
+      await stat(drops(watchRoot, 'copying.mxf.part'));
+
+      const events = await drain();
+      const detected = events.find((e) => e.type === 'ingest.detected')!;
+      assert.deepEqual(
+        [
+          (detected.payload as { source: string }).source,
+          (detected.payload as { sourceKind: string }).sourceKind,
+        ],
+        [w.id, 'watch'],
+      );
+      assert.ok(validatePayload('ingest.detected', detected.payload).valid);
+      // Validation follows, exactly as it does for an upload.
+      await settle();
+      assert.equal((await store.job(job.id))?.state, 'accepted');
+    });
+  });
+
+  test(`[${name}] WATCHERS: the same bytes are never taken twice — re-dropped, or left behind by a crash — and a changed file is`, async () => {
+    await withFixture(async ({ service, store, clock, watchRoot }) => {
+      const keep = await service.createWatcher(caller(), watcherInput({ afterPickup: 'keep' }));
+      await mkdir(drops(watchRoot), { recursive: true });
+      const file = drops(watchRoot, 'promo.mxf');
+      const bytes = randomBytes(2000);
+      await writeFile(file, bytes);
+      const pass = async () => {
+        const r = await service.scanWatchers();
+        clock.now += 11_000;
+        return r;
+      };
+      await pass();
+      assert.equal((await pass()).pickedUp, 1);
+      // `keep`: the file stays, and the ledger stops every later scan taking it again.
+      for (let n = 0; n < 3; n += 1) assert.equal((await pass()).pickedUp, 0);
+      const jobsOf = async () =>
+        (await store.jobs(CH, { limit: 50, order: 'asc' })).filter((j) => j.source === keep.id);
+      assert.equal((await jobsOf()).length, 1);
+
+      // The same bytes written again (a re-drop; mtime moves): copied, found in the ledger by
+      // checksum, and dropped — a duplicate, not a job.
+      await writeFile(file, bytes);
+      const later = clock.now / 1000 + 60; // seconds, as utimes takes them
+      await utimes(file, later, later);
+      await pass();
+      const again = await pass();
+      assert.equal(again.duplicates, 1);
+      assert.equal((await jobsOf()).length, 1);
+
+      // Different bytes under the same name: a new file, a new job.
+      await writeFile(file, randomBytes(2500));
+      await pass();
+      assert.equal((await pass()).pickedUp, 1);
+      assert.equal((await jobsOf()).length, 2);
+    });
+  });
+
+  test(`[${name}] WATCHERS: one scanner per watcher — a second pod waits for the lease to lapse`, async () => {
+    await withFixture(async ({ service, store, clock, watchRoot, serviceAs }) => {
+      const w = await service.createWatcher(caller(), watcherInput({ settleSeconds: 1 }));
+      await mkdir(drops(watchRoot), { recursive: true });
+      await writeFile(drops(watchRoot, 'a.mxf'), randomBytes(100));
+      const podB = serviceAs('pod-b');
+
+      assert.equal((await service.scanWatchers()).scanned, 1);
+      clock.now += 5_000;
+      assert.deepEqual(
+        [(await podB.scanWatchers()).skipped, (await podB.scanWatchers()).scanned],
+        [1, 0],
+      );
+      // A renewal by the holder keeps it held.
+      assert.equal((await service.scanWatchers()).pickedUp, 1);
+      clock.now += 20_000;
+      assert.equal((await podB.scanWatchers()).skipped, 1);
+      // The holder stops (a pod gone): after the lease, the other takes over.
+      clock.now += 31_000;
+      assert.equal((await podB.scanWatchers()).scanned, 1);
+      assert.equal((await service.scanWatchers()).skipped, 1);
+      assert.equal(
+        (await store.jobs(CH, { limit: 10, order: 'asc' })).filter((j) => j.source === w.id).length,
+        1,
+      );
+    });
+  });
+
+  test(`[${name}] WATCHERS: a missing folder is reported every pass, not skipped quietly; a disabled watcher is not scanned`, async () => {
+    await withFixture(async ({ service }) => {
+      const w = await service.createWatcher(caller(), watcherInput({ path: 'not-mounted-yet' }));
+      const report = await service.scanWatchers();
+      assert.equal(report.problems.length, 1);
+      assert.equal(report.problems[0]?.watcherId, w.id);
+      assert.match(report.problems[0]!.problem, /does not exist/);
+      await service.replaceWatcher(
+        caller(),
+        w.id,
+        watcherInput({ path: 'not-mounted-yet', enabled: false }),
+      );
+      assert.deepEqual(await service.scanWatchers(), {
+        scanned: 0,
+        pickedUp: 0,
+        duplicates: 0,
+        skipped: 0,
+        problems: [],
+      });
     });
   });
 }

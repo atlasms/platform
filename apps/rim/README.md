@@ -137,6 +137,36 @@ or refused, by the probe, a rule or a person), `ingest.accept` (the override) �
 (`acceptance-rule-set`). Studio's Ingest panel reads the queue and drives the review; its
 uploader is the rest of EP-20.3.
 
+## Folder watchers (EP-15.2; FR-ING-1)
+
+A watcher is a source of kind `watch`: a folder under its CHANNEL's own directory of RIM's watch
+root (`ATLAS_RIM_WATCH_ROOT`, the `rim-watch` claim), administered at `/api/v1/watchers` under
+`ingest:admin` and audited. Disabled, never deleted — jobs name their watcher as `source`, and an
+acceptance rule set can scope to it by id.
+
+- **Scanned, not inotified.** A drop folder is usually an NFS or SMB share, where inotify sees only
+  what this host writes. `ATLAS_WATCH_INTERVAL_MS` (5 s) lists every enabled watcher's folder —
+  regular files directly in it; not symlinks, not hidden or partial-transfer names (`.part`,
+  `.tmp`, `.crdownload`, `~`), and only the listed `extensions` when there are any.
+- **Settled before taken.** A file is picked up once its size and mtime have not moved for
+  `settleSeconds` (10), and re-checked after the copy: one that changed while being copied is not
+  settled after all, and its clock starts again. The clock is in memory — a new holder simply
+  starts it over.
+- **Once, however often it is seen.** The pickup ledger `(watcher, name, checksum)` commits in the
+  transaction that creates the job, `ingest.detected` and the audit. A file the ledger already has
+  at that size and mtime is not read again; the same BYTES re-dropped are copied, found by
+  checksum and dropped as a duplicate; different bytes under the same name are a new job. With
+  `afterPickup: delete` (the default) the source is removed only after the commit, so a crash in
+  between leaves a file the next scan finds in the ledger and removes.
+- **One scanner per watcher.** A lease row (the holder is the pod name; 30 s, renewed each scan), compare-and-set like MTS's job lease: a rolling update runs two pods for a moment, and
+  both would otherwise take every file.
+- **Kept to its channel.** The path is relative to `<root>/<channelId>/`; `..`, an absolute path or
+  a symlink out of the channel's directory is a 422 (checked on the REAL path), and two enabled
+  watchers on one folder a 409. A folder that does not exist yet is not refused — a share can be
+  mounted later — and is logged every pass until it is.
+- The job is an upload's: copied into staging (hashed on the way), then validated by the probe
+  and the channel's acceptance rules, the queue and the review exactly as for an upload.
+
 ## The store is a port, with two adapters and one suite
 
 `RimStore` — `sqliteRimStore` for tests, `pgRimStore` for production — held to
@@ -150,7 +180,7 @@ completion idempotent, another channel's upload not found, the sweeper taking on
 
 ## Not yet
 
-- **15.2** watchers and recorders (sources become entities; `source` is `upload` until then)
+- **15.2** recorders (watchers are built — above); FTP sources
 - **15.5** `ingest.accepted` with the asset MAM minted, once EP-14 places the bytes
 - the hand-off to HSM (EP-14): an accepted file waits in staging until then
 

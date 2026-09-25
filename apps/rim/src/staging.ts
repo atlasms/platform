@@ -34,6 +34,16 @@ export interface Staging {
     partCount: number,
     filename: string,
   ): Promise<{ path: string; sizeBytes: number; sha256: string }>;
+  /**
+   * Copy a file a watcher found into a directory of its own (EP-15.2), hashing on the way — the
+   * received file a watched job points at, exactly as an assembled upload is. A COPY, not a move:
+   * the source may be on another filesystem (a network share), and `keep` leaves it where it is.
+   */
+  adopt(
+    id: string,
+    sourcePath: string,
+    filename: string,
+  ): Promise<{ path: string; sizeBytes: number; sha256: string }>;
   /** Remove everything the upload left — parts, the received file, the directory. */
   discard(uploadId: string): Promise<void>;
   /**
@@ -102,6 +112,20 @@ export function fsStaging(root: string): Staging {
       }
       await rename(tmp, target);
       for (let n = 1; n <= partCount; n += 1) await rm(join(dir, `part-${n}`), { force: true });
+      const written = await stat(target);
+      return { path: target, sizeBytes: written.size, sha256: hash.digest('hex') };
+    },
+
+    async adopt(id, sourcePath, filename) {
+      const dir = dirOf(id);
+      await mkdir(dir, { recursive: true });
+      const target = join(dir, checkFilename(filename));
+      const tmp = join(dir, `.adopting-${process.pid}-${Date.now()}`);
+      const hash = createHash('sha256');
+      const source = createReadStream(sourcePath);
+      source.on('data', (chunk: Buffer | string) => hash.update(chunk));
+      await pipeline(source, createWriteStream(tmp, { flags: 'w' }));
+      await rename(tmp, target);
       const written = await stat(target);
       return { path: target, sizeBytes: written.size, sha256: hash.digest('hex') };
     },

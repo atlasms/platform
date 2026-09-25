@@ -61,6 +61,8 @@ patches:
   - path: seed-user.yaml
   # A sample clip in MTS's work area, so smoke can run a real transcode (see the file).
   - path: mts-sample.yaml
+  # A sample file in RIM's watch folder, so smoke can run a folder watcher (EP-15.2, see the file).
+  - path: rim-watch-sample.yaml
 
   # One replica: a laptop does not need two, and a single pod makes `kubectl logs` legible.
   - target:

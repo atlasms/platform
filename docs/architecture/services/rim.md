@@ -213,6 +213,20 @@ it refuses is quarantined with its words — and what goes wrong with the tool i
 stays `validating`, readiness shows it, the loop retries. ffprobe ships in RIM's image only
 (`APK_PACKAGES=ffmpeg`); §9's "malformed upload → rejected" is, as built, "held for a person".
 
+**EP-15.2 folder watchers.** A `Source` of kind `watch` (§3) is a `Watcher` at `/watchers`
+(`ingest:admin`, audited, disabled not deleted). Four decisions this document left open:
+**polling, not the inotify §13 suggests** — a drop folder is usually a network share, and inotify
+on one sees only this host's writes; **settled** means size and mtime unchanged for the watcher's
+`settleSeconds`, re-checked after the copy; the **leader lock** of §8 is a lease row per watcher
+(holder, expiry) taken by compare-and-set and renewed each scan, because a rolling update runs two
+pods at once; and §9's **"idempotency on source path + checksum"** is a pickup ledger keyed
+(watcher, name, checksum) committed in the job's transaction, with size and mtime kept so a file
+already taken is not read again, and the source removed only after the commit. The watch root is
+shared by every channel, so a watcher's path is relative to `<root>/<channelId>/` and contained on
+the real path — a channel administrator cannot watch another channel's drops, by symlink or
+otherwise. A watched file becomes the same `IngestJob` a completed upload does. The audit trail of
+RIM's administration — watchers and acceptance rule sets — reads under `ingest:admin` in the log.
+
 ## 14. Open questions / future
 
 - Growing-file / while-recording ingest (edit-while-ingest) — Post-v1.0.

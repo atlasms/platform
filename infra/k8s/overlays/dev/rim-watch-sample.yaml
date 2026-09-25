@@ -1,0 +1,42 @@
+# A file in RIM's watch folder for channel ch12, rendered on start — DEV ONLY, like the seed user.
+#
+# The smoke suite creates a watcher on `smoke-watch/` and waits for this file to become an ingest
+# job: the whole EP-15.2 path on a cluster — the scan, the settle, the copy into staging, the job
+# and its events, the validation that follows. `keep` in the smoke watcher leaves the file for the
+# next run, and the pickup ledger is per watcher, so each run's new watcher takes it once.
+#
+# The same FFmpeg the service's probe uses; `-n` and the existence test make a restart a no-op.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rim
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: watch-sample
+          image: atlas/rim:dev
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - >-
+              mkdir -p /var/lib/atlas/watch/ch12/smoke-watch &&
+              [ -s /var/lib/atlas/watch/ch12/smoke-watch/smoke-watch.wav ] ||
+              ffmpeg -nostdin -loglevel error -n
+              -f lavfi -i sine=frequency=440:duration=2
+              /var/lib/atlas/watch/ch12/smoke-watch/smoke-watch.wav
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: watch
+              mountPath: /var/lib/atlas/watch
