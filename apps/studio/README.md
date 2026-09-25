@@ -215,6 +215,22 @@ marked dirty would promise changes that are gone. Restored data is validated rat
 localStorage is user-writable and survives deploys, and booting into a crash because someone edited
 devtools is not acceptable.
 
+### Editors are fetched when first opened
+
+Every editor kind is a `@defer (on immediate)` block in [`editor-area.ts`](src/app/workbench/editor-area.ts),
+so its code — and what only editors use, `@angular/forms` among it — is a chunk fetched the first
+time a tab of that kind renders, not part of the initial bundle every session downloads before it
+can sign in. That took the initial bundle from 559 kB to 406 kB (132 → 108 kB gzipped). The
+dashboard stays eager because it is the landing tab. A chunk that fails to load — a redeploy
+replaced it under an open Studio — says so and asks for a reload, instead of leaving an empty pane.
+
+Nothing may import an editor module eagerly, or the split quietly undoes itself: an editor's
+helpers that a panel needs belong in a separate module (`profile.model.ts`), and a panel that
+imports an editor module is itself lazy. The **budget is a gate**: `angular.json` errors on an
+initial bundle over 500 kB (warns at 450 kB), and CI runs Studio's `build` target — the production
+AOT compile — on every PR that affects it. It did not before, which is how the bundle sat over its
+budget with nothing but a local build saying so.
+
 ## The schedule editor owns reel correctness (EP-20.5)
 
 The scheduling service's write path is **thin** — it stores the starts it is given and refuses
