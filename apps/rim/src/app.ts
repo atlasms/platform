@@ -29,6 +29,7 @@ import {
   type Tracer,
 } from '@atlas/service-kit';
 import { parseRuleSetInput } from './acceptance.ts';
+import { parseRecorderInput } from './recorder.ts';
 import { parseWatcherInput } from './watcher.ts';
 import type { Caller as ServiceCaller, RimService } from './service.ts';
 import type { JobQuery } from './store.ts';
@@ -410,6 +411,42 @@ export async function buildRimApp(options: RimAppOptions): Promise<FastifyInstan
     handle(req, reply, 200, (caller) =>
       service.replaceWatcher(caller, req.params.id, parseWatcherInput(req.body)),
     ),
+  );
+
+  // Recorders (EP-39; ADR-0007). No DELETE: the files a recorder made name it — disable it.
+  app.get('/api/v1/recorders', (req, reply) =>
+    handle(req, reply, 200, (caller) => service.recorders(caller)),
+  );
+
+  app.post('/api/v1/recorders', (req, reply) =>
+    handle(req, reply, 201, (caller) =>
+      service.createRecorder(caller, parseRecorderInput(req.body)),
+    ),
+  );
+
+  app.get<{ Params: P }>('/api/v1/recorders/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) => service.recorder(caller, req.params.id)),
+  );
+
+  app.put<{ Params: P }>('/api/v1/recorders/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      service.replaceRecorder(caller, req.params.id, parseRecorderInput(req.body)),
+    ),
+  );
+
+  app.get<{ Params: P; Querystring: { from?: string; limit?: string } }>(
+    '/api/v1/recorders/:id/captures',
+    (req, reply) =>
+      handle(req, reply, 200, (caller) => {
+        const { from, limit } = req.query;
+        if (from !== undefined && Number.isNaN(Date.parse(from))) {
+          throw new ValidationError('from must be a date-time');
+        }
+        return service.recorderCaptures(caller, req.params.id, {
+          ...(from !== undefined ? { from } : {}),
+          ...(limit !== undefined ? { limit: Number(limit) } : {}),
+        });
+      }),
   );
 
   return app;

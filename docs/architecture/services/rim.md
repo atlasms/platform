@@ -235,6 +235,22 @@ the real path — a channel administrator cannot watch another channel's drops, 
 otherwise. A watched file becomes the same `IngestJob` a completed upload does. The audit trail of
 RIM's administration — watchers and acceptance rule sets — reads under `ingest:admin` in the log.
 
+**EP-39, slice 1a — recorders and their plan** ([ADR-0007](../../adr/0007-recorders.md)). A
+`Recorder` at `/recorders` (`ingest:admin`, audited, disabled not deleted): an IP feed (a URL
+that may carry no credential — an SRT passphrase is a Secret it names), IANA `timezone`, recording
+`windows` (days and `HH:MM` ranges; windows that overlap or touch at midnight are one recording),
+`fileMinutes` on a grid from local midnight (it must divide a day), `padSeconds`. RIM PLANS
+captures 24 h ahead — once a minute, and at once on every write: each file one grid slot clipped
+to its window, captured `pad` before to `pad` after, the slot alternating along the whole sequence
+(continued across plan runs) so neighbouring files are always the two workers of decision 4. DST is
+exact: a spring night's skipped hour is not a file, an autumn night's repeated hour is one two-hour
+file. A capture is a COLUMNAR row; the lease is one conditional UPDATE whose rule is ADR-0007's —
+granted when planned, lapsed or a renewal, and never to a worker already running an overlapping
+capture of the same recorder, which holds under failure too. A replaced recorder is planned again
+(what has not started goes; what runs finishes); disabled plans nothing; a planned capture whose
+span ended untaken is `missed`, and logged as an error. Planning and leases are not audited rows —
+the recorder is, and the run (slice 1b) will be. Slice 1b is the `rim-recorder` worker.
+
 ## 14. Open questions / future
 
 - Growing-file / while-recording ingest (edit-while-ingest) — Post-v1.0.

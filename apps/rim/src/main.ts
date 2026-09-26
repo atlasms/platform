@@ -270,6 +270,21 @@ const watch = async (): Promise<void> => {
 };
 if (config.watchRoot !== '') void watch();
 
+// --- recorders (EP-39): the next day of captures planned, and the missed ones said out loud ------
+let planTimer: NodeJS.Timeout | undefined;
+const plan = async (): Promise<void> => {
+  try {
+    const report = await service.planRecorders();
+    if (report.planned > 0) log.info('recorders planned', { ...report });
+    // A capture no worker took is a hole in a recording — an operator must hear about it.
+    if (report.missed > 0) log.error('recorder captures missed', { ...report });
+  } catch (err) {
+    log.error('recorder planning failed', { error: (err as Error).message });
+  }
+  planTimer = setTimeout(() => void plan(), 60_000);
+};
+void plan();
+
 await app.listen({ port: config.port, host: config.host });
 log.info('rim listening', { port: config.port, host: config.host });
 
@@ -282,6 +297,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     if (retryTimer) clearTimeout(retryTimer);
     if (sweepTimer) clearTimeout(sweepTimer);
     if (watchTimer) clearTimeout(watchTimer);
+    if (planTimer) clearTimeout(planTimer);
     void app
       .close()
       // After Fastify closes, so spans for in-flight requests make the final batch.

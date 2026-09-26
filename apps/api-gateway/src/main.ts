@@ -97,6 +97,7 @@ const routes: RoutingTable = [
   { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/ingest' },
   { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/acceptance-rules' },
   { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/watchers' },
+  { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/recorders' },
   // MTS (EP-16.1): enqueue a transcode and poll it. Normally a broker command from BMS/RIM; this
   // is the same enqueue for an operator, a tool and the smoke suite.
   { service: 'mts', origin: config.mtsOrigin, prefix: '/api/v1/jobs' },

@@ -11,7 +11,9 @@
 // review's transitions, the queue's keyset page, the rule sets' audit trail. And the folder
 // watchers (EP-15.2): a file taken once it has settled, exactly once however often it is seen,
 // its job the same as an upload's; one scanner per watcher by lease; a channel's watcher kept
-// inside the channel's own directory.
+// inside the channel's own directory. And recorders (EP-39; ADR-0007): planned ahead from their
+// windows, planned again when changed, a capture no worker took marked missed, and the lease that
+// never puts the two sides of a cut on one worker.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,6 +30,7 @@ import { RimService, type Caller } from './service.ts';
 import { fsStaging } from './staging.ts';
 import type { RimStore } from './store.ts';
 import type { IngestJob } from './upload.ts';
+import type { RecorderInput } from './recorder.ts';
 import type { WatcherInput } from './watcher.ts';
 
 export interface RimStoreHarness {
@@ -907,6 +910,174 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
         skipped: 0,
         problems: [],
       });
+    });
+  });
+
+  // --- recorders (EP-39; ADR-0007) ----------------------------------------------------------------
+
+  const recorderInput = (over: Partial<RecorderInput> = {}): RecorderInput => ({
+    name: 'Channel 12 air',
+    input: { url: 'udp://239.1.1.1:5000' },
+    timezone: 'UTC',
+    windows: [
+      { days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'], from: '13:00', to: '16:00' },
+    ],
+    ...over,
+  });
+
+  test(`[${name}] RECORDERS: written under ingest:admin, audited, and planned at once — padded hours, alternating slots`, async () => {
+    await withFixture(async ({ service, store, clock, drain }) => {
+      // The fixture's clock is 12:00 UTC.
+      const r = await service.createRecorder(caller(), recorderInput());
+      assert.equal(r.fileMinutes, 60);
+      assert.equal(r.padSeconds, 5);
+      const audit = (await drain()).find((e) => e.type === 'audit.recorded')!;
+      const payload = audit.payload as unknown as EventPayloads['audit.recorded'];
+      assert.deepEqual([payload.entityType, payload.action], ['recorder', 'recorder.created']);
+
+      const captures = await service.recorderCaptures(caller(), r.id, {
+        from: new Date(clock.now).toISOString(),
+      });
+      assert.deepEqual(
+        captures.map((c) => [
+          c.captureFrom.slice(11, 19),
+          c.captureTo.slice(11, 19),
+          c.slot,
+          c.state,
+        ]),
+        [
+          ['12:59:55', '14:00:05', 0, 'planned'],
+          ['13:59:55', '15:00:05', 1, 'planned'],
+          ['14:59:55', '16:00:05', 0, 'planned'],
+        ],
+      );
+      assert.ok(!('leaseUntil' in captures[0]!), 'the lease is the workers’ business');
+
+      // A credential in the URL, and another channel's recorder, are refused.
+      await assert.rejects(
+        service.createRecorder(caller(), recorderInput({ input: { url: 'srt://u:p@enc:9000' } })),
+        /no credential/,
+      );
+      await assert.rejects(service.recorder(caller('ch99'), r.id), { status: 404 });
+      assert.equal((await store.recorders(CH)).length, 1);
+    });
+  });
+
+  test(`[${name}] PLANNING: a pass is idempotent, continues the slot sequence, and marks a capture nobody took as missed`, async () => {
+    await withFixture(async ({ service, store, clock }) => {
+      const r = await service.createRecorder(caller(), recorderInput());
+      assert.equal((await service.planRecorders()).planned, 0, 'nothing new within the horizon');
+
+      // A day later the next day's captures are planned, and the slots carry on alternating.
+      clock.now += 24 * 3600_000;
+      const report = await service.planRecorders();
+      assert.equal(report.planned, 3);
+      const all = await store.captures(r.id, '2000-01-01T00:00:00.000Z', 50);
+      assert.deepEqual(
+        all.map((c) => c.slot),
+        [0, 1, 0, 1, 0, 1],
+      );
+      // Nobody leased yesterday's: all three are missed, said out loud.
+      assert.equal(report.missed, 3);
+      assert.deepEqual(
+        all.slice(0, 3).map((c) => c.state),
+        ['missed', 'missed', 'missed'],
+      );
+      assert.match(all[0]!.reason!, /no recorder worker/);
+    });
+  });
+
+  test(`[${name}] PLANNING: a replaced recorder is planned again — what has not started goes, what runs finishes; disabled plans nothing`, async () => {
+    await withFixture(async ({ service, store, clock }) => {
+      const r = await service.createRecorder(caller(), recorderInput());
+      const [first] = await store.captures(r.id, '2000-01-01T00:00:00.000Z', 1);
+      // 12:59:55 — the first capture has started.
+      clock.now = Date.parse('2026-09-14T13:10:00.000Z');
+      assert.ok(
+        await store.transaction((tx) =>
+          tx.leaseCapture(
+            first!.id,
+            'pod-a',
+            new Date(clock.now).toISOString(),
+            new Date(clock.now + 30_000).toISOString(),
+          ),
+        ),
+      );
+
+      await service.replaceRecorder(
+        caller(),
+        r.id,
+        recorderInput({
+          windows: [
+            { days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'], from: '13:00', to: '18:00' },
+          ],
+        }),
+      );
+      // Today's (the 24 h horizon also reaches tomorrow's 13:00, correctly).
+      const after = (await store.captures(r.id, '2000-01-01T00:00:00.000Z', 50)).filter((c) =>
+        c.fileStart.startsWith('2026-09-14'),
+      );
+      assert.equal(after[0]!.id, first!.id, 'the running capture was not touched');
+      assert.equal(after[0]!.state, 'running');
+      assert.deepEqual(
+        after.map((c) => c.fileStart.slice(11, 16)),
+        ['13:00', '14:00', '15:00', '16:00', '17:00'],
+      );
+      // Still alternating from the running one.
+      assert.deepEqual(
+        after.map((c) => c.slot),
+        [0, 1, 0, 1, 0],
+      );
+
+      await service.replaceRecorder(caller(), r.id, recorderInput({ enabled: false }));
+      const disabled = await store.captures(r.id, '2000-01-01T00:00:00.000Z', 50);
+      assert.deepEqual(
+        disabled.map((c) => c.state),
+        ['running'],
+      );
+      assert.equal((await service.planRecorders()).recorders, 0);
+    });
+  });
+
+  test(`[${name}] LEASE: the two sides of a cut are never one worker; a lapsed lease is taken over; a renewal is the holder's`, async () => {
+    await withFixture(async ({ service, store, clock }) => {
+      const r = await service.createRecorder(caller(), recorderInput());
+      const [h13, h14, h15] = await store.captures(r.id, '2000-01-01T00:00:00.000Z', 3);
+      const lease = (id: string, holder: string, ms = 30_000) =>
+        store.transaction((tx) =>
+          tx.leaseCapture(
+            id,
+            holder,
+            new Date(clock.now).toISOString(),
+            new Date(clock.now + ms).toISOString(),
+          ),
+        );
+      clock.now = Date.parse('2026-09-14T12:59:00.000Z');
+
+      assert.equal(await lease(h13!.id, 'pod-a'), true);
+      // 13:59:55–14:00:05 overlaps 13's capture: pod-a may not take 14 while it runs 13.
+      assert.equal(await lease(h14!.id, 'pod-a'), false);
+      assert.equal(await lease(h14!.id, 'pod-b'), true);
+      // 15 does not overlap 13: the same worker may hold both.
+      assert.equal(await lease(h15!.id, 'pod-a'), true);
+      // Held: another worker cannot take it; the holder renews it.
+      assert.equal(await lease(h13!.id, 'pod-c'), false);
+      assert.equal(await lease(h13!.id, 'pod-a'), true);
+
+      // pod-a dies: its lease lapses. pod-b — running 14, which overlaps 13 — still may not take 13;
+      // a third worker does. The rule holds under failure, not only when all is well.
+      clock.now += 60_000;
+      await lease(h14!.id, 'pod-b'); // pod-b renews its own
+      assert.equal(await lease(h13!.id, 'pod-b'), false);
+      assert.equal(await lease(h13!.id, 'pod-c'), true);
+      const taken = await store.capture(h13!.id);
+      assert.equal(taken?.holder, 'pod-c');
+      assert.equal(taken?.state, 'running');
+      assert.equal(
+        taken?.startedAt,
+        new Date(Date.parse('2026-09-14T12:59:00.000Z')).toISOString(),
+        'first start kept',
+      );
     });
   });
 }

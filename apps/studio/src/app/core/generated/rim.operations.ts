@@ -35,10 +35,16 @@ export const RimOperations = {
   getWatcher: { method: 'GET', path: '/api/v1/watchers/{id}', params: ['id'] },
   /** Replace a watcher — the whole thing, as given; `enabled` false stops it (scope ingest:admin) */
   replaceWatcher: { method: 'PUT', path: '/api/v1/watchers/{id}', params: ['id'] },
-  /** List recorders */
+  /** The channel's recorders (scope ingest:admin) */
   listRecorders: { method: 'GET', path: '/api/v1/recorders', params: [] },
-  /** Create a recorder */
+  /** Create a recorder (scope ingest:admin) */
   createRecorder: { method: 'POST', path: '/api/v1/recorders', params: [] },
+  /** One recorder (scope ingest:admin) */
+  getRecorder: { method: 'GET', path: '/api/v1/recorders/{id}', params: ['id'] },
+  /** Replace a recorder — the whole thing, as given; its captures not yet started are planned again (scope ingest:admin) */
+  replaceRecorder: { method: 'PUT', path: '/api/v1/recorders/{id}', params: ['id'] },
+  /** A recorder's captures around now — planned, running, finished — oldest first (scope ingest:admin) */
+  listRecorderCaptures: { method: 'GET', path: '/api/v1/recorders/{id}/captures', params: ['id'] },
   /** The channel's acceptance rule sets (scope ingest:admin) */
   listAcceptanceRules: { method: 'GET', path: '/api/v1/acceptance-rules', params: [] },
   /** Create an acceptance rule set (scope ingest:admin) */

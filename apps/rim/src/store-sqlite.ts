@@ -13,6 +13,8 @@ import {
 import type { AcceptanceRuleSet } from './acceptance.ts';
 import type { RimStore, RimTx } from './store.ts';
 import type { IngestJob, Upload } from './upload.ts';
+import { captureOf, type Capture, type CaptureRow } from './capture.ts';
+import type { Recorder } from './recorder.ts';
 import type { Pickup, Watcher } from './watcher.ts';
 
 export const sqliteMigrations: Migration[] = [
@@ -89,6 +91,40 @@ export const sqliteMigrations: Migration[] = [
            expires_at TEXT NOT NULL
          )`,
   },
+  {
+    // EP-39 (ADR-0007): recorders, and the captures planned from them. A capture is COLUMNS: the
+    // lease is one conditional UPDATE whose rule reads the recorder's other captures.
+    id: 'rim_recorders',
+    up: `CREATE TABLE IF NOT EXISTS recorders (
+           id         TEXT PRIMARY KEY,
+           channel_id TEXT NOT NULL,
+           enabled    INTEGER NOT NULL,
+           data       TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS recorders_channel_idx ON recorders (channel_id);
+         CREATE TABLE IF NOT EXISTS captures (
+           id           TEXT PRIMARY KEY,
+           recorder_id  TEXT NOT NULL,
+           channel_id   TEXT NOT NULL,
+           file_start   TEXT NOT NULL,
+           file_end     TEXT NOT NULL,
+           capture_from TEXT NOT NULL,
+           capture_to   TEXT NOT NULL,
+           slot         INTEGER NOT NULL,
+           part         INTEGER NOT NULL,
+           state        TEXT NOT NULL,
+           holder       TEXT,
+           lease_until  TEXT,
+           started_at   TEXT,
+           ended_at     TEXT,
+           job_id       TEXT,
+           reason       TEXT,
+           UNIQUE (recorder_id, file_start, part)
+         );
+         -- A recorder's captures in order: the listing, planning's "last", the lease rule's overlap.
+         CREATE INDEX IF NOT EXISTS captures_recorder_idx ON captures (recorder_id, file_start);
+         CREATE INDEX IF NOT EXISTS captures_state_idx ON captures (state, capture_to)`,
+  },
 ];
 
 export function sqliteRimStore(path = ':memory:'): RimStore & { db: Db } {
@@ -148,6 +184,65 @@ export function sqliteRimStore(path = ':memory:'): RimStore & { db: Db } {
            ON CONFLICT (watcher_id, name, sha256) DO NOTHING`,
         )
         .run(p.watcherId, p.name, p.sha256, p.channelId, p.at, JSON.stringify(p));
+      return Number(result.changes) === 1;
+    },
+    async putRecorder(r) {
+      db.prepare(
+        `INSERT INTO recorders (id, channel_id, enabled, data) VALUES (?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET enabled = excluded.enabled, data = excluded.data`,
+      ).run(r.id, r.channelId, r.enabled ? 1 : 0, JSON.stringify(r));
+    },
+    async insertCapture(c) {
+      const result = db
+        .prepare(
+          `INSERT INTO captures (id, recorder_id, channel_id, file_start, file_end, capture_from, capture_to, slot, part, state, holder, lease_until, started_at, ended_at, job_id, reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (recorder_id, file_start, part) DO NOTHING`,
+        )
+        .run(...captureParams(c));
+      return Number(result.changes) === 1;
+    },
+    async putCapture(c, ifState) {
+      const result = db
+        .prepare(
+          `UPDATE captures SET state = ?, holder = ?, lease_until = ?, started_at = ?, ended_at = ?,
+             job_id = ?, reason = ? WHERE id = ? AND state = ?`,
+        )
+        .run(
+          c.state,
+          c.holder ?? null,
+          c.leaseUntil ?? null,
+          c.startedAt ?? null,
+          c.endedAt ?? null,
+          c.jobId ?? null,
+          c.reason ?? null,
+          c.id,
+          ifState,
+        );
+      return Number(result.changes) === 1;
+    },
+    async deletePlanned(recorderId, after) {
+      const result = db
+        .prepare(
+          `DELETE FROM captures WHERE recorder_id = ? AND state = 'planned' AND capture_from > ?`,
+        )
+        .run(recorderId, after);
+      return Number(result.changes);
+    },
+    async leaseCapture(id, holder, now, until) {
+      const result = db
+        .prepare(
+          `UPDATE captures SET state = 'running', holder = ?, lease_until = ?,
+             started_at = COALESCE(started_at, ?)
+           WHERE id = ?
+             AND (state = 'planned' OR (state = 'running' AND (holder = ? OR lease_until <= ?)))
+             AND NOT EXISTS (
+               SELECT 1 FROM captures o
+                WHERE o.recorder_id = captures.recorder_id AND o.id <> captures.id
+                  AND o.state = 'running' AND o.holder = ? AND o.lease_until > ?
+                  AND o.capture_from < captures.capture_to AND o.capture_to > captures.capture_from)`,
+        )
+        .run(holder, until, now, id, holder, now, holder, now);
       return Number(result.changes) === 1;
     },
     async leaseWatcher(watcherId, channelId, holder, now, until) {
@@ -250,6 +345,53 @@ export function sqliteRimStore(path = ':memory:'): RimStore & { db: Db } {
         .get(watcherId, name) as { data: string } | undefined;
       return row ? (JSON.parse(row.data) as Pickup) : undefined;
     },
+    async recorders(channelId) {
+      const rows = db
+        .prepare('SELECT data FROM recorders WHERE channel_id = ? ORDER BY id')
+        .all(channelId) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as Recorder);
+    },
+    async recorder(id) {
+      const row = db.prepare('SELECT data FROM recorders WHERE id = ?').get(id) as
+        { data: string } | undefined;
+      return row ? (JSON.parse(row.data) as Recorder) : undefined;
+    },
+    async enabledRecorders() {
+      const rows = db.prepare('SELECT data FROM recorders WHERE enabled = 1 ORDER BY id').all() as {
+        data: string;
+      }[];
+      return rows.map((r) => JSON.parse(r.data) as Recorder);
+    },
+    async capture(id) {
+      const row = db.prepare('SELECT * FROM captures WHERE id = ?').get(id) as
+        CaptureRow | undefined;
+      return row ? captureOf(row) : undefined;
+    },
+    async captures(recorderId, from, limit) {
+      const rows = db
+        .prepare(
+          'SELECT * FROM captures WHERE recorder_id = ? AND file_start >= ? ORDER BY file_start, part LIMIT ?',
+        )
+        .all(recorderId, from, limit) as CaptureRow[];
+      return rows.map(captureOf);
+    },
+    async lastCapture(recorderId) {
+      const row = db
+        .prepare(
+          `SELECT * FROM captures WHERE recorder_id = ? AND state <> 'cancelled'
+           ORDER BY file_start DESC, part DESC LIMIT 1`,
+        )
+        .get(recorderId) as CaptureRow | undefined;
+      return row ? captureOf(row) : undefined;
+    },
+    async capturesEndedIn(state, before, limit) {
+      const rows = db
+        .prepare(
+          'SELECT * FROM captures WHERE state = ? AND capture_to < ? ORDER BY capture_to LIMIT ?',
+        )
+        .all(state, before, limit) as CaptureRow[];
+      return rows.map(captureOf);
+    },
     async expiredUploads(now, limit) {
       const rows = db
         .prepare(
@@ -262,4 +404,25 @@ export function sqliteRimStore(path = ':memory:'): RimStore & { db: Db } {
       db.close();
     },
   };
+}
+
+function captureParams(c: Capture): (string | number | null)[] {
+  return [
+    c.id,
+    c.recorderId,
+    c.channelId,
+    c.fileStart,
+    c.fileEnd,
+    c.captureFrom,
+    c.captureTo,
+    c.slot,
+    c.part,
+    c.state,
+    c.holder ?? null,
+    c.leaseUntil ?? null,
+    c.startedAt ?? null,
+    c.endedAt ?? null,
+    c.jobId ?? null,
+    c.reason ?? null,
+  ];
 }
