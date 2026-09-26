@@ -113,6 +113,14 @@ completed segment becomes an ingest job (checksum + place + register) and emits
 `recording.segment.completed`. Segmentation is crash-safe: a partially written segment is
 finalized or discarded on restart.
 
+> **Decided in [ADR-0007](../../adr/0007-recorders.md):** recorders record inside recording windows,
+> each hour as its own file from 5 s before to 5 s after it — two recorder workers take turns, so
+> the files overlap by 10 s — stream-copied from an IP feed (multicast, or SRT that serves several
+> readers), a crash's partial kept and continued at once. A separate
+> `rim-recorder` worker uploads each file to RIM, where it is an ordinary `IngestJob`. SDI later,
+> through a capture helper that serves the recorder an IP feed; third-party recorders through
+> folder watchers. Measured, not assumed — the ADR's evidence.
+
 ## 7. Dependencies
 
 - **HSM** — place incoming bytes; RIM never writes storage directly
