@@ -21,6 +21,14 @@ release is a statement of what changed, not a deploy step.
 
 ## [Unreleased]
 
+### Breaking
+
+- `recording.segment.completed` (EP-39; ADR-0007) now describes a recorder's FILE as it is handed
+  over: `captureId`, `jobId`, `fileStart`/`fileEnd`, `part`, `partial`, `sizeBytes` and `checksum`
+  are required; `index` and `path` are gone — a file is named by its grid slot and part, and the
+  staging path is never on the wire. No producer existed before this change, so no consumer can
+  have depended on the old shape.
+
 ### Added
 
 - `liveSubjectFor(channelId, type)` → `live.<channelId>.<type>`: the subject of a PROGRESS message,

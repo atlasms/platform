@@ -288,6 +288,10 @@ test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENT
       permission: 'ingest:admin',
     });
   }
+  // A recorder's file handed over reads as the ingest queue does (EP-39).
+  assert.deepEqual(requiredRule({ ...base, type: 'recording.segment.completed' }), {
+    permission: 'ingest:read',
+  });
   // An ingest JOB is not administration: it stays under ingest:read.
   assert.deepEqual(
     requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'ingest' } }),

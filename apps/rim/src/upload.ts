@@ -21,6 +21,12 @@ export interface Upload {
   state: UploadState;
   /** Set once completed: the ingest job the bytes became. */
   jobId?: string;
+  /**
+   * A recorder's file (EP-39): the capture it carries. Set only by the internal hand-off
+   * (ADR-0008) — such an upload is reachable only through the internal routes, and its job is the
+   * recorder's, not a person's.
+   */
+  captureId?: string;
   createdBy: string;
   createdAt: string;
   expiresAt: string;

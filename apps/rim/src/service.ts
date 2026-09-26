@@ -160,6 +160,8 @@ export const DEFAULT_WATCH_LEASE_MS = 30 * 1000;
 export const DEFAULT_PLAN_HORIZON_MS = 24 * 3600 * 1000;
 
 const SERVICE_ACTOR = { kind: 'service', id: 'rim' } as const;
+/** The recorder worker (EP-39): the actor of every file it hands over. */
+const RECORDER_ACTOR = { kind: 'service', id: 'rim-recorder' } as const;
 
 type Actor = { kind: 'user' | 'service'; id: string };
 interface Origin {
@@ -249,6 +251,12 @@ export class RimService {
   async putPart(caller: Caller, id: string, n: number, bytes: Uint8Array): Promise<void> {
     this.authorize(caller, 'ingest:write');
     const upload = await this.uploadFor(caller, id);
+    await this.storePart(upload, n, bytes);
+  }
+
+  /** A part, checked against the size the server chose and stored: file first, row second. */
+  private async storePart(upload: Upload, n: number, bytes: Uint8Array): Promise<void> {
+    const id = upload.uploadId;
     if (upload.state !== 'open') throw new Conflict(`upload ${id} is already complete`);
     const expected = expectedPartSize(upload, n);
     if (bytes.byteLength > expected) {
@@ -272,6 +280,17 @@ export class RimService {
   async complete(caller: Caller, id: string): Promise<IngestJob> {
     this.authorize(caller, 'ingest:write');
     const upload = await this.uploadFor(caller, id);
+    return this.completeUpload(upload, this.originOf(caller));
+  }
+
+  /**
+   * The completion both paths share. For a recorder's file (`upload.captureId`) the job is the
+   * RECORDER's — `sourceKind: recorder`, `source` its id — and, in the same transaction, the
+   * capture is linked to it (compare-and-set on the state it was read in) and
+   * `recording.segment.completed` is emitted: a file handed over is announced exactly once.
+   */
+  private async completeUpload(upload: Upload, origin: Origin): Promise<IngestJob> {
+    const id = upload.uploadId;
     if (upload.state === 'completed' && upload.jobId !== undefined) {
       const job = await this.store.job(upload.jobId);
       if (job) return job;
@@ -291,28 +310,51 @@ export class RimService {
       );
     }
 
+    const capture =
+      upload.captureId !== undefined ? await this.store.capture(upload.captureId) : undefined;
+    if (upload.captureId !== undefined && !capture)
+      throw new NotFound(`capture ${upload.captureId}`);
     const at = this.now().toISOString();
     const job: IngestJob = {
       id: ulid(),
       channelId: upload.channelId,
-      source: UPLOAD_SOURCE,
-      sourceKind: 'upload',
+      source: capture ? capture.recorderId : UPLOAD_SOURCE,
+      sourceKind: capture ? 'recorder' : 'upload',
       state: 'detected',
       filename: upload.filename,
       sizeBytes: assembled.sizeBytes,
       checksum: assembled.sha256,
       ...(upload.contentType !== undefined ? { contentType: upload.contentType } : {}),
       receivedPath: assembled.path,
-      createdBy: caller.userId,
+      createdBy: upload.createdBy,
       createdAt: at,
       updatedAt: at,
       version: 1,
     };
     const done: Upload = { ...upload, state: 'completed', jobId: job.id };
-    const origin = this.originOf(caller);
     await this.store.transaction(async (tx) => {
       await tx.putJob(job);
       await tx.putUpload(done);
+      if (capture) {
+        if (!(await tx.putCapture({ ...capture, jobId: job.id }, capture.state))) {
+          throw new Conflict(`capture ${capture.id} changed while its file was handed over`);
+        }
+        await tx.enqueue(
+          this.record(origin, job.channelId, 'recording.segment.completed', {
+            recorderId: capture.recorderId,
+            captureId: capture.id,
+            jobId: job.id,
+            fileStart: capture.fileStart,
+            fileEnd: capture.fileEnd,
+            part: capture.part,
+            partial: capture.state === 'partial',
+            ...(capture.startedAt !== undefined ? { startedAt: capture.startedAt } : {}),
+            ...(capture.endedAt !== undefined ? { endedAt: capture.endedAt } : {}),
+            sizeBytes: job.sizeBytes,
+            checksum: { algorithm: 'sha256', value: job.checksum },
+          } satisfies EventPayloads['recording.segment.completed']),
+        );
+      }
       await tx.enqueue(
         this.record(origin, job.channelId, 'ingest.detected', {
           source: job.source,
@@ -604,6 +646,60 @@ export class RimService {
         ),
       );
     });
+  }
+
+  // --- the recorder's hand-off (EP-39; ADR-0008) ------------------------------------------------------
+  //
+  // Reached only through the SIGNED internal routes. Authority comes from the capture the request
+  // names — its channel, the recorder as source — never from the request; the actor is the service.
+
+  /** An upload for a finished capture's file: the same parts, sized by the server, as any upload. */
+  async startCaptureUpload(captureId: string, input: StartUploadInput): Promise<UploadStatus> {
+    const capture = await this.store.capture(captureId);
+    if (!capture) throw new NotFound(`capture ${captureId}`);
+    if (capture.state !== 'completed' && capture.state !== 'partial') {
+      throw new Conflict(
+        `capture ${captureId} is ${capture.state}; only a finished capture is handed over`,
+      );
+    }
+    if (capture.jobId !== undefined) {
+      throw new Conflict(`capture ${captureId} was handed over already, as job ${capture.jobId}`);
+    }
+    const upload: Upload = {
+      ...newUpload(
+        input,
+        { userId: RECORDER_ACTOR.id, channelId: capture.channelId },
+        {
+          partSizeBytes: this.partSizeBytes,
+          ttlMs: this.uploadTtlMs,
+          now: this.now().getTime(),
+        },
+      ),
+      captureId,
+    };
+    await this.store.transaction((tx) => tx.putUpload(upload));
+    return { ...upload, received: [] };
+  }
+
+  async putCapturePart(uploadId: string, n: number, bytes: Uint8Array): Promise<void> {
+    await this.storePart(await this.captureUpload(uploadId), n, bytes);
+  }
+
+  /** What the worker resumes from: the parts RIM holds. */
+  async captureUploadStatus(uploadId: string): Promise<UploadStatus> {
+    const upload = await this.captureUpload(uploadId);
+    return { ...upload, received: (await this.store.parts(uploadId)).map((p) => p.n) };
+  }
+
+  async completeCaptureUpload(uploadId: string): Promise<IngestJob> {
+    return this.completeUpload(await this.captureUpload(uploadId), { actor: RECORDER_ACTOR });
+  }
+
+  /** An upload the internal routes may touch: a recorder's, and only a recorder's. */
+  private async captureUpload(uploadId: string): Promise<Upload> {
+    const upload = await this.store.upload(uploadId);
+    if (!upload || upload.captureId === undefined) throw new NotFound(`upload ${uploadId}`);
+    return upload;
   }
 
   // --- folder watchers (EP-15.2) ---------------------------------------------------------------------
@@ -1094,7 +1190,11 @@ export class RimService {
 
   private async uploadFor(caller: Caller, id: string): Promise<Upload> {
     const upload = await this.store.upload(id);
-    if (!upload || upload.channelId !== caller.channelId) throw new NotFound(`upload ${id}`);
+    // Another channel's upload, and a recorder's (the internal hand-off's alone, ADR-0008), are
+    // not found — status, parts, completion and abort alike.
+    if (!upload || upload.channelId !== caller.channelId || upload.captureId !== undefined) {
+      throw new NotFound(`upload ${id}`);
+    }
     return upload;
   }
 

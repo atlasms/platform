@@ -98,6 +98,8 @@ const routes: RoutingTable = [
   { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/acceptance-rules' },
   { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/watchers' },
   { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/recorders' },
+  // NEVER a route for `/internal/`: those are a service's own components calling each other,
+  // signed (ADR-0008), and must be unreachable from outside. RIM refuses them unsigned anyway.
   // MTS (EP-16.1): enqueue a transcode and poll it. Normally a broker command from BMS/RIM; this
   // is the same enqueue for an operator, a tool and the smoke suite.
   { service: 'mts', origin: config.mtsOrigin, prefix: '/api/v1/jobs' },

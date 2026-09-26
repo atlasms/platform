@@ -15,6 +15,7 @@ import {
   goldenSignals,
   isTraceable,
   HealthRegistry,
+  INTERNAL_SIGNATURE_HEADER,
   MetricRegistry,
   runWithContext,
   shouldLogAccess,
@@ -23,6 +24,7 @@ import {
   toProblem,
   Unauthorized,
   ValidationError,
+  verifyInternal,
   type AccessLogPolicy,
   type AccessRecord,
   type Span,
@@ -58,6 +60,14 @@ export interface RimAppOptions {
   accessLogPolicy?: AccessLogPolicy;
   /** Every 5xx, where it is raised, with the correlation id the caller was given. */
   onError?: (err: unknown, context: { correlationId: string; url: string }) => void;
+  /**
+   * The keys internal requests are signed with (ADR-0008) — RIM's and its recorder worker's
+   * shared Secret. Empty: every `/internal/` request is refused.
+   */
+  internalKeys?: readonly string[];
+  /** Where a refused internal request is reported: main.ts logs it. The response says nothing. */
+  onInternalRefused?: (reason: string, context: { correlationId: string; url: string }) => void;
+  now?: () => Date;
 }
 
 /** Header names the gateway establishes and this service trusts. It never sees a token. */
@@ -104,7 +114,9 @@ export async function buildRimApp(options: RimAppOptions): Promise<FastifyInstan
   // `POST /…/approve` sent with `content-type: application/json` into a 500 — a client that sets
   // the header by default (most do) hit it on the first action with no body. The gateway strips an
   // empty body before proxying, which is why this only shows up on a direct call — and in tests.
-  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    // The bytes as sent: an internal request's signature covers them, not the parsed object.
+    (req as FastifyRequest & { rawBody?: string }).rawBody = body as string;
     if (body === '' || body === undefined) return done(null, undefined);
     try {
       done(null, JSON.parse(body as string));
@@ -321,6 +333,84 @@ export async function buildRimApp(options: RimAppOptions): Promise<FastifyInstan
 
   app.post<{ Params: P }>('/api/v1/uploads/:id/complete', (req, reply) =>
     handle(req, reply, 202, async (caller) => wire(await service.complete(caller, req.params.id))),
+  );
+
+  // --- the recorder's hand-off (EP-39; ADR-0008) — SIGNED, internal, never routed by the gateway -------
+  //
+  // RIM's recorder worker hands each finished file over through these. They authenticate the
+  // request, not a person: the signature must be one of `internalKeys` over the method, the path
+  // and query, a timestamp within 60 s and the SHA-256 of the body as sent. Authority then comes
+  // from the capture the request names. A refusal is one bare 401 — which check failed is the
+  // log's business (`onInternalRefused`), not a caller's that is not ours.
+
+  const internalKeys = options.internalKeys ?? [];
+  const refused = metrics.counter({
+    name: 'atlas_rim_internal_refused_total',
+    help: 'Internal (signed) requests refused — a misconfigured worker, or someone probing.',
+  });
+  const handleInternal = async (
+    req: FastifyRequest,
+    reply: FastifyReply,
+    status: number,
+    fn: () => Promise<unknown>,
+  ): Promise<unknown> => {
+    try {
+      const raw = Buffer.isBuffer(req.body)
+        ? req.body
+        : ((req as FastifyRequest & { rawBody?: string }).rawBody ?? '');
+      const header = req.headers[INTERNAL_SIGNATURE_HEADER];
+      const verdict = verifyInternal(
+        internalKeys,
+        { method: req.method, path: req.url, body: raw },
+        typeof header === 'string' ? header : undefined,
+        options.now?.() ?? new Date(),
+      );
+      if (!verdict.ok) {
+        refused.inc();
+        options.onInternalRefused?.(verdict.reason, {
+          correlationId: req.correlationId,
+          url: req.url,
+        });
+        throw new Unauthorized('not an internal request');
+      }
+      const result = await fn();
+      return status === 204 ? reply.code(204).send() : reply.code(status).send(result);
+    } catch (err) {
+      const problem = toProblem(err, req.correlationId);
+      if (problem.status >= 500) {
+        options.onError?.(err, { correlationId: req.correlationId, url: req.url });
+      }
+      return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
+    }
+  };
+
+  app.post<{ Params: P }>('/internal/v1/captures/:id/upload', (req, reply) =>
+    handleInternal(req, reply, 201, () =>
+      service.startCaptureUpload(req.params.id, parseStartUpload(req.body)),
+    ),
+  );
+
+  app.get<{ Params: P }>('/internal/v1/uploads/:id', (req, reply) =>
+    handleInternal(req, reply, 200, () => service.captureUploadStatus(req.params.id)),
+  );
+
+  app.put<{ Params: P }>('/internal/v1/uploads/:id/parts/:n', (req, reply) =>
+    handleInternal(req, reply, 204, () => {
+      const n = Number(req.params.n);
+      if (!Number.isInteger(n) || n < 1) {
+        throw new ValidationError('part number must be a positive integer');
+      }
+      if (!Buffer.isBuffer(req.body)) {
+        throw new ValidationError('a part is sent as application/octet-stream');
+      }
+      return service.putCapturePart(req.params.id, n, req.body);
+    }),
+  );
+
+  app.post<{ Params: P }>('/internal/v1/uploads/:id/complete', (req, reply) =>
+    handleInternal(req, reply, 202, async () =>
+      wire(await service.completeCaptureUpload(req.params.id)),
+    ),
   );
 
   // --- the queue and the review (EP-15.6) -------------------------------------------------------------

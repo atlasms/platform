@@ -52,6 +52,12 @@ secretGenerator:
       # rewritten by kustomize — which works, but makes `kubectl get secret` output confusing for
       # no benefit at a password that never rotates.
       disableNameSuffixHash: true
+  # RIM's internal signing key (ADR-0008) — worthless for the same reason: dev only, committed.
+  - name: rim-internal-keys
+    literals:
+      - keys=dev-only-rim-internal-signing-key-0000000000
+    options:
+      disableNameSuffixHash: true
 
 # ONE `patches:` key. Two would not be a merge — YAML duplicate keys silently override, so the
 # second list wins and the first is dropped without a warning from kustomize or kubectl.

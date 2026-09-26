@@ -78,3 +78,13 @@ export {
   type AlertEvaluatorOptions,
   type Severity,
 } from './alerts.ts';
+export {
+  DEFAULT_INTERNAL_SKEW_SECONDS,
+  INTERNAL_SIGNATURE_HEADER,
+  internalKeys,
+  MIN_INTERNAL_KEY_BYTES,
+  signInternal,
+  verifyInternal,
+  type InternalRequest,
+  type InternalVerdict,
+} from './internal-auth.ts';

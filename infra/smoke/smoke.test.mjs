@@ -1009,6 +1009,19 @@ test('smoke: EP-15.4 — the probe reads a real file: a WAV is accepted with its
   );
 });
 
+test("smoke: ADR-0008 — a service's internal routes are unreachable through the gateway", async () => {
+  // `/internal/` is RIM and its recorder worker talking, signed. From outside it must not exist:
+  // the gateway has no route for it, so the answer is the gateway's own 404 — never RIM's 401,
+  // which would mean the request reached the service.
+  const token = await seedToken();
+  if (!token) return;
+  const res = await get('/internal/v1/uploads/01H0000000000000000000000A', {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(res.status, 404, res.text);
+  assert.match(res.text, /no route/i, 'the gateway answered, not RIM');
+});
+
 test('smoke: EP-39 — a recorder is planned at once: padded files, alternating slots; its history is readable', async () => {
   // The planning half of ADR-0007 on a live cluster: a recorder written through the gateway has
   // its next captures planned in the same request — each file padded 5 s on both sides, the slots

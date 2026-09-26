@@ -192,7 +192,24 @@ carrying a credential is a 422 (an SRT passphrase is a Secret the recorder names
   the dead one's; a third can.
 - `GET /api/v1/recorders/{id}/captures` shows the plan and the runs.
 
-The worker that runs the captures is slice 1b.
+### The hand-off — signed internal routes (slice 1b-i; ADR-0008)
+
+The recorder worker hands each finished file to RIM through `/internal/v1/…` — `POST
+/captures/{id}/upload`, `PUT /uploads/{id}/parts/{n}`, `GET /uploads/{id}`, `POST
+/uploads/{id}/complete` — the upload's own server-sized, resumable parts. The gateway never routes
+`/internal/` (smoke asserts its own 404), and RIM refuses any request not signed with a key in
+`ATLAS_RIM_INTERNAL_KEYS` (the `rim-internal-keys` Secret): `x-atlas-internal: v1,t=…,sig=…`,
+HMAC-SHA256 over method, path+query, a timestamp within 60 s and the body's SHA-256
+([`@atlas/service-kit` `internal-auth.ts`](../../libs/service-kit/src/internal-auth.ts)). A refusal is
+one bare 401; the reason goes to the log and `atlas_rim_internal_refused_total`.
+
+Authority comes from the CAPTURE the request names: its channel, the recorder as `source`,
+`rim-recorder` as actor. Completion makes the job (`sourceKind: recorder`), links the capture (a
+compare-and-set) and emits `recording.segment.completed` in one transaction; only a `completed` or
+`partial` capture is handed over, and only once. A recorder's upload is not found on the public
+upload routes, and a person's is not found on the internal ones.
+
+The worker that runs the captures is slice 1b-ii.
 
 ## The store is a port, with two adapters and one suite
 

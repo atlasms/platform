@@ -477,17 +477,28 @@ export interface PublishFailedPayload {
   at: string;
 }
 
-/** Emitted by RIM when a recorder finalizes a segment file. */
+/** Emitted by RIM when a recorder's file has been handed over and has become an ingest job (EP-39; ADR-0007), in the transaction that creates the job. One per file part: a capture continued after a crash is part 2, 3, … of the same file. */
 export interface RecordingSegmentCompletedPayload {
   recorderId: Ulid;
-  /** Sequential segment index. */
-  index: number;
-  path: string;
+  captureId: Ulid;
+  /** The ingest job the file became. */
+  jobId: Ulid;
+  /** The start of the part of the recording this file IS — a grid slot, clipped to the window. The file itself starts up to the recorder's pad earlier. */
+  fileStart: string;
+  fileEnd: string;
+  /** 1 for a file captured whole; 2, 3, … for a continuation after a crash. */
+  part: number;
+  /** The capture did not run to the end of its span — it was cut by a crash. The file is kept (ADR-0007 decision 3). */
+  partial: boolean;
+  /** When the capture started, by the worker's clock. */
+  startedAt?: string;
+  endedAt?: string;
+  sizeBytes: number;
+  checksum: Checksum;
   /** Start timecode HH:MM:SS:FF. */
   tcIn?: string;
   /** End timecode HH:MM:SS:FF. */
   tcOut?: string;
-  checksum?: Checksum;
 }
 
 /** Emitted by HSM when a near-line/offline asset is back online. Consumed by Scheduling, Notifications. */

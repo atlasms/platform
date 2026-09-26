@@ -251,6 +251,18 @@ capture of the same recorder, which holds under failure too. A replaced recorder
 span ended untaken is `missed`, and logged as an error. Planning and leases are not audited rows —
 the recorder is, and the run (slice 1b) will be. Slice 1b is the `rim-recorder` worker.
 
+**EP-39, slice 1b-i — the hand-off** ([ADR-0008](../../adr/0008-internal-signed-calls.md)). A
+finished capture's file reaches RIM through three SIGNED internal routes — start an upload for a
+capture, put a part, complete — the same server-sized, resumable parts as any upload, on routes the
+gateway never serves. Authority comes from the capture the request names (its channel; the
+recorder as `source`; `rim-recorder` as actor), never from the request. Completion creates the
+job (`sourceKind: recorder`), links the capture to it by compare-and-set, and emits
+`recording.segment.completed` (redefined for a handed-over file: capture, job, grid slot, part,
+`partial`, size, checksum) in one transaction. Only a `completed` or `partial` capture is handed
+over, once. A recorder's upload is not found on the gateway-facing upload routes, and a person's
+upload is not found on the internal ones. The key is a Secret (`rim-internal-keys`), optional: RIM
+runs without it and refuses every internal call.
+
 ## 14. Open questions / future
 
 - Growing-file / while-recording ingest (edit-while-ingest) — Post-v1.0.

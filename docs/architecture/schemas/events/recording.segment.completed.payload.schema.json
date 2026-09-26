@@ -2,16 +2,23 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas.example/schemas/events/recording.segment.completed.payload.schema.json",
   "title": "recording.segment.completed payload",
-  "description": "Emitted by RIM when a recorder finalizes a segment file.",
+  "description": "Emitted by RIM when a recorder's file has been handed over and has become an ingest job (EP-39; ADR-0007), in the transaction that creates the job. One per file part: a capture continued after a crash is part 2, 3, … of the same file.",
   "type": "object",
-  "required": ["recorderId", "index", "path"],
+  "required": ["recorderId", "captureId", "jobId", "fileStart", "fileEnd", "part", "partial", "sizeBytes", "checksum"],
   "additionalProperties": false,
   "properties": {
     "recorderId": { "$ref": "../common.schema.json#/$defs/Ulid" },
-    "index": { "type": "integer", "minimum": 0, "description": "Sequential segment index." },
-    "path": { "type": "string" },
+    "captureId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "jobId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "The ingest job the file became." },
+    "fileStart": { "type": "string", "format": "date-time", "description": "The start of the part of the recording this file IS — a grid slot, clipped to the window. The file itself starts up to the recorder's pad earlier." },
+    "fileEnd": { "type": "string", "format": "date-time" },
+    "part": { "type": "integer", "minimum": 1, "description": "1 for a file captured whole; 2, 3, … for a continuation after a crash." },
+    "partial": { "type": "boolean", "description": "The capture did not run to the end of its span — it was cut by a crash. The file is kept (ADR-0007 decision 3)." },
+    "startedAt": { "type": "string", "format": "date-time", "description": "When the capture started, by the worker's clock." },
+    "endedAt": { "type": "string", "format": "date-time" },
+    "sizeBytes": { "type": "integer", "minimum": 0 },
+    "checksum": { "$ref": "../common.schema.json#/$defs/Checksum" },
     "tcIn": { "type": "string", "description": "Start timecode HH:MM:SS:FF." },
-    "tcOut": { "type": "string", "description": "End timecode HH:MM:SS:FF." },
-    "checksum": { "$ref": "../common.schema.json#/$defs/Checksum" }
+    "tcOut": { "type": "string", "description": "End timecode HH:MM:SS:FF." }
   }
 }

@@ -14,6 +14,7 @@ import { NatsBroker } from '@atlas/messaging-nats';
 import {
   createLogger,
   createTracer,
+  internalKeys,
   currentTraceparent,
   HealthRegistry,
   loadConfig,
@@ -65,6 +66,10 @@ const config = loadConfig({
   // often every enabled watcher's folder is listed; a file is picked up once it has settled.
   watchRoot: { env: 'ATLAS_RIM_WATCH_ROOT', type: 'string', default: '' },
   watchIntervalMs: { env: 'ATLAS_WATCH_INTERVAL_MS', type: 'number', default: 5_000 },
+  // Signed internal requests (ADR-0008): the recorder worker's hand-off. Comma-separated, each at
+  // least 32 bytes, from a Secret — the first signs, all verify, so a key rotates without downtime.
+  // Empty: every /internal/ request is refused, and recorders' files cannot be handed over.
+  internalKeys: { env: 'ATLAS_RIM_INTERNAL_KEYS', type: 'string', default: '' },
   // A job still `detected` after this long is one whose validation was lost with the process
   // (EP-15.3); the sweep tick runs it. Longer than any request, shorter than an operator notices.
   validateAfterMs: {
@@ -191,6 +196,9 @@ const app = await buildRimApp({
       error: (err as Error).message,
       stack: (err as Error).stack,
     }),
+  // A key too short fails the start, not the first hand-off.
+  internalKeys: internalKeys(config.internalKeys),
+  onInternalRefused: (reason, ctx) => log.warn('internal request refused', { ...ctx, reason }),
 });
 
 // --- the broker -------------------------------------------------------------------------------------
