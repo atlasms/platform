@@ -59,7 +59,7 @@ export function entityPermission(entityType: string): string {
  *
  * A transcode PROFILE's history is read by whoever may write the registry (`config:admin`), the
  * retention policy's rule: a Tier-1 entry's audience is its administrators. RIM's source and rule
- * administration — an acceptance rule set, a folder watcher (EP-15.2) — the same way, under
+ * administration — an acceptance rule set, a folder watcher (EP-15.2), a recorder (EP-39) — the same way, under
  * `ingest:admin`: under the default they read as `acceptance-rule-set:read` and `watcher:read`,
  * which no catalogue defines and no role holds, so their history was readable by nobody.
  */
@@ -75,7 +75,11 @@ export function entityRule(entityType: string): ReadRule {
 const IAM_DOMAINS: ReadonlySet<string> = new Set(['user', 'group', 'role', 'permissions']);
 const GOVERNANCE: ReadonlySet<string> = new Set(['retention-policy']);
 const CONFIG_REGISTRIES: ReadonlySet<string> = new Set(['transcode-profile']);
-const INGEST_ADMINISTRATION: ReadonlySet<string> = new Set(['acceptance-rule-set', 'watcher']);
+const INGEST_ADMINISTRATION: ReadonlySet<string> = new Set([
+  'acceptance-rule-set',
+  'watcher',
+  'recorder',
+]);
 const FILE_SET: ReadonlySet<string> = new Set(['transcode', 'transcode-job', 'file']);
 
 /**

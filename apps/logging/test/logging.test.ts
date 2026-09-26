@@ -283,7 +283,7 @@ test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENT
     assert.deepEqual(requiredRule(entry), { permission: 'asset:read', fieldGroup: 'files' });
   }
   // RIM's administration (EP-15.2): rule sets and watchers, under ingest:admin.
-  for (const entityType of ['acceptance-rule-set', 'watcher']) {
+  for (const entityType of ['acceptance-rule-set', 'watcher', 'recorder']) {
     assert.deepEqual(requiredRule({ ...base, type: 'audit.recorded', payload: { entityType } }), {
       permission: 'ingest:admin',
     });

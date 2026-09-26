@@ -206,9 +206,60 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
+  # Recorders (EP-39; ADR-0007). A recorder records an IP feed inside recording WINDOWS; each file
+  # covers one grid slot (an hour by default) and is captured from `padSeconds` before it to
+  # `padSeconds` after, by two workers taking turns — so neighbouring files overlap and no instant
+  # goes unrecorded at a cut. RIM plans the captures ahead; the rim-recorder workers run them.
+  # Disabled, never deleted: the files it made name it as their source.
   /recorders:
-    get: { operationId: listRecorders, tags: [admin], summary: List recorders, responses: { '200': { description: Recorders } } }
-    post: { operationId: createRecorder, tags: [admin], summary: Create a recorder, responses: { '201': { description: Created } } }
+    get:
+      operationId: listRecorders
+      tags: [admin]
+      summary: The channel's recorders (scope ingest:admin)
+      responses:
+        '200': { description: Recorders, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Recorder' } } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createRecorder
+      tags: [admin]
+      summary: Create a recorder (scope ingest:admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RecorderInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Recorder' } } } }
+        '422': { $ref: '#/components/responses/Error' }
+  /recorders/{id}:
+    get:
+      operationId: getRecorder
+      tags: [admin]
+      summary: One recorder (scope ingest:admin)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: The recorder, content: { application/json: { schema: { $ref: '#/components/schemas/Recorder' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: replaceRecorder
+      tags: [admin]
+      summary: 'Replace a recorder — the whole thing, as given; its captures not yet started are planned again (scope ingest:admin)'
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RecorderInput' } } } }
+      responses:
+        '200': { description: 'Replaced; `version` bumped', content: { application/json: { schema: { $ref: '#/components/schemas/Recorder' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /recorders/{id}/captures:
+    get:
+      operationId: listRecorderCaptures
+      tags: [admin]
+      summary: 'A recorder''s captures around now — planned, running, finished — oldest first (scope ingest:admin)'
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: from, in: query, required: false, schema: { type: string, format: date-time }, description: 'Captures whose file starts at or after this; default six hours ago.' }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200': { description: Captures, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Capture' } } } } }
+        '404': { $ref: '#/components/responses/Error' }
   # Acceptance rules (EP-15.3; FR-ING-4). A channel has rule SETS; each set has a scope (every
   # source, one source kind, or one source — sources themselves are EP-15.2) and rules. A job is
   # validated against every enabled set whose scope matches it, and the worst failure decides:
@@ -394,6 +445,71 @@ components:
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time }
             version: { type: integer, minimum: 1, description: The audit revision; every replacement bumps it. }
+    RecordingWindow:
+      type: object
+      required: [days, from, to]
+      properties:
+        days: { type: array, minItems: 1, items: { type: string, enum: [mon, tue, wed, thu, fri, sat, sun] } }
+        from: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$', description: 'HH:MM in the recorder''s zone.' }
+        to: { type: string, pattern: '^(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)$', description: 'HH:MM after `from`; 24:00 is the end of the day. A window across midnight is two windows — windows that touch are merged into one recording.' }
+    RecorderInput:
+      type: object
+      required: [name, input, timezone, windows]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        input:
+          type: object
+          required: [url]
+          description: >-
+            The feed. Two captures read it at once for the seconds of every overlap, so it must
+            serve several readers — multicast, or SRT from an encoder in listener mode that accepts
+            several callers. A unicast UDP push serves one (ADR-0007, measured).
+          properties:
+            url: { type: string, maxLength: 2000, description: 'srt://, udp://, rtp://, rtmp:// or rtmps:// — never with a credential in it.' }
+            passphraseSecret: { type: string, description: '`<secret>/<key>` of a Kubernetes Secret holding an SRT passphrase. The recorder names it; it never holds it.' }
+        timezone: { type: string, description: 'IANA zone the windows are in.', example: Europe/London }
+        windows: { type: array, minItems: 1, maxItems: 50, items: { $ref: '#/components/schemas/RecordingWindow' } }
+        fileMinutes: { type: integer, minimum: 5, maximum: 1440, default: 60, description: 'The length of a file, on a grid from local midnight — it must divide a day.' }
+        padSeconds: { type: integer, minimum: 0, maximum: 60, default: 5, description: 'Each file is captured from this long before its start to this long after its end.' }
+        enabled: { type: boolean, default: true, description: A disabled recorder is kept and records nothing; captures not yet started are cancelled. }
+    Recorder:
+      allOf:
+        - $ref: '#/components/schemas/RecorderInput'
+        - type: object
+          required: [id, channelId, fileMinutes, padSeconds, enabled, createdBy, createdAt, updatedAt, version]
+          properties:
+            id: { $ref: '#/components/schemas/Ulid' }
+            channelId: { type: string }
+            fileMinutes: { type: integer }
+            padSeconds: { type: integer }
+            enabled: { type: boolean }
+            createdBy: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+            version: { type: integer, minimum: 1, description: The audit revision; every replacement bumps it. }
+    Capture:
+      type: object
+      description: >-
+        One file of a recording, as planned and as run: the grid slot it covers (`fileStart` to
+        `fileEnd`), the padded span it is captured over, and the slot — 0 or 1, alternating — that
+        puts neighbouring files on different workers.
+      required: [id, recorderId, channelId, fileStart, fileEnd, captureFrom, captureTo, slot, part, state]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        recorderId: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        fileStart: { type: string, format: date-time }
+        fileEnd: { type: string, format: date-time }
+        captureFrom: { type: string, format: date-time }
+        captureTo: { type: string, format: date-time }
+        slot: { type: integer, enum: [0, 1] }
+        part: { type: integer, minimum: 1, description: 'A crash continues the same file as part 2, 3, …' }
+        state: { type: string, enum: [planned, running, completed, partial, missed, cancelled] }
+        holder: { type: string, description: 'The worker (a pod) running it, or that last ran it.' }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+        jobId: { $ref: '#/components/schemas/Ulid', description: 'The ingest job the file became, once handed over.' }
+        reason: { type: string, description: 'Why it is partial or missed.' }
     WatcherInput:
       type: object
       required: [name, path]

@@ -4,13 +4,32 @@ export {
   DEFAULT_PART_BYTES,
   DEFAULT_UPLOAD_TTL_MS,
   DEFAULT_VALIDATE_AFTER_MS,
+  DEFAULT_PLAN_HORIZON_MS,
   DEFAULT_WATCH_LEASE_MS,
   RimService,
   type Caller as ServiceCaller,
   type IngestQueuePage,
   type RimServiceOptions,
+  type PlanReport,
   type WatchReport,
 } from './service.ts';
+export { CAPTURE_STATES, captureView, type Capture, type CaptureState } from './capture.ts';
+export {
+  DEFAULT_FILE_MINUTES,
+  DEFAULT_PAD_SECONDS,
+  isTimeZone,
+  localToUtc,
+  parseRecorderInput,
+  planFiles,
+  RECORDER_SCHEMES,
+  recorderErrors,
+  WEEKDAYS,
+  type PlannedFile,
+  type Recorder,
+  type RecorderInput,
+  type RecordingWindow,
+  type Weekday,
+} from './recorder.ts';
 export {
   DEFAULT_SETTLE_SECONDS,
   isCandidate,

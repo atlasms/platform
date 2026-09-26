@@ -57,6 +57,15 @@ import {
 } from './acceptance.ts';
 import { ProbeRefusal, type Probe } from './probe.ts';
 import type { Staging } from './staging.ts';
+import { captureView, type Capture } from './capture.ts';
+import {
+  DEFAULT_FILE_MINUTES,
+  DEFAULT_PAD_SECONDS,
+  planFiles,
+  recorderErrors,
+  type Recorder,
+  type RecorderInput,
+} from './recorder.ts';
 import type { JobQuery, RimStore, RimTx } from './store.ts';
 import {
   DEFAULT_SETTLE_SECONDS,
@@ -116,6 +125,16 @@ export interface RimServiceOptions {
   holder?: string;
   /** How long a watcher lease lasts; renewed every scan, so this bounds a dead holder's hold. */
   watchLeaseMs?: number;
+  /** How far ahead recorders' captures are planned (EP-39). */
+  planHorizonMs?: number;
+}
+
+/** What one planning pass did — main.ts logs it when anything happened. */
+export interface PlanReport {
+  recorders: number;
+  planned: number;
+  /** Planned captures no worker took before their span ended. */
+  missed: number;
 }
 
 /** What one pass over the watchers did — main.ts logs it when anything happened. */
@@ -138,6 +157,7 @@ export const DEFAULT_PART_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_VALIDATE_AFTER_MS = 60 * 1000;
 export const DEFAULT_WATCH_LEASE_MS = 30 * 1000;
+export const DEFAULT_PLAN_HORIZON_MS = 24 * 3600 * 1000;
 
 const SERVICE_ACTOR = { kind: 'service', id: 'rim' } as const;
 
@@ -168,6 +188,7 @@ export class RimService {
   private readonly watchRoot: string | undefined;
   private readonly holder: string;
   private readonly watchLeaseMs: number;
+  private readonly planHorizonMs: number;
   /**
    * What each watched file looked like when first seen, and since when — the settle clock. In
    * memory on purpose: it only matters to the process holding the lease, and a new holder simply
@@ -191,6 +212,7 @@ export class RimService {
     this.watchRoot = options.watchRoot;
     this.holder = options.holder ?? `${hostname()}:${process.pid}`;
     this.watchLeaseMs = options.watchLeaseMs ?? DEFAULT_WATCH_LEASE_MS;
+    this.planHorizonMs = options.planHorizonMs ?? DEFAULT_PLAN_HORIZON_MS;
     this.defer =
       options.defer ??
       ((task) => {
@@ -865,6 +887,190 @@ export class RimService {
   ): OutboxRecord {
     return this.record(origin, at.channelId, 'audit.recorded', {
       entityType: 'watcher',
+      entityId: at.id,
+      revision: at.version,
+      action,
+      origin: { service: 'rim' },
+      delta: delta(
+        before as unknown as Record<string, unknown> | undefined,
+        after as unknown as Record<string, unknown>,
+      ),
+    } satisfies EventPayloads['audit.recorded']);
+  }
+
+  // --- recorders (EP-39; ADR-0007) --------------------------------------------------------------------
+
+  async recorders(caller: Caller): Promise<Recorder[]> {
+    this.authorize(caller, 'ingest:admin');
+    return this.store.recorders(caller.channelId);
+  }
+
+  async recorder(caller: Caller, id: string): Promise<Recorder> {
+    this.authorize(caller, 'ingest:admin');
+    return this.recorderFor(caller, id);
+  }
+
+  /** A new recorder, audited, and its next captures planned at once — not a minute later. */
+  async createRecorder(caller: Caller, input: RecorderInput): Promise<Recorder> {
+    this.authorize(caller, 'ingest:admin');
+    const at = this.now().toISOString();
+    const recorder = this.recorderRecord(input, caller.channelId, {
+      id: ulid(),
+      createdBy: caller.userId,
+      createdAt: at,
+      updatedAt: at,
+      version: 1,
+    });
+    const origin = this.originOf(caller);
+    await this.store.transaction(async (tx) => {
+      await tx.putRecorder(recorder);
+      await tx.enqueue(
+        this.auditRecorder(origin, recorder, undefined, recorder, 'recorder.created'),
+      );
+    });
+    if (recorder.enabled) await this.planRecorder(recorder);
+    return recorder;
+  }
+
+  /**
+   * The whole recorder, as given. Its captures that have not STARTED are planned again from the
+   * new windows — a running capture finishes as it was planned, so a change never cuts a file.
+   * `enabled: false` plans nothing: what has not started is removed.
+   */
+  async replaceRecorder(caller: Caller, id: string, input: RecorderInput): Promise<Recorder> {
+    this.authorize(caller, 'ingest:admin');
+    const before = await this.recorderFor(caller, id);
+    const recorder = this.recorderRecord(input, caller.channelId, {
+      id,
+      createdBy: before.createdBy,
+      createdAt: before.createdAt,
+      updatedAt: this.now().toISOString(),
+      version: before.version + 1,
+    });
+    const origin = this.originOf(caller);
+    const now = this.now().toISOString();
+    await this.store.transaction(async (tx) => {
+      await tx.putRecorder(recorder);
+      await tx.deletePlanned(id, now);
+      await tx.enqueue(this.auditRecorder(origin, recorder, before, recorder, 'recorder.replaced'));
+    });
+    if (recorder.enabled) await this.planRecorder(recorder);
+    return recorder;
+  }
+
+  /** A recorder's captures from `from` (default: six hours ago), oldest first. */
+  async recorderCaptures(
+    caller: Caller,
+    id: string,
+    query: { from?: string; limit?: number } = {},
+  ): Promise<Omit<Capture, 'leaseUntil'>[]> {
+    this.authorize(caller, 'ingest:admin');
+    await this.recorderFor(caller, id);
+    const from = query.from ?? new Date(this.now().getTime() - 6 * 3600_000).toISOString();
+    const limit = Math.min(Math.max(query.limit ?? 50, 1), 200);
+    return (await this.store.captures(id, new Date(from).toISOString(), limit)).map(captureView);
+  }
+
+  /**
+   * One planning pass — run on a timer by main.ts. Every enabled recorder's captures are planned
+   * up to the horizon, continuing from the last one planned (and from its slot, so no two
+   * consecutive captures share one); and a planned capture whose span has ENDED with no worker
+   * having taken it is `missed` — a hole in the recording, said out loud rather than left planned.
+   */
+  async planRecorders(): Promise<PlanReport> {
+    const report: PlanReport = { recorders: 0, planned: 0, missed: 0 };
+    for (const recorder of await this.store.enabledRecorders()) {
+      report.recorders += 1;
+      report.planned += await this.planRecorder(recorder);
+    }
+    const now = this.now().toISOString();
+    for (const c of await this.store.capturesEndedIn('planned', now, 500)) {
+      const missed: Capture = { ...c, state: 'missed', reason: 'no recorder worker took it' };
+      if (await this.store.transaction((tx) => tx.putCapture(missed, 'planned')))
+        report.missed += 1;
+    }
+    return report;
+  }
+
+  /**
+   * Plan one recorder up to the horizon. A file already under way when planning starts (a
+   * recorder enabled at 10:20 with hourly files) is planned too: its capture starts late, and the
+   * part of the hour after that is recorded rather than the whole hour lost.
+   */
+  private async planRecorder(recorder: Recorder): Promise<number> {
+    const now = this.now().getTime();
+    const last = await this.store.lastCapture(recorder.id);
+    const lastEnd = last ? Date.parse(last.fileEnd) : -Infinity;
+    const from = Math.max(lastEnd, now - recorder.fileMinutes * 60_000);
+    const files = planFiles(
+      recorder,
+      from,
+      now + this.planHorizonMs,
+      last ? { slot: last.slot } : undefined,
+    ).filter((f) => Date.parse(f.fileEnd) > now);
+    if (files.length === 0) return 0;
+    let planned = 0;
+    await this.store.transaction(async (tx) => {
+      for (const f of files) {
+        const inserted = await tx.insertCapture({
+          id: ulid(),
+          recorderId: recorder.id,
+          channelId: recorder.channelId,
+          ...f,
+          part: 1,
+          state: 'planned',
+        });
+        if (inserted) planned += 1;
+      }
+    });
+    return planned;
+  }
+
+  private recorderRecord(
+    input: RecorderInput,
+    channelId: string,
+    meta: Pick<Recorder, 'id' | 'createdBy' | 'createdAt' | 'updatedAt' | 'version'>,
+  ): Recorder {
+    const errors = recorderErrors(input);
+    if (errors.length > 0) throw new ValidationError(errors.join('; '));
+    // Field by field: the body is the caller's, and a stray key must not be kept.
+    return {
+      id: meta.id,
+      channelId,
+      name: input.name.trim(),
+      input: {
+        url: input.input.url,
+        ...(input.input.passphraseSecret !== undefined
+          ? { passphraseSecret: input.input.passphraseSecret }
+          : {}),
+      },
+      timezone: input.timezone,
+      windows: input.windows.map((w) => ({ days: [...w.days], from: w.from, to: w.to })),
+      fileMinutes: input.fileMinutes ?? DEFAULT_FILE_MINUTES,
+      padSeconds: input.padSeconds ?? DEFAULT_PAD_SECONDS,
+      enabled: input.enabled ?? true,
+      createdBy: meta.createdBy,
+      createdAt: meta.createdAt,
+      updatedAt: meta.updatedAt,
+      version: meta.version,
+    };
+  }
+
+  private async recorderFor(caller: Caller, id: string): Promise<Recorder> {
+    const recorder = await this.store.recorder(id);
+    if (!recorder || recorder.channelId !== caller.channelId) throw new NotFound(`recorder ${id}`);
+    return recorder;
+  }
+
+  private auditRecorder(
+    origin: Origin,
+    at: Recorder,
+    before: Recorder | undefined,
+    after: Recorder,
+    action: string,
+  ): OutboxRecord {
+    return this.record(origin, at.channelId, 'audit.recorded', {
+      entityType: 'recorder',
       entityId: at.id,
       revision: at.version,
       action,

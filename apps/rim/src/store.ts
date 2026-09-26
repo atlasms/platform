@@ -9,6 +9,8 @@
 import type { OutboxRecord } from '@atlas/messaging';
 import type { AcceptanceRuleSet } from './acceptance.ts';
 import type { IngestJob, IngestState, Upload, UploadPart } from './upload.ts';
+import type { Capture, CaptureState } from './capture.ts';
+import type { Recorder } from './recorder.ts';
 import type { Pickup, Watcher } from './watcher.ts';
 
 export interface JobQuery {
@@ -43,6 +45,21 @@ export interface RimStore {
   enabledWatchers(): Promise<Watcher[]>;
   /** The latest pickup of a file name by a watcher, if it ever took one. */
   pickup(watcherId: string, name: string): Promise<Pickup | undefined>;
+  /** A channel's recorders, enabled or not. */
+  recorders(channelId: string): Promise<Recorder[]>;
+  recorder(id: string): Promise<Recorder | undefined>;
+  /** Every enabled recorder, across channels — what the planner walks. */
+  enabledRecorders(): Promise<Recorder[]>;
+  capture(id: string): Promise<Capture | undefined>;
+  /** A recorder's captures whose file starts at or after `from`, oldest first. */
+  captures(recorderId: string, from: string, limit: number): Promise<Capture[]>;
+  /**
+   * The recorder's last capture that is not cancelled, by file start — where planning continues,
+   * and whose slot the next file must not repeat.
+   */
+  lastCapture(recorderId: string): Promise<Capture | undefined>;
+  /** Captures in `state` whose capture span ENDED before `before`, across recorders. */
+  capturesEndedIn(state: CaptureState, before: string, limit: number): Promise<Capture[]>;
   close(): Promise<void>;
 }
 
@@ -80,5 +97,25 @@ export interface RimTx {
     now: string,
     until: string,
   ): Promise<boolean>;
+  putRecorder(recorder: Recorder): Promise<void>;
+  /** Insert a planned capture; false when one for that recorder, file start and part exists. */
+  insertCapture(capture: Capture): Promise<boolean>;
+  /**
+   * Write a capture's run state, guarded by the state it was read in — a compare-and-set, so a
+   * worker's report and the planner's "missed" cannot both apply.
+   */
+  putCapture(capture: Capture, ifState: CaptureState): Promise<boolean>;
+  /**
+   * Remove a recorder's planned captures that have not started (capture span begins after
+   * `after`) — a replaced or disabled recorder is planned again. Returns how many went.
+   */
+  deletePlanned(recorderId: string, after: string): Promise<number>;
+  /**
+   * Lease a capture to `holder` until `until`: granted when it is `planned`, or `running` under a
+   * lease that has run out (its worker is gone), or already the holder's (a renewal) — AND the
+   * holder is not running another capture of the same recorder that overlaps it. That last clause
+   * is ADR-0007's rule: the two sides of a cut are never one worker. Returns whether it was granted.
+   */
+  leaseCapture(id: string, holder: string, now: string, until: string): Promise<boolean>;
   enqueue(record: OutboxRecord): Promise<void>;
 }

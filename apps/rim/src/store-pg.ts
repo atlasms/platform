@@ -11,6 +11,8 @@ import {
 import type { AcceptanceRuleSet } from './acceptance.ts';
 import type { RimStore, RimTx } from './store.ts';
 import type { IngestJob, Upload } from './upload.ts';
+import { captureOf } from './capture.ts';
+import type { Recorder } from './recorder.ts';
 import type { Pickup, Watcher } from './watcher.ts';
 
 export const pgMigrations: Migration[] = [
@@ -87,6 +89,40 @@ export const pgMigrations: Migration[] = [
            expires_at timestamptz NOT NULL
          )`,
   },
+  {
+    // EP-39 (ADR-0007): recorders, and the captures planned from them. A capture is COLUMNS: the
+    // lease is one conditional UPDATE whose rule reads the recorder's other captures.
+    id: 'rim_recorders',
+    up: `CREATE TABLE IF NOT EXISTS recorders (
+           id         text PRIMARY KEY,
+           channel_id text NOT NULL,
+           enabled    boolean NOT NULL,
+           data       jsonb NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS recorders_channel_idx ON recorders (channel_id);
+         CREATE TABLE IF NOT EXISTS captures (
+           id           text PRIMARY KEY,
+           recorder_id  text NOT NULL,
+           channel_id   text NOT NULL,
+           file_start   timestamptz NOT NULL,
+           file_end     timestamptz NOT NULL,
+           capture_from timestamptz NOT NULL,
+           capture_to   timestamptz NOT NULL,
+           slot         integer NOT NULL,
+           part         integer NOT NULL,
+           state        text NOT NULL,
+           holder       text,
+           lease_until  timestamptz,
+           started_at   timestamptz,
+           ended_at     timestamptz,
+           job_id       text,
+           reason       text,
+           UNIQUE (recorder_id, file_start, part)
+         );
+         -- A recorder's captures in order: the listing, planning's "last", the lease rule's overlap.
+         CREATE INDEX IF NOT EXISTS captures_recorder_idx ON captures (recorder_id, file_start);
+         CREATE INDEX IF NOT EXISTS captures_state_idx ON captures (state, capture_to)`,
+  },
 ];
 
 export function pgRimStore(pool: PgPool): RimStore {
@@ -150,6 +186,79 @@ export function pgRimStore(pool: PgPool): RimStore {
               `INSERT INTO watch_pickups (watcher_id, name, sha256, channel_id, at, data) VALUES ($1, $2, $3, $4, $5, $6)
                ON CONFLICT (watcher_id, name, sha256) DO NOTHING`,
               [p.watcherId, p.name, p.sha256, p.channelId, p.at, JSON.stringify(p)],
+            );
+            return result.rowCount === 1;
+          },
+          async putRecorder(r) {
+            await client.query(
+              `INSERT INTO recorders (id, channel_id, enabled, data) VALUES ($1, $2, $3, $4)
+               ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, data = EXCLUDED.data`,
+              [r.id, r.channelId, r.enabled, JSON.stringify(r)],
+            );
+          },
+          async insertCapture(c) {
+            const result = await client.query(
+              `INSERT INTO captures (id, recorder_id, channel_id, file_start, file_end, capture_from, capture_to, slot, part, state, holder, lease_until, started_at, ended_at, job_id, reason)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+               ON CONFLICT (recorder_id, file_start, part) DO NOTHING`,
+              [
+                c.id,
+                c.recorderId,
+                c.channelId,
+                c.fileStart,
+                c.fileEnd,
+                c.captureFrom,
+                c.captureTo,
+                c.slot,
+                c.part,
+                c.state,
+                c.holder ?? null,
+                c.leaseUntil ?? null,
+                c.startedAt ?? null,
+                c.endedAt ?? null,
+                c.jobId ?? null,
+                c.reason ?? null,
+              ],
+            );
+            return result.rowCount === 1;
+          },
+          async putCapture(c, ifState) {
+            const result = await client.query(
+              `UPDATE captures SET state = $1, holder = $2, lease_until = $3, started_at = $4,
+                 ended_at = $5, job_id = $6, reason = $7 WHERE id = $8 AND state = $9`,
+              [
+                c.state,
+                c.holder ?? null,
+                c.leaseUntil ?? null,
+                c.startedAt ?? null,
+                c.endedAt ?? null,
+                c.jobId ?? null,
+                c.reason ?? null,
+                c.id,
+                ifState,
+              ],
+            );
+            return result.rowCount === 1;
+          },
+          async deletePlanned(recorderId, after) {
+            const result = await client.query(
+              `DELETE FROM captures WHERE recorder_id = $1 AND state = 'planned' AND capture_from > $2`,
+              [recorderId, after],
+            );
+            return result.rowCount ?? 0;
+          },
+          async leaseCapture(id, holder, now, until) {
+            const result = await client.query(
+              `UPDATE captures c SET state = 'running', holder = $1, lease_until = $2,
+                 started_at = COALESCE(c.started_at, $3)
+               WHERE c.id = $4
+                 AND (c.state = 'planned' OR (c.state = 'running' AND (c.holder = $1 OR c.lease_until <= $3)))
+                 AND NOT EXISTS (
+                   SELECT 1 FROM captures o
+                    WHERE o.recorder_id = c.recorder_id AND o.id <> c.id
+                      AND o.state = 'running' AND o.holder = $1 AND o.lease_until > $3
+                      AND o.capture_from < c.capture_to AND o.capture_to > c.capture_from)`,
+              [holder, until, now, id],
             );
             return result.rowCount === 1;
           },
@@ -262,6 +371,52 @@ export function pgRimStore(pool: PgPool): RimStore {
         [watcherId, name],
       );
       return rows[0]?.data;
+    },
+    async recorders(channelId) {
+      const { rows } = await pool.query<{ data: Recorder }>(
+        'SELECT data FROM recorders WHERE channel_id = $1 ORDER BY id',
+        [channelId],
+      );
+      return rows.map((r) => r.data);
+    },
+    async recorder(id) {
+      const { rows } = await pool.query<{ data: Recorder }>(
+        'SELECT data FROM recorders WHERE id = $1',
+        [id],
+      );
+      return rows[0]?.data;
+    },
+    async enabledRecorders() {
+      const { rows } = await pool.query<{ data: Recorder }>(
+        'SELECT data FROM recorders WHERE enabled ORDER BY id',
+      );
+      return rows.map((r) => r.data);
+    },
+    async capture(id) {
+      const { rows } = await pool.query('SELECT * FROM captures WHERE id = $1', [id]);
+      return rows[0] ? captureOf(rows[0]) : undefined;
+    },
+    async captures(recorderId, from, limit) {
+      const { rows } = await pool.query(
+        'SELECT * FROM captures WHERE recorder_id = $1 AND file_start >= $2 ORDER BY file_start, part LIMIT $3',
+        [recorderId, from, limit],
+      );
+      return rows.map(captureOf);
+    },
+    async lastCapture(recorderId) {
+      const { rows } = await pool.query(
+        `SELECT * FROM captures WHERE recorder_id = $1 AND state <> 'cancelled'
+         ORDER BY file_start DESC, part DESC LIMIT 1`,
+        [recorderId],
+      );
+      return rows[0] ? captureOf(rows[0]) : undefined;
+    },
+    async capturesEndedIn(state, before, limit) {
+      const { rows } = await pool.query(
+        'SELECT * FROM captures WHERE state = $1 AND capture_to < $2 ORDER BY capture_to LIMIT $3',
+        [state, before, limit],
+      );
+      return rows.map(captureOf);
     },
     async expiredUploads(now, limit) {
       const { rows } = await pool.query<{ data: Upload }>(

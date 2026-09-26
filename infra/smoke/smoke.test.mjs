@@ -1009,6 +1009,89 @@ test('smoke: EP-15.4 — the probe reads a real file: a WAV is accepted with its
   );
 });
 
+test('smoke: EP-39 — a recorder is planned at once: padded files, alternating slots; its history is readable', async () => {
+  // The planning half of ADR-0007 on a live cluster: a recorder written through the gateway has
+  // its next captures planned in the same request — each file padded 5 s on both sides, the slots
+  // alternating so neighbouring files are two workers. The window is built around NOW so the plan
+  // is never empty whenever this runs. Disabled at the end, which removes what had not started.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const now = new Date();
+  const hh = (d) => String(d.getUTCHours()).padStart(2, '0');
+  const start = hh(now);
+  const end =
+    now.getUTCHours() + 3 >= 24 ? '24:00' : `${hh(new Date(now.getTime() + 3 * 3600_000))}:00`;
+  const body = (over = {}) =>
+    JSON.stringify({
+      name: 'smoke recorder',
+      input: { url: 'udp://239.1.1.1:5000' },
+      timezone: 'UTC',
+      windows: [
+        { days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'], from: `${start}:00`, to: end },
+      ],
+      ...over,
+    });
+
+  // A credential in the feed's URL is refused before anything is written.
+  const leaky = await get('/api/v1/recorders', {
+    method: 'POST',
+    headers,
+    body: body({ input: { url: 'srt://user:secret@encoder:9000' } }),
+  });
+  assert.equal(leaky.status, 422, leaky.text);
+
+  const created = await get('/api/v1/recorders', { method: 'POST', headers, body: body() });
+  assert.equal(created.status, 201, `recorder failed: ${created.text}`);
+  const recorder = json(created);
+  try {
+    const listed = await get(
+      `/api/v1/recorders/${recorder.id}/captures?from=${encodeURIComponent(new Date(now.getTime() - 3600_000).toISOString())}`,
+      { headers },
+    );
+    assert.equal(listed.status, 200, listed.text);
+    const captures = json(listed);
+    assert.ok(captures.length >= 1, `nothing planned: ${listed.text}`);
+    for (const c of captures) {
+      assert.equal(Date.parse(c.fileStart) - Date.parse(c.captureFrom), 5_000, 'padded before');
+      assert.equal(Date.parse(c.captureTo) - Date.parse(c.fileEnd), 5_000, 'padded after');
+    }
+    // Slots alternate along the whole plan — across days too.
+    for (let i = 1; i < captures.length; i += 1) {
+      assert.notEqual(captures[i].slot, captures[i - 1].slot, 'neighbouring files are two workers');
+    }
+    // No gap WITHIN a window: today's files. (The 24 h plan also holds tomorrow's window, which
+    // starts hours after today's ends — a gap by design, not a hole.)
+    const today = captures.filter(
+      (c) => c.fileStart.slice(0, 10) === captures[0].fileStart.slice(0, 10),
+    );
+    for (let i = 1; i < today.length; i += 1) {
+      assert.equal(today[i].fileStart, today[i - 1].fileEnd, 'no gap between files of a window');
+    }
+  } finally {
+    const disabled = await get(`/api/v1/recorders/${recorder.id}`, {
+      method: 'PUT',
+      headers,
+      body: body({ enabled: false }),
+    });
+    assert.equal(disabled.status, 200, `recorder cleanup failed: ${disabled.text}`);
+  }
+
+  let history;
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const res = await get(`/api/v1/history/recorder/${recorder.id}`, { headers });
+    assert.equal(res.status, 200, `recorder history: ${res.text}`);
+    history = json(res);
+    if (history.revisions.length >= 2 || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.deepEqual(
+    history.revisions.slice(0, 2).map((r) => r.action),
+    ['recorder.created', 'recorder.replaced'],
+  );
+});
+
 test('smoke: EP-15.2 — a folder watcher takes a settled file into ingest; its own history is readable', async () => {
   // The dev overlay renders `smoke-watch.wav` into ch12's watch folder (rim-watch-sample.yaml).
   // A watcher on it, scanned by the real loop in the pod, must turn the file into an ingest job —

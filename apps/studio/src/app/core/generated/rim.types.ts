@@ -121,6 +121,64 @@ export type AcceptanceRuleSet = AcceptanceRuleSetInput & {
   version: number;
 };
 
+export interface RecordingWindow {
+  days: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'[];
+  /** HH:MM in the recorder's zone. */
+  from: string;
+  /** HH:MM after `from`; 24:00 is the end of the day. A window across midnight is two windows — windows that touch are merged into one recording. */
+  to: string;
+}
+
+export interface RecorderInput {
+  name: string;
+  /** The feed. Two captures read it at once for the seconds of every overlap, so it must serve several readers — multicast, or SRT from an encoder in listener mode that accepts several callers. A unicast UDP push serves one (ADR-0007, measured). */
+  input: { url: string; passphraseSecret?: string };
+  /** IANA zone the windows are in. */
+  timezone: string;
+  windows: RecordingWindow[];
+  /** The length of a file, on a grid from local midnight — it must divide a day. */
+  fileMinutes?: number;
+  /** Each file is captured from this long before its start to this long after its end. */
+  padSeconds?: number;
+  /** A disabled recorder is kept and records nothing; captures not yet started are cancelled. */
+  enabled?: boolean;
+}
+
+export type Recorder = RecorderInput & {
+  id: Ulid;
+  channelId: string;
+  fileMinutes: number;
+  padSeconds: number;
+  enabled: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+};
+
+/** One file of a recording, as planned and as run: the grid slot it covers (`fileStart` to `fileEnd`), the padded span it is captured over, and the slot — 0 or 1, alternating — that puts neighbouring files on different workers. */
+export interface Capture {
+  id: Ulid;
+  recorderId: Ulid;
+  channelId: string;
+  fileStart: string;
+  fileEnd: string;
+  captureFrom: string;
+  captureTo: string;
+  slot: number;
+  /** A crash continues the same file as part 2, 3, … */
+  part: number;
+  state: 'planned' | 'running' | 'completed' | 'partial' | 'missed' | 'cancelled';
+  /** The worker (a pod) running it, or that last ran it. */
+  holder?: string;
+  startedAt?: string;
+  endedAt?: string;
+  /** The ingest job the file became, once handed over. */
+  jobId?: Ulid;
+  /** Why it is partial or missed. */
+  reason?: string;
+}
+
 export interface WatcherInput {
   name: string;
   /** The folder, relative to the channel's own directory of RIM's watch root (`<watchRoot>/<channelId>/<path>`) — so a channel can only ever watch its own drops. Checked on the resolved real path, symlinks included. Only files directly in it are picked up. */

@@ -167,6 +167,33 @@ acceptance rule set can scope to it by id.
 - The job is an upload's: copied into staging (hashed on the way), then validated by the probe
   and the channel's acceptance rules, the queue and the review exactly as for an upload.
 
+## Recorders — the plan (EP-39, slice 1a; ADR-0007)
+
+A recorder records an IP feed inside recording **windows**: each file is one grid slot
+(`fileMinutes`, an hour by default) captured from `padSeconds` before it to `padSeconds` after it,
+by two workers taking turns — recording 01:00–03:00, one runs 00:59:55–02:00:05 and the other
+01:59:55–03:00:05. `/api/v1/recorders` under `ingest:admin`, audited, disabled not deleted; a URL
+carrying a credential is a 422 (an SRT passphrase is a Secret the recorder names).
+
+- **The planner** ([`recorder.ts`](src/recorder.ts), pure, `test/recorder.test.ts`) expands
+  windows day by day in the recorder's zone, merges what overlaps or touches (22:00–24:00 and the
+  next day's 00:00–02:00 are one recording), cuts on the local grid and alternates the slot along
+  the whole sequence, continuing from the last capture planned. DST: a spring night's skipped hour
+  is not a file; an autumn night's repeated hour is one two-hour file — every instant once.
+- **The plan** is written 24 h ahead, once a minute (`planRecorders`) and at once on every write.
+  A replaced recorder is planned again — captures not started go, a running one finishes as
+  planned — and a disabled one plans nothing. A planned capture whose span ended with no worker
+  having taken it is `missed`, logged as an error: a hole in a recording is not left looking
+  planned.
+- **The lease** ([`capture.ts`](src/capture.ts), `leaseCapture`) is one conditional UPDATE:
+  granted when the capture is planned, its lease has lapsed, or it is the holder's renewal — and
+  never to a worker already running an overlapping capture of the same recorder. The conformance
+  suite plays it through a worker's death: the survivor holding the next hour still cannot take
+  the dead one's; a third can.
+- `GET /api/v1/recorders/{id}/captures` shows the plan and the runs.
+
+The worker that runs the captures is slice 1b.
+
 ## The store is a port, with two adapters and one suite
 
 `RimStore` — `sqliteRimStore` for tests, `pgRimStore` for production — held to
