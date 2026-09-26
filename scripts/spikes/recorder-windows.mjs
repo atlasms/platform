@@ -19,6 +19,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { clearTimeout, setTimeout } from 'node:timers';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const FPS = 25;
@@ -61,7 +62,7 @@ function capture(url, file) {
 }
 
 function probe(file) {
-  let bytes = 0;
+  let bytes;
   try {
     bytes = statSync(file).size;
   } catch {
