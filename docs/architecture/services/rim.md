@@ -113,6 +113,12 @@ completed segment becomes an ingest job (checksum + place + register) and emits
 `recording.segment.completed`. Segmentation is crash-safe: a partially written segment is
 finalized or discarded on restart.
 
+> **Refined by [ADR-0007](../../adr/0007-recorders.md) (Proposed):** IP inputs only in the cluster
+> (SDI through an edge encoder); stream copy into MPEG-TS segments, finished when FFmpeg's segment
+> list names them; `flush_packets` on the segment muxer so a crash leaves a readable partial; a
+> separate `rim-recorder` worker that uploads each segment to RIM. Measured, not assumed — the
+> ADR's evidence and its five open decisions.
+
 ## 7. Dependencies
 
 - **HSM** — place incoming bytes; RIM never writes storage directly
