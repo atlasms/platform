@@ -292,7 +292,7 @@ describe('IngestPanel', () => {
   });
 
   // EP-15.2: the Watchers view, and a watched job's source in words.
-  it('an administrator gets a Watchers tab; an operator without ingest:admin gets the queue only', () => {
+  it('an administrator gets Watchers and Rules tabs; an operator without ingest:admin gets the queue only', () => {
     const admin = setup();
     admin.fixture.detectChanges();
     const root = admin.fixture.nativeElement as HTMLElement;
@@ -300,6 +300,7 @@ describe('IngestPanel', () => {
     expect(tabs.map((t) => t.textContent?.trim())).toEqual([
       'ingest.view.queue',
       'ingest.view.watchers',
+      'ingest.view.rules',
     ]);
     expect(admin.watchers.lists).toHaveLength(1);
     tabs[1]!.click();

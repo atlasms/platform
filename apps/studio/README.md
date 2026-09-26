@@ -446,6 +446,20 @@ watcher's id, and the row now says the watcher's NAME (the id stays on the cell'
 `ingest:admin` the list cannot be read, so the row says "Folder watcher". The panel's three
 hard-coded English errors are locale keys now.
 
+## Acceptance rules in the Ingest panel (EP-15.3)
+
+A third Ingest view under `ingest:admin`, **Rules**: the channel's acceptance rule sets — what
+each applies to (every job, a source kind, or ONE folder watcher, named), how many rules, whether
+it is on — each opening as an editor tab ([`rule-set-editor.ts`](src/app/editors/rule-set-editor.ts),
+deferred). [`rule-set.model.ts`](src/app/editors/rule-set.model.ts) turns the form into the body
+RIM reads: each rule carries only its kind's parameter (RIM refuses a rule carrying one it does
+not read), sizes are typed in MiB and sent in bytes, an empty label is omitted (RIM refuses it),
+and every rule keeps its id across saves — a job a rule held names it by `ruleId`, and must still
+after the set is edited; a new rule gets a browser-minted ULID. RIM stops at the first problem and
+names where (`rules[2].containers…`); the page puts it under that rule. The page says the one
+surprising thing out loud: an aspect-ratio rule cannot be checked before the probe, and holds the
+job for a person rather than passing it.
+
 ## Lint: Angular's rules, templates included
 
 Studio is linted by the root [`eslint.config.mjs`](../../eslint.config.mjs) (`npm run lint -w
