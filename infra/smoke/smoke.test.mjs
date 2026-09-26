@@ -1056,9 +1056,17 @@ test('smoke: EP-39 — a recorder is planned at once: padded files, alternating 
       assert.equal(Date.parse(c.fileStart) - Date.parse(c.captureFrom), 5_000, 'padded before');
       assert.equal(Date.parse(c.captureTo) - Date.parse(c.fileEnd), 5_000, 'padded after');
     }
+    // Slots alternate along the whole plan — across days too.
     for (let i = 1; i < captures.length; i += 1) {
       assert.notEqual(captures[i].slot, captures[i - 1].slot, 'neighbouring files are two workers');
-      assert.equal(captures[i].fileStart, captures[i - 1].fileEnd, 'no gap between files');
+    }
+    // No gap WITHIN a window: today's files. (The 24 h plan also holds tomorrow's window, which
+    // starts hours after today's ends — a gap by design, not a hole.)
+    const today = captures.filter(
+      (c) => c.fileStart.slice(0, 10) === captures[0].fileStart.slice(0, 10),
+    );
+    for (let i = 1; i < today.length; i += 1) {
+      assert.equal(today[i].fileStart, today[i - 1].fileEnd, 'no gap between files of a window');
     }
   } finally {
     const disabled = await get(`/api/v1/recorders/${recorder.id}`, {
