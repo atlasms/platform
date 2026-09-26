@@ -7,6 +7,7 @@ import { ProfileEditor } from '../editors/profile-editor.ts';
 import { RoleEditor } from '../editors/role-editor.ts';
 import { UserEditor } from '../editors/user-editor.ts';
 import { WatcherEditor } from '../editors/watcher-editor.ts';
+import { RuleSetEditor } from '../editors/rule-set-editor.ts';
 import { Dashboard } from '../panels/dashboard.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { EditorStore } from './editor.store.ts';
@@ -40,6 +41,7 @@ import { EditorStore } from './editor.store.ts';
     RoleEditor,
     ProfileEditor,
     WatcherEditor,
+    RuleSetEditor,
   ],
   template: `
     @if (store.isEmpty()) {
@@ -177,6 +179,15 @@ import { EditorStore } from './editor.store.ts';
                     @case ('watcher') {
                       @defer (on immediate) {
                         <atlas-watcher-editor [watcherId]="tab.resourceId" [tabId]="tab.id" />
+                      } @placeholder {
+                        <p class="muted">{{ locale.t('editor.loading') }}</p>
+                      } @error {
+                        <p class="error" role="alert">{{ locale.t('editor.loadFailed') }}</p>
+                      }
+                    }
+                    @case ('rules') {
+                      @defer (on immediate) {
+                        <atlas-rule-set-editor [setId]="tab.resourceId" [tabId]="tab.id" />
                       } @placeholder {
                         <p class="muted">{{ locale.t('editor.loading') }}</p>
                       } @error {

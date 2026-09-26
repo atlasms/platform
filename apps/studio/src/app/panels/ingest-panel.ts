@@ -15,9 +15,10 @@ import { PermissionService } from '../core/permission.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { UploadService } from '../core/upload.service.ts';
 import { WatchersService } from '../core/watchers.service.ts';
+import { RulesView } from './ingest/rules-view.ts';
 import { WatchersView } from './ingest/watchers-view.ts';
 
-type IngestView = 'queue' | 'watchers';
+type IngestView = 'queue' | 'watchers' | 'rules';
 
 /**
  * The Ingest/Import panel (EP-20.3) — upload, queue, quarantine accept/reject.
@@ -28,7 +29,8 @@ type IngestView = 'queue' | 'watchers';
  * (upload.service.ts) — chunked, resumable, against EP-15.1 — whose progress the transfer tray
  * shows. When an upload's job settles, its row joins the queue here without a refetch.
  *
- * The Watchers view (EP-15.2) is the channel's folder watchers, revealed by `ingest:admin`. The
+ * The Watchers view (EP-15.2) is the channel's folder watchers, and the Rules view its acceptance
+ * rule sets (EP-15.3) — what a job must be to be accepted, per source; both `ingest:admin`. The
  * panel holds the list because the queue needs it too: a watched job's `source` is its watcher's
  * id, and a row saying "Playout drops" is an answer where a ULID is a question. Someone without
  * `ingest:admin` cannot list watchers, and their queue says "Folder watcher" instead.
@@ -36,7 +38,7 @@ type IngestView = 'queue' | 'watchers';
 @Component({
   selector: 'atlas-ingest-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [IfCanDirective, WatchersView],
+  imports: [IfCanDirective, WatchersView, RulesView],
   template: `
     <h2 class="panel-title">{{ locale.t('ingest.title') }}</h2>
     @if (views().length > 1) {
@@ -55,7 +57,9 @@ type IngestView = 'queue' | 'watchers';
       </nav>
     }
 
-    @if (current() === 'watchers') {
+    @if (current() === 'rules') {
+      <atlas-rules-view [watchers]="watchers()" />
+    } @else if (current() === 'watchers') {
       <atlas-watchers-view
         [watchers]="watchers()"
         [error]="watchersError()"
@@ -331,7 +335,7 @@ export class IngestPanel {
     return this.permissions.can('ingest:admin');
   });
   protected readonly views = computed<readonly IngestView[]>(() =>
-    this.canAdmin() ? ['queue', 'watchers'] : ['queue'],
+    this.canAdmin() ? ['queue', 'watchers', 'rules'] : ['queue'],
   );
   protected readonly view = signal<IngestView>('queue');
   /** The chosen view, or the queue when the chosen one is no longer offered. */

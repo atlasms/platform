@@ -80,7 +80,8 @@
     "rejectError": "Could not reject the job.",
     "view": {
       "queue": "Queue",
-      "watchers": "Watchers"
+      "watchers": "Watchers",
+      "rules": "Rules"
     },
     "source": {
       "upload": "Web upload",
@@ -429,5 +430,47 @@
     "enabled": "Enabled",
     "enabledWhy": "Watchers are disabled, never deleted: the jobs they made name them as their source.",
     "disabled": "disabled"
+  },
+  "rules": {
+    "new": "New rule set",
+    "none": "No acceptance rules: every file that reaches this channel is accepted.",
+    "why": "A job is held to every enabled set that applies to it; the worst failure decides.",
+    "count": "rules",
+    "disabled": "disabled",
+    "name": "Name",
+    "appliesTo": "Applies to",
+    "scope": {
+      "all": "Every job",
+      "watcher": "Watcher:",
+      "kind": {
+        "upload": "Web uploads",
+        "watch": "All folder watchers",
+        "ftp": "FTP",
+        "recorder": "Recorders"
+      }
+    },
+    "enabled": "Enabled",
+    "rules": "Rules",
+    "worstWins": "Reject beats quarantine. A rule that cannot be checked yet holds the job for a person rather than letting it through.",
+    "noRules": "No rules yet — this set holds nothing.",
+    "kind": {
+      "container": "File type is one of",
+      "minSizeBytes": "At least",
+      "maxSizeBytes": "At most",
+      "aspectRatio": "Picture aspect ratio is"
+    },
+    "kindLabel": "Rule",
+    "onFailLabel": "When it fails",
+    "containers": "Extensions",
+    "mebibytes": "Size in MiB",
+    "onFail": {
+      "quarantine": "else hold for review",
+      "reject": "else reject"
+    },
+    "label": "Reason shown to the operator (optional)",
+    "aspectBeforeProbe": "Known only once the file has been probed; until then the job is held for review, never passed.",
+    "addRule": "Add a rule",
+    "delete": "Delete rule set",
+    "deleteWhy": "Stops applying at once. Jobs it already held keep their reason."
   }
 }
