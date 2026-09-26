@@ -113,11 +113,13 @@ completed segment becomes an ingest job (checksum + place + register) and emits
 `recording.segment.completed`. Segmentation is crash-safe: a partially written segment is
 finalized or discarded on restart.
 
-> **Refined by [ADR-0007](../../adr/0007-recorders.md) (Proposed):** IP inputs only in the cluster
-> (SDI through an edge encoder); stream copy into MPEG-TS segments, finished when FFmpeg's segment
-> list names them; `flush_packets` on the segment muxer so a crash leaves a readable partial; a
-> separate `rim-recorder` worker that uploads each segment to RIM. Measured, not assumed — the
-> ADR's evidence and its five open decisions.
+> **Decided in [ADR-0007](../../adr/0007-recorders.md):** recorders record inside recording windows,
+> each hour as its own file from 5 s before to 5 s after it — two captures alternate so the files
+> overlap — stream-copied from an IP feed (multicast, or SRT that serves several readers), each file
+> captured twice by different workers (the mirror), a crash's partial kept and continued. A separate
+> `rim-recorder` worker uploads each file to RIM, where it is an ordinary `IngestJob`. SDI later,
+> through a capture helper that serves the recorder an IP feed; third-party recorders through
+> folder watchers. Measured, not assumed — the ADR's evidence.
 
 ## 7. Dependencies
 
