@@ -44,9 +44,18 @@ still what the crash handling rests on.
    (days and times, in the channel's zone), not always. Always-on is the window 00:00–24:00.
 3. **A crash's partial file is kept**, marked partial — never discarded.
 4. **Blank intervals are not acceptable.** Every hour is recorded as **its own file, from 5 s before
-   the hour to 5 s after it**, so neighbouring files overlap by 10 s — which needs **two captures
-   running at once** at every boundary. The pad and the file length are per recorder (5 s, 60 min
-   by default).
+   the hour to 5 s after it**, by **two recorder workers taking turns**, so neighbouring files
+   overlap by 10 s and for those 10 s both workers are capturing. The product owner's example — a
+   recording from 01:00:00 to 03:00:00:
+
+   | | starts | stops | file covers |
+   |---|---|---|---|
+   | worker 1 | 00:59:55 | 02:00:05 | the 01:00 hour, ±5 s |
+   | worker 2 | 01:59:55 | 03:00:05 | the 02:00 hour, ±5 s |
+
+   Between 01:59:55 and 02:00:05 both run; then worker 1 stops. The pad and the file length are
+   per recorder (5 s and 60 min by default); a window's first file starts `pad` before the window
+   and its last ends `pad` after it.
 5. The first slice's scope was left to engineering (§ Delivery).
 
 ### From engineering, on those answers
@@ -54,34 +63,40 @@ still what the crash handling rests on.
 6. **One capture = one FFmpeg process bounded to its window** (`-t`), stream copy (`-c copy`), into
    MPEG-TS, the muxer flushing every packet. Its file is finished when the process exits 0 at the
    end of its window — no segment muxer, no list to read. Two **capture slots** per recorder
-   alternate — hour N in slot A, hour N+1 in slot B — which is what makes the overlap possible.
+   alternate — hour N in slot A, hour N+1 in slot B — and the two slots are held by **different
+   worker pods** (decision 10), so the overlap is two workers, as decision 4 requires, and a worker
+   lost at a boundary takes one hour's capture with it, never both sides of the cut.
 7. **Stream copy, no transcode at capture.** The feed is recorded as it arrived; house formats are
    MTS's (EP-16), from the file, like any ingested file. Keyframe-accurate cuts no longer matter:
    the pad contains the hour whatever GOP the feed has (evidence: start cost 0.8–1.2 s with a 2 s
    GOP, against a 5 s pad).
 8. **A crash inside a window**: the partial file is kept, and a **continuation** capture starts at
-   once for the rest of that window, as part 2 of the same file-window. The seconds between are a
-   gap in that copy — which is why:
-9. **Mirrored capture — engineering's addition to decision 4, switchable per recorder, on by
-   default.** Padding removes gaps at the boundaries and at a capture's start; it cannot remove the
-   gap a crash makes mid-hour. So each file-window is captured TWICE, by two different worker pods;
-   when both have ended, the complete copy is kept and the other removed, and if both are partial
-   both are kept, marked. Stream copy costs almost no CPU, so the mirror is network and disk, not
-   compute. A recorder whose feed cannot be read twice (below) cannot be mirrored.
-10. **Where it runs: a `rim-recorder` Deployment**, separate from RIM. A capture is a leased work
-    item, as an MTS job is: a scheduler writes the next files' captures (recorder, window, slot,
-    copy) ahead of time; workers lease them by compare-and-set; a mirror copy is never leased by the
-    holder of its twin. Each finished file is uploaded to RIM through the chunked upload API
-    (EP-15.1) — RIM assembles and checksums it in its own staging and it becomes an `IngestJob`
-    with `sourceKind: recorder` and `source` the recorder's id; `recording.segment.completed` is
-    emitted with it. No shared volume; RIM stays one replica; a recorder worker's rollout touches
-    only the captures it holds — and with the mirror, not the recording.
-11. **The feed must serve more than one reader.** Two captures at once (the overlap, and the
-    mirror) each read the feed. **Multicast** does that (every member receives; measured) and so
-    does **SRT** from an encoder in listener mode that accepts several callers. A **unicast UDP
-    push** does not — the second reader receives nothing (measured) — so for one the worker runs a
-    local relay per recorder, which makes that pod a single point of failure and rules out the
-    mirror; the recorder says so. The site guidance is: send multicast, or two unicast copies.
+   once — on another worker if the one that crashed is gone — for the rest of that file's window,
+   as part 2 of the same file. **What remains** is the time between the crash and the
+   continuation's first frame: the restart plus one GOP (the start cost measured below, ~1 s).
+   Padding covers the hour boundaries and every capture's start; it cannot cover a crash in the
+   middle of an hour. That residue is known and accepted, and it is measured by the first slice's
+   tests rather than assumed.
+9. *(Withdrawn.)* The first acceptance of this ADR proposed capturing every file twice, on two
+   workers, to cover the mid-hour crash. The product owner's design is the two workers taking
+   turns (decision 4), not a mirror; it is not part of this decision. Should the mid-hour residue
+   of decision 8 become unacceptable, a mirror is the documented next step (§ Revisit when).
+10. **Where it runs: a `rim-recorder` Deployment**, separate from RIM, with at least two replicas —
+    one per slot. A capture is a leased work item, as an MTS job is: a scheduler writes the next
+    files' captures (recorder, file window, slot) ahead of time; workers lease them by
+    compare-and-set; a capture is never leased by the pod holding the same recorder's other slot
+    while that pod has a capture running in its overlap (the two sides of a cut are two workers).
+    Each finished file is uploaded to RIM through the chunked upload API (EP-15.1) — RIM assembles
+    and checksums it in its own staging and it becomes an `IngestJob` with `sourceKind: recorder`
+    and `source` the recorder's id; `recording.segment.completed` is emitted with it. No shared
+    volume; RIM stays one replica; a recorder worker's rollout touches only the captures it holds,
+    and a rollout is ordered one pod at a time so both slots are never down together.
+11. **The feed must serve more than one reader.** For the 10 s of every overlap two workers read the
+    feed at once. **Multicast** does that (every member receives; measured) and so does **SRT** from
+    an encoder in listener mode that accepts several callers. A **unicast UDP push** does not — the
+    second reader receives nothing (measured) — so a unicast recorder needs a relay (one receiver
+    re-publishing to both workers), which is then a single point of failure; the recorder says so.
+    The site guidance is: send multicast, or SRT that serves several callers.
 12. **SDI later, without changing the recorder:** a **capture helper** on a node with a capture
     card reads SDI through the vendor SDK directly (not through FFmpeg, whose DeckLink input is on
     its `nonfree` list and could not ship in our image), ENCODES it — SDI is uncompressed — and
@@ -140,9 +155,10 @@ continuation; a Linux run of both harnesses is the check before the first slice 
 
 - **Slice 1:** the `Recorder` (input, windows, file length, pad, enabled) in `rim.yaml` with its
   admin API (`ingest:admin`, audited, disabled not deleted) and Studio; the scheduler and the
-  `rim-recorder` worker; padded, alternating captures of ONE copy; crash → partial kept +
-  continuation; hand-off through the upload API; `recording.segment.completed`.
-- **Slice 2:** the mirror (decision 9) and its reconciliation; the unicast relay.
+  `rim-recorder` worker (two replicas); padded captures alternating between two workers; crash →
+  partial kept + continuation; hand-off through the upload API; `recording.segment.completed`.
+- **Slice 2:** the unicast relay; the recorder's health in Studio (the next file's worker, the last
+  file, a continuation's gap).
 - **Later:** windows driven by Scheduling/BMS (rim.md §5), embedded timecode, the SDI capture
   helper (decision 12).
 
@@ -151,9 +167,8 @@ continuation; a Linux run of both harnesses is the check before the first slice 
 - **Nothing downstream changes.** A file is an `IngestJob`; acceptance rules can scope to
   `sourceKind: recorder` or one recorder; the Ingest panel shows it; MTS and (after EP-14) HSM
   treat it like any file. Third-party recorders already work, through watchers.
-- **Overlaps are recorded twice on purpose.** Consecutive files share 10 s, and a mirrored recorder
-  writes every file twice until reconciliation. Storage is sized for ~1.003× the channel's air time
-  at rest (the overlaps) and ~2× in flight (the mirror).
+- **Overlaps are recorded twice on purpose.** Consecutive files share 10 s: storage is ~1.003× the
+  channel's recorded air time (10 s an hour).
 - **RIM stays one replica**; recorders scale on their own, and the upload path is their only
   interface to RIM.
 - **The recorder image carries FFmpeg** (`APK_PACKAGES=ffmpeg`, as RIM's and MTS's); its SRT
@@ -164,10 +179,14 @@ continuation; a Linux run of both harnesses is the check before the first slice 
   (`ingest:admin`, as watchers).
 - **Tests the worker needs:** a real FFmpeg on a generated feed (skipped without the binary, FAILED
   in CI, as MTS's are) — the window's bound, the crash leaving a readable partial on the plain
-  muxer, a continuation, and two overlapping captures from a multicast feed; a lease that never
-  gives a mirror to its twin's holder.
+  muxer, a continuation and the gap it leaves, and two overlapping captures from a multicast feed;
+  the two sides of a cut never leased by one pod.
 
 ## Revisit when
+
+- The seconds a mid-hour crash costs (decision 8) become unacceptable for a channel — a mirror
+  (every file captured twice, the complete copy kept) is the step, at twice the network and
+  in-flight disk, not CPU.
 
 - A site needs SDI recorded before the capture helper exists — a third-party recorder writing to a
   watch folder is the interim answer.
