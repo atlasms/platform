@@ -263,6 +263,19 @@ over, once. A recorder's upload is not found on the gateway-facing upload routes
 upload is not found on the internal ones. The key is a Secret (`rim-internal-keys`), optional: RIM
 runs without it and refuses every internal call.
 
+**EP-39, slice 1b-ii — the worker.** `rim-recorder`, a StatefulSet of two (RIM's image,
+`node src/recorder-main.ts`, RIM's schema): the pod name is the lease holder and each pod has its
+own volume, both surviving a restart. Every second it recovers (first pass: a capture it held as
+`running` is `partial`, continued), renews its leases, starts what is due — a planned capture, or
+one whose worker is gone, marked `partial` for its old holder and continued here as the next part —
+and hands every finished file on its disk to RIM (signed, ADR-0008), deleting it only when RIM has
+made it a job. A capture ending at its span's end is `completed`; anything else is `partial`, kept,
+and continued at once, a feed failing straight away backing off (2 s, 4 s, … 30 s). An empty file
+is `missed`, not handed over. SIGTERM stops every capture (FFmpeg finishes its file), marks it
+partial and continues it for the other worker. The capture is FFmpeg with stream copy, MPEG-TS,
+packets flushed and — found by its real-binary test — 1 s of input probing, without which a crash
+in the first seconds left no file at all (ADR-0007 evidence 6).
+
 ## 14. Open questions / future
 
 - Growing-file / while-recording ingest (edit-while-ingest) — Post-v1.0.

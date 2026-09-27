@@ -384,6 +384,33 @@ export function sqliteRimStore(path = ':memory:'): RimStore & { db: Db } {
         .get(recorderId) as CaptureRow | undefined;
       return row ? captureOf(row) : undefined;
     },
+    async capturesDue(now, until, limit) {
+      const rows = db
+        .prepare(
+          `SELECT * FROM captures
+            WHERE capture_to > ?
+              AND ((state = 'planned' AND capture_from <= ?)
+                OR (state = 'running' AND lease_until <= ?))
+            ORDER BY capture_from LIMIT ?`,
+        )
+        .all(now, until, now, limit) as CaptureRow[];
+      return rows.map(captureOf);
+    },
+    async capturesHeldBy(holder, state) {
+      const rows = db
+        .prepare('SELECT * FROM captures WHERE holder = ? AND state = ? ORDER BY capture_from')
+        .all(holder, state) as CaptureRow[];
+      return rows.map(captureOf);
+    },
+    async unhandedBy(holder) {
+      const rows = db
+        .prepare(
+          `SELECT * FROM captures WHERE holder = ? AND state IN ('completed', 'partial')
+             AND job_id IS NULL ORDER BY capture_from`,
+        )
+        .all(holder) as CaptureRow[];
+      return rows.map(captureOf);
+    },
     async capturesEndedIn(state, before, limit) {
       const rows = db
         .prepare(

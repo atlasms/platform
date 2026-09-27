@@ -151,6 +151,16 @@ delivered nothing at all — the harness uses the default interface with TTL 1. 
 feed that drops and returns. The first slice's tests cover the crash case on the plain muxer and a
 continuation; a Linux run of both harnesses is the check before the first slice ships.
 
+### Found by the implementation (slice 1b-ii) — `apps/rim/test/capturer.test.ts`
+
+6. **FFmpeg writes nothing until it has finished probing a live input — 5 s by default for
+   MPEG-TS.** The worker's real-binary test killed a capture 3.5 s in and found **no file at all**:
+   the received packets sat in the analysis buffer. `-flush_packets` cannot help with bytes not yet
+   handed to the muxer. The capture's arguments probe for 1 s (`-analyzeduration 1000000
+   -probesize 1000000`); with that, the same kill leaves a readable file of what was received,
+   passing three runs in a row. This does not change a decision — it is what decision 3 needed to
+   be true — and the test holds it.
+
 ## Delivery (decision 5)
 
 - **Slice 1:** the `Recorder` (input, windows, file length, pad, enabled) in `rim.yaml` with its

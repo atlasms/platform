@@ -74,12 +74,36 @@ function checkWorkload(overlay, doc) {
       problem(overlay, `${where}: needs cpu and memory requests`);
     if (!c.resources?.limits?.memory) problem(overlay, `${where}: needs a memory limit`);
     // The data plane's images (Postgres, NATS, OpenSearch) write to their own filesystems by
-    // design; the read-only root is the platform's own services' promise (the Dockerfile).
-    if (doc.kind === 'Deployment') {
+    // design; the read-only root is the platform's own services' promise (the Dockerfile) — and
+    // an Atlas image is one of those whatever workload runs it (rim-recorder is a StatefulSet).
+    const atlasImage = /(^|\/)atlas\//.test(c.image ?? '');
+    if (atlasImage) checkEntrypoint(overlay, where, c);
+    if (doc.kind === 'Deployment' || atlasImage) {
       if (c.securityContext?.readOnlyRootFilesystem !== true)
         problem(overlay, `${where}: readOnlyRootFilesystem must be true`);
       if (c.securityContext?.allowPrivilegeEscalation !== false)
         problem(overlay, `${where}: allowPrivilegeEscalation must be false`);
+    }
+  }
+}
+
+/**
+ * An Atlas image runs `dumb-init -- node apps/<svc>/src/<file>.ts` from WORKDIR /app. Two mistakes
+ * crash-looped rim-recorder's first deploy while every test passed: `command` REPLACED dumb-init
+ * (which forwards SIGTERM, the drain's trigger) and named `src/recorder-main.ts`, a path that is
+ * not there from /app. So: a container that runs node keeps the entrypoint (`args`, not
+ * `command`), and every .ts path it names is `apps/<svc>/src/…` and exists in this repository.
+ */
+function checkEntrypoint(overlay, where, c) {
+  const argv = [...(c.command ?? []), ...(c.args ?? [])].map(String);
+  if ((c.command ?? []).some((t) => /(^|\/)node$/.test(String(t)))) {
+    problem(overlay, `${where}: runs node through \`command\`, replacing dumb-init — use \`args\``);
+  }
+  for (const token of argv.flatMap((t) => t.split(/\s+/)).filter((t) => t.endsWith('.ts'))) {
+    if (!/^apps\/[a-z0-9-]+\/src\/[\w./-]+\.ts$/.test(token)) {
+      problem(overlay, `${where}: "${token}" is not apps/<svc>/src/… — paths are relative to /app`);
+    } else if (!existsSync(join(ROOT, token))) {
+      problem(overlay, `${where}: "${token}" does not exist in this repository`);
     }
   }
 }

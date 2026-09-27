@@ -132,9 +132,9 @@ export function recorderErrors(input: RecorderInput): string[] {
   const file = input.fileMinutes;
   if (
     file !== undefined &&
-    !(Number.isInteger(file) && file >= 5 && file <= 1440 && 1440 % file === 0)
+    !(Number.isInteger(file) && file >= 1 && file <= 1440 && 1440 % file === 0)
   ) {
-    add('fileMinutes must divide a day (5, 10, 15, 30, 60, 120, … 1440)');
+    add('fileMinutes must divide a day (1, 5, 10, 15, 30, 60, 120, … 1440)');
   }
   const pad = input.padSeconds;
   if (pad !== undefined && !(Number.isInteger(pad) && pad >= 0 && pad <= 60)) {

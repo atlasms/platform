@@ -1,0 +1,146 @@
+# rim-recorder — RIM's recorder worker (EP-39; ADR-0007). RIM's image, another command.
+#
+# A StatefulSet, not a Deployment, for two reasons that are the design:
+#  - the pod NAME is the worker's lease holder, and it survives a restart — so a restarted worker
+#    recognises the capture it was recording, marks it partial and continues it;
+#  - each pod has its OWN volume (volumeClaimTemplates), which survives a restart — so the partial
+#    file a crash left is still there to hand over (decision 3: a crash's file is kept).
+# Two replicas: the product owner's two workers taking turns at every cut. The lease rule keeps
+# the two sides of a cut on different pods; a rolling update replaces ONE pod at a time
+# (RollingUpdate, the StatefulSet default), and the PodDisruptionBudget in an overlay keeps a
+# voluntary disruption from taking both.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rim-recorder
+  labels:
+    app.kubernetes.io/name: rim-recorder
+    app.kubernetes.io/part-of: atlas
+spec:
+  serviceName: rim-recorder
+  replicas: 2
+  # Both pods at once: the second is not waiting for the first to be Ready to record.
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rim-recorder
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rim-recorder
+        app.kubernetes.io/part-of: atlas
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: /metrics
+    spec:
+      # SIGTERM stops every capture — FFmpeg finishes its file — marks it partial and continues it
+      # for the other worker. FFmpeg gets 5 s of that; the rest is slack.
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rim-recorder
+          image: atlas/rim:dev
+          imagePullPolicy: IfNotPresent
+          # `args`, not `command`: the image's ENTRYPOINT is dumb-init, which forwards SIGTERM — the
+          # drain depends on it. Paths are relative to the image's WORKDIR, /app.
+          args: ["node", "apps/rim/src/recorder-main.ts"]
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            - name: ATLAS_PG_URL
+              value: postgres://$(PGUSER):$(PGPASSWORD)@postgres:5432/atlas
+            # RIM's schema: this is RIM's own worker (EP-07.6 — one owner per schema).
+            - name: ATLAS_PG_SCHEMA
+              value: rim
+            # RIM directly; the gateway does not route /internal/ (ADR-0008).
+            - name: ATLAS_RIM_ORIGIN
+              value: http://rim:3000
+            # Required here, unlike in RIM: without it no file could ever be handed over.
+            - name: ATLAS_RIM_INTERNAL_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: rim-internal-keys
+                  key: keys
+            - name: ATLAS_RECORDER_WORK_DIR
+              value: /var/lib/atlas/recorder
+          volumeMounts:
+            - name: work
+              mountPath: /var/lib/atlas/recorder
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Stream copy: a capture is a copy of packets, not an encode — little CPU per feed.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 3
+            failureThreshold: 40
+  # Each pod's own disk: files wait here until RIM has them. Sized for a few hours of one feed
+  # at contribution bit rates; a facility sets it (the chart's storage value).
+  volumeClaimTemplates:
+    - metadata:
+        name: work
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+---
+# The StatefulSet's governing Service (a StatefulSet needs one). Headless: nothing calls a recorder
+# worker except Prometheus, which scrapes the pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rim-recorder
+  labels:
+    app.kubernetes.io/name: rim-recorder
+    app.kubernetes.io/part-of: atlas
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: rim-recorder
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

@@ -112,6 +112,8 @@ jobs:
           for d in iam mam websocket api-gateway logging scheduling rim mts; do
             kubectl -n atlas rollout status "deployment/$d" --timeout=180s
           done
+          # RIM's recorder workers (EP-39): a StatefulSet, two pods, each with its own volume.
+          kubectl -n atlas rollout status statefulset/rim-recorder --timeout=180s
 
       - name: Smoke
         run: npm run smoke

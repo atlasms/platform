@@ -209,7 +209,34 @@ compare-and-set) and emits `recording.segment.completed` in one transaction; onl
 `partial` capture is handed over, and only once. A recorder's upload is not found on the public
 upload routes, and a person's is not found on the internal ones.
 
-The worker that runs the captures is slice 1b-ii.
+### The worker — `rim-recorder` (slice 1b-ii)
+
+[`recorder-worker.ts`](src/recorder-worker.ts), run by [`recorder-main.ts`](src/recorder-main.ts) in
+the `rim-recorder` StatefulSet (two pods; RIM's image; RIM's schema). Each second:
+
+1. **Recover** (first pass): a capture this pod held as `running` but is not running — it restarted
+   — is `partial`, and continued.
+2. **Renew** the lease of everything it is recording.
+3. **Start** what is due: a planned capture whose span has begun, or one whose worker is gone (its
+   lease lapsed) — marked `partial` for its old holder and continued here as the next part. The
+   lease rule never gives it both sides of a cut.
+4. **Hand over** every finished file on its disk (`httpHandOff`, signed), deleting it only once RIM
+   has made it a job. An empty file is `missed`.
+
+A capture ending at its span's end is `completed`; anything else is `partial` — kept — and the rest
+of the span is planned at once; a feed failing straight away backs off (2, 4, 8 … 30 s). SIGTERM
+stops each capture (FFmpeg finishes its file), marks it partial and continues it for the other pod.
+The pod name is the lease holder and the volume is per pod: both survive a restart, which is what
+lets a restarted worker hand over the file a crash left.
+
+The capture ([`capturer.ts`](src/capturer.ts)) is FFmpeg — stream copy, MPEG-TS, `-flush_packets 1`,
+`-t` the span, and **1 s of input probing**: its real-binary test found that FFmpeg writes nothing
+until it has finished probing a live input (5 s by default), so a crash 3.5 s in left no file at all.
+An SRT passphrase is read from `ATLAS_RECORDER_PASSPHRASE_DIR/<secret>/<key>` (the install mounts
+the Secret there) and applied to the URL at spawn — it is never logged.
+
+The dev overlay runs a test feed beside each worker pod on `127.0.0.1:5000`, and smoke records a
+minute of it end to end.
 
 ## The store is a port, with two adapters and one suite
 

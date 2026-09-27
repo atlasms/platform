@@ -23,6 +23,7 @@ resources:
   - api-gateway.yaml
   - mts.yaml
   - rim.yaml
+  - rim-recorder.yaml
   - scheduling.yaml
   - logging.yaml
 
