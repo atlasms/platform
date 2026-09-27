@@ -1080,4 +1080,97 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       );
     });
   });
+
+  test(`[${name}] HAND-OFF: a finished capture's file becomes the recorder's job, the capture is linked, the file announced once`, async () => {
+    await withFixture(async ({ service, store, clock, drain }) => {
+      const r = await service.createRecorder(caller(), recorderInput());
+      const [h13, h14, h15] = await store.captures(r.id, '2000-01-01T00:00:00.000Z', 3);
+      clock.now = Date.parse('2026-09-14T13:10:00.000Z');
+      const now = () => new Date(clock.now).toISOString();
+      // A planned capture has no file yet: refused.
+      await assert.rejects(
+        service.startCaptureUpload(h13!.id, { filename: 'a.ts', sizeBytes: 10 }),
+        {
+          status: 409,
+        },
+      );
+      const finish = async (id: string, state: 'completed' | 'partial') => {
+        await store.transaction((tx) => tx.leaseCapture(id, 'pod-a', now(), now()));
+        const c = (await store.capture(id))!;
+        await store.transaction((tx) =>
+          tx.putCapture(
+            {
+              ...c,
+              state,
+              endedAt: now(),
+              ...(state === 'partial' ? { reason: 'ffmpeg exited 1' } : {}),
+            },
+            'running',
+          ),
+        );
+      };
+      const handOver = async (id: string) => {
+        const bytes = randomBytes(PART + 100);
+        const u = await service.startCaptureUpload(id, {
+          filename: `${id}.ts`,
+          sizeBytes: bytes.length,
+        });
+        await service.putCapturePart(u.uploadId, 1, bytes.subarray(0, PART));
+        await service.putCapturePart(u.uploadId, 2, bytes.subarray(PART));
+        return {
+          job: await service.completeCaptureUpload(u.uploadId),
+          bytes,
+          uploadId: u.uploadId,
+        };
+      };
+
+      await finish(h13!.id, 'completed');
+      await drain();
+      const { job, bytes, uploadId } = await handOver(h13!.id);
+      assert.deepEqual(
+        [job.sourceKind, job.source, job.createdBy],
+        ['recorder', r.id, 'rim-recorder'],
+      );
+      assert.equal(job.checksum, sha256(bytes));
+      assert.equal((await store.capture(h13!.id))?.jobId, job.id);
+      const events = await drain();
+      const segment = events.find((e) => e.type === 'recording.segment.completed')!;
+      assert.ok(validatePayload('recording.segment.completed', segment.payload).valid);
+      assert.equal(segment.actor?.id, 'rim-recorder');
+      const payload = segment.payload as unknown as EventPayloads['recording.segment.completed'];
+      assert.deepEqual(
+        [payload.recorderId, payload.captureId, payload.jobId, payload.part, payload.partial],
+        [r.id, h13!.id, job.id, 1, false],
+      );
+      assert.equal(payload.checksum.value, job.checksum);
+      assert.ok(events.some((e) => e.type === 'ingest.detected'));
+
+      // Completing again is the same job (a lost answer, retried); a second hand-off is refused.
+      assert.equal((await service.completeCaptureUpload(uploadId)).id, job.id);
+      await assert.rejects(
+        service.startCaptureUpload(h13!.id, { filename: 'b.ts', sizeBytes: 10 }),
+        {
+          status: 409,
+        },
+      );
+
+      // A crash's file is kept, and said to be partial (ADR-0007 decision 3).
+      await finish(h14!.id, 'partial');
+      await handOver(h14!.id);
+      // `drain` returns everything published so far: pick this capture's announcement.
+      const partial = (await drain()).find(
+        (e) =>
+          e.type === 'recording.segment.completed' &&
+          (e.payload as { captureId: string }).captureId === h14!.id,
+      )!;
+      assert.equal((partial.payload as { partial: boolean }).partial, true);
+
+      // An internal route never reaches a person's upload, and a person's route never a recorder's.
+      const mine = await service.start(caller(), { filename: 'mine.mxf', sizeBytes: 10 });
+      await assert.rejects(service.putCapturePart(mine.uploadId, 1, randomBytes(10)), {
+        status: 404,
+      });
+      void h15;
+    });
+  });
 }

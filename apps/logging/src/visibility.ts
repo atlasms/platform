@@ -68,6 +68,9 @@ export function entityRule(entityType: string): ReadRule {
   if (GOVERNANCE.has(entityType)) return { permission: 'compliance:admin' };
   if (CONFIG_REGISTRIES.has(entityType)) return { permission: 'config:admin' };
   if (INGEST_ADMINISTRATION.has(entityType)) return { permission: 'ingest:admin' };
+  // A recorder's file handed over (`recording.segment.completed`, EP-39) is an ingest event: it
+  // reads as the ingest queue does. Under the default it was `recording:read`, which no role holds.
+  if (entityType === 'recording') return { permission: 'ingest:read' };
   if (FILE_SET.has(entityType)) return { permission: 'asset:read', fieldGroup: 'files' };
   return { permission: `${entityType}:read` };
 }

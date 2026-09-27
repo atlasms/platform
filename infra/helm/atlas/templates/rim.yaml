@@ -73,6 +73,15 @@ spec:
             # A facility binds this claim to its drop share; RIM reads it and removes what it took.
             - name: ATLAS_RIM_WATCH_ROOT
               value: /var/lib/atlas/watch
+            # Signed internal requests (ADR-0008): the key(s) RIM and its recorder worker share.
+            # The base names the Secret and stops there; an install creates it. Optional: without it
+            # RIM runs and refuses every /internal/ call — recorders' files wait, nothing else does.
+            - name: ATLAS_RIM_INTERNAL_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: rim-internal-keys
+                  key: keys
+                  optional: true
           volumeMounts:
             - name: staging
               mountPath: /var/lib/atlas/rim
