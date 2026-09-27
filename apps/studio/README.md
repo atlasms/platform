@@ -460,6 +460,22 @@ names where (`rules[2].containers…`); the page puts it under that rule. The pa
 surprising thing out loud: an aspect-ratio rule cannot be checked before the probe, and holds the
 job for a person rather than passing it.
 
+## Recorders in the Ingest panel (EP-39; ADR-0007)
+
+A **Recorders** view under `ingest:admin` beside Watchers and Rules: the channel's recorders, each
+one's windows in a line (`mon–fri 06:00–24:00 (Europe/London)`), and a new one — which starts
+**switched off**, every day all day, hourly, in the browser's zone: nothing records until someone
+has set its windows and turned it on. A recorder opens as an editor tab
+([`recorder-editor.ts`](src/app/editors/recorder-editor.ts), deferred): feed, SRT passphrase
+Secret, zone, file length, pad, and the recording windows (days ticked, times typed — `24:00` is the
+end of the day). RIM's reasons land under the field each names, `windows[…]` above the windows.
+
+Under the settings are the recorder's **captures** — the last six hours and what is planned — in
+the recorder's own zone: file, part (a crash continues a file as part 2), state, the worker that
+recorded it, and why a capture is partial or missed. A `missed` capture is a hole in the recording
+and its row is marked. The queue names a recorded job's source by the recorder's name, and a rule
+set can scope to one recorder as to one watcher (`source:<kind>:<id>` in the form's model).
+
 ## Lint: Angular's rules, templates included
 
 Studio is linted by the root [`eslint.config.mjs`](../../eslint.config.mjs) (`npm run lint -w

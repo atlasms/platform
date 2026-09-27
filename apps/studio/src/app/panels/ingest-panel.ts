@@ -8,17 +8,19 @@ import {
   type ElementRef,
 } from '@angular/core';
 import { IngestService } from '../core/ingest.service.ts';
-import type { IngestJob, Watcher } from '../core/generated/rim.types.ts';
+import type { IngestJob, Recorder, Watcher } from '../core/generated/rim.types.ts';
 import { IfCanDirective } from '../core/if-can.directive.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { UploadService } from '../core/upload.service.ts';
+import { RecordersService } from '../core/recorders.service.ts';
 import { WatchersService } from '../core/watchers.service.ts';
+import { RecordersView } from './ingest/recorders-view.ts';
 import { RulesView } from './ingest/rules-view.ts';
 import { WatchersView } from './ingest/watchers-view.ts';
 
-type IngestView = 'queue' | 'watchers' | 'rules';
+type IngestView = 'queue' | 'watchers' | 'recorders' | 'rules';
 
 /**
  * The Ingest/Import panel (EP-20.3) — upload, queue, quarantine accept/reject.
@@ -38,7 +40,7 @@ type IngestView = 'queue' | 'watchers' | 'rules';
 @Component({
   selector: 'atlas-ingest-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [IfCanDirective, WatchersView, RulesView],
+  imports: [IfCanDirective, WatchersView, RecordersView, RulesView],
   template: `
     <h2 class="panel-title">{{ locale.t('ingest.title') }}</h2>
     @if (views().length > 1) {
@@ -58,7 +60,13 @@ type IngestView = 'queue' | 'watchers' | 'rules';
     }
 
     @if (current() === 'rules') {
-      <atlas-rules-view [watchers]="watchers()" />
+      <atlas-rules-view [watchers]="watchers()" [recorders]="recorders()" />
+    } @else if (current() === 'recorders') {
+      <atlas-recorders-view
+        [recorders]="recorders()"
+        [error]="recordersError()"
+        (created)="recorders.update((list) => [...list, $event])"
+      />
     } @else if (current() === 'watchers') {
       <atlas-watchers-view
         [watchers]="watchers()"
@@ -317,6 +325,7 @@ type IngestView = 'queue' | 'watchers' | 'rules';
 export class IngestPanel {
   private readonly ingestApi = inject(IngestService);
   private readonly watchersApi = inject(WatchersService);
+  private readonly recordersApi = inject(RecordersService);
   private readonly uploads = inject(UploadService);
   private readonly permissions = inject(PermissionService);
   private readonly session = inject(SessionStore);
@@ -328,6 +337,8 @@ export class IngestPanel {
   protected readonly error = signal<string | null>(null);
   protected readonly watchers = signal<Watcher[]>([]);
   protected readonly watchersError = signal<string | null>(null);
+  protected readonly recorders = signal<Recorder[]>([]);
+  protected readonly recordersError = signal<string | null>(null);
 
   /** UX only — RIM enforces `ingest:admin` on every watcher call. */
   private readonly canAdmin = computed(() => {
@@ -335,7 +346,7 @@ export class IngestPanel {
     return this.permissions.can('ingest:admin');
   });
   protected readonly views = computed<readonly IngestView[]>(() =>
-    this.canAdmin() ? ['queue', 'watchers', 'rules'] : ['queue'],
+    this.canAdmin() ? ['queue', 'watchers', 'recorders', 'rules'] : ['queue'],
   );
   protected readonly view = signal<IngestView>('queue');
   /** The chosen view, or the queue when the chosen one is no longer offered. */
@@ -345,10 +356,26 @@ export class IngestPanel {
   private readonly watcherNames = computed(
     () => new Map(this.watchers().map((w) => [w.id, w.name])),
   );
+  private readonly recorderNames = computed(
+    () => new Map(this.recorders().map((r) => [r.id, r.name])),
+  );
 
   constructor() {
     this.load();
-    if (this.canAdmin()) this.loadWatchers();
+    if (this.canAdmin()) {
+      this.loadWatchers();
+      this.loadRecorders();
+    }
+  }
+
+  private loadRecorders(): void {
+    this.recordersApi.list().subscribe({
+      next: (list) => {
+        this.recorders.set(list);
+        this.recordersError.set(null);
+      },
+      error: () => this.recordersError.set(this.locale.t('recorders.loadError')),
+    });
   }
 
   private loadWatchers(): void {
@@ -372,6 +399,12 @@ export class IngestPanel {
       return (
         (job.source ? this.watcherNames().get(job.source) : undefined) ??
         this.locale.t('ingest.source.watch')
+      );
+    }
+    if (job.sourceKind === 'recorder') {
+      return (
+        (job.source ? this.recorderNames().get(job.source) : undefined) ??
+        this.locale.t('ingest.source.recorder')
       );
     }
     return job.source || '—';

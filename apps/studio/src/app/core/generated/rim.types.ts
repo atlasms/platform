@@ -122,7 +122,7 @@ export type AcceptanceRuleSet = AcceptanceRuleSetInput & {
 };
 
 export interface RecordingWindow {
-  days: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'[];
+  days: ('mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun')[];
   /** HH:MM in the recorder's zone. */
   from: string;
   /** HH:MM after `from`; 24:00 is the end of the day. A window across midnight is two windows — windows that touch are merged into one recording. */

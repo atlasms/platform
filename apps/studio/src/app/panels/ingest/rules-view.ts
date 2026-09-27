@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import type { AcceptanceRuleSet, Watcher } from '../../core/generated/rim.types.ts';
+import type { AcceptanceRuleSet, Recorder, Watcher } from '../../core/generated/rim.types.ts';
 import { LocaleService } from '../../core/locale.service.ts';
 import { RulesService } from '../../core/rules.service.ts';
 import { openRuleSet } from '../../editors/rule-set-editor.ts';
@@ -64,6 +64,7 @@ import { EditorStore } from '../../workbench/editor.store.ts';
 })
 export class RulesView {
   readonly watchers = input<readonly Watcher[]>([]);
+  readonly recorders = input<readonly Recorder[]>([]);
 
   private readonly api = inject(RulesService);
   private readonly editors = inject(EditorStore);
@@ -77,8 +78,12 @@ export class RulesView {
   protected readonly createError = signal<string | null>(null);
   protected name = '';
 
-  private readonly watcherNames = computed(
-    () => new Map(this.watchers().map((w) => [w.id, w.name])),
+  private readonly names = computed(
+    () =>
+      new Map<string, string>([
+        ...this.watchers().map((w) => [`watch:${w.id}`, w.name] as const),
+        ...this.recorders().map((r) => [`recorder:${r.id}`, r.name] as const),
+      ]),
   );
 
   constructor() {
@@ -99,7 +104,7 @@ export class RulesView {
     return describeScope(
       s.scope,
       (k) => this.locale.t(k),
-      (id) => this.watcherNames().get(id),
+      (kind, id) => this.names().get(`${kind}:${id}`),
     );
   }
 

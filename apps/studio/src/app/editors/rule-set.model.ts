@@ -53,9 +53,15 @@ export interface RuleDraft {
 
 /**
  * Which jobs the set applies to, as one select's value: every job, one source kind, or one
- * source by id (`source:<watcherId>`).
+ * source — a watcher or a recorder — by kind and id (`source:watch:<id>`, `source:recorder:<id>`).
  */
-export type ScopeChoice = 'all' | `kind:${SourceKind}` | `source:${string}`;
+export type ScopeChoice = 'all' | `kind:${SourceKind}` | `source:${SourceKind}:${string}`;
+
+/** A one-source scope's kind and id, or undefined for any other scope. */
+export function sourceOf(choice: string): { kind: SourceKind; id: string } | undefined {
+  const m = /^source:([a-z]+):(.+)$/.exec(choice);
+  return m ? { kind: m[1] as SourceKind, id: m[2]! } : undefined;
+}
 
 export interface RuleSetDraft {
   name: string;
@@ -79,7 +85,9 @@ export function newRule(kind: Kind = 'container'): RuleDraft {
 export function scopeOf(scope: AcceptanceRuleSetInput['scope']): ScopeChoice {
   // `upload` is the one upload source there is: "that source" and "that kind" are the same set.
   if (scope?.sourceId === 'upload') return 'kind:upload';
-  if (scope?.sourceId) return `source:${scope.sourceId}`;
+  // A source with no kind recorded is a watcher's: they were the only one-source scope before
+  // recorders (EP-39).
+  if (scope?.sourceId) return `source:${scope.sourceKind ?? 'watch'}:${scope.sourceId}`;
   if (scope?.sourceKind) return `kind:${scope.sourceKind}`;
   return 'all';
 }
@@ -120,8 +128,9 @@ export function inputOfSet(d: RuleSetDraft): AcceptanceRuleSetInput {
 function scopeInput(choice: ScopeChoice): NonNullable<AcceptanceRuleSetInput['scope']> {
   if (choice === 'all') return {};
   if (choice.startsWith('kind:')) return { sourceKind: choice.slice(5) as SourceKind };
-  // One watcher: its kind too, so the set reads right in any tool that shows only the kind.
-  return { sourceKind: 'watch', sourceId: choice.slice(7) };
+  // One source: its kind too, so the set reads right in any tool that shows only the kind.
+  const source = sourceOf(choice)!;
+  return { sourceKind: source.kind, sourceId: source.id };
 }
 
 function ruleInput(r: RuleDraft): AcceptanceRuleInput {
@@ -165,11 +174,11 @@ export function placeRuleSetProblems(message: string): Problems {
 export function describeScope(
   scope: AcceptanceRuleSetInput['scope'],
   t: (key: string) => string,
-  watcherName: (id: string) => string | undefined,
+  sourceName: (kind: SourceKind, id: string) => string | undefined,
 ): string {
   const choice = scopeOf(scope);
   if (choice === 'all') return t('rules.scope.all');
   if (choice.startsWith('kind:')) return t(`rules.scope.kind.${choice.slice(5)}`);
-  const id = choice.slice(7);
-  return watcherName(id) ?? `${t('rules.scope.kind.watch')} (${id})`;
+  const { kind, id } = sourceOf(choice)!;
+  return sourceName(kind, id) ?? `${t(`rules.scope.kind.${kind}`)} (${id})`;
 }
