@@ -29,6 +29,12 @@ release is a statement of what changed, not a deploy step.
   staging path is never on the wire. No producer existed before this change, so no consumer can
   have depended on the old shape.
 
+### Changed
+
+- `alert.raised` is emitted by the service watching the condition, not only Logging & Analytics:
+  RIM raises `recording-missed` (critical) and `recording-partial` (warning) for a hole in a
+  recording (EP-39). Description only; the payload is unchanged.
+
 ### Added
 
 - `liveSubjectFor(channelId, type)` → `live.<channelId>.<type>`: the subject of a PROGRESS message,

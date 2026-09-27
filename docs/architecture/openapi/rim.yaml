@@ -227,6 +227,14 @@ paths:
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Recorder' } } } }
         '422': { $ref: '#/components/responses/Error' }
+  /recorders/status:
+    get:
+      operationId: listRecorderStatus
+      tags: [admin]
+      summary: 'Each recorder''s health: what it is recording now, and the holes of the last 24 h (scope ingest:admin)'
+      responses:
+        '200': { description: One per recorder of the channel, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/RecorderStatus' } } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
   /recorders/{id}:
     get:
       operationId: getRecorder
@@ -487,6 +495,35 @@ components:
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time }
             version: { type: integer, minimum: 1, description: The audit revision; every replacement bumps it. }
+    RecorderStatus:
+      type: object
+      description: >-
+        A recorder's health at a glance (EP-39 slice 2). `recording` is every capture of it running
+        now — two for the seconds of an overlap, none between windows. The counts are over the files
+        that started in the last 24 h; a missed file is a hole in the recording and also raised
+        `alert.raised` (recording-missed, critical), a partial one a gap of seconds (warning).
+      required: [recorderId, recording, missed24h, partial24h]
+      properties:
+        recorderId: { $ref: '#/components/schemas/Ulid' }
+        recording:
+          type: array
+          items:
+            type: object
+            required: [holder, part, fileStart, fileEnd]
+            properties:
+              holder: { type: string, description: The worker pod recording it. }
+              part: { type: integer, minimum: 1 }
+              fileStart: { type: string, format: date-time }
+              fileEnd: { type: string, format: date-time }
+        missed24h: { type: integer, minimum: 0 }
+        partial24h: { type: integer, minimum: 0 }
+        lastMissed:
+          type: object
+          required: [fileStart, fileEnd]
+          properties:
+            fileStart: { type: string, format: date-time }
+            fileEnd: { type: string, format: date-time }
+            reason: { type: string }
     Capture:
       type: object
       description: >-

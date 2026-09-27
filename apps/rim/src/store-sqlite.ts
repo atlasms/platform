@@ -411,6 +411,39 @@ export function sqliteRimStore(path = ':memory:'): RimStore & { db: Db } {
         .all(holder) as CaptureRow[];
       return rows.map(captureOf);
     },
+    async runningCaptures(channelId) {
+      const rows = db
+        .prepare(
+          `SELECT * FROM captures WHERE channel_id = ? AND state = 'running' ORDER BY file_start`,
+        )
+        .all(channelId) as CaptureRow[];
+      return rows.map(captureOf);
+    },
+    async captureCounts(channelId, since) {
+      const rows = db
+        .prepare(
+          `SELECT recorder_id,
+                  SUM(CASE WHEN state = 'missed' THEN 1 ELSE 0 END) AS missed,
+                  SUM(CASE WHEN state = 'partial' THEN 1 ELSE 0 END) AS partial
+             FROM captures WHERE channel_id = ? AND file_start >= ? GROUP BY recorder_id`,
+        )
+        .all(channelId, since) as { recorder_id: string; missed: number; partial: number }[];
+      return rows.map((r) => ({
+        recorderId: r.recorder_id,
+        missed: Number(r.missed),
+        partial: Number(r.partial),
+      }));
+    },
+    async lastMissed(channelId, since) {
+      const rows = db
+        .prepare(
+          `SELECT * FROM captures c WHERE channel_id = ? AND state = 'missed' AND file_start >= ?
+             AND file_start = (SELECT MAX(file_start) FROM captures m
+                                WHERE m.recorder_id = c.recorder_id AND m.state = 'missed')`,
+        )
+        .all(channelId, since) as CaptureRow[];
+      return rows.map(captureOf);
+    },
     async capturesEndedIn(state, before, limit) {
       const rows = db
         .prepare(

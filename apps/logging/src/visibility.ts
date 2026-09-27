@@ -71,6 +71,10 @@ export function entityRule(entityType: string): ReadRule {
   // A recorder's file handed over (`recording.segment.completed`, EP-39) is an ingest event: it
   // reads as the ingest queue does. Under the default it was `recording:read`, which no role holds.
   if (entityType === 'recording') return { permission: 'ingest:read' };
+  // An alert (`alert.raised`) is operations' — the starter Ops role holds `ops:read`
+  // (authorization-model.md §9). Under the default it was `alert:read`, which no role holds, and
+  // the first producer (RIM's recording holes, EP-39) would have raised alerts nobody could read.
+  if (entityType === 'alert') return { permission: 'ops:read' };
   if (FILE_SET.has(entityType)) return { permission: 'asset:read', fieldGroup: 'files' };
   return { permission: `${entityType}:read` };
 }

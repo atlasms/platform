@@ -156,6 +156,15 @@ export type Recorder = RecorderInput & {
   version: number;
 };
 
+/** A recorder's health at a glance (EP-39 slice 2). `recording` is every capture of it running now — two for the seconds of an overlap, none between windows. The counts are over the files that started in the last 24 h; a missed file is a hole in the recording and also raised `alert.raised` (recording-missed, critical), a partial one a gap of seconds (warning). */
+export interface RecorderStatus {
+  recorderId: Ulid;
+  recording: { holder: string; part: number; fileStart: string; fileEnd: string }[];
+  missed24h: number;
+  partial24h: number;
+  lastMissed?: { fileStart: string; fileEnd: string; reason?: string };
+}
+
 /** One file of a recording, as planned and as run: the grid slot it covers (`fileStart` to `fileEnd`), the padded span it is captured over, and the slot — 0 or 1, alternating — that puts neighbouring files on different workers. */
 export interface Capture {
   id: Ulid;

@@ -514,6 +514,11 @@ export async function buildRimApp(options: RimAppOptions): Promise<FastifyInstan
     ),
   );
 
+  // Static before the parameter: `status` is never read as a recorder id.
+  app.get('/api/v1/recorders/status', (req, reply) =>
+    handle(req, reply, 200, (caller) => service.recorderStatus(caller)),
+  );
+
   app.get<{ Params: P }>('/api/v1/recorders/:id', (req, reply) =>
     handle(req, reply, 200, (caller) => service.recorder(caller, req.params.id)),
   );

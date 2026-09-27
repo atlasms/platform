@@ -280,9 +280,15 @@ if (config.watchRoot !== '') void watch();
 
 // --- recorders (EP-39): the next day of captures planned, and the missed ones said out loud ------
 let planTimer: NodeJS.Timeout | undefined;
+// A closed label set: how many holes, never which recorder (that is the alert's, and the audit's).
+const missedCaptures = metrics.counter({
+  name: 'atlas_rim_captures_missed_total',
+  help: 'Planned recorder captures no worker took — each a hole in a recording, each alerted.',
+});
 const plan = async (): Promise<void> => {
   try {
     const report = await service.planRecorders();
+    if (report.missed > 0) missedCaptures.inc({}, report.missed);
     if (report.planned > 0) log.info('recorders planned', { ...report });
     // A capture no worker took is a hole in a recording — an operator must hear about it.
     if (report.missed > 0) log.error('recorder captures missed', { ...report });

@@ -292,6 +292,8 @@ test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENT
   assert.deepEqual(requiredRule({ ...base, type: 'recording.segment.completed' }), {
     permission: 'ingest:read',
   });
+  // An alert is operations' (EP-39's recording holes are its first producer).
+  assert.deepEqual(requiredRule({ ...base, type: 'alert.raised' }), { permission: 'ops:read' });
   // An ingest JOB is not administration: it stays under ingest:read.
   assert.deepEqual(
     requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'ingest' } }),

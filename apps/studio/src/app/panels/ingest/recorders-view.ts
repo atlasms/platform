@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import type { Recorder } from '../../core/generated/rim.types.ts';
+import type { Recorder, RecorderStatus } from '../../core/generated/rim.types.ts';
 import { LocaleService } from '../../core/locale.service.ts';
 import { RecordersService } from '../../core/recorders.service.ts';
 import { openRecorder } from '../../editors/recorder-editor.ts';
@@ -61,6 +61,20 @@ import { EditorStore } from '../../workbench/editor.store.ts';
                 <span class="state" data-state="disabled">{{
                   locale.t('recorders.disabled')
                 }}</span>
+              } @else if (statusOf(r); as s) {
+                @if (s.recording.length > 0) {
+                  <span class="state live"
+                    >● {{ locale.t('recorders.recordingOn') }} {{ workers(s) }}</span
+                  >
+                } @else {
+                  <span class="state">{{ locale.t('recorders.idle') }}</span>
+                }
+                @if (s.missed24h > 0 || s.partial24h > 0) {
+                  <span class="state" [attr.data-state]="s.missed24h > 0 ? 'disabled' : null">
+                    {{ s.missed24h }} {{ locale.t('recorders.missed24h') }} · {{ s.partial24h }}
+                    {{ locale.t('recorders.partial24h') }}
+                  </span>
+                }
               }
             </button>
           </li>
@@ -72,6 +86,8 @@ import { EditorStore } from '../../workbench/editor.store.ts';
 })
 export class RecordersView {
   readonly recorders = input.required<readonly Recorder[]>();
+  /** Each recorder's health (EP-39 slice 2); a recorder with none yet shows none. */
+  readonly statuses = input<readonly RecorderStatus[]>([]);
   readonly error = input<string | null>(null);
   readonly created = output<Recorder>();
 
@@ -84,6 +100,15 @@ export class RecordersView {
   protected readonly createError = signal<string | null>(null);
   protected name = '';
   protected url = '';
+
+  protected statusOf(r: Recorder): RecorderStatus | undefined {
+    return this.statuses().find((s) => s.recorderId === r.id);
+  }
+
+  /** `rim-recorder-0` — or both, for the seconds of an overlap. */
+  protected workers(s: RecorderStatus): string {
+    return [...new Set(s.recording.map((x) => x.holder))].join(', ');
+  }
 
   protected windows(r: Recorder): string {
     return `${describeWindows(r.windows)} (${r.timezone})`;

@@ -8,7 +8,7 @@ import {
   type ElementRef,
 } from '@angular/core';
 import { IngestService } from '../core/ingest.service.ts';
-import type { IngestJob, Recorder, Watcher } from '../core/generated/rim.types.ts';
+import type { IngestJob, Recorder, RecorderStatus, Watcher } from '../core/generated/rim.types.ts';
 import { IfCanDirective } from '../core/if-can.directive.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
@@ -64,6 +64,7 @@ type IngestView = 'queue' | 'watchers' | 'recorders' | 'rules';
     } @else if (current() === 'recorders') {
       <atlas-recorders-view
         [recorders]="recorders()"
+        [statuses]="recorderStatuses()"
         [error]="recordersError()"
         (created)="recorders.update((list) => [...list, $event])"
       />
@@ -339,6 +340,7 @@ export class IngestPanel {
   protected readonly watchersError = signal<string | null>(null);
   protected readonly recorders = signal<Recorder[]>([]);
   protected readonly recordersError = signal<string | null>(null);
+  protected readonly recorderStatuses = signal<RecorderStatus[]>([]);
 
   /** UX only — RIM enforces `ingest:admin` on every watcher call. */
   private readonly canAdmin = computed(() => {
@@ -369,6 +371,8 @@ export class IngestPanel {
   }
 
   private loadRecorders(): void {
+    // Health alongside the list; a failure here only leaves the rows without it.
+    this.recordersApi.status().subscribe({ next: (list) => this.recorderStatuses.set(list) });
     this.recordersApi.list().subscribe({
       next: (list) => {
         this.recorders.set(list);

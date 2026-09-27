@@ -57,7 +57,7 @@ import {
 } from './acceptance.ts';
 import { ProbeRefusal, type Probe } from './probe.ts';
 import type { Staging } from './staging.ts';
-import { captureView, type Capture } from './capture.ts';
+import { captureView, type Capture, type RecorderStatus } from './capture.ts';
 import {
   DEFAULT_FILE_MINUTES,
   DEFAULT_PAD_SECONDS,
@@ -66,6 +66,7 @@ import {
   type Recorder,
   type RecorderInput,
 } from './recorder.ts';
+import { recordingAlert } from './recording-alerts.ts';
 import type { JobQuery, RimStore, RimTx } from './store.ts';
 import {
   DEFAULT_SETTLE_SECONDS,
@@ -1054,6 +1055,48 @@ export class RimService {
     return recorder;
   }
 
+  /**
+   * Every recorder of the channel, at a glance: what is recording now (and on which worker), and
+   * the holes of the last 24 h — missed files (nothing recorded) and partial ones (a gap of
+   * seconds). A recorder with nothing to report is listed with zeros, not left out.
+   */
+  async recorderStatus(caller: Caller): Promise<RecorderStatus[]> {
+    this.authorize(caller, 'ingest:admin');
+    const since = new Date(this.now().getTime() - 24 * 3600_000).toISOString();
+    const [recorders, running, counts, missed] = await Promise.all([
+      this.store.recorders(caller.channelId),
+      this.store.runningCaptures(caller.channelId),
+      this.store.captureCounts(caller.channelId, since),
+      this.store.lastMissed(caller.channelId, since),
+    ]);
+    return recorders.map((r) => {
+      const count = counts.find((c) => c.recorderId === r.id);
+      const last = missed.find((c) => c.recorderId === r.id);
+      return {
+        recorderId: r.id,
+        recording: running
+          .filter((c) => c.recorderId === r.id)
+          .map((c) => ({
+            holder: c.holder ?? 'unknown',
+            part: c.part,
+            fileStart: c.fileStart,
+            fileEnd: c.fileEnd,
+          })),
+        missed24h: count?.missed ?? 0,
+        partial24h: count?.partial ?? 0,
+        ...(last
+          ? {
+              lastMissed: {
+                fileStart: last.fileStart,
+                fileEnd: last.fileEnd,
+                ...(last.reason !== undefined ? { reason: last.reason } : {}),
+              },
+            }
+          : {}),
+      };
+    });
+  }
+
   /** A recorder's captures from `from` (default: six hours ago), oldest first. */
   async recorderCaptures(
     caller: Caller,
@@ -1080,10 +1123,25 @@ export class RimService {
       report.planned += await this.planRecorder(recorder);
     }
     const now = this.now().toISOString();
+    const names = new Map<string, string | undefined>();
     for (const c of await this.store.capturesEndedIn('planned', now, 500)) {
       const missed: Capture = { ...c, state: 'missed', reason: 'no recorder worker took it' };
-      if (await this.store.transaction((tx) => tx.putCapture(missed, 'planned')))
-        report.missed += 1;
+      if (!names.has(c.recorderId))
+        names.set(c.recorderId, (await this.store.recorder(c.recorderId))?.name);
+      const recorderName = names.get(c.recorderId);
+      // The hole and its alert commit together: a missed capture is never silent (EP-39 slice 2).
+      const applied = await this.store.transaction(async (tx) => {
+        if (!(await tx.putCapture(missed, 'planned'))) return false;
+        await tx.enqueue(
+          recordingAlert(missed, 'recording-missed', missed.reason!, {
+            ...(recorderName !== undefined ? { recorderName } : {}),
+            now: this.now(),
+            actor: SERVICE_ACTOR,
+          }),
+        );
+        return true;
+      });
+      if (applied) report.missed += 1;
     }
     return report;
   }

@@ -39,6 +39,8 @@ export const RimOperations = {
   listRecorders: { method: 'GET', path: '/api/v1/recorders', params: [] },
   /** Create a recorder (scope ingest:admin) */
   createRecorder: { method: 'POST', path: '/api/v1/recorders', params: [] },
+  /** Each recorder's health: what it is recording now, and the holes of the last 24 h (scope ingest:admin) */
+  listRecorderStatus: { method: 'GET', path: '/api/v1/recorders/status', params: [] },
   /** One recorder (scope ingest:admin) */
   getRecorder: { method: 'GET', path: '/api/v1/recorders/{id}', params: ['id'] },
   /** Replace a recorder — the whole thing, as given; its captures not yet started are planned again (scope ingest:admin) */
