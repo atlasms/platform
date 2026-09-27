@@ -50,7 +50,9 @@ spec:
         - name: rim-recorder
           image: {{ include "atlas.image" (dict "ctx" . "name" "rim") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["node", "src/recorder-main.ts"]
+          # `args`, not `command`: the image's ENTRYPOINT is dumb-init, which forwards SIGTERM — the
+          # drain depends on it. Paths are relative to the image's WORKDIR, /app.
+          args: ["node", "apps/rim/src/recorder-main.ts"]
           ports:
             - name: http
               containerPort: 3000
