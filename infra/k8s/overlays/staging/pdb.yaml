@@ -24,3 +24,17 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: mam
+---
+# The recorder workers (EP-39; ADR-0007): the two workers taking turns at every cut. A drain may
+# take ONE — the other records on, and takes the drained one's captures over as continuations.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rim-recorder
+  labels:
+    app.kubernetes.io/name: rim-recorder
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rim-recorder

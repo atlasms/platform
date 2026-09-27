@@ -6,13 +6,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compile } from '@atlas/policy';
 import { INTERNAL_SIGNATURE_HEADER, signInternal } from '@atlas/service-kit';
 import {
   buildRimApp,
+  handOffFilename,
+  httpHandOff,
   fakeProbe,
   fsStaging,
   INTERNAL_HEADERS,
@@ -196,6 +198,34 @@ test('an unsigned, tampered, foreign or stale request is one bare 401, counted, 
       payload: body,
     });
     assert.equal(asUser.statusCode, 401);
+  } finally {
+    await h.close();
+  }
+});
+
+test("the worker's client, over real HTTP: every request it signs is one RIM accepts, and the file arrives whole", async () => {
+  const h = await harness();
+  try {
+    await h.app.listen({ port: 0, host: '127.0.0.1' });
+    const address = h.app.server.address();
+    const origin = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
+    const bytes = randomBytes(PART * 2 + 300); // three parts, the last short
+    const file = join(tmpdir(), `handoff-${Date.now()}.ts`);
+    await writeFile(file, bytes);
+    const capture = (await h.store.capture(h.captureId))!;
+    const { jobId } = await httpHandOff({ origin, key: KEY, now: () => NOW }).handOver(
+      capture,
+      file,
+    );
+    const job = (await h.store.job(jobId))!;
+    assert.deepEqual(
+      [job.sourceKind, job.source, job.sizeBytes],
+      ['recorder', h.recorder.id, bytes.length],
+    );
+    assert.equal(job.filename, handOffFilename(capture));
+    assert.match(job.filename, /^rec_20260914T\d{6}Z_p1\.ts$/);
+    assert.equal(h.refusals.length, 0);
+    await rm(file, { force: true });
   } finally {
     await h.close();
   }

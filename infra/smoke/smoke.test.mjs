@@ -1022,6 +1022,89 @@ test("smoke: ADR-0008 — a service's internal routes are unreachable through th
   assert.match(res.text, /no route/i, 'the gateway answered, not RIM');
 });
 
+test('smoke: EP-39 — a recorder RECORDS: captured by FFmpeg on a worker, handed over signed, accepted as an ingest job', async () => {
+  // The whole of ADR-0007 slice 1 on a live cluster. The dev overlay runs a test feed beside each
+  // rim-recorder pod on 127.0.0.1:5000. A recorder with ONE-MINUTE files over that feed has its
+  // current minute planned at once; a worker leases it, records to the end of the minute plus the
+  // pad, hands the file to RIM through the signed internal routes, and RIM makes it an ingest job
+  // that the probe reads — `sourceKind: recorder`. Disabled at the end whatever happens.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const now = new Date();
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const from = `${pad2(now.getUTCHours())}:${pad2(now.getUTCMinutes())}`;
+  const later = new Date(now.getTime() + 10 * 60_000);
+  const to =
+    later.getUTCDate() !== now.getUTCDate()
+      ? '24:00'
+      : `${pad2(later.getUTCHours())}:${pad2(later.getUTCMinutes())}`;
+  const body = (over = {}) =>
+    JSON.stringify({
+      name: 'smoke recording',
+      input: { url: 'udp://127.0.0.1:5000?fifo_size=1000000&overrun_nonfatal=1' },
+      timezone: 'UTC',
+      windows: [{ days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'], from, to }],
+      fileMinutes: 1,
+      padSeconds: 5,
+      ...over,
+    });
+  const created = await get('/api/v1/recorders', { method: 'POST', headers, body: body() });
+  assert.equal(created.status, 201, `recorder failed: ${created.text}`);
+  const recorder = json(created);
+  try {
+    // At most a minute and a pad to finish a file, then the hand-off: ~2 minutes is generous.
+    let handed;
+    let captures = [];
+    const deadline = Date.now() + 150_000;
+    for (;;) {
+      const res = await get(
+        `/api/v1/recorders/${recorder.id}/captures?from=${encodeURIComponent(new Date(now.getTime() - 120_000).toISOString())}`,
+        { headers },
+      );
+      assert.equal(res.status, 200, res.text);
+      captures = json(res);
+      handed = captures.find((c) => c.jobId);
+      if (handed || Date.now() > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+    assert.ok(
+      handed,
+      `no capture handed over in time: ${JSON.stringify(captures.map((c) => [c.fileStart, c.state, c.holder, c.reason]))}`,
+    );
+    assert.match(handed.holder, /^rim-recorder-[01]$/, 'recorded by a worker pod');
+    assert.ok(['completed', 'partial'].includes(handed.state), handed.state);
+
+    // The file is an ingest job like any other: probed, and accepted (no rules hold it).
+    let job;
+    const jobDeadline = Date.now() + 30_000;
+    for (;;) {
+      const res = await get(`/api/v1/ingest/${handed.jobId}`, { headers });
+      assert.equal(res.status, 200, res.text);
+      job = json(res);
+      if ((job.state !== 'detected' && job.state !== 'validating') || Date.now() > jobDeadline)
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+    assert.equal(job.sourceKind, 'recorder');
+    assert.equal(job.source, recorder.id);
+    assert.equal(job.state, 'accepted', JSON.stringify(job));
+    assert.equal(job.technicalMetadata?.container, 'mpegts');
+    assert.equal(job.technicalMetadata?.videoCodec, 'h264');
+    assert.ok(
+      job.technicalMetadata?.durationSec > 5,
+      `recorded ${job.technicalMetadata?.durationSec} s`,
+    );
+  } finally {
+    const disabled = await get(`/api/v1/recorders/${recorder.id}`, {
+      method: 'PUT',
+      headers,
+      body: body({ enabled: false }),
+    });
+    assert.equal(disabled.status, 200, `recorder cleanup failed: ${disabled.text}`);
+  }
+});
+
 test('smoke: EP-39 — a recorder is planned at once: padded files, alternating slots; its history is readable', async () => {
   // The planning half of ADR-0007 on a live cluster: a recorder written through the gateway has
   // its next captures planned in the same request — each file padded 5 s on both sides, the slots

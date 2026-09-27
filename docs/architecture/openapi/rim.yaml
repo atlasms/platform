@@ -469,7 +469,7 @@ components:
             passphraseSecret: { type: string, description: '`<secret>/<key>` of a Kubernetes Secret holding an SRT passphrase. The recorder names it; it never holds it.' }
         timezone: { type: string, description: 'IANA zone the windows are in.', example: Europe/London }
         windows: { type: array, minItems: 1, maxItems: 50, items: { $ref: '#/components/schemas/RecordingWindow' } }
-        fileMinutes: { type: integer, minimum: 5, maximum: 1440, default: 60, description: 'The length of a file, on a grid from local midnight — it must divide a day.' }
+        fileMinutes: { type: integer, minimum: 1, maximum: 1440, default: 60, description: 'The length of a file, on a grid from local midnight — it must divide a day. An hour is the norm; a minute is for testing a recorder end to end.' }
         padSeconds: { type: integer, minimum: 0, maximum: 60, default: 5, description: 'Each file is captured from this long before its start to this long after its end.' }
         enabled: { type: boolean, default: true, description: A disabled recorder is kept and records nothing; captures not yet started are cancelled. }
     Recorder:

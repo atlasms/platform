@@ -60,6 +60,16 @@ export interface RimStore {
   lastCapture(recorderId: string): Promise<Capture | undefined>;
   /** Captures in `state` whose capture span ENDED before `before`, across recorders. */
   capturesEndedIn(state: CaptureState, before: string, limit: number): Promise<Capture[]>;
+  /**
+   * What a recorder worker may start (EP-39): `planned` captures whose span begins by `until` and
+   * has not ended at `now`, and `running` ones whose lease has LAPSED (their worker is gone) and
+   * whose span has not ended — earliest first.
+   */
+  capturesDue(now: string, until: string, limit: number): Promise<Capture[]>;
+  /** A worker's own captures in `state` — what it recovers after a restart. */
+  capturesHeldBy(holder: string, state: CaptureState): Promise<Capture[]>;
+  /** A worker's finished captures not yet handed over (no job): what its disk still owes RIM. */
+  unhandedBy(holder: string): Promise<Capture[]>;
   close(): Promise<void>;
 }
 

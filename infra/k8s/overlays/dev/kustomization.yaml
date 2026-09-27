@@ -69,6 +69,8 @@ patches:
   - path: mts-sample.yaml
   # A sample file in RIM's watch folder, so smoke can run a folder watcher (EP-15.2, see the file).
   - path: rim-watch-sample.yaml
+  # A live test feed beside each recorder worker, so smoke can record (EP-39, see the file).
+  - path: rim-recorder-feed.yaml
 
   # One replica: a laptop does not need two, and a single pod makes `kubectl logs` legible.
   - target:

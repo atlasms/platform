@@ -411,6 +411,32 @@ export function pgRimStore(pool: PgPool): RimStore {
       );
       return rows[0] ? captureOf(rows[0]) : undefined;
     },
+    async capturesDue(now, until, limit) {
+      const { rows } = await pool.query(
+        `SELECT * FROM captures
+          WHERE capture_to > $1
+            AND ((state = 'planned' AND capture_from <= $2)
+              OR (state = 'running' AND lease_until <= $1))
+          ORDER BY capture_from LIMIT $3`,
+        [now, until, limit],
+      );
+      return rows.map(captureOf);
+    },
+    async capturesHeldBy(holder, state) {
+      const { rows } = await pool.query(
+        'SELECT * FROM captures WHERE holder = $1 AND state = $2 ORDER BY capture_from',
+        [holder, state],
+      );
+      return rows.map(captureOf);
+    },
+    async unhandedBy(holder) {
+      const { rows } = await pool.query(
+        `SELECT * FROM captures WHERE holder = $1 AND state IN ('completed', 'partial')
+           AND job_id IS NULL ORDER BY capture_from`,
+        [holder],
+      );
+      return rows.map(captureOf);
+    },
     async capturesEndedIn(state, before, limit) {
       const { rows } = await pool.query(
         'SELECT * FROM captures WHERE state = $1 AND capture_to < $2 ORDER BY capture_to LIMIT $3',

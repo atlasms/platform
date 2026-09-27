@@ -91,3 +91,23 @@ export {
   type UploadState,
   type UploadStatus,
 } from './upload.ts';
+export {
+  captureArgs,
+  ffmpegCapturer,
+  type CaptureResult,
+  type CaptureRun,
+  type Capturer,
+  type FfmpegCapturerOptions,
+} from './capturer.ts';
+export { fakeCapturer, type PendingCapture } from './capturer-fake.ts';
+export {
+  handOffFilename,
+  httpHandOff,
+  type HandOff,
+  type HttpHandOffOptions,
+} from './handoff-client.ts';
+export {
+  DEFAULT_CAPTURE_LEASE_MS,
+  RecorderWorker,
+  type RecorderWorkerOptions,
+} from './recorder-worker.ts';

@@ -136,7 +136,7 @@ export interface RecorderInput {
   /** IANA zone the windows are in. */
   timezone: string;
   windows: RecordingWindow[];
-  /** The length of a file, on a grid from local midnight — it must divide a day. */
+  /** The length of a file, on a grid from local midnight — it must divide a day. An hour is the norm; a minute is for testing a recorder end to end. */
   fileMinutes?: number;
   /** Each file is captured from this long before its start to this long after its end. */
   padSeconds?: number;

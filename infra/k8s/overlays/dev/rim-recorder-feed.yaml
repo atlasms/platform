@@ -1,0 +1,71 @@
+# A live feed for the recorder workers — DEV ONLY, like the seed user.
+#
+# Every rim-recorder pod gets a sidecar streaming a test pattern (with tone) in real time as
+# MPEG-TS to its own 127.0.0.1:5000, so a recorder whose URL is udp://127.0.0.1:5000 has a feed on
+# whichever worker runs its capture. The smoke suite records a minute of it end to end: planned,
+# leased, captured by FFmpeg, handed to RIM over the signed routes, probed and accepted.
+#
+# Why not one feed Service: a real site sends multicast (ADR-0007 decision 11), and multicast
+# between pods depends on the CNI — kind's does not promise it. A local feed per pod proves the
+# worker without betting the suite on the network. The same FFmpeg the image carries.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rim-recorder
+spec:
+  template:
+    spec:
+      containers:
+        - name: feed
+          image: atlas/rim:dev
+          imagePullPolicy: IfNotPresent
+          command:
+            - ffmpeg
+            - -nostdin
+            - -loglevel
+            - error
+            - -re
+            - -f
+            - lavfi
+            - -i
+            - testsrc=size=320x240:rate=25
+            - -f
+            - lavfi
+            - -i
+            - sine=frequency=440
+            - -c:v
+            - libx264
+            - -preset
+            - ultrafast
+            - -g
+            - "25"
+            - -keyint_min
+            - "25"
+            - -sc_threshold
+            - "0"
+            - -c:a
+            - aac
+            - -f
+            - mpegts
+            - udp://127.0.0.1:5000?pkt_size=1316
+          # The feed IS its FFmpeg (PID 1): alive while it runs, and the container restarts
+          # when it stops. There is nothing else to ask it.
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "kill -0 1"]
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "kill -0 1"]
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
