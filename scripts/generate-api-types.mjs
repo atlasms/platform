@@ -406,7 +406,12 @@ function tsType(schema, where, resolveRef = openApiRef) {
       return 'boolean' + nullable;
     case 'array':
       if (!schema.items) fail(where, 'array without items');
-      return `${tsType(schema.items, `${where}[]`, resolveRef)}[]` + nullable;
+      {
+        // An item type that is a union (an enum) must be parenthesised: `'a' | 'b'[]` is `'a'` OR an
+        // array of `'b'` — it typed a recorder's `days` as exactly that until EP-39's Studio view.
+        const item = tsType(schema.items, `${where}[]`, resolveRef);
+        return `${/[|&]/.test(item) ? `(${item})` : item}[]` + nullable;
+      }
     case 'object': {
       if (schema.properties) {
         const required = new Set(schema.required ?? []);

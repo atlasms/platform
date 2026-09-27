@@ -12,6 +12,7 @@ import type {
   Watcher,
 } from '../core/generated/rim.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { RecordersService } from '../core/recorders.service.ts';
 import { RulesService } from '../core/rules.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { ULID_RE } from '../core/ulid.ts';
@@ -67,7 +68,7 @@ const watcher: Watcher = {
 describe('rule-set model', () => {
   it('sends each rule with only its parameter, MiB as bytes, no empty label, ids kept', () => {
     const d = draftOfSet(stored());
-    expect(d.scope).toBe(`source:${WATCHER}`);
+    expect(d.scope).toBe(`source:watch:${WATCHER}`);
     expect(d.rules[1]?.mebibytes).toBe(50);
     // A rule's parameter survives a change of kind and back — nothing typed is lost.
     const flipped = { ...d.rules[0]!, kind: 'aspectRatio' as const };
@@ -108,7 +109,8 @@ describe('rule-set model', () => {
     expect(scopeOf({ sourceKind: 'upload' })).toBe('kind:upload');
     expect(scopeOf({ sourceId: 'upload' })).toBe('kind:upload');
     const t = (k: string) => k;
-    const names = (id: string) => (id === WATCHER ? 'Playout drops' : undefined);
+    const names = (kind: string, id: string) =>
+      kind === 'watch' && id === WATCHER ? 'Playout drops' : undefined;
     expect(describeScope({ sourceId: WATCHER }, t, names)).toBe('Playout drops');
     expect(describeScope({ sourceId: '01GONE' }, t, names)).toBe('rules.scope.kind.watch (01GONE)');
     expect(describeScope({ sourceKind: 'upload' }, t, names)).toBe('rules.scope.kind.upload');
@@ -176,6 +178,7 @@ function configure(permissions: string[] = ['ingest:admin']) {
       EditorStore,
       { provide: RulesService, useValue: new FakeRules() },
       { provide: WatchersService, useValue: new FakeWatchers() },
+      { provide: RecordersService, useValue: { list: () => new Subject() } },
       { provide: LocaleService, useValue: { t: (k: string) => k } },
     ],
   });

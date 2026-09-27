@@ -8,6 +8,7 @@ import { RoleEditor } from '../editors/role-editor.ts';
 import { UserEditor } from '../editors/user-editor.ts';
 import { WatcherEditor } from '../editors/watcher-editor.ts';
 import { RuleSetEditor } from '../editors/rule-set-editor.ts';
+import { RecorderEditor } from '../editors/recorder-editor.ts';
 import { Dashboard } from '../panels/dashboard.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { EditorStore } from './editor.store.ts';
@@ -42,6 +43,7 @@ import { EditorStore } from './editor.store.ts';
     ProfileEditor,
     WatcherEditor,
     RuleSetEditor,
+    RecorderEditor,
   ],
   template: `
     @if (store.isEmpty()) {
@@ -188,6 +190,15 @@ import { EditorStore } from './editor.store.ts';
                     @case ('rules') {
                       @defer (on immediate) {
                         <atlas-rule-set-editor [setId]="tab.resourceId" [tabId]="tab.id" />
+                      } @placeholder {
+                        <p class="muted">{{ locale.t('editor.loading') }}</p>
+                      } @error {
+                        <p class="error" role="alert">{{ locale.t('editor.loadFailed') }}</p>
+                      }
+                    }
+                    @case ('recorder') {
+                      @defer (on immediate) {
+                        <atlas-recorder-editor [recorderId]="tab.resourceId" [tabId]="tab.id" />
                       } @placeholder {
                         <p class="muted">{{ locale.t('editor.loading') }}</p>
                       } @error {

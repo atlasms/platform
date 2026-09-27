@@ -8,10 +8,11 @@ import {
   type OnInit,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import type { AcceptanceRuleSet, Watcher } from '../core/generated/rim.types.ts';
+import type { AcceptanceRuleSet, Recorder, Watcher } from '../core/generated/rim.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { NO_PROBLEMS, type Problems } from '../core/problems.ts';
+import { RecordersService } from '../core/recorders.service.ts';
 import { RulesService } from '../core/rules.service.ts';
 import { WatchersService } from '../core/watchers.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
@@ -23,6 +24,7 @@ import {
   inputOfSet,
   newRule,
   placeRuleSetProblems,
+  sourceOf,
   type RuleDraft,
   type RuleSetDraft,
 } from './rule-set.model.ts';
@@ -79,12 +81,17 @@ import {
                   <option [value]="'kind:' + k">{{ locale.t('rules.scope.kind.' + k) }}</option>
                 }
                 @for (w of watchers(); track w.id) {
-                  <option [value]="'source:' + w.id">
+                  <option [value]="'source:watch:' + w.id">
                     {{ locale.t('rules.scope.watcher') }} {{ w.name }}
                   </option>
                 }
-                @if (unknownSource(); as id) {
-                  <option [value]="'source:' + id">{{ id }}</option>
+                @for (r of recorders(); track r.id) {
+                  <option [value]="'source:recorder:' + r.id">
+                    {{ locale.t('rules.scope.recorder') }} {{ r.name }}
+                  </option>
+                }
+                @if (unknownSource(); as scope) {
+                  <option [value]="scope">{{ scope }}</option>
                 }
               </select>
             </label>
@@ -280,6 +287,7 @@ export class RuleSetEditor implements OnInit {
 
   private readonly api = inject(RulesService);
   private readonly watchersApi = inject(WatchersService);
+  private readonly recordersApi = inject(RecordersService);
   private readonly editors = inject(EditorStore);
   private readonly permissions = inject(PermissionService);
   protected readonly locale = inject(LocaleService);
@@ -291,6 +299,7 @@ export class RuleSetEditor implements OnInit {
   protected readonly set = signal<AcceptanceRuleSet | null>(null);
   private readonly draft = signal<RuleSetDraft | null>(null);
   protected readonly watchers = signal<Watcher[]>([]);
+  protected readonly recorders = signal<Recorder[]>([]);
   protected readonly loadError = signal<string | null>(null);
   protected readonly error = signal<string | null>(null);
   protected readonly problems = signal<Problems>(NO_PROBLEMS);
@@ -306,12 +315,16 @@ export class RuleSetEditor implements OnInit {
       !!s && !!d && JSON.stringify(inputOfSet(d)) !== JSON.stringify(inputOfSet(draftOfSet(s)))
     );
   });
-  /** A set scoped to a source this page does not list (a watcher since removed from view). */
+  /** A set scoped to a source this page does not list — offered as itself, so it is kept. */
   protected readonly unknownSource = computed(() => {
     const scope = this.draft()?.scope;
-    if (!scope?.startsWith('source:')) return undefined;
-    const id = scope.slice(7);
-    return this.watchers().some((w) => w.id === id) ? undefined : id;
+    const source = scope ? sourceOf(scope) : undefined;
+    if (!source) return undefined;
+    const known =
+      source.kind === 'recorder'
+        ? this.recorders().some((r) => r.id === source.id)
+        : this.watchers().some((w) => w.id === source.id);
+    return known ? undefined : scope;
   });
 
   ngOnInit(): void {
@@ -321,6 +334,7 @@ export class RuleSetEditor implements OnInit {
     });
     // For the scope select's names. A failure here only means watchers are offered by id.
     this.watchersApi.list().subscribe({ next: (list) => this.watchers.set(list) });
+    this.recordersApi.list().subscribe({ next: (list) => this.recorders.set(list) });
   }
 
   protected problemsFor(field: string): readonly string[] {

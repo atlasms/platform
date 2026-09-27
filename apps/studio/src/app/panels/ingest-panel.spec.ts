@@ -9,12 +9,13 @@
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { IngestJob, IngestQueuePage, Watcher } from '../core/generated/rim.types.ts';
+import type { IngestJob, IngestQueuePage, Recorder, Watcher } from '../core/generated/rim.types.ts';
 import { IngestService } from '../core/ingest.service.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import type { Transfer } from '../core/transfer.store.ts';
 import { UploadService } from '../core/upload.service.ts';
+import { RecordersService } from '../core/recorders.service.ts';
 import { WatchersService } from '../core/watchers.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { IngestPanel } from './ingest-panel.ts';
@@ -100,6 +101,16 @@ class FakePermissions {
   }
 }
 
+/** Always faked: the panel lists recorders when it may (EP-39), for the same reason. */
+class FakeRecorders {
+  lists: Subject<Recorder[]>[] = [];
+  list() {
+    const subject = new Subject<Recorder[]>();
+    this.lists.push(subject);
+    return subject;
+  }
+}
+
 /** Always faked: the panel lists watchers when it may, and a real client would really call. */
 class FakeWatchers {
   lists: Subject<Watcher[]>[] = [];
@@ -141,6 +152,7 @@ function setup(options: { withoutAdmin?: boolean } = {}) {
   const fake = new FakeIngest();
   const uploads = new FakeUploads();
   const watchers = new FakeWatchers();
+  const recorders = new FakeRecorders();
   const permissions = new FakePermissions();
   if (options.withoutAdmin) permissions.denied.add('ingest:admin');
   TestBed.configureTestingModule({
@@ -149,6 +161,7 @@ function setup(options: { withoutAdmin?: boolean } = {}) {
       { provide: IngestService, useValue: fake },
       { provide: UploadService, useValue: uploads },
       { provide: WatchersService, useValue: watchers },
+      { provide: RecordersService, useValue: recorders },
       { provide: LocaleService, useClass: FakeLocale },
       { provide: PermissionService, useValue: permissions },
     ],
@@ -160,6 +173,7 @@ function setup(options: { withoutAdmin?: boolean } = {}) {
     fake,
     uploads,
     watchers,
+    recorders,
   };
 }
 
@@ -292,7 +306,7 @@ describe('IngestPanel', () => {
   });
 
   // EP-15.2: the Watchers view, and a watched job's source in words.
-  it('an administrator gets Watchers and Rules tabs; an operator without ingest:admin gets the queue only', () => {
+  it('an administrator gets Watchers, Recorders and Rules tabs; an operator without ingest:admin gets the queue only', () => {
     const admin = setup();
     admin.fixture.detectChanges();
     const root = admin.fixture.nativeElement as HTMLElement;
@@ -300,6 +314,7 @@ describe('IngestPanel', () => {
     expect(tabs.map((t) => t.textContent?.trim())).toEqual([
       'ingest.view.queue',
       'ingest.view.watchers',
+      'ingest.view.recorders',
       'ingest.view.rules',
     ]);
     expect(admin.watchers.lists).toHaveLength(1);
@@ -327,6 +342,15 @@ describe('IngestPanel', () => {
     expect(component.sourceLabel(job({ sourceKind: 'watch', source: w.id }))).toBe('Playout drops');
     expect(component.sourceLabel(job({ sourceKind: 'watch', source: '01GONE' }))).toBe(
       'ingest.source.watch',
+    );
+    // A recorder's file (EP-39): by the recorder's name, or by kind when it is not listed.
+    const recorders = TestBed.inject(RecordersService) as unknown as FakeRecorders;
+    recorders.lists[0]?.next([{ id: '01REC', name: 'Channel 1 air' } as Recorder]);
+    expect(component.sourceLabel(job({ sourceKind: 'recorder', source: '01REC' }))).toBe(
+      'Channel 1 air',
+    );
+    expect(component.sourceLabel(job({ sourceKind: 'recorder', source: '01OTHER' }))).toBe(
+      'ingest.source.recorder',
     );
 
     TestBed.resetTestingModule();

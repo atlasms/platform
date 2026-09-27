@@ -81,11 +81,13 @@
     "view": {
       "queue": "Queue",
       "watchers": "Watchers",
-      "rules": "Rules"
+      "rules": "Rules",
+      "recorders": "Recorders"
     },
     "source": {
       "upload": "Web upload",
-      "watch": "Folder watcher"
+      "watch": "Folder watcher",
+      "recorder": "Recorder"
     }
   },
   "dashboard": {
@@ -447,7 +449,8 @@
         "watch": "All folder watchers",
         "ftp": "FTP",
         "recorder": "Recorders"
-      }
+      },
+      "recorder": "Recorder:"
     },
     "enabled": "Enabled",
     "rules": "Rules",
@@ -472,5 +475,54 @@
     "addRule": "Add a rule",
     "delete": "Delete rule set",
     "deleteWhy": "Stops applying at once. Jobs it already held keep their reason."
+  },
+  "recorders": {
+    "new": "New recorder",
+    "newHint": "A new recorder starts switched off, every day all day, in hourly files: set its windows, then switch it on.",
+    "none": "No recorders. Third-party recorders can drop their files into a folder watcher.",
+    "loadError": "Could not load the recorders.",
+    "disabled": "off",
+    "name": "Name",
+    "url": "Feed",
+    "urlHint": "srt://, udp://, rtp://, rtmp:// — multicast, or SRT that serves several readers: two workers read it at once at every hour boundary. Never a password in the URL.",
+    "passphraseSecret": "SRT passphrase Secret (secret/key)",
+    "timezone": "Time zone",
+    "fileMinutes": "File length",
+    "minutes": "min",
+    "padSeconds": "Pad (seconds)",
+    "padHint": "Each file is recorded from the pad before its start to the pad after its end, so neighbouring files overlap — two workers taking turns.",
+    "enabled": "Recording",
+    "windows": "Recording windows",
+    "windowsHint": "Days and times in the recorder's zone. 24:00 is the end of the day; a window across midnight is two windows, and windows that touch are one recording.",
+    "days": "Days",
+    "day": {
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat",
+      "sun": "Sun"
+    },
+    "from": "From",
+    "to": "To",
+    "addWindow": "Add a window",
+    "captures": "Captures",
+    "refresh": "Refresh",
+    "capturesHint": "The last six hours and what is planned. A missed capture is a hole in the recording.",
+    "noCaptures": "Nothing recorded or planned yet.",
+    "file": "File",
+    "part": "Part",
+    "state": "State",
+    "worker": "Worker",
+    "reason": "Why",
+    "captureState": {
+      "planned": "planned",
+      "running": "recording",
+      "completed": "recorded",
+      "partial": "partial",
+      "missed": "MISSED",
+      "cancelled": "cancelled"
+    }
   }
 }
