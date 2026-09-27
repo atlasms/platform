@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { ApiClient } from './api-client.ts';
-import type { Capture, Recorder, RecorderInput } from './generated/rim.types.ts';
+import type { Capture, Recorder, RecorderInput, RecorderStatus } from './generated/rim.types.ts';
 import { RimOperations as ops } from './generated/rim.operations.ts';
 
 /**
@@ -30,6 +30,11 @@ export class RecordersService {
   /** The whole recorder — RIM replaces it, plans again what has not started, bumps `version`. */
   replace(id: string, input: RecorderInput) {
     return this.api.call(ops.replaceRecorder, { params: { id }, body: input }).as<Recorder>();
+  }
+
+  /** Every recorder's health: recording now (and where), and the holes of the last 24 h. */
+  status() {
+    return this.api.call(ops.listRecorderStatus).as<RecorderStatus[]>();
   }
 
   /** Its captures from `from` (RIM's default: six hours ago), oldest first. */

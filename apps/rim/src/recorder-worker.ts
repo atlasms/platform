@@ -26,6 +26,7 @@ import type { Capture } from './capture.ts';
 import type { Capturer } from './capturer.ts';
 import type { HandOff } from './handoff-client.ts';
 import type { Recorder } from './recorder.ts';
+import { recordingAlert } from './recording-alerts.ts';
 import type { RimStore } from './store.ts';
 
 export interface RecorderWorkerOptions {
@@ -55,6 +56,8 @@ const FAILED_FAST_MS = 2_000;
 const MAX_BACKOFF_MS = 30_000;
 /** Ending this close to the span's end is ending AT it. */
 const END_TOLERANCE_MS = 2_000;
+/** Every alert this worker raises names it as the actor. */
+const WORKER_ACTOR = { kind: 'service', id: 'rim-recorder' } as const;
 
 interface Running {
   capture: Capture;
@@ -254,9 +257,16 @@ export class RecorderWorker {
           }
         : undefined;
     let inserted = false;
+    const alert = recordingAlert(ended, 'recording-partial', ended.reason!, {
+      ...(await this.nameOf(capture.recorderId)),
+      now: this.now(),
+      actor: WORKER_ACTOR,
+    });
     const applied = await this.store.transaction(async (tx) => {
       if (!(await tx.putCapture(ended, ifState))) return false;
       if (next) inserted = await tx.insertCapture(next);
+      // The gap is said out loud in the same transaction (EP-39 slice 2).
+      await tx.enqueue(alert);
       return true;
     });
     if (!applied) return undefined;
@@ -276,11 +286,20 @@ export class RecorderWorker {
         );
         if (size === undefined || size === 0) {
           // Nothing to hand over: the feed sent nothing, or the disk was lost with the pod.
-          await this.transition(c, {
+          const missed: Capture = {
             ...c,
             state: 'missed',
             reason:
               size === 0 ? 'no data received from the feed' : 'the file is not on this worker',
+          };
+          const alert = recordingAlert(missed, 'recording-missed', missed.reason!, {
+            ...(await this.nameOf(c.recorderId)),
+            now: this.now(),
+            actor: WORKER_ACTOR,
+          });
+          // The hole and its alert commit together.
+          await this.store.transaction(async (tx) => {
+            if (await tx.putCapture(missed, c.state)) await tx.enqueue(alert);
           });
           await rm(file, { force: true });
           continue;
@@ -317,6 +336,12 @@ export class RecorderWorker {
 
   private transition(from: Capture, to: Capture): Promise<boolean> {
     return this.store.transaction((tx) => tx.putCapture(to, from.state));
+  }
+
+  /** The recorder's name for an alert's message — absent if the recorder is gone. */
+  private async nameOf(recorderId: string): Promise<{ recorderName?: string }> {
+    const name = (await this.store.recorder(recorderId))?.name;
+    return name !== undefined ? { recorderName: name } : {};
   }
 
   private fileOf(capture: Pick<Capture, 'id'>): string {

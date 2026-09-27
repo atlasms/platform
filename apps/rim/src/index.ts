@@ -13,7 +13,14 @@ export {
   type PlanReport,
   type WatchReport,
 } from './service.ts';
-export { CAPTURE_STATES, captureView, type Capture, type CaptureState } from './capture.ts';
+export {
+  CAPTURE_STATES,
+  captureView,
+  type Capture,
+  type CaptureState,
+  type RecorderStatus,
+} from './capture.ts';
+export { recordingAlert, type RecordingAlertKind } from './recording-alerts.ts';
 export {
   DEFAULT_FILE_MINUTES,
   DEFAULT_PAD_SECONDS,

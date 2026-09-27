@@ -1095,6 +1095,14 @@ test('smoke: EP-39 — a recorder RECORDS: captured by FFmpeg on a worker, hande
       job.technicalMetadata?.durationSec > 5,
       `recorded ${job.technicalMetadata?.durationSec} s`,
     );
+
+    // Its health (EP-39 slice 2), through the gateway: the recorder is there, with its counts.
+    const statuses = await get('/api/v1/recorders/status', { headers });
+    assert.equal(statuses.status, 200, statuses.text);
+    const status = json(statuses).find((s) => s.recorderId === recorder.id);
+    assert.ok(status, 'the recorder has a status');
+    assert.equal(typeof status.missed24h, 'number');
+    assert.ok(Array.isArray(status.recording));
   } finally {
     const disabled = await get(`/api/v1/recorders/${recorder.id}`, {
       method: 'PUT',

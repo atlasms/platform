@@ -523,6 +523,10 @@
       "partial": "partial",
       "missed": "MISSED",
       "cancelled": "cancelled"
-    }
+    },
+    "recordingOn": "recording on",
+    "idle": "not recording now",
+    "missed24h": "missed",
+    "partial24h": "partial in 24 h"
   }
 }

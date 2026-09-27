@@ -151,6 +151,24 @@ describe('RecordersView', () => {
     expect(row.textContent).toContain('mon–fri 06:00–24:00 (Europe/London)');
     expect(row.textContent).toContain('recorders.disabled');
 
+    // Health (EP-39 slice 2): recording now on a worker, and the holes of the last day.
+    fixture.componentRef.setInput('recorders', [stored()]);
+    fixture.componentRef.setInput('statuses', [
+      {
+        recorderId: ID,
+        recording: [{ holder: 'rim-recorder-1', part: 1, fileStart: 'x', fileEnd: 'y' }],
+        missed24h: 2,
+        partial24h: 1,
+      },
+    ]);
+    fixture.detectChanges();
+    const live = (fixture.nativeElement as HTMLElement).querySelector('.items button')!;
+    expect(live.textContent).toContain('recorders.recordingOn rim-recorder-1');
+    const holes = live.querySelector('[data-state=disabled]');
+    expect(holes?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      '2 recorders.missed24h · 1 recorders.partial24h',
+    );
+
     const view = fixture.componentInstance as unknown as {
       name: string;
       url: string;

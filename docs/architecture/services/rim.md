@@ -276,6 +276,17 @@ partial and continues it for the other worker. The capture is FFmpeg with stream
 packets flushed and — found by its real-binary test — 1 s of input probing, without which a crash
 in the first seconds left no file at all (ADR-0007 evidence 6).
 
+**EP-39, slice 2a — recorder health.** Blank intervals are not acceptable, so every hole is said
+out loud: a capture marked `missed` (untaken by any worker, an empty file, a file lost with its pod)
+raises `alert.raised` — `recording-missed`, **critical** — and one cut short and continued
+(`partial`: a crash, a lost worker, a drain) raises `recording-partial`, **warning**; each in the
+transaction of the state change, through RIM's outbox (the worker writes RIM's schema, so its
+alerts leave by RIM's relay), naming the recorder as subject and the file's span in the message.
+The audit log reads alerts under `ops:read`. `GET /recorders/status` answers per recorder what is
+recording now (on which worker — two during an overlap) and the missed and partial files of the
+last 24 h; Studio's Recorders list shows it. `atlas_rim_captures_missed_total` counts the holes
+with no label. The unicast relay (slice 2b) waits on how a site's unicast feeds reach the cluster.
+
 ## 14. Open questions / future
 
 - Growing-file / while-recording ingest (edit-while-ingest) — Post-v1.0.

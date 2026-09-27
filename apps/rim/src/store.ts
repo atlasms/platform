@@ -10,6 +10,13 @@ import type { OutboxRecord } from '@atlas/messaging';
 import type { AcceptanceRuleSet } from './acceptance.ts';
 import type { IngestJob, IngestState, Upload, UploadPart } from './upload.ts';
 import type { Capture, CaptureState } from './capture.ts';
+
+/** One recorder's counts over a window of files (a status summary's raw half). */
+export interface CaptureCounts {
+  recorderId: string;
+  missed: number;
+  partial: number;
+}
 import type { Recorder } from './recorder.ts';
 import type { Pickup, Watcher } from './watcher.ts';
 
@@ -70,6 +77,12 @@ export interface RimStore {
   capturesHeldBy(holder: string, state: CaptureState): Promise<Capture[]>;
   /** A worker's finished captures not yet handed over (no job): what its disk still owes RIM. */
   unhandedBy(holder: string): Promise<Capture[]>;
+  /** A channel's captures running now, across its recorders. */
+  runningCaptures(channelId: string): Promise<Capture[]>;
+  /** Per recorder of a channel: missed and partial captures among files starting at/after `since`. */
+  captureCounts(channelId: string, since: string): Promise<CaptureCounts[]>;
+  /** A channel's latest missed capture per recorder since `since`. */
+  lastMissed(channelId: string, since: string): Promise<Capture[]>;
   close(): Promise<void>;
 }
 

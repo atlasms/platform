@@ -41,6 +41,15 @@ export interface Capture {
   reason?: string;
 }
 
+/** A recorder's health at a glance (rim.yaml `RecorderStatus`, EP-39 slice 2). */
+export interface RecorderStatus {
+  recorderId: string;
+  recording: { holder: string; part: number; fileStart: string; fileEnd: string }[];
+  missed24h: number;
+  partial24h: number;
+  lastMissed?: { fileStart: string; fileEnd: string; reason?: string };
+}
+
 /** The capture as the wire carries it: the lease's expiry is the workers' business. */
 export function captureView(c: Capture): Omit<Capture, 'leaseUntil'> {
   const { leaseUntil: _lease, ...rest } = c;

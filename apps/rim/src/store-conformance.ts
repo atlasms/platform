@@ -1173,4 +1173,59 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       void h15;
     });
   });
+
+  test(`[${name}] HEALTH: a missed capture raises a CRITICAL alert with it; the status says what records now and counts the holes`, async () => {
+    await withFixture(async ({ service, store, clock, drain }) => {
+      const r = await service.createRecorder(caller(), recorderInput());
+      const [h13] = await store.captures(r.id, '2000-01-01T00:00:00.000Z', 1);
+      await drain();
+
+      // 13:10 — a worker is recording the 13:00 file.
+      clock.now = Date.parse('2026-09-14T13:10:00.000Z');
+      await store.transaction((tx) =>
+        tx.leaseCapture(
+          h13!.id,
+          'rim-recorder-1',
+          new Date(clock.now).toISOString(),
+          new Date(clock.now + 30_000).toISOString(),
+        ),
+      );
+      let [status] = await service.recorderStatus(caller());
+      assert.equal(status!.recorderId, r.id);
+      assert.deepEqual(
+        status!.recording.map((x) => [x.holder, x.part, x.fileStart.slice(11, 16)]),
+        [['rim-recorder-1', 1, '13:00']],
+      );
+      assert.deepEqual(
+        [status!.missed24h, status!.partial24h, status!.lastMissed],
+        [0, 0, undefined],
+      );
+
+      // The next day: nobody took 14:00 or 15:00 — each a hole, each an alert.
+      clock.now = Date.parse('2026-09-15T12:00:00.000Z');
+      await service.planRecorders();
+      const alerts = (await drain()).filter((e) => e.type === 'alert.raised');
+      assert.equal(alerts.length, 2);
+      for (const a of alerts) {
+        assert.ok(validatePayload('alert.raised', a.payload).valid);
+        const payload = a.payload as unknown as EventPayloads['alert.raised'];
+        assert.deepEqual(
+          [payload.source, payload.kind, payload.severity, payload.subjectRef],
+          ['rim', 'recording-missed', 'critical', { entityType: 'recorder', entityId: r.id }],
+        );
+        assert.match(
+          payload.message,
+          /^Channel 12 air: .* was NOT recorded — no recorder worker took it$/,
+        );
+        assert.equal(a.channelId, CH);
+      }
+
+      [status] = await service.recorderStatus(caller());
+      assert.equal(status!.missed24h, 2);
+      assert.equal(status!.lastMissed?.fileStart.slice(11, 16), '15:00');
+      assert.equal(status!.lastMissed?.reason, 'no recorder worker took it');
+      // Another channel's recorders are not this one's business.
+      assert.deepEqual(await service.recorderStatus(caller('ch99')), []);
+    });
+  });
 }

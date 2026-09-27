@@ -104,6 +104,9 @@ class FakePermissions {
 /** Always faked: the panel lists recorders when it may (EP-39), for the same reason. */
 class FakeRecorders {
   lists: Subject<Recorder[]>[] = [];
+  status() {
+    return new Subject();
+  }
   list() {
     const subject = new Subject<Recorder[]>();
     this.lists.push(subject);

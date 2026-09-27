@@ -310,3 +310,59 @@ test('a drain stops every capture — partial, continued for another worker — 
     await h.close();
   }
 });
+
+/** The alerts in the outbox — what RIM's relay will publish. */
+function alertsIn(
+  store: ReturnType<typeof sqliteRimStore>,
+): { kind: string; severity: string; message: string }[] {
+  const rows = store.db
+    .prepare(`SELECT body FROM outbox WHERE subject LIKE '%.alert.raised'`)
+    .all() as {
+    body: string;
+  }[];
+  return rows.map(
+    (r) =>
+      (JSON.parse(r.body) as { payload: { kind: string; severity: string; message: string } })
+        .payload,
+  );
+}
+
+test('a cut capture raises a WARNING alert and an empty file a CRITICAL one — in the same transaction as the state', async () => {
+  const h = await harness();
+  try {
+    const a = await h.worker('rec-0');
+    h.at('12:59:56');
+    await a.w.tick();
+    h.at('13:20:00');
+    await a.capturer.pending[0]!.end(1, 3000, 'Connection timed out');
+    await a.w.settled();
+    let alerts = alertsIn(h.store);
+    assert.deepEqual(
+      alerts.map((x) => [x.kind, x.severity]),
+      [['recording-partial', 'warning']],
+    );
+    assert.match(
+      alerts[0]!.message,
+      /^air: 13:00:00–14:00:00 UTC 2026-09-14 was recorded with a gap \(part 1 was cut short\) — ffmpeg exited 1: Connection timed out$/,
+    );
+
+    // The continuation records nothing at all: a hole — critical.
+    h.at('13:20:01');
+    await a.w.tick();
+    h.at('14:00:05');
+    await a.capturer.pending[0]!.end(0, 0);
+    await a.w.settled();
+    await a.w.tick();
+    alerts = alertsIn(h.store);
+    assert.deepEqual(
+      alerts.map((x) => [x.kind, x.severity]),
+      [
+        ['recording-partial', 'warning'],
+        ['recording-missed', 'critical'],
+      ],
+    );
+    assert.match(alerts[1]!.message, /no data received from the feed/);
+  } finally {
+    await h.close();
+  }
+});

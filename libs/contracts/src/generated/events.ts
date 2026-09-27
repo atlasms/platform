@@ -139,7 +139,7 @@ export interface AiSuggestionRaisedPayload {
   }[];
 }
 
-/** Emitted by Logging & Analytics when a monitored threshold or condition trips (DLQ growth, checksum-mismatch rate, restore-ETA breach, storage target down). Consumed by Notifications for delivery. */
+/** Emitted by the service watching a condition when it trips — Logging & Analytics for monitored thresholds (DLQ growth, checksum-mismatch rate, restore-ETA breach, storage target down), RIM for a hole in a recording (recording-missed, recording-partial; EP-39). Consumed by Notifications for delivery. */
 export interface AlertRaisedPayload {
   alertId: Ulid;
   /** Service or subsystem that is the subject of the alert. */

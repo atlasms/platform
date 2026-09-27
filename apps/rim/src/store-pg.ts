@@ -437,6 +437,36 @@ export function pgRimStore(pool: PgPool): RimStore {
       );
       return rows.map(captureOf);
     },
+    async runningCaptures(channelId) {
+      const { rows } = await pool.query(
+        `SELECT * FROM captures WHERE channel_id = $1 AND state = 'running' ORDER BY file_start`,
+        [channelId],
+      );
+      return rows.map(captureOf);
+    },
+    async captureCounts(channelId, since) {
+      const { rows } = await pool.query<{ recorder_id: string; missed: string; partial: string }>(
+        `SELECT recorder_id,
+                count(*) FILTER (WHERE state = 'missed') AS missed,
+                count(*) FILTER (WHERE state = 'partial') AS partial
+           FROM captures WHERE channel_id = $1 AND file_start >= $2 GROUP BY recorder_id`,
+        [channelId, since],
+      );
+      return rows.map((r) => ({
+        recorderId: r.recorder_id,
+        missed: Number(r.missed),
+        partial: Number(r.partial),
+      }));
+    },
+    async lastMissed(channelId, since) {
+      const { rows } = await pool.query(
+        `SELECT DISTINCT ON (recorder_id) * FROM captures
+          WHERE channel_id = $1 AND state = 'missed' AND file_start >= $2
+          ORDER BY recorder_id, file_start DESC`,
+        [channelId, since],
+      );
+      return rows.map(captureOf);
+    },
     async capturesEndedIn(state, before, limit) {
       const { rows } = await pool.query(
         'SELECT * FROM captures WHERE state = $1 AND capture_to < $2 ORDER BY capture_to LIMIT $3',
