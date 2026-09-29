@@ -8,11 +8,14 @@ import {
   openDb,
   outboxHeadersMigration,
   outboxMigration,
+  seenMigration,
   SqliteOutboxStore,
+  SqliteSeenStore,
   withTransactionAsync,
   type Db,
   type Migration,
 } from '@atlas/data';
+import type { MediaApproval } from './approvals.ts';
 import type { Schedule, ScheduleItem } from './schedule.ts';
 import type { ScheduleStore, ScheduleTx } from './store.ts';
 
@@ -47,6 +50,18 @@ export const sqliteMigrations: Migration[] = [
          CREATE INDEX IF NOT EXISTS schedule_items_day_idx ON schedule_items (channel_id, broadcast_date, start);
          CREATE INDEX IF NOT EXISTS schedule_items_range_idx ON schedule_items (channel_id, start, "end");`,
   },
+  // EP-31: the first broker consumer here brings the seen-mark, and what it keeps — MAM's word on
+  // each asset's approval, which validation reads.
+  seenMigration,
+  {
+    id: 'scheduling_media_approvals',
+    up: `CREATE TABLE IF NOT EXISTS media_approvals (
+           asset_id   TEXT PRIMARY KEY,
+           channel_id TEXT NOT NULL,
+           data       TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS media_approvals_channel_idx ON media_approvals (channel_id, asset_id);`,
+  },
 ];
 
 const toItem = (r: { data: string }): ScheduleItem => JSON.parse(r.data) as ScheduleItem;
@@ -55,6 +70,7 @@ export function sqliteScheduleStore(path = ':memory:'): ScheduleStore & { db: Db
   const db = openDb(path);
   migrate(db, sqliteMigrations);
   const outbox = new SqliteOutboxStore(db);
+  const seen = new SqliteSeenStore(db);
 
   const putItem = (item: ScheduleItem, channelId: string, broadcastDate: string): void => {
     db.prepare(
@@ -86,7 +102,15 @@ export function sqliteScheduleStore(path = ':memory:'): ScheduleStore & { db: Db
   };
 
   const tx: ScheduleTx = {
-    async put(s) {
+    async put(s, ifVersion) {
+      if (ifVersion !== undefined) {
+        const result = db
+          .prepare(
+            `UPDATE schedules SET data = ? WHERE id = ? AND json_extract(data, '$.version') = ?`,
+          )
+          .run(JSON.stringify(s), s.id, ifVersion);
+        return Number(result.changes) === 1;
+      }
       // An UPSERT, never INSERT OR REPLACE: REPLACE is DELETE + INSERT, and the items cascade on
       // delete — so every header write silently wiped the reel here while Postgres's ON CONFLICT
       // DO UPDATE kept it. The conformance suite is what caught the two adapters disagreeing.
@@ -94,6 +118,7 @@ export function sqliteScheduleStore(path = ':memory:'): ScheduleStore & { db: Db
         `INSERT INTO schedules (id, channel_id, broadcast_date, data) VALUES (?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET data = excluded.data`,
       ).run(s.id, s.channelId, s.broadcastDate, JSON.stringify(s));
+      return true;
     },
     async replaceItems(scheduleId, items) {
       const h = header(scheduleId);
@@ -111,6 +136,25 @@ export function sqliteScheduleStore(path = ':memory:'): ScheduleStore & { db: Db
     },
     async enqueue(record) {
       outbox.enqueue(record);
+    },
+    async markSeen(messageId) {
+      return seen.mark(db, messageId);
+    },
+    async approvalForUpdate(assetId) {
+      // sqlite serializes writers; the transaction is the lock.
+      const row = db.prepare('SELECT data FROM media_approvals WHERE asset_id = ?').get(assetId) as
+        { data: string } | undefined;
+      return row ? (JSON.parse(row.data) as MediaApproval) : undefined;
+    },
+    async putApproval(a, existed) {
+      const result = db
+        .prepare(
+          existed
+            ? 'UPDATE media_approvals SET channel_id = ?, data = ? WHERE asset_id = ?'
+            : 'INSERT INTO media_approvals (channel_id, data, asset_id) VALUES (?, ?, ?) ON CONFLICT (asset_id) DO NOTHING',
+        )
+        .run(a.channelId, JSON.stringify(a), a.assetId);
+      return Number(result.changes) === 1;
     },
   };
 
@@ -169,6 +213,15 @@ export function sqliteScheduleStore(path = ':memory:'): ScheduleStore & { db: Db
         )
         .all(channelId, to, from) as { data: string }[];
       return rows.map(toItem);
+    },
+    async approvals(channelId, assetIds) {
+      if (assetIds.length === 0) return [];
+      const rows = db
+        .prepare(
+          `SELECT data FROM media_approvals WHERE channel_id = ? AND asset_id IN (${assetIds.map(() => '?').join(', ')})`,
+        )
+        .all(channelId, ...assetIds) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as MediaApproval);
     },
     async close() {
       db.close();

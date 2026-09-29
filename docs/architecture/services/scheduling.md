@@ -178,6 +178,37 @@ so. `PUT /schedules/{id}/items` is the editor's save (the whole reel, as given);
 columns with `start`/`end` materialized (§3.6). Every write emits `schedule.updated` and an
 `audit.recorded` delta in one transaction. v1 (validation, the guard, MCRList, send-to-air) is EP-31.
 
+**EP-31, first slice: validation.** `POST /schedules/{id}/validate` (`schedule:write`) checks the
+reel **as stored** and answers a report — advisory, never a gate on save. Five validators
+(`validation.ts`, pure): **overlap** and **anchor** (critical — the latter when the item run into is
+`fixed`), **gap** (a warning: a filler may take it at playout; a gap inside a live item is the
+studio's and is not reported), **approval** (critical — the media is not approved in this channel)
+and **expiry** (critical — the approval lapses before the item *finishes airing*: judged at air
+time, not now). Rights windows and rendition availability are **not checked yet** and every report
+says so in `unchecked` (no rights windows exist; availability is HSM's, EP-14). Messages give times
+in the schedule's zone. A run with no critical issue moves a `draft` to `validated`; a run with one
+moves a `validated` schedule back (an approval can lapse with no edit), and **any edit** makes it a
+draft again (§3.1). A state change is a write — version, `schedule.updated`, the `audit.recorded`
+delta with action `schedule.validated` — made by compare-and-set on the version validated, so an
+edit in between is a 409. Every run emits `schedule.validated` with its issues and version.
+
+**What approval means here is Scheduling's own record** (`approvals.ts`), kept from MAM's
+lifecycle as §5 says rather than asked of MAM at validation time: one durable over
+`atlas.*.asset.*` (one cursor, so the stream's order is the order applied; other asset events are
+acked and ignored), each message applied with its seen-mark in one transaction, the record read
+`FOR UPDATE` through the transaction. The approval STATE (approved/rejected/expired/deleted) and the
+EXPIRY carry the time MAM stated each, and a fact older than the one held is ignored — so a
+redelivered `asset.approved` still lands its verdict without undoing a newer expiry. The expiry
+reaches Scheduling from `asset.approved` and from `asset.updated`, which now carries `expiresAt`
+when it names it (it named the field without the value). The stream keeps everything, so a new
+deployment backfills from history. The record is a read model of facts MAM already audited, and is
+not audited again. Not done in this slice: flagging items on `asset.expired` (validation computes
+it instead), `asset.replaced` (no producer yet), rights windows, availability, the approved-only
+guard at serialization and send-to-air — the last two correctness-critical (§5.7), with MCRList.
+Studio's schedule editor has a **Validate** button (the stored reel only — disabled with unsaved
+edits), the report above the reel, each issue flagged on its row, and the report hidden once the
+version on screen moves past it.
+
 ## 14. Open questions / future
 
 - Additional serializers (other playout vendors) and a conformance test suite per format.

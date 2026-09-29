@@ -340,6 +340,26 @@ export async function buildSchedulingApp(options: SchedulingAppOptions): Promise
     }),
   );
 
+  // EP-31: on-demand validation. Advisory — the report is the answer, whatever it finds.
+  const validations = metrics.counter({
+    name: 'atlas_scheduling_validations_total',
+    help: 'Schedule validation runs, by outcome (valid = no critical issue).',
+    labelNames: ['valid'],
+  });
+  const validationIssues = metrics.counter({
+    name: 'atlas_scheduling_validation_issues_total',
+    help: 'Issues found by schedule validation, by kind — the causes the schedules fail on.',
+    labelNames: ['kind'],
+  });
+  app.post<{ Params: P }>('/api/v1/schedules/:id/validate', (req, reply) =>
+    handle(req, reply, 200, async (caller) => {
+      const report = await service.validate(caller, req.params.id);
+      validations.inc({ valid: String(report.valid) });
+      for (const issue of report.issues) validationIssues.inc({ kind: issue.kind });
+      return report;
+    }),
+  );
+
   app.delete<{ Params: P }>('/api/v1/schedules/:id/items/:itemId', (req, reply) =>
     handle(req, reply, 204, (caller) =>
       service.removeItem(caller, req.params.id, req.params.itemId),

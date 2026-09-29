@@ -237,6 +237,24 @@
       "title": "Title card",
       "filler": "Filler",
       "break": "Break"
+    },
+    "validate": "Validate",
+    "validating": "Validating…",
+    "validateSaveFirst": "Save the reel first — validation checks what is stored.",
+    "validateError": "Could not validate this schedule.",
+    "validateConflict": "The schedule changed while it was being validated. Validate it again.",
+    "report": "Validation report",
+    "reportValid": "No problems found — the schedule is validated.",
+    "reportInvalid": "problem(s) must be fixed before air.",
+    "unchecked": "Not checked yet:",
+    "issue": {
+      "gap": "Gap",
+      "overlap": "Overlap",
+      "anchor": "Fixed start overrun",
+      "approval": "Not approved",
+      "expiry": "Approval expires",
+      "rights": "Rights",
+      "availability": "Availability"
     }
   },
   "schedulePanel": {

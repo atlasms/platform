@@ -375,6 +375,16 @@ function tsType(schema, where, resolveRef = openApiRef) {
     return schema.allOf.map((s, i) => tsType(s, `${where}.allOf[${i}]`, resolveRef)).join(' & ');
   }
 
+  // JSON Schema's own spelling of nullable, `type: [T, "null"]` (OpenAPI 3.0's is `nullable: true`,
+  // below): `T | null`. Only that pair — a union of two real types has no single projection here.
+  if (Array.isArray(schema.type)) {
+    const real = schema.type.filter((t) => t !== 'null');
+    if (schema.type.length !== 2 || real.length !== 1) {
+      fail(where, `unsupported type union: ${JSON.stringify(schema.type)}`);
+    }
+    return `${tsType({ ...schema, type: real[0] }, where, resolveRef)} | null`;
+  }
+
   const nullable = schema.nullable === true ? ' | null' : '';
 
   // A bare `enum` with no `type` is a closed set of literals whatever their JSON type — the shape

@@ -226,13 +226,15 @@ export interface AssetReplacedPayload {
   newId: Ulid;
 }
 
-/** Emitted by MAM when asset metadata changes. Consumed by WebSocket, Search, Logging. */
+/** Emitted by MAM when asset metadata changes. Consumed by WebSocket, Search, Logging, and Scheduling (which keeps each asset's approval expiry to validate a schedule against, EP-31). */
 export interface AssetUpdatedPayload {
   assetId: Ulid;
   /** Names of the fields that changed. */
   changedFields: string[];
   /** Provenance of the change (FR-MAM-8). */
   source?: 'user' | 'ai' | 'technical';
+  /** Present exactly when `changedFields` names `expiresAt`: the new value, or null when the expiry was cleared. The one lifecycle value a metadata edit changes, carried so a consumer keeping approvals (Scheduling) never has to read it back from MAM. */
+  expiresAt?: string | null;
 }
 
 /** Emitted by the OWNING service with every mutation, in the same transaction as the change — alongside the domain event when there is one, alone when there is not (an internal lifecycle step, a rendition attach). Carries the field-level before/after delta the change-history viewer reads (logging-analytics.md §6.4; FR-AUD-1..5); the owning service produces it at write time because only it holds the prior state. `actor` and `correlationId` are on the envelope, not here. Consumed by Logging. */
@@ -550,12 +552,15 @@ export interface ScheduleValidatedPayload {
   scheduleId: Ulid;
   valid: boolean;
   issues?: {
-    kind: 'gap' | 'overlap' | 'rights' | 'availability' | 'expiry' | 'anchor';
+    kind: 'gap' | 'overlap' | 'anchor' | 'approval' | 'expiry' | 'rights' | 'availability';
     itemId?: Ulid;
     severity?: Severity;
     message?: string;
+    seconds?: number;
   }[];
   validatedAt: string;
+  /** The schedule version that was validated; a later edit makes the result stale. */
+  version?: number;
 }
 
 /** Emitted by Newsroom when a story changes (status, assignment, script/media). Consumed by the WebSocket service (collaborative editing) and Logging. */

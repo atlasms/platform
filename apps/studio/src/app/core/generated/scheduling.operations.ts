@@ -35,7 +35,7 @@ export const SchedulingOperations = {
     path: '/api/v1/schedules/{id}/items/{itemId}',
     params: ['id', 'itemId'],
   },
-  /** Validate gaps/overlaps/rights/availability (FR-SCH-2/3) */
+  /** Validate the reel on demand (scope schedule:write; FR-SCH-2/3) */
   validateSchedule: { method: 'POST', path: '/api/v1/schedules/{id}/validate', params: ['id'] },
   /** Serialize the playlist and trigger HSM delivery (scope schedule:send; audited) */
   sendToAir: { method: 'POST', path: '/api/v1/schedules/{id}/send-to-air', params: ['id'] },

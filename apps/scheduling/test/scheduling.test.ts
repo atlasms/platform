@@ -4,7 +4,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isUlid, ulid } from '@atlas/contracts';
+import { buildEnvelope, isUlid, subjectFor, ulid } from '@atlas/contracts';
+import { InMemoryBroker } from '@atlas/messaging';
 import { compile, type EffectivePolicy, type Rule } from '@atlas/policy';
 import { HealthRegistry, type AccessRecord } from '@atlas/service-kit';
 import {
@@ -12,6 +13,7 @@ import {
   INTERNAL_HEADERS,
   SchedulingService,
   sqliteScheduleStore,
+  startApprovalConsumer,
 } from '../src/index.ts';
 
 const CH = 'ch12';
@@ -345,4 +347,80 @@ test('SECURITY: schedule:read for reads, schedule:write for writes; no policy is
     'no caller at all',
   );
   await nobody.app.close();
+});
+
+test('POST /validate: the report over the wire, counted by outcome and by cause', async () => {
+  const { app, caller } = await harness();
+  const created = await app.inject({
+    method: 'POST',
+    url: '/api/v1/schedules',
+    headers: caller,
+    payload: { broadcastDate: '2026-09-12', timezone: 'UTC' },
+  });
+  const id = created.json().id as string;
+  // Two items overlapping by 10 min, neither of them approved (no MAM event has arrived).
+  await app.inject({
+    method: 'PUT',
+    url: `/api/v1/schedules/${id}/items`,
+    headers: caller,
+    payload: [item(0, 0, 30), item(1, 20, 30)],
+  });
+
+  const res = await app.inject({
+    method: 'POST',
+    url: `/api/v1/schedules/${id}/validate`,
+    headers: caller,
+  });
+  assert.equal(res.statusCode, 200);
+  const report = res.json();
+  assert.equal(report.valid, false);
+  assert.equal(report.state, 'draft');
+  assert.deepEqual(report.unchecked, ['rights', 'availability']);
+  assert.deepEqual(
+    report.issues.map((i: { kind: string }) => i.kind),
+    ['overlap', 'approval', 'approval'],
+  );
+
+  const metrics = (await app.inject({ method: 'GET', url: '/metrics' })).body;
+  assert.match(metrics, /atlas_scheduling_validations_total\{valid="false"\} 1/);
+  assert.match(metrics, /atlas_scheduling_validation_issues_total\{kind="approval"\} 2/);
+  assert.match(metrics, /atlas_scheduling_validation_issues_total\{kind="overlap"\} 1/);
+
+  const missing = await app.inject({
+    method: 'POST',
+    url: `/api/v1/schedules/${ulid()}/validate`,
+    headers: caller,
+  });
+  assert.equal(missing.statusCode, 404);
+});
+
+test('the approval consumer takes MAM’s envelopes off the bus — one subscription over every asset event', async () => {
+  const store = sqliteScheduleStore();
+  const service = new SchedulingService({ store });
+  const broker = new InMemoryBroker();
+  const outcomes: string[] = [];
+  startApprovalConsumer({
+    broker,
+    service,
+    onApplied: (subject) => outcomes.push(`applied ${subject}`),
+    onSkipped: (subject, outcome) => outcomes.push(`${outcome} ${subject}`),
+  });
+  const assetId = ulid();
+  const publish = async (type: string, payload: Record<string, unknown>) => {
+    // Exactly what MAM's outbox sends: the ENVELOPE is the body, the payload inside it.
+    const envelope = buildEnvelope({
+      type,
+      channelId: CH,
+      payload,
+      actor: { kind: 'user', id: 'u' },
+    });
+    await broker.publish({ id: envelope.messageId, subject: subjectFor(CH, type), body: envelope });
+  };
+  await publish('asset.ready', { assetId });
+  await publish('asset.approved', { assetId, approver: 'u-2' });
+  assert.deepEqual(outcomes, [
+    `ignored atlas.${CH}.asset.ready`,
+    `applied atlas.${CH}.asset.approved`,
+  ]);
+  assert.equal((await store.approvals(CH, [assetId]))[0]?.state, 'approved');
 });

@@ -37,6 +37,12 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `asset.updated` carries `expiresAt` (a date-time, or null when cleared) exactly when
+  `changedFields` names it — the one lifecycle value a metadata edit changes, so Scheduling's record
+  of approvals (EP-31) never has to read it back from MAM. Optional; nothing else changes.
+- `schedule.validated` gains the `approval` issue kind (the media is not approved in the channel)
+  and an optional `version` (the schedule version validated). The kinds are reordered by what each
+  validator reads; no value was removed.
 - `liveSubjectFor(channelId, type)` → `live.<channelId>.<type>`: the subject of a PROGRESS message,
   outside the durable stream's `atlas.>` so it is never stored, replayed or audited (messaging §1.1,
   EP-16.4). First user: `transcode.progress`.

@@ -19,7 +19,13 @@ import {
   loadConfig,
   MetricRegistry,
 } from '@atlas/service-kit';
-import { buildSchedulingApp, pgMigrations, pgScheduleStore, SchedulingService } from './index.ts';
+import {
+  buildSchedulingApp,
+  pgMigrations,
+  pgScheduleStore,
+  SchedulingService,
+  startApprovalConsumer,
+} from './index.ts';
 
 const config = loadConfig({
   port: { env: 'PORT', type: 'number', default: 3000 },
@@ -51,6 +57,13 @@ const tracer = createTracer({
 });
 
 const metrics = new MetricRegistry();
+const approvalEvents = metrics.counter({
+  name: 'atlas_scheduling_approval_events_total',
+  help: 'MAM asset events taken by the approval consumer, by type and outcome.',
+  labelNames: ['type', 'outcome'],
+});
+/** `atlas.<channel>.asset.approved` → `asset.approved` — a closed set, never the channel. */
+const typeOf = (subject: string): string => subject.split('.').slice(2).join('.');
 
 const pool = openPool({ connectionString: config.databaseUrl, schema: config.pgSchema });
 
@@ -150,6 +163,24 @@ async function startBroker(): Promise<void> {
     retryTimer = setTimeout(() => void startBroker(), 5_000);
     return;
   }
+
+  // EP-31: MAM's word on each approval, kept for validation. One durable over every asset event,
+  // so the stream's order is the order they are applied in.
+  startApprovalConsumer({
+    broker,
+    service,
+    onApplied: (subject) => approvalEvents.inc({ outcome: 'applied', type: typeOf(subject) }),
+    onSkipped: (subject, outcome) => approvalEvents.inc({ outcome, type: typeOf(subject) }),
+    onError: (err, msg) => {
+      approvalEvents.inc({ outcome: 'refused', type: typeOf(msg.subject) });
+      log.warn('approval consumer refused a message', {
+        subject: msg.subject,
+        messageId: msg.id,
+        error: (err as Error).message,
+      });
+    },
+  });
+  log.info('approval consumer started');
 
   const relay = new OutboxRelay(outbox, broker);
   log.info('outbox relay started', { intervalMs: config.relayIntervalMs });

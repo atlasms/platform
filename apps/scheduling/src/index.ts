@@ -25,9 +25,26 @@ export {
 } from './schedule.ts';
 export {
   SchedulingService,
+  type ApprovalOutcome,
   type Caller as ServiceCaller,
   type SchedulingServiceOptions,
+  type ValidationReport,
 } from './service.ts';
+export {
+  APPROVAL_EVENTS,
+  applyAssetEvent,
+  type ApprovalState,
+  type MediaApproval,
+} from './approvals.ts';
+export {
+  clock,
+  UNCHECKED,
+  validateReel,
+  type IssueKind,
+  type Severity,
+  type ValidationIssue,
+} from './validation.ts';
+export { ASSET_EVENTS_PATTERN, startApprovalConsumer } from './consumer.ts';
 export type { ScheduleStore, ScheduleTx } from './store.ts';
 export { sqliteScheduleStore, sqliteMigrations } from './store-sqlite.ts';
 export { pgScheduleStore, pgMigrations } from './store-pg.ts';

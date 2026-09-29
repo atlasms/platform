@@ -498,7 +498,14 @@ export class MamService {
       updated,
       existing,
       'asset.updated',
-      { assetId: updated.id, changedFields, source: 'user' },
+      {
+        assetId: updated.id,
+        changedFields,
+        source: 'user',
+        // The one lifecycle value an edit changes, carried with its name: Scheduling keeps each
+        // approval's expiry to validate against (EP-31) and must not have to read it back.
+        ...(changedFields.includes('expiresAt') ? { expiresAt: updated.expiresAt ?? null } : {}),
+      },
       // `title` and `description` are indexed, so this path must reindex. Tags and the extended
       // document are untouched here, and are read rather than assumed empty — assuming would
       // silently strip every tag term from the index on an ordinary rename.

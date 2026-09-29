@@ -237,6 +237,24 @@
       "title": "بطاقة عنوان",
       "filler": "حشو",
       "break": "فاصل"
+    },
+    "validate": "تحقّق",
+    "validating": "جارٍ التحقّق…",
+    "validateSaveFirst": "احفظ البكرة أولًا — التحقّق يفحص ما هو محفوظ.",
+    "validateError": "تعذّر التحقّق من هذا الجدول.",
+    "validateConflict": "تغيّر الجدول أثناء التحقّق منه. تحقّق منه مرة أخرى.",
+    "report": "تقرير التحقّق",
+    "reportValid": "لا توجد مشكلات — الجدول مُعتمد.",
+    "reportInvalid": "مشكلة يجب إصلاحها قبل البث.",
+    "unchecked": "لم يُفحص بعد:",
+    "issue": {
+      "gap": "فجوة",
+      "overlap": "تداخل",
+      "anchor": "تجاوز بداية ثابتة",
+      "approval": "غير معتمد",
+      "expiry": "انتهاء الاعتماد",
+      "rights": "الحقوق",
+      "availability": "التوفّر"
     }
   },
   "schedulePanel": {

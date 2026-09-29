@@ -9,10 +9,16 @@
 // Every write goes out through the outbox in the same transaction as the rows (AGENTS.md §5.4):
 // `schedule.updated` for consumers, and `audit.recorded` with the field-level delta (§5.6) — the
 // same `commitWith` shape MAM uses.
+//
+// v1 (EP-31) adds the on-demand validation (validation.ts) and what it reads: MAM's word on each
+// asset's approval, kept here from MAM's lifecycle events (approvals.ts) by `applyAssetEvent`, the
+// service's first broker consumer. A clean run moves a draft to `validated`; any edit moves it
+// back.
 
 import {
   buildEnvelope,
   delta,
+  envelopeShapeErrors,
   subjectFor,
   ulid,
   validatePayload,
@@ -20,7 +26,7 @@ import {
   type Envelope,
   type EventPayloads,
 } from '@atlas/contracts';
-import type { OutboxRecord } from '@atlas/messaging';
+import type { Message, OutboxRecord } from '@atlas/messaging';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, Forbidden, NotFound, ValidationError } from '@atlas/service-kit';
 import {
@@ -33,7 +39,23 @@ import {
   type ScheduleItemInput,
   type UpdateScheduleInput,
 } from './schedule.ts';
+import { APPROVAL_EVENTS, applyAssetEvent, type MediaApproval } from './approvals.ts';
 import type { ScheduleStore, ScheduleTx } from './store.ts';
+import { UNCHECKED, validateReel, type IssueKind, type ValidationIssue } from './validation.ts';
+
+/** What `POST /schedules/{id}/validate` answers (scheduling.yaml `ValidationReport`). */
+export interface ValidationReport {
+  scheduleId: string;
+  version: number;
+  state: Schedule['state'];
+  valid: boolean;
+  issues: ValidationIssue[];
+  unchecked: IssueKind[];
+  validatedAt: string;
+}
+
+/** What the consumer did with one asset event. */
+export type ApprovalOutcome = 'applied' | 'unchanged' | 'duplicate' | 'ignored';
 
 export interface Caller {
   userId: string;
@@ -88,6 +110,130 @@ export class SchedulingService {
   async items(caller: Caller, scheduleId: string): Promise<ScheduleItem[]> {
     await this.get(caller, scheduleId);
     return inReelOrder(await this.store.items(scheduleId));
+  }
+
+  // --- validation (EP-31) ------------------------------------------------------------------------------
+
+  /**
+   * Validate the reel as stored — advisory, never a gate on save (§3.4).
+   *
+   * A run with no critical issue moves a `draft` to `validated`; one with a critical issue moves a
+   * `validated` schedule back to `draft` (an approval can lapse with no edit at all). A state change
+   * is a write — version, `schedule.updated`, the audit delta — and is made only over the version
+   * that was validated: an edit in between is a 409, since the report would describe a reel that
+   * no longer exists. Every run emits `schedule.validated`, which the editor and Logging read.
+   */
+  async validate(caller: Caller, id: string): Promise<ValidationReport> {
+    const schedule = await this.get(caller, id);
+    this.authorize(caller, 'schedule:write');
+    const items = await this.store.items(id);
+    const mediaIds = [
+      ...new Set(items.flatMap((i) => (i.mediaId !== undefined ? [i.mediaId] : []))),
+    ];
+    const approvals = new Map(
+      (await this.store.approvals(schedule.channelId, mediaIds)).map((a) => [a.assetId, a]),
+    );
+    const issues = validateReel(items, approvals, schedule.timezone);
+    const valid = !issues.some((i) => i.severity === 'critical');
+    const validatedAt = this.now().toISOString();
+
+    const state =
+      valid && schedule.state === 'draft'
+        ? 'validated'
+        : !valid && schedule.state === 'validated'
+          ? 'draft'
+          : schedule.state;
+    const next: Schedule =
+      state === schedule.state
+        ? schedule
+        : { ...schedule, state, version: schedule.version + 1, updatedAt: validatedAt };
+
+    const validated = this.record(caller, schedule.channelId, 'schedule.validated', {
+      scheduleId: id,
+      valid,
+      issues,
+      validatedAt,
+      version: next.version,
+    } satisfies EventPayloads['schedule.validated']);
+
+    if (next === schedule) {
+      await this.store.transaction((tx) => tx.enqueue(validated));
+    } else {
+      await this.commit(
+        caller,
+        next,
+        schedule,
+        { itemCount: items.length },
+        undefined,
+        {},
+        {
+          action: 'schedule.validated',
+          ifVersion: schedule.version,
+          also: [validated],
+        },
+      );
+    }
+    return {
+      scheduleId: id,
+      version: next.version,
+      state: next.state,
+      valid,
+      issues,
+      unchecked: [...UNCHECKED],
+      validatedAt,
+    };
+  }
+
+  /**
+   * One MAM lifecycle event into the approval record — the consumer of `atlas.*.asset.*`.
+   *
+   * The seen-mark and the record commit together (EP-03.3), so a redelivery is a duplicate and a
+   * crash a retry. The record is read THROUGH the transaction and locked, so two replicas taking
+   * two events of one asset cannot each apply theirs over the same old record. A message that is
+   * not a well-formed envelope is thrown — retried, then dead-lettered — never skipped.
+   */
+  async applyAssetEvent(msg: Message): Promise<ApprovalOutcome> {
+    const shape = envelopeShapeErrors(msg.body);
+    if (!shape.valid) {
+      throw new ValidationError(
+        `message ${msg.id} on ${msg.subject} is not an envelope: ${shape.errors.map((e) => `${e.path} ${e.message}`).join('; ')}`,
+      );
+    }
+    const envelope = msg.body as Envelope;
+    // Every other asset.* (created, ready, replaced, …) says nothing about approval.
+    if (!(APPROVAL_EVENTS as readonly string[]).includes(envelope.type)) return 'ignored';
+    const check = validatePayload(envelope.type, envelope.payload);
+    if (!check.valid) {
+      throw new ValidationError(
+        `${envelope.type} ${msg.id} does not match its schema: ${check.errors.map((e) => `${e.path} ${e.message}`).join('; ')}`,
+      );
+    }
+
+    let outcome: ApprovalOutcome = 'unchanged';
+    await this.store.transaction(async (tx) => {
+      if (!(await tx.markSeen(msg.id))) {
+        outcome = 'duplicate';
+        return;
+      }
+      const assetId = (envelope.payload as { assetId: string }).assetId;
+      const current = await tx.approvalForUpdate(assetId);
+      // An asset id is global, but a record is the channel's that announced it first; another
+      // channel claiming the same id is not a fact about this record.
+      if (current !== undefined && current.channelId !== envelope.channelId) {
+        throw new Conflict(
+          `asset ${assetId} is recorded in channel ${current.channelId}, not ${envelope.channelId}`,
+        );
+      }
+      const next: MediaApproval | undefined = applyAssetEvent(current, envelope);
+      if (next === undefined) return;
+      if (!(await tx.putApproval(next, current !== undefined))) {
+        // Another consumer created the record between our read and our insert: roll back (the
+        // seen-mark with it) and let the broker redeliver, which reads the record it made.
+        throw new Conflict(`approval record for ${assetId} was created concurrently; retry`);
+      }
+      outcome = 'applied';
+    });
+    return outcome;
   }
 
   // --- writes ---------------------------------------------------------------------------------------------
@@ -244,8 +390,14 @@ export class SchedulingService {
     if (!decision.allowed) throw new Forbidden(decision.reason ?? `missing ${permission}`);
   }
 
+  /** Every edit: a new version, and a validated schedule is a draft again (§3.1 Validated → Draft). */
   private bump(schedule: Schedule): Schedule {
-    return { ...schedule, version: schedule.version + 1, updatedAt: this.now().toISOString() };
+    return {
+      ...schedule,
+      ...(schedule.state === 'validated' ? { state: 'draft' as const } : {}),
+      version: schedule.version + 1,
+      updatedAt: this.now().toISOString(),
+    };
   }
 
   private materialize(scheduleId: string, input: ScheduleItemInput): ScheduleItem {
@@ -268,6 +420,7 @@ export class SchedulingService {
     event: { itemCount: number },
     also?: (tx: ScheduleTx) => Promise<void>,
     sideTables: Delta = {},
+    options: { action?: string; ifVersion?: number; also?: OutboxRecord[] } = {},
   ): Promise<void> {
     const updated = this.record(caller, schedule.channelId, 'schedule.updated', {
       scheduleId: schedule.id,
@@ -278,7 +431,7 @@ export class SchedulingService {
       entityType: 'schedule',
       entityId: schedule.id,
       revision: schedule.version,
-      action: before === undefined ? 'schedule.created' : 'schedule.updated',
+      action: options.action ?? (before === undefined ? 'schedule.created' : 'schedule.updated'),
       origin: { service: 'scheduling' },
       delta: {
         ...delta(
@@ -290,10 +443,15 @@ export class SchedulingService {
     } satisfies EventPayloads['audit.recorded']);
 
     await this.store.transaction(async (tx) => {
-      await tx.put(schedule);
+      if (!(await tx.put(schedule, options.ifVersion))) {
+        throw new Conflict(
+          `schedule ${schedule.id} changed while it was being validated; validate it again`,
+        );
+      }
       await also?.(tx);
       await tx.enqueue(updated);
       await tx.enqueue(audit);
+      for (const record of options.also ?? []) await tx.enqueue(record);
     });
   }
 
