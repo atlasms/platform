@@ -1,3 +1,4 @@
+import { HttpErrorResponse } from '@angular/common/http';
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -6,6 +7,7 @@ import type {
   ScheduleItem,
   ScheduleItemInput,
   ScheduleWithItems,
+  ValidationReport,
 } from '../core/generated/scheduling.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { SchedulesService } from '../core/schedules.service.ts';
@@ -73,6 +75,13 @@ class FakeSchedules {
     this.saves.push({ id, items, result });
     return result;
   }
+
+  readonly validations: Array<{ id: string; result: Subject<ValidationReport> }> = [];
+  validate(id: string) {
+    const result = new Subject<ValidationReport>();
+    this.validations.push({ id, result });
+    return result;
+  }
 }
 
 class FakeLocale {
@@ -103,6 +112,10 @@ interface Internal {
   setDuration(key: string, minutes: string): void;
   save(): void;
   gapBefore(key: string): number | undefined;
+  validate(): void;
+  report: () => ValidationReport | null;
+  validateError: () => string | null;
+  schedule: () => Schedule | null;
 }
 
 function setup(permissions: string[] = ['schedule:read', 'schedule:write']) {
@@ -335,5 +348,92 @@ describe('ScheduleEditor', () => {
     t.component.removeRow('a');
     emit(SID);
     expect(t.fake.gets).toHaveLength(2);
+  });
+
+  it('VALIDATE: the stored reel only; the report names its rows, and the header takes the new state', () => {
+    const t = loaded(setup());
+    const root = t.fixture.nativeElement as HTMLElement;
+    const button = () =>
+      [...root.querySelectorAll<HTMLButtonElement>('.actions button')].find(
+        (b) => b.textContent?.trim() === 'scheduleEditor.validate',
+      )!;
+
+    // Unsaved edits: validation checks what is stored, so it waits for the save.
+    t.component.removeRow('c');
+    t.fixture.detectChanges();
+    expect(button().disabled).toBe(true);
+    t.component.validate();
+    expect(t.fake.validations).toHaveLength(0);
+    t.component.save();
+    t.fake.saves[0]?.result.next([item('a', 0, 0, 30), item('b', 1, 30, 10)]);
+    t.fake.gets[1]?.result.next({ ...header({ version: 2 }), items: [] });
+    t.fixture.detectChanges();
+    expect(button().disabled).toBe(false);
+
+    button().click();
+    expect(t.fake.validations[0]?.id).toBe(SID);
+    t.fake.validations[0]?.result.next({
+      scheduleId: SID,
+      version: 2,
+      state: 'draft',
+      valid: false,
+      issues: [
+        {
+          kind: 'approval',
+          itemId: 'b',
+          severity: 'critical',
+          message: 'media m-b has no approval',
+        },
+        { kind: 'gap', itemId: 'b', severity: 'warning', message: '60 s of dead air', seconds: 60 },
+      ],
+      unchecked: ['rights', 'availability'],
+      validatedAt: T0,
+    });
+    t.fixture.detectChanges();
+    const report = root.querySelector('section.report')!;
+    expect(report.querySelector('.summary')?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      '1 scheduleEditor.reportInvalid · scheduleEditor.unchecked scheduleEditor.issue.rights, scheduleEditor.issue.availability',
+    );
+    expect(report.querySelectorAll('li')).toHaveLength(2);
+    const flagged = [...root.querySelectorAll('tbody tr.flagged td.title .flag')].map((f) =>
+      f.textContent?.trim(),
+    );
+    expect(flagged).toEqual(['scheduleEditor.issue.approval', 'scheduleEditor.issue.gap']);
+
+    // A clean run: validated, and the version the service moved it to.
+    button().click();
+    t.fake.validations[1]?.result.next({
+      scheduleId: SID,
+      version: 3,
+      state: 'validated',
+      valid: true,
+      issues: [],
+      unchecked: ['rights', 'availability'],
+      validatedAt: T0,
+    });
+    t.fixture.detectChanges();
+    expect(t.component.schedule()?.state).toBe('validated');
+    expect(root.querySelector('.eyebrow')?.textContent).toContain('validated');
+    expect(root.querySelector('section.report.valid')).not.toBeNull();
+
+    // A newer version on screen (someone saved): the report is stale, and is not shown.
+    t.ws.events$.next({
+      subject: 'atlas.ch12.schedule.updated',
+      payload: { type: 'schedule.updated', channelId: 'ch12', payload: { scheduleId: SID } },
+    });
+    t.fake.gets.at(-1)?.result.next({ ...header({ version: 4 }), items: [] });
+    t.fixture.detectChanges();
+    expect(t.component.report()).toBeNull();
+    expect(root.querySelector('section.report')).toBeNull();
+  });
+
+  it('VALIDATE: a 409 says the schedule changed, anything else that it could not validate', () => {
+    const t = loaded(setup());
+    t.component.validate();
+    t.fake.validations[0]?.result.error(new HttpErrorResponse({ status: 409 }));
+    expect(t.component.validateError()).toBe('scheduleEditor.validateConflict');
+    t.component.validate();
+    t.fake.validations[1]?.result.error(new HttpErrorResponse({ status: 500 }));
+    expect(t.component.validateError()).toBe('scheduleEditor.validateError');
   });
 });

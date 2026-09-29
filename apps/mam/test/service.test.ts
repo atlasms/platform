@@ -126,6 +126,25 @@ test('a no-op update changes nothing and emits nothing', async () => {
   );
 });
 
+test('asset.updated carries the new expiresAt with its name — and nothing when it did not change', async () => {
+  // Scheduling keeps each approval's expiry (EP-31); a field name alone would leave it stale.
+  const { service, caller, drain } = harness();
+  const created = await service.create(caller(), NEW_ASSET);
+  await drain();
+  await service.update(caller(), created.id, { expiresAt: '2027-01-01T00:00:00.000Z' });
+  await service.update(caller(), created.id, { title: 'Renamed' });
+  const updates = (await drain()).filter((e) => e.type === 'asset.updated').map((e) => e.payload);
+  assert.deepEqual(updates, [
+    {
+      assetId: created.id,
+      changedFields: ['expiresAt'],
+      source: 'user',
+      expiresAt: '2027-01-01T00:00:00.000Z',
+    },
+    { assetId: created.id, changedFields: ['title'], source: 'user' },
+  ]);
+});
+
 // =============================================================================
 // Authorization
 // =============================================================================

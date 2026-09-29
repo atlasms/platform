@@ -5,10 +5,13 @@ import {
   outboxHeadersMigration,
   outboxMigration,
   PgOutboxStore,
+  PgSeenStore,
+  seenMigration,
   withTransaction,
   type PgClient,
   type PgPool,
 } from '@atlas/data-pg';
+import type { MediaApproval } from './approvals.ts';
 import type { Schedule, ScheduleItem } from './schedule.ts';
 import type { ScheduleStore, ScheduleTx } from './store.ts';
 
@@ -43,12 +46,24 @@ export const pgMigrations: Migration[] = [
          CREATE INDEX IF NOT EXISTS schedule_items_day_idx ON schedule_items (channel_id, broadcast_date, start);
          CREATE INDEX IF NOT EXISTS schedule_items_range_idx ON schedule_items (channel_id, start, "end");`,
   },
+  // EP-31: the first broker consumer here brings the seen-mark, and MAM's word on each approval.
+  seenMigration,
+  {
+    id: 'scheduling_media_approvals',
+    up: `CREATE TABLE IF NOT EXISTS media_approvals (
+           asset_id   text PRIMARY KEY,
+           channel_id text NOT NULL,
+           data       jsonb NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS media_approvals_channel_idx ON media_approvals (channel_id, asset_id);`,
+  },
 ];
 
 const toItem = (r: { data: ScheduleItem }): ScheduleItem => r.data;
 
 export function pgScheduleStore(pool: PgPool): ScheduleStore {
   const outbox = new PgOutboxStore(pool);
+  const seen = new PgSeenStore(pool);
 
   const putItem = async (
     client: PgClient,
@@ -94,12 +109,20 @@ export function pgScheduleStore(pool: PgPool): ScheduleStore {
     async transaction(fn) {
       return withTransaction(pool, async (client) => {
         const tx: ScheduleTx = {
-          async put(s) {
+          async put(s, ifVersion) {
+            if (ifVersion !== undefined) {
+              const result = await client.query(
+                `UPDATE schedules SET data = $1 WHERE id = $2 AND (data->>'version')::int = $3`,
+                [JSON.stringify(s), s.id, ifVersion],
+              );
+              return result.rowCount === 1;
+            }
             await client.query(
               `INSERT INTO schedules (id, channel_id, broadcast_date, data) VALUES ($1, $2, $3, $4)
                ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data`,
               [s.id, s.channelId, s.broadcastDate, JSON.stringify(s)],
             );
+            return true;
           },
           async replaceItems(scheduleId, items) {
             const h = await header(client, scheduleId);
@@ -118,6 +141,25 @@ export function pgScheduleStore(pool: PgPool): ScheduleStore {
           },
           async enqueue(record) {
             await outbox.enqueue(client, record);
+          },
+          async markSeen(messageId) {
+            return seen.mark(client, messageId);
+          },
+          async approvalForUpdate(assetId) {
+            const { rows } = await client.query<{ data: MediaApproval }>(
+              'SELECT data FROM media_approvals WHERE asset_id = $1 FOR UPDATE',
+              [assetId],
+            );
+            return rows[0]?.data;
+          },
+          async putApproval(a, existed) {
+            const result = await client.query(
+              existed
+                ? 'UPDATE media_approvals SET channel_id = $1, data = $2 WHERE asset_id = $3'
+                : 'INSERT INTO media_approvals (channel_id, data, asset_id) VALUES ($1, $2, $3) ON CONFLICT (asset_id) DO NOTHING',
+              [a.channelId, JSON.stringify(a), a.assetId],
+            );
+            return result.rowCount === 1;
           },
         };
         return fn(tx);
@@ -175,6 +217,14 @@ export function pgScheduleStore(pool: PgPool): ScheduleStore {
         [channelId, to, from],
       );
       return rows.map(toItem);
+    },
+    async approvals(channelId, assetIds) {
+      if (assetIds.length === 0) return [];
+      const { rows } = await pool.query<{ data: MediaApproval }>(
+        'SELECT data FROM media_approvals WHERE channel_id = $1 AND asset_id = ANY($2::text[])',
+        [channelId, [...assetIds]],
+      );
+      return rows.map((r) => r.data);
     },
     async close() {
       await pool.end();

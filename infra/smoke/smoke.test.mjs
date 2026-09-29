@@ -1091,9 +1091,17 @@ test('smoke: EP-39 — a recorder RECORDS: captured by FFmpeg on a worker, hande
     assert.equal(job.state, 'accepted', JSON.stringify(job));
     assert.equal(job.technicalMetadata?.container, 'mpegts');
     assert.equal(job.technicalMetadata?.videoCodec, 'h264');
+    // The current minute is planned at once, so the first file may begin when the recorder was
+    // created, seconds before the minute ends: what it can hold is its own window, not a constant.
+    // (A fixed `> 5` failed when the recorder was made at hh:mm:54 — 4.69 s, correctly recorded.)
+    const window =
+      (Date.parse(handed.captureTo) -
+        Math.max(Date.parse(handed.captureFrom), Date.parse(recorder.createdAt))) /
+      1000;
+    const recorded = job.technicalMetadata?.durationSec;
     assert.ok(
-      job.technicalMetadata?.durationSec > 5,
-      `recorded ${job.technicalMetadata?.durationSec} s`,
+      recorded > 1 && recorded <= window + 1,
+      `recorded ${recorded} s of a ${window} s window`,
     );
 
     // Its health (EP-39 slice 2), through the gateway: the recorder is there, with its counts.
@@ -1400,6 +1408,128 @@ test('smoke: EP-18 — a program table is written thinly, read back in reel orde
     'the sink saw both writes',
   );
   assert.ok(history.revisions[1].delta.items, 'the reel change rode in the delta');
+});
+
+test('smoke: EP-31 — validation reads MAM’s approvals off the bus, and a clean reel is validated', async () => {
+  // The whole of it on a live cluster: an asset made approvable the only way there is (a real
+  // transcode gives it renditions), approved in MAM, the approval crossing the broker into
+  // Scheduling's own record — and a reel validated against it, judged at air time, through the
+  // gateway. A media id MAM never approved is named; a clean reel moves the schedule to
+  // `validated`, audited like any write.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const poll = async (fn, done, budgetMs, what) => {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const value = await fn();
+      if (done(value)) return value;
+      assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(value)}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      title: 'Smoke approval',
+      mediaType: 'video',
+      fileType: 'mp4',
+      categoryId: 'cat-1',
+    }),
+  });
+  assert.equal(created.status, 201, `asset create failed: ${created.text}`);
+  const assetId = json(created).id;
+  const enqueued = await get('/api/v1/jobs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId, presetIds: ['thumbnail'], inputPath: 'samples/smoke.mp4' }),
+  });
+  assert.equal(enqueued.status, 202, `enqueue failed: ${enqueued.text}`);
+  await poll(
+    async () =>
+      json(
+        await get(`/api/v1/assets/${assetId}`, {
+          headers: { ...headers, 'cache-control': 'no-cache' },
+        }),
+      ),
+    (a) => a.hasRenditions === true,
+    60_000,
+    'the asset never got its rendition',
+  );
+  for (const step of ['process', 'ready']) {
+    const res = await get(`/api/v1/assets/${assetId}/${step}`, { method: 'POST', headers });
+    assert.equal(res.status, 200, `${step} failed: ${res.text}`);
+  }
+  const approved = await get(`/api/v1/assets/${assetId}/approve`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ expiresAt: '2099-01-01T00:00:00.000Z' }),
+  });
+  assert.equal(approved.status, 200, `approve failed: ${approved.text}`);
+
+  // A day of its own, a reel of the approved asset and one MAM has never heard of.
+  const day = new Date(Date.now() + (400 + Math.floor(Math.random() * 365)) * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  const schedule = json(
+    await get('/api/v1/schedules', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ broadcastDate: day, timezone: 'UTC' }),
+    }),
+  );
+  const t0 = Date.parse(`${day}T06:00:00.000Z`);
+  const at = (min) => new Date(t0 + min * 60_000).toISOString();
+  const stranger = '01H00000000000000000000000';
+  const reel = (items) =>
+    get(`/api/v1/schedules/${schedule.id}/items`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(items),
+    });
+  const saved = await reel([
+    { seq: 0, start: at(0), durationSec: 1800, itemType: 'media', mediaId: assetId },
+    { seq: 1, start: at(30), durationSec: 600, itemType: 'media', mediaId: stranger },
+  ]);
+  assert.equal(saved.status, 200, `reel save failed: ${saved.text}`);
+  const validate = async () => {
+    const res = await get(`/api/v1/schedules/${schedule.id}/validate`, { method: 'POST', headers });
+    assert.equal(res.status, 200, `validate failed: ${res.text}`);
+    return json(res);
+  };
+
+  // The approval reaches Scheduling over the broker: until it does, both items are unapproved.
+  const report = await poll(
+    validate,
+    (r) => r.issues.filter((i) => i.kind === 'approval').length === 1,
+    30_000,
+    'the approval never reached scheduling',
+  );
+  assert.equal(report.valid, false);
+  assert.equal(report.state, 'draft');
+  assert.deepEqual(report.unchecked, ['rights', 'availability']);
+  const [issue] = report.issues;
+  assert.match(issue.message, new RegExp(`media ${stranger} has no approval from MAM yet`));
+
+  // Only the approved asset, tightly: clean — and the schedule is validated, audited as such.
+  assert.equal(
+    (await reel([{ seq: 0, start: at(0), durationSec: 1800, itemType: 'media', mediaId: assetId }]))
+      .status,
+    200,
+  );
+  const clean = await validate();
+  assert.deepEqual([clean.valid, clean.state, clean.issues], [true, 'validated', []]);
+  const history = await poll(
+    async () => json(await get(`/api/v1/history/schedule/${schedule.id}`, { headers })),
+    (h) => h.revisions.some((r) => r.action === 'schedule.validated'),
+    20_000,
+    'the sink never saw the validation',
+  );
+  const last = history.revisions.at(-1);
+  assert.equal(last.action, 'schedule.validated');
+  assert.deepEqual(last.delta.state, { before: 'draft', after: 'validated' });
 });
 
 test('smoke: EP-16 — a real transcode: enqueued through the gateway, run by FFmpeg, announced, and mirrored into the asset’s files by MAM', async () => {

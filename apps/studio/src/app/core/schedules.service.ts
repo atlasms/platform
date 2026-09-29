@@ -7,6 +7,7 @@ import type {
   ScheduleItemInput,
   SchedulePage,
   ScheduleWithItems,
+  ValidationReport,
 } from './generated/scheduling.types.ts';
 import { SchedulingOperations as ops } from './generated/scheduling.operations.ts';
 
@@ -34,6 +35,14 @@ export class SchedulesService {
   /** The header with its reel, in reel order. */
   get(id: string) {
     return this.api.call(ops.getSchedule, { params: { id } }).as<ScheduleWithItems>();
+  }
+
+  /**
+   * Validate the STORED reel (EP-31) — advisory; a clean run makes a draft `validated`. A 409
+   * means the schedule changed while it was being validated.
+   */
+  validate(id: string) {
+    return this.api.call(ops.validateSchedule, { params: { id } }).as<ValidationReport>();
   }
 
   /** The editor's save: the reel as given, ids kept where sent. Returns the reel as stored. */

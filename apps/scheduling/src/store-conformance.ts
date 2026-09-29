@@ -7,8 +7,15 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ulid, validatePayload, type Envelope, type EventPayloads } from '@atlas/contracts';
-import { InMemoryBroker, OutboxRelay, type OutboxStore } from '@atlas/messaging';
+import {
+  buildEnvelope,
+  subjectFor,
+  ulid,
+  validatePayload,
+  type Envelope,
+  type EventPayloads,
+} from '@atlas/contracts';
+import { InMemoryBroker, OutboxRelay, type Message, type OutboxStore } from '@atlas/messaging';
 import { compile, type EffectivePolicy } from '@atlas/policy';
 import { SchedulingService, type Caller } from './service.ts';
 import type { ScheduleItemInput } from './schedule.ts';
@@ -65,6 +72,29 @@ const live = (
   void _none;
   return { ...rest, itemType: 'live' };
 };
+
+/** A MAM lifecycle event as the broker delivers it — a real envelope, at a chosen time. */
+function assetEvent(
+  type: string,
+  payload: Record<string, unknown>,
+  occurredAt: string,
+  channelId = CH,
+): Message {
+  const envelope = buildEnvelope({
+    type,
+    channelId,
+    payload,
+    actor: { kind: 'user', id: 'u-mam' },
+  });
+  const body = { ...envelope, occurredAt };
+  return { id: envelope.messageId, subject: subjectFor(channelId, type), body };
+}
+const approved = (assetId: string, at: string, expiresAt?: string): Message =>
+  assetEvent(
+    'asset.approved',
+    { assetId, approver: 'u-2', approvedAt: at, ...(expiresAt ? { expiresAt } : {}) },
+    at,
+  );
 
 export function scheduleStoreConformance(name: string, harness: ScheduleStoreHarness): void {
   async function withFixture(
@@ -325,6 +355,278 @@ export function scheduleStoreConformance(name: string, harness: ScheduleStoreHar
       assert.equal((await service.items(caller(), s.id)).length, 1);
       assert.equal((await service.get(caller(), s.id)).version, 2);
       assert.equal((await drain()).length, published);
+    });
+  });
+
+  // --- EP-31: MAM's word on approvals, and the validation that reads it ------------------------------
+
+  test(`[${name}] APPROVALS: each fact lands once, in any order — a stale verdict or expiry never undoes a newer one`, async () => {
+    await withFixture(async ({ service, store }) => {
+      const a = ulid();
+      const first = approved(a, '2026-09-10T10:00:00.000Z', '2026-12-31T00:00:00.000Z');
+      assert.equal(await service.applyAssetEvent(first), 'applied');
+      assert.equal(await service.applyAssetEvent(first), 'duplicate', 'a redelivery is seen');
+      assert.deepEqual(await store.approvals(CH, [a]), [
+        {
+          assetId: a,
+          channelId: CH,
+          state: 'approved',
+          stateAsOf: '2026-09-10T10:00:00.000Z',
+          expiresAt: '2026-12-31T00:00:00.000Z',
+          expiryAsOf: '2026-09-10T10:00:00.000Z',
+        },
+      ]);
+
+      // The expiry moved by an edit at 11:00; then an OLDER approval is redelivered: it sets nothing.
+      const edited = assetEvent(
+        'asset.updated',
+        {
+          assetId: a,
+          changedFields: ['expiresAt'],
+          source: 'user',
+          expiresAt: '2026-10-01T00:00:00.000Z',
+        },
+        '2026-09-10T11:00:00.000Z',
+      );
+      assert.equal(await service.applyAssetEvent(edited), 'applied');
+      const stale = approved(a, '2026-09-09T09:00:00.000Z');
+      assert.equal(await service.applyAssetEvent(stale), 'unchanged');
+      const [record] = await store.approvals(CH, [a]);
+      assert.deepEqual(
+        [record?.state, record?.expiresAt],
+        ['approved', '2026-10-01T00:00:00.000Z'],
+      );
+
+      // An edit that does not touch the expiry, and an event about something else: nothing.
+      const renamed = assetEvent(
+        'asset.updated',
+        { assetId: a, changedFields: ['title'], source: 'user' },
+        '2026-09-10T12:00:00.000Z',
+      );
+      assert.equal(await service.applyAssetEvent(renamed), 'unchanged');
+      const created = assetEvent(
+        'asset.created',
+        { assetId: a, title: 'x', type: 'video', state: 'created' },
+        '2026-09-10T12:00:00.000Z',
+      );
+      assert.equal(await service.applyAssetEvent(created), 'ignored');
+
+      // The expiry edit arriving BEFORE any verdict (two cursors, a redelivery): kept, verdict unknown.
+      const b = ulid();
+      await service.applyAssetEvent(
+        assetEvent(
+          'asset.updated',
+          { assetId: b, changedFields: ['expiresAt'], source: 'user', expiresAt: null },
+          '2026-09-10T11:00:00.000Z',
+        ),
+      );
+      assert.equal((await store.approvals(CH, [b]))[0]?.state, 'unknown');
+      await service.applyAssetEvent(
+        approved(b, '2026-09-10T10:00:00.000Z', '2026-09-20T00:00:00.000Z'),
+      );
+      const [late] = await store.approvals(CH, [b]);
+      assert.equal(late?.state, 'approved', 'the verdict still lands');
+      assert.equal(late?.expiresAt, undefined, 'and the newer "cleared" expiry stands');
+
+      // Rejected later: the verdict follows the latest word.
+      await service.applyAssetEvent(
+        assetEvent(
+          'asset.rejected',
+          { assetId: a, reason: 'bad audio' },
+          '2026-09-11T08:00:00.000Z',
+        ),
+      );
+      assert.equal((await store.approvals(CH, [a]))[0]?.state, 'rejected');
+
+      // Another channel's record is not visible here, and another channel cannot write this one.
+      assert.deepEqual(await store.approvals('ch99', [a, b]), []);
+      await assert.rejects(
+        service
+          .applyAssetEvent(approved(a, '2026-09-12T00:00:00.000Z'))
+          .then(() =>
+            service.applyAssetEvent(
+              assetEvent(
+                'asset.expired',
+                { assetId: a, expiredAt: '2026-09-12T00:00:00.000Z' },
+                '2026-09-12T01:00:00.000Z',
+                'ch99',
+              ),
+            ),
+          ),
+        /recorded in channel ch12, not ch99/,
+      );
+      // A body that is not an envelope is refused — to the broker, never skipped.
+      await assert.rejects(
+        service.applyAssetEvent({
+          id: ulid(),
+          subject: 'atlas.ch12.asset.approved',
+          body: { assetId: a },
+        }),
+        /not an envelope/,
+      );
+    });
+  });
+
+  test(`[${name}] VALIDATE: every kind named on its item, judged at AIR time — and a failed run changes nothing but says so`, async () => {
+    await withFixture(async ({ service, drain }) => {
+      const s = await service.create(caller(), {
+        broadcastDate: '2026-09-12',
+        timezone: 'Europe/London',
+      });
+      const ok = ulid();
+      const lapsing = ulid(); // approved, but only until 06:50 — it airs 06:40–07:00
+      const never = ulid();
+      await service.applyAssetEvent(approved(ok, '2026-09-01T00:00:00.000Z'));
+      await service.applyAssetEvent(approved(lapsing, '2026-09-01T00:00:00.000Z', at(50)));
+      const reel = await service.replaceItems(caller(), s.id, [
+        media(0, 0, 30, { mediaId: ok, mediaTitle: 'News' }), //        06:00–06:30
+        media(1, 20, 10, { mediaId: ok }), //                           06:20–06:30  overlap 10 min
+        media(2, 40, 20, { mediaId: lapsing }), //                      06:40–07:00  gap 10 min; expiry
+        media(3, 55, 5, { mediaId: never, fixed: true }), //            06:55–07:00  anchor 5 min; approval
+        live(4, 60, 30, { description: 'studio' }), //                  07:00–07:30
+      ]);
+      const liveId = reel.find((i) => i.itemType === 'live')!.id;
+      await service.addItem(caller(), s.id, {
+        ...media(0, 85, 10, { mediaId: ok, mediaTitle: 'VT' }), //      07:25–07:35  outside its live item
+        parentItemId: liveId,
+      });
+      const before = await service.get(caller(), s.id);
+      const seen = (await drain()).length;
+
+      const report = await service.validate(caller(), s.id);
+      assert.equal(report.valid, false);
+      assert.equal(report.state, 'draft');
+      assert.equal(report.version, before.version, 'a failed run on a draft writes nothing');
+      assert.deepEqual(report.unchecked, ['rights', 'availability']);
+      const byItem = (seq: number) => reel.find((i) => i.seq === seq && !i.parentItemId)!.id;
+      assert.deepEqual(
+        report.issues.map((i) => [i.kind, i.severity, i.seconds]),
+        [
+          ['overlap', 'critical', 600],
+          ['gap', 'warning', 600],
+          ['anchor', 'critical', 300],
+          ['overlap', 'critical', undefined],
+          ['expiry', 'critical', undefined],
+          ['approval', 'critical', undefined],
+        ],
+      );
+      assert.deepEqual(
+        report.issues.slice(0, 3).map((i) => i.itemId),
+        [byItem(1), byItem(2), byItem(3)],
+      );
+      // In the schedule's zone (BST, +1): what the person reading it plans in.
+      assert.equal(
+        report.issues[0]!.message,
+        '“media” starts at 07:20:00, 600 s before “News” ends',
+      );
+      assert.match(report.issues[2]!.message, /runs 300 s into the fixed start of .* at 07:55:00$/);
+      assert.match(
+        report.issues[3]!.message,
+        /“VT” runs outside its live item “studio” \(08:00:00–08:30:00\)/,
+      );
+      assert.match(
+        report.issues[4]!.message,
+        /the approval expires at 2026-09-12T06:50:00.000Z, before it ends$/,
+      );
+      assert.match(report.issues[5]!.message, /has no approval from MAM yet$/);
+
+      const events = (await drain()).slice(seen);
+      assert.deepEqual(
+        events.map((e) => e.type),
+        ['schedule.validated'],
+        'announced, not audited: nothing changed',
+      );
+      const payload = events[0]!.payload as unknown as EventPayloads['schedule.validated'];
+      assert.ok(validatePayload('schedule.validated', payload).valid);
+      assert.equal(payload.issues?.length, 6);
+    });
+  });
+
+  test(`[${name}] VALIDATE: a clean run makes a draft validated (audited); an edit, or a lapse, makes it a draft again`, async () => {
+    await withFixture(async ({ service, drain }) => {
+      const s = await service.create(caller(), { broadcastDate: '2026-09-12', timezone: 'UTC' });
+      const a = ulid();
+      await service.applyAssetEvent(approved(a, '2026-09-01T00:00:00.000Z'));
+      await service.replaceItems(caller(), s.id, [
+        media(0, 0, 30, { mediaId: a }),
+        live(1, 30, 30),
+      ]);
+      await drain();
+
+      const clean = await service.validate(caller(), s.id);
+      assert.deepEqual(
+        [clean.valid, clean.state, clean.version, clean.issues],
+        [true, 'validated', 3, []],
+      );
+      // The last audit record of the stream — the sqlite outbox orders a transaction's rows by a
+      // clock that ties, so position within one commit is not a thing to assert on.
+      const lastAudit = (events: Envelope[]) =>
+        events.filter((e) => e.type === 'audit.recorded').at(-1)!
+          .payload as unknown as EventPayloads['audit.recorded'];
+      let events = await drain();
+      assert.deepEqual(
+        events
+          .slice(-3)
+          .map((e) => e.type)
+          .sort(),
+        ['audit.recorded', 'schedule.updated', 'schedule.validated'],
+      );
+      const audit = lastAudit(events);
+      assert.equal(audit.action, 'schedule.validated');
+      assert.deepEqual(audit.delta['state'], { before: 'draft', after: 'validated' });
+
+      // Validating again changes nothing: announced, not written.
+      const again = await service.validate(caller(), s.id);
+      assert.deepEqual([again.state, again.version], ['validated', 3]);
+
+      // Any edit is a draft again (§3.1).
+      const edited = await service.update(caller(), s.id, { notes: 'late change' });
+      assert.equal(edited.state, 'draft');
+      assert.equal((await service.validate(caller(), s.id)).state, 'validated');
+
+      // With no edit at all, MAM rejects the media: the next run takes the schedule back to draft.
+      await service.applyAssetEvent(
+        assetEvent('asset.rejected', { assetId: a, reason: 'rights' }, '2026-09-11T00:00:00.000Z'),
+      );
+      const lapsed = await service.validate(caller(), s.id);
+      assert.deepEqual([lapsed.valid, lapsed.state], [false, 'draft']);
+      assert.match(lapsed.issues[0]!.message, /was rejected in review$/);
+      events = await drain();
+      assert.deepEqual(lastAudit(events).delta['state'], { before: 'validated', after: 'draft' });
+    });
+  });
+
+  test(`[${name}] VALIDATE: the state is written only over the version validated — an edit in between is a 409`, async () => {
+    await withFixture(async ({ service, store }) => {
+      const s = await service.create(caller(), { broadcastDate: '2026-09-12', timezone: 'UTC' });
+      const current = await store.get(s.id);
+      const moved = { ...current!, state: 'validated' as const, version: current!.version + 1 };
+      assert.equal(await store.transaction((tx) => tx.put(moved, current!.version + 5)), false);
+      assert.equal(
+        (await store.get(s.id))?.state,
+        'draft',
+        'nothing written over the wrong version',
+      );
+      assert.equal(await store.transaction((tx) => tx.put(moved, current!.version)), true);
+      assert.equal((await store.get(s.id))?.state, 'validated');
+    });
+  });
+
+  test(`[${name}] VALIDATE is schedule:write, in the caller's channel`, async () => {
+    await withFixture(async ({ service }) => {
+      const s = await service.create(caller(), { broadcastDate: '2026-09-12', timezone: 'UTC' });
+      const reader: Caller = {
+        ...caller(),
+        policy: compile({
+          subjectId: 'user-2',
+          permVersion: 1,
+          rules: [{ id: 'r', permissions: ['schedule:read'] }],
+          roles: [],
+          groups: [],
+        }),
+      };
+      await assert.rejects(service.validate(reader, s.id), /schedule:write/);
+      await assert.rejects(service.validate(caller('ch99'), s.id), /not found|schedule/i);
     });
   });
 }

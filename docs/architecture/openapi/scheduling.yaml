@@ -116,15 +116,21 @@ paths:
     post:
       operationId: validateSchedule
       tags: [schedules]
-      summary: Validate gaps/overlaps/rights/availability (FR-SCH-2/3)
+      summary: Validate the reel on demand (scope schedule:write; FR-SCH-2/3)
+      description: >-
+        ADVISORY, never a gate on save (data-model §3.4): the reel is checked as stored and the
+        report says what is wrong with it. Gaps, overlaps and anchor overruns come from the reel;
+        approval and expiry from what MAM announced about each item's media (Scheduling keeps it
+        from `asset.approved`/`rejected`/`expired`/`deleted`/`updated`), judged at the time the item
+        AIRS, not now. Rights windows and rendition availability are not checked yet and are named
+        in `unchecked`. A run with no critical issue moves a draft to `validated`; any later edit
+        moves it back to `draft`. Every run emits `schedule.validated`.
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
       responses:
-        '200':
-          description: Validation result
-          content:
-            application/json:
-              schema: { type: object, properties: { valid: { type: boolean }, problems: { type: array, items: { type: string } } } }
+        '200': { description: The report, content: { application/json: { schema: { $ref: '#/components/schemas/ValidationReport' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /schedules/{id}/send-to-air:
     post:
       operationId: sendToAir
@@ -260,6 +266,30 @@ components:
           required: [items]
           properties:
             items: { type: array, items: { $ref: '#/components/schemas/ScheduleItem' } }
+    IssueKind:
+      type: string
+      description: Tier 0 — each kind is a validator with its own rule (schedule.validated).
+      enum: [gap, overlap, anchor, approval, expiry, rights, availability]
+    ValidationIssue:
+      type: object
+      required: [kind, severity, message]
+      properties:
+        kind: { $ref: '#/components/schemas/IssueKind' }
+        itemId: { $ref: '#/components/schemas/Ulid' }
+        severity: { type: string, enum: [info, warning, critical], description: 'critical makes the schedule invalid; a gap is a warning (a filler may fill it at playout).' }
+        message: { type: string }
+        seconds: { type: number, description: 'gap/overlap/anchor: how long the dead air or the overrun is.' }
+    ValidationReport:
+      type: object
+      required: [scheduleId, version, state, valid, issues, unchecked, validatedAt]
+      properties:
+        scheduleId: { $ref: '#/components/schemas/Ulid' }
+        version: { type: integer, minimum: 1, description: The version validated. }
+        state: { type: string, enum: [draft, validated, sending, sent, failed], description: The schedule's state after this run. }
+        valid: { type: boolean, description: No critical issue. }
+        issues: { type: array, items: { $ref: '#/components/schemas/ValidationIssue' } }
+        unchecked: { type: array, items: { $ref: '#/components/schemas/IssueKind' }, description: 'Validators that did not run, and so found nothing: today rights (no rights windows yet) and availability (HSM, EP-14).' }
+        validatedAt: { type: string, format: date-time }
     SchedulePage:
       type: object
       required: [items]

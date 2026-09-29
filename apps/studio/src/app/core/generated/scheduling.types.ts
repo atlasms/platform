@@ -117,6 +117,34 @@ export interface ScheduleItemPatch {
 
 export type ScheduleWithItems = Schedule & { items: ScheduleItem[] };
 
+/** Tier 0 — each kind is a validator with its own rule (schedule.validated). */
+export type IssueKind =
+  'gap' | 'overlap' | 'anchor' | 'approval' | 'expiry' | 'rights' | 'availability';
+
+export interface ValidationIssue {
+  kind: IssueKind;
+  itemId?: Ulid;
+  /** critical makes the schedule invalid; a gap is a warning (a filler may fill it at playout). */
+  severity: 'info' | 'warning' | 'critical';
+  message: string;
+  /** gap/overlap/anchor: how long the dead air or the overrun is. */
+  seconds?: number;
+}
+
+export interface ValidationReport {
+  scheduleId: Ulid;
+  /** The version validated. */
+  version: number;
+  /** The schedule's state after this run. */
+  state: 'draft' | 'validated' | 'sending' | 'sent' | 'failed';
+  /** No critical issue. */
+  valid: boolean;
+  issues: ValidationIssue[];
+  /** Validators that did not run, and so found nothing: today rights (no rights windows yet) and availability (HSM, EP-14). */
+  unchecked: IssueKind[];
+  validatedAt: string;
+}
+
 export interface SchedulePage {
   items: Schedule[];
   nextCursor?: Ulid;

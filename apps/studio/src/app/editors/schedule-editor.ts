@@ -9,8 +9,15 @@ import {
   signal,
   type OnInit,
 } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import type { ItemType, Schedule } from '../core/generated/scheduling.types.ts';
+import type {
+  IssueKind,
+  ItemType,
+  Schedule,
+  ValidationIssue,
+  ValidationReport,
+} from '../core/generated/scheduling.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { SchedulesService } from '../core/schedules.service.ts';
@@ -43,6 +50,17 @@ const ITEM_TYPE_LABEL: Readonly<Record<ItemType, string>> = {
   title: 'scheduleEditor.type.title',
   filler: 'scheduleEditor.type.filler',
   break: 'scheduleEditor.type.break',
+};
+
+/** Every validation issue kind (Tier 0), with its label key — same rule as the item types. */
+const ISSUE_KIND_LABEL: Readonly<Record<IssueKind, string>> = {
+  gap: 'scheduleEditor.issue.gap',
+  overlap: 'scheduleEditor.issue.overlap',
+  anchor: 'scheduleEditor.issue.anchor',
+  approval: 'scheduleEditor.issue.approval',
+  expiry: 'scheduleEditor.issue.expiry',
+  rights: 'scheduleEditor.issue.rights',
+  availability: 'scheduleEditor.issue.availability',
 };
 
 interface NewItemForm {
@@ -107,6 +125,44 @@ const EMPTY_FORM: NewItemForm = {
         <p class="message" role="status">{{ locale.t('scheduleEditor.saved') }}</p>
       }
 
+      @if (validateError()) {
+        <p class="message error" role="alert">{{ validateError() }}</p>
+      }
+      @if (report(); as r) {
+        <section
+          class="report"
+          [class.valid]="r.valid"
+          [attr.aria-label]="locale.t('scheduleEditor.report')"
+          role="status"
+        >
+          <p class="summary">
+            @if (r.valid) {
+              ✓ {{ locale.t('scheduleEditor.reportValid') }}
+            } @else {
+              {{ criticalCount() }} {{ locale.t('scheduleEditor.reportInvalid') }}
+            }
+            @if (r.unchecked.length > 0) {
+              <span class="muted">
+                · {{ locale.t('scheduleEditor.unchecked') }}
+                @for (kind of r.unchecked; track kind; let lastKind = $last) {
+                  {{ locale.t(issueLabel(kind)) }}{{ lastKind ? '' : ', ' }}
+                }
+              </span>
+            }
+          </p>
+          @if (r.issues.length > 0) {
+            <ul class="issues">
+              @for (issue of r.issues; track $index) {
+                <li [attr.data-severity]="issue.severity">
+                  <span class="kind">{{ locale.t(issueLabel(issue.kind)) }}</span>
+                  {{ issue.message }}
+                </li>
+              }
+            </ul>
+          }
+        </section>
+      }
+
       <table class="reel" [attr.aria-label]="locale.t('scheduleEditor.reel')">
         <thead>
           <tr>
@@ -129,7 +185,11 @@ const EMPTY_FORM: NewItemForm = {
                 <td colspan="8">{{ locale.t('scheduleEditor.gap') }} {{ minutes(gap) }}</td>
               </tr>
             }
-            <tr [class.overlap]="isOverlap(row.key)" [class.unsaved]="!row.id">
+            <tr
+              [class.overlap]="isOverlap(row.key)"
+              [class.unsaved]="!row.id"
+              [class.flagged]="issuesOf(row.id).length > 0"
+            >
               <td class="seq">{{ i + 1 }}</td>
               <td class="time">{{ clock(row.start) }}</td>
               <td class="time">{{ clock(endOf(row.start, row.durationSec)) }}</td>
@@ -153,6 +213,11 @@ const EMPTY_FORM: NewItemForm = {
                 {{ row.mediaTitle || row.description || row.mediaId || '—' }}
                 @if (isOverlap(row.key)) {
                   <span class="flag">{{ locale.t('scheduleEditor.overlap') }}</span>
+                }
+                @for (issue of issuesOf(row.id); track $index) {
+                  <span class="flag" [attr.data-severity]="issue.severity">{{
+                    locale.t(issueLabel(issue.kind))
+                  }}</span>
                 }
               </td>
               <td>
@@ -202,6 +267,11 @@ const EMPTY_FORM: NewItemForm = {
                 <td>{{ locale.t(typeLabel(child.itemType)) }}</td>
                 <td class="title">
                   {{ child.mediaTitle || child.description || child.mediaId || '—' }}
+                  @for (issue of issuesOf(child.id); track $index) {
+                    <span class="flag" [attr.data-severity]="issue.severity">{{
+                      locale.t(issueLabel(issue.kind))
+                    }}</span>
+                  }
                 </td>
                 <td></td>
                 <td></td>
@@ -302,6 +372,19 @@ const EMPTY_FORM: NewItemForm = {
               {{ locale.t('scheduleEditor.discard') }}
             </button>
           }
+          <button
+            type="button"
+            class="secondary"
+            (click)="validate()"
+            [disabled]="validating() || dirty()"
+            [title]="dirty() ? locale.t('scheduleEditor.validateSaveFirst') : ''"
+          >
+            {{
+              validating()
+                ? locale.t('scheduleEditor.validating')
+                : locale.t('scheduleEditor.validate')
+            }}
+          </button>
           <span>{{ top().length }} {{ locale.t('scheduleEditor.items') }}</span>
         </div>
       }
@@ -331,6 +414,17 @@ export class ScheduleEditor implements OnInit {
   protected readonly saved = signal(false);
   protected readonly form = signal<NewItemForm>(EMPTY_FORM);
   protected readonly formError = signal<string | null>(null);
+  protected readonly validating = signal(false);
+  protected readonly validateError = signal<string | null>(null);
+  /** The last run's report — shown only while it describes the version on screen. */
+  private readonly lastReport = signal<ValidationReport | null>(null);
+  protected readonly report = computed(() => {
+    const r = this.lastReport();
+    return r !== null && !this.dirty() && r.version === this.schedule()?.version ? r : null;
+  });
+  protected readonly criticalCount = computed(
+    () => this.report()?.issues.filter((i) => i.severity === 'critical').length ?? 0,
+  );
 
   protected readonly itemTypes = Object.keys(ITEM_TYPE_LABEL) as ItemType[];
   protected readonly top = computed(() => topLevel(this.rows()));
@@ -467,7 +561,46 @@ export class ScheduleEditor implements OnInit {
     });
   }
 
+  /**
+   * Validate the reel AS STORED (EP-31) — so only with nothing unsaved. The report is the service's;
+   * a clean run moved the schedule to `validated`, and the header takes that state and version.
+   */
+  protected validate(): void {
+    if (this.validating() || this.dirty()) return;
+    this.validating.set(true);
+    this.validateError.set(null);
+    this.schedulesApi.validate(this.scheduleId()).subscribe({
+      next: (report) => {
+        this.lastReport.set(report);
+        this.schedule.update((s) =>
+          s ? { ...s, state: report.state, version: report.version } : s,
+        );
+        this.validating.set(false);
+      },
+      error: (err: unknown) => {
+        this.validateError.set(
+          this.locale.t(
+            err instanceof HttpErrorResponse && err.status === 409
+              ? 'scheduleEditor.validateConflict'
+              : 'scheduleEditor.validateError',
+          ),
+        );
+        this.validating.set(false);
+      },
+    });
+  }
+
   // --- rendering helpers -------------------------------------------------------------------------------
+
+  /** What the current report says about one saved row. An unsaved row has no id, and no report. */
+  protected issuesOf(id: string | undefined): ValidationIssue[] {
+    if (id === undefined) return [];
+    return this.report()?.issues.filter((i) => i.itemId === id) ?? [];
+  }
+
+  protected issueLabel(kind: IssueKind): string {
+    return ISSUE_KIND_LABEL[kind];
+  }
 
   protected childrenOf(key: string): ReelRow[] {
     return childrenOf(this.rows(), key);
@@ -544,6 +677,8 @@ export class ScheduleEditor implements OnInit {
     const envelope = payload as { channelId?: string; payload?: { scheduleId?: string } };
     if (envelope.channelId !== this.session.channelId()) return;
     if (envelope.payload?.scheduleId !== this.scheduleId()) return;
+    // A run that changed the state also sent schedule.updated, which is the one that reloads.
+    if (subject.endsWith('.schedule.validated')) return;
     // A reload replaces the rows; with unsaved edits that would discard the user's work.
     if (this.dirty()) return;
     this.reload();
