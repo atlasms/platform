@@ -1091,9 +1091,17 @@ test('smoke: EP-39 — a recorder RECORDS: captured by FFmpeg on a worker, hande
     assert.equal(job.state, 'accepted', JSON.stringify(job));
     assert.equal(job.technicalMetadata?.container, 'mpegts');
     assert.equal(job.technicalMetadata?.videoCodec, 'h264');
+    // The current minute is planned at once, so the first file may begin when the recorder was
+    // created, seconds before the minute ends: what it can hold is its own window, not a constant.
+    // (A fixed `> 5` failed when the recorder was made at hh:mm:54 — 4.69 s, correctly recorded.)
+    const window =
+      (Date.parse(handed.captureTo) -
+        Math.max(Date.parse(handed.captureFrom), Date.parse(recorder.createdAt))) /
+      1000;
+    const recorded = job.technicalMetadata?.durationSec;
     assert.ok(
-      job.technicalMetadata?.durationSec > 5,
-      `recorded ${job.technicalMetadata?.durationSec} s`,
+      recorded > 1 && recorded <= window + 1,
+      `recorded ${recorded} s of a ${window} s window`,
     );
 
     // Its health (EP-39 slice 2), through the gateway: the recorder is there, with its counts.
