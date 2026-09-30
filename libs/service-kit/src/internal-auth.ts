@@ -27,10 +27,21 @@ const bodyHash = (body: Uint8Array | string | undefined): string =>
     .update(body ?? '')
     .digest('hex');
 
-const mac = (key: string, req: InternalRequest, t: number): string =>
+/** The same request with its body already hashed — a stream too large to hold (ADR-0009). */
+export interface InternalDigestRequest {
+  method: string;
+  path: string;
+  /** Hex SHA-256 of the body as sent. */
+  bodySha256: string;
+}
+
+const macOf = (key: string, req: InternalDigestRequest, t: number): string =>
   createHmac('sha256', key)
-    .update(`${req.method.toUpperCase()}\n${req.path}\n${t}\n${bodyHash(req.body)}`)
+    .update(`${req.method.toUpperCase()}\n${req.path}\n${t}\n${req.bodySha256.toLowerCase()}`)
     .digest('hex');
+
+const mac = (key: string, req: InternalRequest, t: number): string =>
+  macOf(key, { method: req.method, path: req.path, bodySha256: bodyHash(req.body) }, t);
 
 /** Keys from config: comma-separated, each at least 32 bytes. The first one signs. */
 export function internalKeys(raw: string): string[] {
@@ -56,6 +67,77 @@ export function signInternal(key: string, req: InternalRequest, now: Date = new 
 export type InternalVerdict = { ok: true } | { ok: false; reason: string };
 
 /**
+ * Sign a request whose body is hashed already (ADR-0009): a producer streaming a file it has hashed
+ * signs the digest it holds, and the same signature then verifies the bytes the receiver hashed as
+ * they arrived. The string signed is identical to `signInternal`'s for the same bytes.
+ */
+export function signInternalDigest(
+  key: string,
+  req: InternalDigestRequest,
+  now: Date = new Date(),
+): string {
+  const t = Math.floor(now.getTime() / 1000);
+  return `v1,t=${t},sig=${macOf(key, req, t)}`;
+}
+
+type Parsed = { ok: true; t: number; sig: Buffer } | { ok: false; reason: string };
+
+function parse(
+  keys: readonly string[],
+  header: string | undefined,
+  now: Date,
+  skewSeconds: number,
+): Parsed {
+  if (keys.length === 0) return { ok: false, reason: 'no internal key configured' };
+  if (!header) return { ok: false, reason: 'unsigned' };
+  const m = /^v1,t=(\d{1,12}),sig=([0-9a-f]{64})$/.exec(header);
+  if (!m) return { ok: false, reason: 'malformed signature' };
+  const t = Number(m[1]);
+  if (Math.abs(Math.floor(now.getTime() / 1000) - t) > skewSeconds) {
+    return { ok: false, reason: 'signature outside the time window' };
+  }
+  return { ok: true, t, sig: Buffer.from(m[2]!, 'hex') };
+}
+
+/**
+ * The checks that need no body: a key is configured, the header is well-formed, the time is inside
+ * the window. A receiver of a large stream calls this BEFORE reading it, so an unsigned or stale
+ * request is refused without accepting gigabytes; the signature itself is checked afterwards, with
+ * `verifyInternalDigest`, against the digest of what arrived.
+ */
+export function preflightInternal(
+  keys: readonly string[],
+  header: string | undefined,
+  now: Date = new Date(),
+  skewSeconds = DEFAULT_INTERNAL_SKEW_SECONDS,
+): InternalVerdict {
+  const parsed = parse(keys, header, now, skewSeconds);
+  return parsed.ok ? { ok: true } : parsed;
+}
+
+/**
+ * `verifyInternal` for a body hashed as it was received. The time window is judged at `now` —
+ * pass the time the request ARRIVED, or a long upload would outlive its own signature.
+ */
+export function verifyInternalDigest(
+  keys: readonly string[],
+  req: InternalDigestRequest,
+  header: string | undefined,
+  now: Date = new Date(),
+  skewSeconds = DEFAULT_INTERNAL_SKEW_SECONDS,
+): InternalVerdict {
+  const parsed = parse(keys, header, now, skewSeconds);
+  if (!parsed.ok) return parsed;
+  for (const key of keys) {
+    const expected = Buffer.from(macOf(key, req, parsed.t), 'hex');
+    if (expected.length === parsed.sig.length && timingSafeEqual(expected, parsed.sig)) {
+      return { ok: true };
+    }
+  }
+  return { ok: false, reason: 'bad signature' };
+}
+
+/**
  * Whether `header` is a valid signature of `req` under one of `keys`. The reason on a refusal is
  * for the service's log, never for the response — a caller that is not ours learns nothing.
  */
@@ -66,18 +148,13 @@ export function verifyInternal(
   now: Date = new Date(),
   skewSeconds = DEFAULT_INTERNAL_SKEW_SECONDS,
 ): InternalVerdict {
-  if (keys.length === 0) return { ok: false, reason: 'no internal key configured' };
-  if (!header) return { ok: false, reason: 'unsigned' };
-  const m = /^v1,t=(\d{1,12}),sig=([0-9a-f]{64})$/.exec(header);
-  if (!m) return { ok: false, reason: 'malformed signature' };
-  const t = Number(m[1]);
-  if (Math.abs(Math.floor(now.getTime() / 1000) - t) > skewSeconds) {
-    return { ok: false, reason: 'signature outside the time window' };
-  }
-  const given = Buffer.from(m[2]!, 'hex');
+  const parsed = parse(keys, header, now, skewSeconds);
+  if (!parsed.ok) return parsed;
   for (const key of keys) {
-    const expected = Buffer.from(mac(key, req, t), 'hex');
-    if (expected.length === given.length && timingSafeEqual(expected, given)) return { ok: true };
+    const expected = Buffer.from(mac(key, req, parsed.t), 'hex');
+    if (expected.length === parsed.sig.length && timingSafeEqual(expected, parsed.sig)) {
+      return { ok: true };
+    }
   }
   return { ok: false, reason: 'bad signature' };
 }

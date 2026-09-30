@@ -83,8 +83,12 @@ export {
   INTERNAL_SIGNATURE_HEADER,
   internalKeys,
   MIN_INTERNAL_KEY_BYTES,
+  preflightInternal,
   signInternal,
+  signInternalDigest,
   verifyInternal,
+  verifyInternalDigest,
+  type InternalDigestRequest,
   type InternalRequest,
   type InternalVerdict,
 } from './internal-auth.ts';
