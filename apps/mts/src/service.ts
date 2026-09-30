@@ -14,7 +14,7 @@
 
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, rm, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   buildEnvelope,
@@ -40,6 +40,7 @@ import {
   type ProfileInput,
   type TranscodeProfile,
 } from './profile.ts';
+import type { FileStore } from './hsm-client.ts';
 import type { JobStore } from './store.ts';
 import { TranscodeRefusal, type Transcoder } from './transcoder.ts';
 
@@ -55,6 +56,13 @@ export interface MtsOptions {
    * refuses it.
    */
   workRoot: string;
+  /**
+   * HSM (EP-14.7; ADR-0009): where every rendition goes and where an `inputFile` comes from. With
+   * it, a rendition is pushed to HSM, its `path` becomes HSM's, and the local output is removed —
+   * the work root is scratch. Without it (the suites, a deployment with no HSM) renditions stay
+   * under the work root as before, and an `inputFile` job is refused.
+   */
+  files?: FileStore;
   /** How many times an attempt may fail before the job is dead-lettered. Default 3. */
   maxAttempts?: number;
   /**
@@ -80,7 +88,9 @@ export interface MtsOptions {
 export interface EnqueueInput {
   assetId: string;
   presetIds: string[];
-  inputPath: string;
+  /** Exactly one of `inputPath` (under the work root) and `inputFile` (the asset's file in HSM). */
+  inputPath?: string;
+  inputFile?: { kind: string; variant?: string };
   priority?: number;
 }
 
@@ -138,16 +148,30 @@ export class MtsService {
     if (input.presetIds.length === 0) throw new ValidationError('presetIds must not be empty');
     const unknown = await this.unresolvable(caller.channelId, input.presetIds);
     if (unknown.length > 0) throw new ValidationError(`unknown preset(s): ${unknown.join(', ')}`);
-    const inputPath = this.resolveInput(input.inputPath);
-    await this.requireInput(inputPath, input.inputPath);
+    if ((input.inputPath === undefined) === (input.inputFile === undefined)) {
+      throw new ValidationError('give exactly one of inputPath and inputFile');
+    }
+    const id = ulid();
+    let inputPath: string;
+    if (input.inputFile !== undefined) {
+      if (!this.options.files) {
+        throw new ValidationError('inputFile needs HSM, and this MTS has none configured');
+      }
+      // Fetched at run time to scratch, named by the job — a retry overwrites its own copy.
+      inputPath = join(this.options.workRoot, 'inputs', id, input.inputFile.kind);
+    } else {
+      inputPath = this.resolveInput(input.inputPath!);
+      await this.requireInput(inputPath, input.inputPath!);
+    }
 
     const at = this.now().toISOString();
     const job: TranscodeJob = {
-      id: ulid(),
+      id,
       channelId: caller.channelId,
       assetId: input.assetId,
       presetIds: [...input.presetIds],
       inputPath,
+      ...(input.inputFile !== undefined ? { inputFile: { ...input.inputFile } } : {}),
       state: 'queued',
       attempts: 0,
       priority: input.priority ?? 0,
@@ -307,6 +331,20 @@ export class MtsService {
 
   private async executePresets(job: TranscodeJob, signal?: AbortSignal): Promise<RunOutcome> {
     const renditions: RenditionResult[] = [];
+    try {
+      // An input in HSM comes to scratch first (ADR-0009): a failure here is a tool fault, retried.
+      if (job.inputFile !== undefined) {
+        if (!this.options.files) throw new Error('inputFile needs HSM, and none is configured');
+        await this.options.files.fetch(
+          job.assetId,
+          job.inputFile.kind,
+          job.inputFile.variant,
+          job.inputPath,
+        );
+      }
+    } catch (err) {
+      return this.fail(job, err);
+    }
     // Once per job, before the first preset: what turns FFmpeg's `out_time` into a percentage.
     // Unreadable is not a failure — the job runs without a progress bar.
     const durationSec = await this.options.transcoder
@@ -341,6 +379,10 @@ export class MtsService {
       updatedAt: at,
       version: job.version + 1,
     };
+    if (job.inputFile !== undefined) {
+      // The fetched input was scratch; the renditions are HSM's now.
+      await rm(dirname(job.inputPath), { recursive: true, force: true }).catch(() => undefined);
+    }
     await this.options.store.transaction(async (tx) => {
       if (!(await tx.putJob(completed, 'running'))) return;
       await tx.enqueue(
@@ -388,12 +430,36 @@ export class MtsService {
       },
     );
 
+    const checksum = await sha256(outputPath);
+    let path = outputPath;
+    let sizeBytes = output.sizeBytes;
+    if (this.options.files) {
+      // To HSM (ADR-0009): signed over this checksum, and HSM's path is the rendition's from here
+      // on. The local file was scratch. A refusal or an outage throws — a tool fault, retried.
+      const placed = await this.options.files.place(
+        {
+          channelId: job.channelId,
+          assetId: job.assetId,
+          kind: preset.kind,
+          jobId: job.id,
+          profile: preset.id,
+          ...(!preset.still && output.durationSec !== undefined
+            ? { technical: { durationSec: output.durationSec } }
+            : {}),
+        },
+        outputPath,
+        checksum,
+      );
+      path = placed.path;
+      sizeBytes = placed.sizeBytes;
+      await rm(outputPath, { force: true });
+    }
     return {
       presetId: preset.id,
       kind: preset.kind,
-      path: outputPath,
-      checksum: { algorithm: 'sha256', value: await sha256(outputPath) },
-      sizeBytes: output.sizeBytes,
+      path,
+      checksum: { algorithm: 'sha256', value: checksum },
+      sizeBytes,
       // Which encoder made it, and whether a GPU the profile asked for was unusable here.
       ...('encoder' in preset && preset.encoder !== undefined ? { encoder: preset.encoder } : {}),
       ...('fallback' in preset && preset.fallback ? { fallback: true } : {}),

@@ -31,7 +31,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [assetId, presetIds, inputPath]
+              required: [assetId, presetIds]
               properties:
                 assetId: { $ref: '#/components/schemas/Ulid' }
                 presetIds:
@@ -41,7 +41,14 @@ paths:
                   items: { type: string }
                 inputPath:
                   type: string
-                  description: A path inside MTS's work root, until HSM (EP-14) resolves inputs. Relative paths resolve against the root.
+                  description: A path inside MTS's work root (a sample a deployment rendered there). Relative paths resolve against the root. Exactly one of inputPath and inputFile.
+                inputFile:
+                  type: object
+                  description: 'The input is the asset''s live file of this kind in HSM (EP-14.7; ADR-0009), fetched to scratch at run time. Exactly one of inputPath and inputFile; refused when MTS has no HSM configured.'
+                  required: [kind]
+                  properties:
+                    kind: { type: string, enum: [original, proxy, broadcast, thumbnail, vtt-filmstrip, hover-preview] }
+                    variant: { type: string }
                 priority: { type: integer, description: 'Higher runs sooner; equal priorities run oldest first. Default 0.' }
       responses:
         '202': { description: Job queued, content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } } }
@@ -134,7 +141,13 @@ components:
         channelId: { type: string }
         assetId: { $ref: '#/components/schemas/Ulid' }
         presetIds: { type: array, items: { type: string } }
-        inputPath: { type: string }
+        inputPath: { type: string, description: 'Under the work root; for an inputFile job, the scratch path it is fetched to.' }
+        inputFile:
+          type: object
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [original, proxy, broadcast, thumbnail, vtt-filmstrip, hover-preview] }
+            variant: { type: string }
         state: { type: string, enum: [queued, running, completed, failed, dead-letter] }
         attempts: { type: integer, minimum: 0, description: 'Attempts started. An attempt interrupted by a drain is given back.' }
         percent: { type: number, minimum: 0, maximum: 100, description: Best-effort progress across the job's presets. Never a state. }

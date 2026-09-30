@@ -15,12 +15,14 @@ import {
   createLogger,
   createTracer,
   HealthRegistry,
+  internalKeys,
   loadConfig,
   MetricRegistry,
 } from '@atlas/service-kit';
 import {
   buildMtsApp,
   ffmpegTranscoder,
+  hsmFileStore,
   MtsService,
   pgJobStore,
   pgMigrations,
@@ -50,6 +52,10 @@ const config = loadConfig({
   // EP-16.2. Inputs are read from here and renditions written under it. Until HSM (EP-14)
   // resolves paths, a job's `inputPath` MUST be inside this root — see service.ts.
   workRoot: { env: 'ATLAS_MTS_WORK_DIR', type: 'string', default: '/var/lib/atlas/mts' },
+  // HSM (EP-14.7; ADR-0009): every rendition goes there, signed with HSM's internal key. Unset —
+  // renditions stay in the work area (a deployment without HSM); set, the work area is scratch.
+  hsmOrigin: { env: 'ATLAS_HSM_ORIGIN', type: 'string', default: 'http://hsm:3000' },
+  hsmKeys: { env: 'ATLAS_HSM_INTERNAL_KEYS', type: 'string', default: '' },
   ffmpegBinary: { env: 'ATLAS_FFMPEG_BINARY', type: 'string', default: 'ffmpeg' },
   transcodeTimeoutMs: { env: 'ATLAS_TRANSCODE_TIMEOUT_MS', type: 'number', default: 30 * 60_000 },
   maxAttempts: { env: 'ATLAS_TRANSCODE_MAX_ATTEMPTS', type: 'number', default: 3 },
@@ -119,10 +125,16 @@ const transcoder = ffmpegTranscoder({
   timeoutMs: config.transcodeTimeoutMs,
 });
 const store = pgJobStore(pool);
+const hsmKey = internalKeys(config.hsmKeys)[0];
+if (!hsmKey)
+  log.warn('no HSM key: renditions stay in the work area, and inputFile jobs are refused');
 const service = new MtsService({
   store,
   transcoder,
   workRoot: config.workRoot,
+  ...(hsmKey !== undefined
+    ? { files: hsmFileStore({ origin: config.hsmOrigin, key: hsmKey }) }
+    : {}),
   maxAttempts: config.maxAttempts,
   workerId,
   // EP-16.4: progress on `live.<channel>.transcode.progress`, core NATS, never stored. While the

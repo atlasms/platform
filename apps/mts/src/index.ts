@@ -63,3 +63,11 @@ export {
   type ProfileInput,
   type TranscodeProfile,
 } from './profile.ts';
+export {
+  hsmFileStore,
+  memoryFileStore,
+  type Fetched,
+  type FileStore,
+  type Placed,
+  type PlacementMeta,
+} from './hsm-client.ts';

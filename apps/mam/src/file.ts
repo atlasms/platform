@@ -91,14 +91,45 @@ export function fileFromPlacement(
     channelId: context.channelId,
     assetId: placed.assetId,
     kind: placed.renditionKind ?? existing?.kind ?? 'original',
-    ...(existing?.variant !== undefined ? { variant: existing.variant } : {}),
+    ...(placed.variant !== undefined
+      ? { variant: placed.variant }
+      : existing?.variant !== undefined
+        ? { variant: existing.variant }
+        : {}),
     storage: { path: placed.path, tier: placed.tier, status: 'available' },
     checksum: placed.checksum ?? existing?.checksum ?? { algorithm: 'unknown', value: '' },
-    ...(existing?.sizeBytes !== undefined ? { sizeBytes: existing.sizeBytes } : {}),
+    // HSM's size is of the bytes it wrote (ADR-0009); a placement without one keeps the row's.
+    ...(placed.sizeBytes !== undefined
+      ? { sizeBytes: placed.sizeBytes }
+      : existing?.sizeBytes !== undefined
+        ? { sizeBytes: existing.sizeBytes }
+        : {}),
     ...(existing?.durationSec !== undefined ? { durationSec: existing.durationSec } : {}),
     ...(existing?.technical !== undefined ? { technical: existing.technical } : {}),
     sourceMessageId: context.messageId,
     version: (existing?.version ?? 0) + 1,
+    updatedAt: context.now,
+  };
+}
+
+/**
+ * A move as HSM announced it (ADR-0009): the same file, its bytes now at another path on another
+ * tier. Only the storage changes; the checksum is the file's, unchanged by a verified move.
+ */
+export function fileFromMove(
+  moved: EventPayloads['file.moved'],
+  existing: FileRef,
+  context: { messageId: string; now: string },
+): FileRef {
+  return {
+    ...existing,
+    storage: {
+      ...existing.storage,
+      ...(moved.path !== undefined ? { path: moved.path } : {}),
+      tier: moved.toTier,
+    },
+    sourceMessageId: context.messageId,
+    version: existing.version + 1,
     updatedAt: context.now,
   };
 }

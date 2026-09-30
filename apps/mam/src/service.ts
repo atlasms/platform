@@ -37,7 +37,13 @@ import {
   type FieldDefinition,
   type FieldSchema,
 } from './field-schema.ts';
-import { fileFromPlacement, fileFromRendition, fileKey, type FileRef } from './file.ts';
+import {
+  fileFromMove,
+  fileFromPlacement,
+  fileFromRendition,
+  fileKey,
+  type FileRef,
+} from './file.ts';
 import type { AssetCache, CacheFamilies, CacheFamily } from './cache.ts';
 import type { AssetStore, AssetTx, ExtendedValues } from './store.ts';
 import { groupsForCoreFields, groupsForExtended, type AssetFieldGroup } from './field-groups.ts';
@@ -669,7 +675,7 @@ export class MamService {
     await this.assetInChannel(placed.assetId, envelope.channelId);
     const kind = placed.renditionKind ?? 'original';
     const existing = (await this.options.store.filesOf(placed.assetId)).find(
-      (f) => f.kind === kind && f.variant === undefined,
+      (f) => f.kind === kind && f.variant === placed.variant,
     );
     const file = fileFromPlacement(placed, {
       channelId: envelope.channelId,
@@ -679,6 +685,41 @@ export class MamService {
     });
     const caller = systemCaller(envelope.channelId, envelope);
     const audit = this.fileAudit(caller, file, existing, 'file.placed');
+    let outcome: MirrorOutcome = 'applied';
+    await this.options.store.transaction(async (tx) => {
+      if (!(await tx.markSeen(msg.id))) {
+        outcome = 'duplicate';
+        return;
+      }
+      await tx.putFile(file);
+      await tx.enqueue(audit);
+    });
+    return outcome;
+  }
+
+  /**
+   * `file.moved`: HSM moved a file's bytes to another tier (ADR-0009). The row of that kind and
+   * variant takes the new path and tier. A move for a row this mirror has not seen yet is THROWN —
+   * `file.placed` travels on another subject and may not have been applied yet; the redelivery finds
+   * it. Skipping would leave the row pointing at bytes that are gone.
+   */
+  async mirrorMove(msg: Message): Promise<MirrorOutcome> {
+    const envelope = this.envelopeOf<EventPayloads['file.moved']>(msg, 'file.moved');
+    const moved = envelope.payload;
+    await this.assetInChannel(moved.assetId, envelope.channelId);
+    const kind = moved.renditionKind ?? 'original';
+    const existing = (await this.options.store.filesOf(moved.assetId)).find(
+      (f) => f.kind === kind && f.variant === moved.variant,
+    );
+    if (!existing) {
+      throw new NotFound(`no ${kind} file of asset ${moved.assetId} to move yet`);
+    }
+    const file = fileFromMove(moved, existing, {
+      messageId: msg.id,
+      now: this.now().toISOString(),
+    });
+    const caller = systemCaller(envelope.channelId, envelope);
+    const audit = this.fileAudit(caller, file, existing, 'file.moved');
     let outcome: MirrorOutcome = 'applied';
     await this.options.store.transaction(async (tx) => {
       if (!(await tx.markSeen(msg.id))) {

@@ -19,10 +19,11 @@ export interface FileMirrorOptions {
   onError?: (err: unknown, msg: Message) => void;
 }
 
-/** Every channel's `transcode.completed` and `file.placed` — `*` is the channel token. */
+/** Every channel's `transcode.completed`, `file.placed` and `file.moved` — `*` is the channel token. */
 export const FILE_MIRROR_PATTERNS = {
   transcode: 'atlas.*.transcode.completed',
   placed: 'atlas.*.file.placed',
+  moved: 'atlas.*.file.moved',
 } as const;
 
 export function startFileMirror(options: FileMirrorOptions): Subscription[] {
@@ -48,6 +49,11 @@ export function startFileMirror(options: FileMirrorOptions): Subscription[] {
     options.broker.subscribe(
       FILE_MIRROR_PATTERNS.placed,
       handle((msg) => options.service.mirrorPlacement(msg)),
+      opts,
+    ),
+    options.broker.subscribe(
+      FILE_MIRROR_PATTERNS.moved,
+      handle((msg) => options.service.mirrorMove(msg)),
       opts,
     ),
   ];

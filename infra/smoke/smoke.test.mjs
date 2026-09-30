@@ -151,6 +151,8 @@ test('smoke: every PROXIED upstream answers through the gateway before anything 
     ['scheduling', '/api/v1/schedules?limit=1'],
     ['rim', '/api/v1/uploads/01H00000000000000000000000'],
     ['mts', '/api/v1/jobs?limit=1'],
+    // HSM (EP-14): the location of an asset nobody has — an empty list, through the suffix route.
+    ['hsm', '/api/v1/assets/01H00000000000000000000000/location'],
   ];
   const budgetMs = Number(process.env.ATLAS_SMOKE_UPSTREAM_BUDGET_MS ?? 30_000);
 
@@ -1555,6 +1557,82 @@ test('smoke: EP-31 — validation reads MAM’s approvals off the bus, and a cle
     });
     assert.equal(removed.status, 204, `rights window delete failed: ${removed.text}`);
   }
+});
+
+test('smoke: EP-14 — HSM holds the renditions: placed signed, located through the gateway, and read back as an input', async () => {
+  // ADR-0009 on a live cluster. MTS transcodes the sample clip and PUSHES each rendition to HSM,
+  // signed over its checksum; HSM writes it to the online target, records it in the ledger and
+  // announces file.placed. Through the gateway the asset's location lists the files with MTS's
+  // checksums — HSM's own, of the bytes it wrote. Then a second job takes its INPUT from HSM (the
+  // proxy), fetched to MTS's scratch: the read path, end to end.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const poll = async (fn, done, budgetMs, what) => {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const value = await fn();
+      if (done(value)) return value;
+      assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(value)}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ title: 'Smoke HSM', mediaType: 'video', fileType: 'mp4' }),
+  });
+  assert.equal(created.status, 201, created.text);
+  const assetId = json(created).id;
+  const runJob = async (body) => {
+    const res = await get('/api/v1/jobs', { method: 'POST', headers, body: JSON.stringify(body) });
+    assert.equal(res.status, 202, `enqueue failed: ${res.text}`);
+    return poll(
+      async () => json(await get(`/api/v1/jobs/${json(res).id}`, { headers })),
+      (job) => ['completed', 'dead-letter'].includes(job.state),
+      90_000,
+      'the job did not finish',
+    );
+  };
+
+  const first = await runJob({ assetId, presetIds: ['proxy'], inputPath: 'samples/smoke.mp4' });
+  assert.equal(first.state, 'completed', JSON.stringify(first));
+  const [proxy] = first.renditions;
+  assert.ok(
+    proxy.path.startsWith(`${json(created).channelId}/${assetId}/proxy/`),
+    `HSM's key, not MTS's work area: ${proxy.path}`,
+  );
+
+  const location = json(await get(`/api/v1/assets/${assetId}/location`, { headers }));
+  assert.equal(location.length, 1, JSON.stringify(location));
+  assert.deepEqual(
+    [
+      location[0].kind,
+      location[0].storage.tier,
+      location[0].storage.status,
+      location[0].checksum.value,
+    ],
+    ['proxy', 'online', 'available', proxy.checksum.value],
+    'the ledger holds the bytes MTS hashed',
+  );
+  assert.equal(location[0].storage.path, proxy.path);
+
+  // The input from HSM: a thumbnail made FROM the proxy HSM holds.
+  const second = await runJob({ assetId, presetIds: ['thumbnail'], inputFile: { kind: 'proxy' } });
+  assert.equal(second.state, 'completed', JSON.stringify(second));
+  const kinds = json(await get(`/api/v1/assets/${assetId}/location`, { headers })).map(
+    (f) => f.kind,
+  );
+  assert.deepEqual(kinds.sort(), ['proxy', 'thumbnail']);
+
+  // MAM's mirror took HSM's word (file.placed): the same path and checksum.
+  const files = await poll(
+    async () => json(await get(`/api/v1/assets/${assetId}/files`, { headers })),
+    (list) => list.some((f) => f.kind === 'proxy' && f.storage.path === proxy.path),
+    30_000,
+    "MAM's mirror never took HSM's placement",
+  );
+  assert.equal(files.find((f) => f.kind === 'proxy').checksum.value, proxy.checksum.value);
 });
 
 test('smoke: EP-16 — a real transcode: enqueued through the gateway, run by FFmpeg, announced, and mirrored into the asset’s files by MAM', async () => {

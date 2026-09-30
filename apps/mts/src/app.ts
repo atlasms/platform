@@ -248,9 +248,29 @@ export async function buildMtsApp(options: MtsAppOptions): Promise<FastifyInstan
   app.post('/api/v1/jobs', async (req, reply) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const presetIds = body['presetIds'];
+    const inputFile = body['inputFile'];
+    if (
+      inputFile !== undefined &&
+      (typeof inputFile !== 'object' ||
+        inputFile === null ||
+        typeof (inputFile as Record<string, unknown>)['kind'] !== 'string')
+    ) {
+      throw new ValidationError('inputFile must be { kind, variant? }');
+    }
+    const file = inputFile as { kind: string; variant?: unknown } | undefined;
     const job = await options.service.enqueue(await caller(req), {
       assetId: str(body['assetId'], 'assetId'),
-      inputPath: str(body['inputPath'], 'inputPath'),
+      ...(body['inputPath'] !== undefined
+        ? { inputPath: str(body['inputPath'], 'inputPath') }
+        : {}),
+      ...(file !== undefined
+        ? {
+            inputFile: {
+              kind: file.kind,
+              ...(typeof file.variant === 'string' ? { variant: file.variant } : {}),
+            },
+          }
+        : {}),
       presetIds: Array.isArray(presetIds) ? presetIds.map((p, i) => str(p, `presetIds[${i}]`)) : [],
       ...(typeof body['priority'] === 'number' ? { priority: body['priority'] } : {}),
     });
