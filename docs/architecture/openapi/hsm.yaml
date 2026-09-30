@@ -1,11 +1,12 @@
 openapi: 3.1.0
 info:
   title: Atlas HSM API
-  version: 0.1.0
+  version: 0.2.0
   description: >-
-    Stub contract for the Hierarchical Storage Manager — asset location, restore, file
-    operations, and send-to-air export. File operations and export are internal (service-to-
-    service). See ../services/hsm.md.
+    The Hierarchical Storage Manager (EP-14; ADR-0009) — the file ledger and every operation on
+    stored bytes. The public surface is reached through the gateway; the internal surface is called
+    by producers and services with a signed request (ADR-0008/0009) and is never routed by the
+    gateway. See ../services/hsm.md.
 servers:
   - url: https://{host}/api/v1
     variables:
@@ -14,27 +15,28 @@ security:
   - bearerAuth: []
 tags:
   - name: location
-  - name: internal
   - name: admin
+  - name: internal
 paths:
   /assets/{id}/location:
     get:
       operationId: getAssetLocation
       tags: [location]
-      summary: Current tier/status/checksum of each rendition (scope asset:read)
+      summary: Where an asset's files are, with their replicas (asset:read on the files group)
+      description: >-
+        The live files of the asset in the caller's channel — another channel's asset is an empty
+        list, never a 403. Strict on the files group: HSM does not know the asset's category, so a
+        grant narrowed to a category is refused. The gateway routes this one path of /assets to HSM.
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
       responses:
-        '200':
-          description: Locations
-          content:
-            application/json:
-              schema: { type: array, items: { $ref: '#/components/schemas/FileEntry' } }
+        '200': { description: Files, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/File' } } } } }
+        '403': { $ref: '#/components/responses/Error' }
   /assets/{id}/restore:
     post:
       operationId: requestRestore
       tags: [location]
-      summary: Request restore to online; returns an ETA (scope asset:restore)
+      summary: Request restore to online; returns an ETA (scope asset:restore) — EP-36, not built
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
       responses:
@@ -43,30 +45,151 @@ paths:
           content:
             application/json:
               schema: { type: object, properties: { restoreRequestId: { $ref: '#/components/schemas/Ulid' }, etaSeconds: { type: integer } } }
-  /files/operations:
+  /operations/{id}:
+    get:
+      operationId: getOperation
+      tags: [location]
+      summary: An operation's state and progress, in the caller's channel (asset:read on files)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Operation, content: { application/json: { schema: { $ref: '#/components/schemas/Operation' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+  /storage-targets:
+    get:
+      operationId: listStorageTargets
+      tags: [admin]
+      summary: "The channel's storage targets and the platform-wide ones (storage:admin)"
+      responses:
+        '200': { description: Targets, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/StorageTarget' } } } } }
+        '403': { $ref: '#/components/responses/Error' }
     post:
-      operationId: fileOperation
+      operationId: createStorageTarget
+      tags: [admin]
+      summary: A new storage target (storage:admin; audited)
+      description: >-
+        A channel's target, or with `?scope=platform` and an UNSCOPED storage:admin a platform-wide
+        one. An fs root must lie under the storage mounted into HSM and be writable; an s3 target
+        names its credentials by `credentialRef` — never the credential. Making a target the default
+        of its (scope, tier) demotes the previous default.
+      parameters:
+        - { name: scope, in: query, schema: { type: string, enum: [channel, platform] } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/StorageTargetInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/StorageTarget' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /storage-targets/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getStorageTarget
+      tags: [admin]
+      summary: One storage target (storage:admin)
+      responses:
+        '200': { description: The target, content: { application/json: { schema: { $ref: '#/components/schemas/StorageTarget' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: updateStorageTarget
+      tags: [admin]
+      summary: Replace a target's settings over the version read (compare-and-set; audited)
+      description: Kind and tier never change — make a new target and move the files. Disabled, never deleted.
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/StorageTargetInput' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/StorageTarget' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /internal/v1/assets/{assetId}/files/{kind}:
+    servers:
+      - url: http://hsm:3000
+        description: In-cluster only; the gateway never routes /internal/.
+    put:
+      operationId: placeFile
       tags: [internal]
-      summary: Copy/move/delete (internal, permissioned; not user-facing)
+      summary: A producer places a file's bytes (signed over the body's SHA-256; streamed)
+      description: >-
+        The body is the file, streamed. The x-atlas-internal signature covers the method, the path
+        WITH the query (the channel, variant and provenance are there, not in headers) and the
+        body's SHA-256 (`signInternalDigest`). Its shape, key and time are checked before the body
+        is read; its MAC after, against the digest of the bytes HSM wrote — a mismatch is a bare 401
+        and the bytes are removed. The same bytes as the live file are 200 and change nothing;
+        other bytes replace it (200) at a new key; a new file is 201.
+      parameters:
+        - { name: assetId, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: kind, in: path, required: true, schema: { $ref: '#/components/schemas/FileKind' } }
+        - { name: channelId, in: query, required: true, schema: { type: string } }
+        - { name: variant, in: query, schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' } }
+        - { name: producedBy, in: query, schema: { type: string, enum: [ingest, transcode, editor, import] } }
+        - { name: jobId, in: query, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: profile, in: query, schema: { type: string } }
+        - { name: technical, in: query, description: 'A JSON object: ffprobe-derived technical metadata.', schema: { type: string } }
+      requestBody: { required: true, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+      responses:
+        '200': { description: 'Replaced, or unchanged', content: { application/json: { schema: { $ref: '#/components/schemas/File' } } } }
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/File' } } } }
+        '401': { description: Not a correctly signed request }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /internal/v1/assets/{assetId}/files/{kind}/content:
+    servers:
+      - url: http://hsm:3000
+    get:
+      operationId: readFileContent
+      tags: [internal]
+      summary: A live file's bytes, for a producer reading an input (signed); the digest in x-atlas-sha256
+      parameters:
+        - { name: assetId, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: kind, in: path, required: true, schema: { $ref: '#/components/schemas/FileKind' } }
+        - { name: variant, in: query, schema: { type: string } }
+      responses:
+        '200': { description: The bytes, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '401': { description: Not a correctly signed request }
+        '404': { $ref: '#/components/responses/Error' }
+  /internal/v1/files/operations:
+    servers:
+      - url: http://hsm:3000
+    post:
+      operationId: requestFileOperation
+      tags: [internal]
+      summary: Queue a copy, move or delete (signed; idempotent by the caller's id)
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [kind, assetId]
+              required: [kind, fileId]
+              additionalProperties: false
               properties:
+                id: { $ref: '#/components/schemas/Ulid' }
                 kind: { type: string, enum: [copy, move, delete] }
-                assetId: { $ref: '#/components/schemas/Ulid' }
-                toTier: { type: string, enum: [online, near-line, offline] }
+                fileId: { $ref: '#/components/schemas/Ulid' }
+                toTargetId: { type: string, description: copy and move — where to. }
+                requestedBy: { type: string, description: 'The requesting service, for the audit.' }
       responses:
-        '202': { description: Operation accepted, content: { application/json: { schema: { $ref: '#/components/schemas/Operation' } } } }
+        '202': { description: Queued, content: { application/json: { schema: { $ref: '#/components/schemas/Operation' } } } }
+        '401': { description: Not a correctly signed request }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /internal/v1/operations/{id}:
+    servers:
+      - url: http://hsm:3000
+    get:
+      operationId: getOperationInternal
+      tags: [internal]
+      summary: An operation's state and progress (signed)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Operation, content: { application/json: { schema: { $ref: '#/components/schemas/Operation' } } } }
+        '404': { $ref: '#/components/responses/Error' }
   /playout/exports:
     post:
       operationId: createPlayoutExport
       tags: [internal]
-      summary: Copy schedule outputs (hi-res + playlist) to a network destination with path rewrite
-      description: Called by Scheduling on send-to-air; enforces approved-only + control-room path rewrite (FR-SCH-5a).
+      summary: Copy schedule outputs (hi-res + playlist) to a network destination with path rewrite — EP-31, not built
       requestBody:
         required: true
         content:
@@ -80,49 +203,144 @@ paths:
                 pathRewriteRuleId: { type: string }
       responses:
         '202': { description: Export accepted, content: { application/json: { schema: { $ref: '#/components/schemas/Operation' } } } }
-  /operations/{id}:
-    get:
-      operationId: getOperation
-      tags: [location]
-      summary: Progress of a long-running operation
-      parameters:
-        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
-      responses:
-        '200': { description: Operation, content: { application/json: { schema: { $ref: '#/components/schemas/Operation' } } } }
-  /tier-policies:
-    get: { operationId: listTierPolicies, tags: [admin], summary: List tier policies, responses: { '200': { description: Policies } } }
-    post: { operationId: createTierPolicy, tags: [admin], summary: Create a tier policy, responses: { '201': { description: Created } } }
-  /storage-targets:
-    get: { operationId: listStorageTargets, tags: [admin], summary: List storage targets, responses: { '200': { description: Targets } } }
-    post: { operationId: createStorageTarget, tags: [admin], summary: Create a storage target, responses: { '201': { description: Created } } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   schemas:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
-    FileEntry:
+    FileKind:
+      type: string
+      description: Tier 0 — common.schema.json RenditionKind.
+      enum: [original, proxy, broadcast, thumbnail, vtt-filmstrip, hover-preview]
+    Tier:
+      type: string
+      description: Tier 0 — common.schema.json Tier.
+      enum: [online, near-line, offline]
+    File:
       type: object
-      required: [assetId, tier, status]
-      properties:
-        assetId: { $ref: '#/components/schemas/Ulid' }
-        renditionKind: { type: string, enum: [original, proxy, broadcast, thumbnail, vtt-filmstrip, hover-preview] }
-        tier: { type: string, enum: [online, near-line, offline] }
-        status: { type: string, enum: [online, near-line, offline, restoring] }
-        path: { type: string }
-        checksum: { type: object, properties: { algorithm: { type: string }, value: { type: string } } }
-    Operation:
-      type: object
-      required: [id, kind, state]
+      description: >-
+        The File record (file.schema.json) as HSM keeps it — the system of record for where the bytes
+        are and whether they are intact. One live file per (asset, kind, variant); `version` is the
+        audit revision and the compare-and-set token.
+      required: [id, channelId, assetId, kind, storage, checksum, sizeBytes, version, createdAt, updatedAt, replicas]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
-        kind: { type: string, enum: [copy, move, delete, restore, export] }
-        state: { type: string, enum: [queued, running, completed, failed] }
-        progress: { type: number }
-    Error:
+        channelId: { type: string }
+        assetId: { $ref: '#/components/schemas/Ulid' }
+        kind: { $ref: '#/components/schemas/FileKind' }
+        variant: { type: string }
+        storage:
+          type: object
+          required: [targetId, path, tier, status]
+          properties:
+            targetId: { type: string }
+            path: { type: string, description: The key on the target. Never reused by another placement. }
+            tier: { $ref: '#/components/schemas/Tier' }
+            status: { type: string, enum: [available, restoring, missing, quarantined], description: "Tier 0 — file.schema.json. quarantined: the bytes did not match the checksum." }
+        checksum:
+          type: object
+          required: [algorithm, value]
+          properties:
+            algorithm: { type: string, enum: [sha256] }
+            value: { type: string, description: 'Hex SHA-256 of the bytes HSM wrote.' }
+        sizeBytes: { type: integer, minimum: 0 }
+        lastVerifiedAt: { type: string, format: date-time }
+        technical: { type: object, additionalProperties: true }
+        provenance:
+          type: object
+          properties:
+            producedBy: { type: string, enum: [ingest, transcode, editor, import] }
+            jobId: { $ref: '#/components/schemas/Ulid' }
+            profile: { type: string }
+        version: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        deletedAt: { type: string, format: date-time }
+        replicas:
+          type: array
+          description: Verified copies on other targets.
+          items:
+            type: object
+            required: [targetId, path, tier, sizeBytes, createdAt]
+            properties:
+              targetId: { type: string }
+              path: { type: string }
+              tier: { $ref: '#/components/schemas/Tier' }
+              sizeBytes: { type: integer, minimum: 0 }
+              createdAt: { type: string, format: date-time }
+    Operation:
       type: object
-      required: [code, message]
-      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+      description: 'A file operation, leased by a worker. A retry is an idempotent restart; a refusal dead-letters at once.'
+      required: [id, channelId, kind, state, attempts, bytesDone, progress, requestedBy, createdAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        kind: { type: string, enum: [copy, move, delete, release], description: 'Tier 0. release: HSM removing bytes nothing references — queued in the transaction that made them unreferenced.' }
+        fileId: { $ref: '#/components/schemas/Ulid' }
+        assetId: { $ref: '#/components/schemas/Ulid' }
+        toTargetId: { type: string }
+        state: { type: string, enum: [queued, running, completed, failed, dead-letter], description: Tier 0 — the lease's state machine. }
+        attempts: { type: integer, minimum: 0 }
+        retryAt: { type: string, format: date-time }
+        bytesDone: { type: integer, minimum: 0 }
+        bytesTotal: { type: integer, minimum: 0 }
+        progress: { type: number, minimum: 0, maximum: 1 }
+        error: { type: string }
+        requestedBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+    StorageTargetInput:
+      type: object
+      required: [name, tier, kind]
+      properties:
+        name: { type: string, maxLength: 100 }
+        tier: { $ref: '#/components/schemas/Tier' }
+        kind: { type: string, enum: [fs, s3], description: Tier 0 — a driver per kind (ADR-0009). }
+        root: { type: string, description: 'fs: an absolute path under the storage mounted into HSM.' }
+        s3:
+          type: object
+          required: [bucket]
+          properties:
+            endpoint: { type: string, format: uri, description: No credential in the URL. }
+            region: { type: string, default: us-east-1 }
+            bucket: { type: string }
+            prefix: { type: string }
+            forcePathStyle: { type: boolean }
+        credentialRef: { type: string, description: "s3: the NAME of an entry in HSM's credentials Secret. Never the credential." }
+        isDefault: { type: boolean, default: false, description: "New files of this tier go here, for this target's scope." }
+        enabled: { type: boolean, default: true }
+    StorageTarget:
+      allOf:
+        - $ref: '#/components/schemas/StorageTargetInput'
+        - type: object
+          required: [id, isDefault, enabled, version, createdBy, createdAt, updatedAt]
+          properties:
+            id: { type: string }
+            channelId: { type: string, description: Absent — platform-wide. }
+            version: { type: integer, minimum: 1 }
+            createdBy: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    Error:
+      description: >-
+        RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept:
+        `code` is the machine key (a closed enum), `message` the text. `type` is
+        https://atlas.example/problems/<code>, `title` constant per code, `detail` equals `message`,
+        `instance` is urn:atlas:correlation:<correlationId>.
+      type: object
+      required: [type, title, status, detail, code, message]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        detail: { type: string }
+        instance: { type: string, format: uri }
+        code: { type: string, enum: [VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, UNAVAILABLE, INTERNAL] }
+        message: { type: string }
+        details: {}
+        correlationId: { type: string }
   responses:
     Error:
       description: Error response
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } }

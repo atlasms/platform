@@ -187,6 +187,49 @@ policy.
 - The **site connector** (SaaS) is a thin HSM edge deployment that receives export payloads and
   writes them onto the on-prem control-room network.
 
+## 13a. As built (EP-14; [ADR-0009](../../adr/0009-hsm-storage-and-placement.md))
+
+`apps/hsm` — Fastify, like every service here, not NestJS. The owner chose **both drivers now**,
+**producers push to HSM**, and **all of EP-14** in one slice; ADR-0009 records those and what
+follows from them. In short:
+
+- **Storage port, two drivers** (`driver.ts`): `fs` (a root on a SAN/NAS mount; write to a
+  `.part-` file, fsync, rename — atomic; keys contained, symlinks out of the root refused) and `s3`
+  (`@aws-sdk/client-s3` multipart `Upload`, aborted on failure). Every write hashes the bytes as it
+  writes them. One conformance suite — fs everywhere, a real S3-compatible server (SeaweedFS) in CI.
+- **Storage targets** (`targets.ts`) are a registry (`storage:admin`, audited, compare-and-set,
+  disabled never deleted): tier, kind, non-secret settings, and for S3 a `credentialRef` — the NAME
+  of an entry in the `hsm-storage-credentials` Secret mounted into HSM alone. An fs root must lie
+  under the storage mounted into HSM (`ATLAS_HSM_FS_BASE`). One default per (scope, tier); a
+  channel's own default wins over the platform's. The platform's first online target is made once
+  from `ATLAS_HSM_BOOTSTRAP_ROOT`.
+- **The ledger** (`file.ts`, `store*.ts`): one live row per (asset, kind, variant) by a partial
+  unique index, `version` for compare-and-set, replicas beside it, a deleted row kept.
+- **Placement** — `PUT /internal/v1/assets/{assetId}/files/{kind}`, the bytes streamed, signed over
+  their SHA-256 (`signInternalDigest`, ADR-0008 widened to a producer calling HSM). The signature's
+  shape, key and time are checked BEFORE the body is read, its MAC AFTER against the digest of what
+  HSM wrote — so the ledger's checksum is HSM's own and the producer's. The channel, variant and
+  provenance travel in the (signed) query string. A new file, a replacement (same id, new key, old
+  bytes released), or the same bytes again (a no-op). `file.placed` and the audit commit with the row.
+- **Operations** (`operation.ts`) — `copy` (a verified replica), `move` (copy, verify, compare-and-set
+  the ledger, release the source), `delete` (the row keeps `deletedAt`; bytes and replicas released)
+  and HSM's own `release`, the ONLY way bytes are removed — queued in the transaction that made them
+  unreferenced, so a crash can leak bytes but never lose a file. A table, leased by compare-and-set,
+  progress renewing the lease, retried with backoff, dead-lettered after 3; a corrupt source (its
+  bytes do not hash to the ledger's checksum) is quarantined, alerted (`alert.raised`,
+  `checksum-mismatch`, critical) and dead-lettered at once. In-process worker per replica.
+- **Reads** — `GET /api/v1/assets/{id}/location` (asset:read on `files`, strict; the gateway sends
+  this one path of `/assets` to HSM by a suffix route), `GET /api/v1/operations/{id}`, and the
+  signed `GET …/files/{kind}/content` a producer reads an input from.
+- **Enforcement (14.7)** — MTS pushes every rendition to HSM and may take its input from HSM
+  (`inputFile`); its work area is scratch. `k8s:check` fails if any workload but `hsm` mounts the
+  storage volume or reads the storage credentials. RIM's staging stays until an accepted file has an
+  asset to belong to (15.5). MAM mirrors `file.placed` (size, variant) and now `file.moved`.
+
+Not yet: restore, tiering policy, integrity sweeps (EP-36); send-to-air export (EP-31); a separate
+worker deployment; worker-threads for hashing (only if profiling asks); more than one replica on a
+ReadWriteOnce volume.
+
 ## 14. Open questions / future
 
 - Partial-file/growing-file operations for edit-while-ingest.

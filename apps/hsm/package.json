@@ -1,0 +1,30 @@
+{
+  "name": "@atlas/hsm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Hierarchical Storage Manager: the file ledger and every operation on stored bytes.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --no-warnings --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@atlas/contracts": "*",
+    "@atlas/data": "*",
+    "@atlas/data-pg": "*",
+    "@atlas/messaging": "*",
+    "@atlas/messaging-nats": "*",
+    "@atlas/policy": "*",
+    "@atlas/service-kit": "*",
+    "@aws-sdk/client-s3": "^3.1144.0",
+    "@aws-sdk/lib-storage": "^3.1144.0",
+    "fastify": "^5.12.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.13"
+  }
+}

@@ -11,6 +11,8 @@
     "renditionKind": { "$ref": "../common.schema.json#/$defs/RenditionKind" },
     "fromTier": { "$ref": "../common.schema.json#/$defs/Tier" },
     "toTier": { "$ref": "../common.schema.json#/$defs/Tier" },
-    "path": { "type": "string" }
+    "path": { "type": "string", "description": "The file's new path on its new target." },
+    "fileId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "The ledger row (HSM, ADR-0009)." },
+    "variant": { "type": "string" }
   }
 }

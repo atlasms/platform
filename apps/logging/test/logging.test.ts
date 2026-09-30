@@ -297,6 +297,15 @@ test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENT
     requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'rights-window' } }),
     { permission: 'asset:read', fieldGroup: 'rights' },
   );
+  // HSM (ADR-0009): a storage target is storage administration; an operation on a file reads as it.
+  assert.deepEqual(
+    requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'storage-target' } }),
+    { permission: 'storage:admin' },
+  );
+  assert.deepEqual(
+    requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'file-operation' } }),
+    { permission: 'asset:read', fieldGroup: 'files' },
+  );
   // An alert is operations' (EP-39's recording holes are its first producer).
   assert.deepEqual(requiredRule({ ...base, type: 'alert.raised' }), { permission: 'ops:read' });
   // An ingest JOB is not administration: it stays under ingest:read.

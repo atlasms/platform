@@ -67,6 +67,7 @@ export function entityRule(entityType: string): ReadRule {
   if (IAM_DOMAINS.has(entityType)) return { permission: 'user:admin' };
   if (GOVERNANCE.has(entityType)) return { permission: 'compliance:admin' };
   if (CONFIG_REGISTRIES.has(entityType)) return { permission: 'config:admin' };
+  if (STORAGE_ADMINISTRATION.has(entityType)) return { permission: 'storage:admin' };
   if (INGEST_ADMINISTRATION.has(entityType)) return { permission: 'ingest:admin' };
   // A recorder's file handed over (`recording.segment.completed`, EP-39) is an ingest event: it
   // reads as the ingest queue does. Under the default it was `recording:read`, which no role holds.
@@ -85,13 +86,22 @@ export function entityRule(entityType: string): ReadRule {
 
 const IAM_DOMAINS: ReadonlySet<string> = new Set(['user', 'group', 'role', 'permissions']);
 const GOVERNANCE: ReadonlySet<string> = new Set(['retention-policy']);
+// HSM's storage targets (ADR-0009) are the storage administrators', as a transcode profile is the
+// configuration administrators': under the default they read as `storage-target:read`, held by no one.
 const CONFIG_REGISTRIES: ReadonlySet<string> = new Set(['transcode-profile']);
+const STORAGE_ADMINISTRATION: ReadonlySet<string> = new Set(['storage-target']);
 const INGEST_ADMINISTRATION: ReadonlySet<string> = new Set([
   'acceptance-rule-set',
   'watcher',
   'recorder',
 ]);
-const FILE_SET: ReadonlySet<string> = new Set(['transcode', 'transcode-job', 'file']);
+// HSM's operations on a file (ADR-0009) read as the file does.
+const FILE_SET: ReadonlySet<string> = new Set([
+  'transcode',
+  'transcode-job',
+  'file',
+  'file-operation',
+]);
 
 /**
  * STRICT evaluation with the full context. The channel is known and the permission is derived

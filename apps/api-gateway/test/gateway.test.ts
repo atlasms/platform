@@ -61,6 +61,18 @@ test('longest-prefix wins regardless of declaration order', () => {
   assert.equal(matchRoute(routes, '/nope'), undefined);
 });
 
+test('a suffix route owns a resource inside another prefix — and only that resource (ADR-0009)', () => {
+  const table = [
+    { service: 'mam', origin: 'http://mam', prefix: '/api/v1/assets' },
+    { service: 'hsm', origin: 'http://hsm', prefix: '/api/v1/assets/', suffix: '/location' },
+  ];
+  assert.equal(matchRoute(table, '/api/v1/assets/01H/location')?.service, 'hsm');
+  assert.equal(matchRoute(table, '/api/v1/assets/01H')?.service, 'mam');
+  assert.equal(matchRoute(table, '/api/v1/assets/01H/relocation')?.service, 'mam');
+  // No id between the prefix and the suffix: not the location of anything — MAM's to refuse.
+  assert.equal(matchRoute(table, '/api/v1/assets/location')?.service, 'mam');
+});
+
 test('an unrouted path is a clean 404 problem, not a stack trace', async () => {
   const { app } = await gatewayWith();
   const res = await app.inject({ method: 'GET', url: '/nope' });

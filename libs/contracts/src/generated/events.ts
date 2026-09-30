@@ -322,16 +322,26 @@ export interface FileMovedPayload {
   renditionKind?: RenditionKind;
   fromTier: Tier;
   toTier: Tier;
+  /** The file's new path on its new target. */
   path?: string;
+  /** The ledger row (HSM, ADR-0009). */
+  fileId?: Ulid;
+  variant?: string;
 }
 
-/** Emitted by HSM when a rendition's bytes are placed on a tier. Consumed by MAM, Logging. */
+/** Emitted by HSM when a file's bytes are placed on a tier — new, or replacing the file of the same asset, kind and variant — in the transaction that records it in the ledger (ADR-0009). The checksum is HSM's own, of the bytes it wrote. Consumed by MAM (the FileRef mirror), Logging. */
 export interface FilePlacedPayload {
   assetId: Ulid;
   renditionKind?: RenditionKind;
   tier: Tier;
   path: string;
   checksum?: Checksum;
+  /** The ledger row (HSM, ADR-0009): stable across replacements of the same (asset, kind, variant). */
+  fileId?: Ulid;
+  /** Distinguishes files of one kind (a subtitle language, a thumbnail index). */
+  variant?: string;
+  /** Of the bytes HSM wrote and hashed. */
+  sizeBytes?: number;
 }
 
 /** The API Gateway's access record: one per request at the edge, so every request appears exactly once. High-volume, so it ships via the log pipeline (structured log line -> Loki), NOT the broadcast bus, and is defined here so the audit sink and the gateway agree on one shape - the gateway's tests validate a real record against this schema. Inner-service access lines (#245) are a different, per-hop record and are not this event. Consumed by Logging & Analytics. */

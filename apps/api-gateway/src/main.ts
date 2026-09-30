@@ -20,6 +20,7 @@ const config = loadConfig({
   loggingOrigin: { env: 'ATLAS_LOGGING_ORIGIN', type: 'string', default: 'http://logging:3000' },
   rimOrigin: { env: 'ATLAS_RIM_ORIGIN', type: 'string', default: 'http://rim:3000' },
   mtsOrigin: { env: 'ATLAS_MTS_ORIGIN', type: 'string', default: 'http://mts:3000' },
+  hsmOrigin: { env: 'ATLAS_HSM_ORIGIN', type: 'string', default: 'http://hsm:3000' },
   // A part of a chunked upload (EP-15.1) is 8 MiB by default (RIM's ATLAS_UPLOAD_PART_BYTES);
   // the gateway must let one through on the upload prefix without raising its cap everywhere.
   uploadBodyLimit: {
@@ -100,6 +101,11 @@ const routes: RoutingTable = [
   { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/acceptance-rules' },
   { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/watchers' },
   { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/recorders' },
+  // HSM (EP-14; ADR-0009): where an asset's files are (a suffix route — the rest of
+  // /api/v1/assets is MAM's), an operation's progress, and the storage targets.
+  { service: 'hsm', origin: config.hsmOrigin, prefix: '/api/v1/assets/', suffix: '/location' },
+  { service: 'hsm', origin: config.hsmOrigin, prefix: '/api/v1/operations' },
+  { service: 'hsm', origin: config.hsmOrigin, prefix: '/api/v1/storage-targets' },
   // NEVER a route for `/internal/`: those are a service's own components calling each other,
   // signed (ADR-0008), and must be unreachable from outside. RIM refuses them unsigned anyway.
   // MTS (EP-16.1): enqueue a transcode and poll it. Normally a broker command from BMS/RIM; this

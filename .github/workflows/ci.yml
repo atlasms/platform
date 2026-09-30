@@ -91,6 +91,11 @@ jobs:
       ATLAS_PG_URL: postgres://atlas:atlas@localhost:5432/atlas
       ATLAS_NATS_URL: nats://localhost:4222
       ATLAS_OPENSEARCH_URL: http://localhost:9200
+      # HSM's S3 driver (ADR-0009) runs the storage driver suite against a real S3-compatible
+      # server; it FAILS rather than skips in CI without this, like the rest.
+      ATLAS_S3_URL: http://localhost:8333
+      ATLAS_S3_ACCESS_KEY: atlas-ci
+      ATLAS_S3_SECRET_KEY: atlas-ci-secret
 
     steps:
       - name: Checkout
@@ -116,6 +121,23 @@ jobs:
           done
           echo "::error::JetStream did not become ready in 30s"
           docker logs atlas-ci-nats
+          exit 1
+
+      # An S3-compatible server for HSM's S3 driver suite (ADR-0009). SeaweedFS, because MinIO no
+      # longer publishes community images to a public registry. It needs a command — which a
+      # `services:` block cannot give (JetStream's reason above). With no identities configured
+      # it accepts any signed request, which is what a conformance run needs.
+      - name: Start SeaweedFS (S3)
+        run: |
+          docker run -d --name atlas-ci-s3 -p 8333:8333             chrislusf/seaweedfs:4.48 server -s3 -dir=/data -master.volumeSizeLimitMB=1024
+          for _ in $(seq 1 60); do
+            if curl -s -o /dev/null http://localhost:8333/; then
+              echo "S3 endpoint up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the S3 endpoint did not come up in 60s"
+          docker logs atlas-ci-s3
           exit 1
 
       - name: Setup Node

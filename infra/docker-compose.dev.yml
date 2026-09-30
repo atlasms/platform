@@ -87,8 +87,22 @@ services:
       timeout: 10s
       retries: 20
 
+  # --- S3-compatible storage for HSM's S3 driver (ADR-0009) ------------------
+  # SeaweedFS: MinIO no longer publishes community images. Any access key works with no
+  # identities configured — dev only.
+  #   ATLAS_S3_URL=http://localhost:58333 npx nx test @atlas/hsm
+  s3:
+    image: chrislusf/seaweedfs:4.48
+    container_name: atlas-s3
+    command: ["server", "-s3", "-dir=/data", "-master.volumeSizeLimitMB=1024"]
+    ports:
+      - "58333:8333"
+    volumes:
+      - s3data:/data
+
 volumes:
   pgdata:
   natsdata:
   osdata:
   rabbitdata:
+  s3data:
