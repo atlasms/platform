@@ -1,7 +1,7 @@
 // On-demand validation of a reel (EP-31; scheduling.md §6.2, FR-SCH-2/3) — pure.
 //
 // ADVISORY by design (data-model §3.4): the write path stores overlaps and gaps without comment,
-// and this is where they are named. Five validators run:
+// and this is where they are named. Six validators run:
 //   - overlap  (critical) an item starts before the previous one ends, or a sub-schedule item runs
 //              outside its live item or into its sibling;
 //   - anchor   (critical) the same, where the item run into is FIXED — a time-locked start that
@@ -11,11 +11,14 @@
 //              inside a live item is the studio's, not dead air, and is not reported;
 //   - approval (critical) the media is not approved in this channel;
 //   - expiry   (critical) the approval lapses before the item FINISHES airing — judged at air time,
-//              not now, so tomorrow's schedule is refused today for an approval that ends at noon.
-// Rights windows and rendition availability are not checked yet (no rights windows exist; the
-// availability of a file is HSM's, EP-14): the report names them in `unchecked`, never silently.
+//              not now, so tomorrow's schedule is refused today for an approval that ends at noon;
+//   - rights   (critical) the item is governed by rights windows (its asset's, else its category's —
+//              rights.ts) and lies wholly inside none of them.
+// Rendition availability is not checked yet (the availability of a file is HSM's, EP-14): the
+// report names it in `unchecked`, never silently.
 
 import type { MediaApproval } from './approvals.ts';
+import { covered, governingWindows, type RightsWindow } from './rights.ts';
 import { inReelOrder, type ScheduleItem } from './schedule.ts';
 
 export type IssueKind =
@@ -33,7 +36,7 @@ export interface ValidationIssue {
 }
 
 /** What this build does not check, reported with every run. */
-export const UNCHECKED: readonly IssueKind[] = ['rights', 'availability'];
+export const UNCHECKED: readonly IssueKind[] = ['availability'];
 
 /** Wall-clock `HH:MM:SS` in the schedule's zone — what the person reading the report plans in. */
 export function clock(timezone: string): (iso: string) => string {
@@ -74,6 +77,7 @@ export function validateReel(
   items: readonly ScheduleItem[],
   approvals: ReadonlyMap<string, MediaApproval>,
   timezone: string,
+  rights: readonly RightsWindow[] = [],
 ): ValidationIssue[] {
   const t = clock(timezone);
   const issues: ValidationIssue[] = [];
@@ -154,6 +158,19 @@ export function validateReel(
   // --- the media: approved in this channel, and still approved when the item finishes ------------
   for (const item of reel) {
     if (item.mediaId === undefined) continue;
+    // Rights first: an unlicensed slot is wrong whatever the review said about the media.
+    const governed = governingWindows(item, rights);
+    if (governed !== undefined && !covered(item.start, item.end, governed.windows)) {
+      const spans = governed.windows
+        .map((w) => `${w.validFrom.slice(0, 16)}–${w.validTo.slice(0, 16)}Z`)
+        .join(', ');
+      issues.push({
+        kind: 'rights',
+        itemId: item.id,
+        severity: 'critical',
+        message: `${label(item)} at ${t(item.start)}: outside the ${governed.by === 'asset' ? "media's" : "category's"} rights windows (${spans})`,
+      });
+    }
     const approval = approvals.get(item.mediaId);
     const state = approval?.state ?? 'unknown';
     if (!isApproved(state)) {

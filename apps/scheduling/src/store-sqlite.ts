@@ -16,6 +16,7 @@ import {
   type Migration,
 } from '@atlas/data';
 import type { MediaApproval } from './approvals.ts';
+import type { RightsWindow } from './rights.ts';
 import type { Schedule, ScheduleItem } from './schedule.ts';
 import type { ScheduleStore, ScheduleTx } from './store.ts';
 
@@ -61,6 +62,22 @@ export const sqliteMigrations: Migration[] = [
            data       TEXT NOT NULL
          );
          CREATE INDEX IF NOT EXISTS media_approvals_channel_idx ON media_approvals (channel_id, asset_id);`,
+  },
+  {
+    id: 'scheduling_rights_windows',
+    up: `CREATE TABLE IF NOT EXISTS rights_windows (
+           id          TEXT PRIMARY KEY,
+           channel_id  TEXT NOT NULL,
+           asset_id    TEXT,
+           category_id TEXT,
+           valid_from  TEXT NOT NULL,
+           valid_to    TEXT NOT NULL,
+           version     INTEGER NOT NULL,
+           data        TEXT NOT NULL,
+           CHECK ((asset_id IS NULL) <> (category_id IS NULL))
+         );
+         CREATE INDEX IF NOT EXISTS rights_windows_asset_idx ON rights_windows (channel_id, asset_id);
+         CREATE INDEX IF NOT EXISTS rights_windows_category_idx ON rights_windows (channel_id, category_id);`,
   },
 ];
 
@@ -156,6 +173,39 @@ export function sqliteScheduleStore(path = ':memory:'): ScheduleStore & { db: Db
         .run(a.channelId, JSON.stringify(a), a.assetId);
       return Number(result.changes) === 1;
     },
+    async putRightsWindow(w, ifVersion) {
+      const params = [
+        w.channelId,
+        w.assetId ?? null,
+        w.categoryId ?? null,
+        w.validFrom,
+        w.validTo,
+        w.version,
+        JSON.stringify(w),
+      ];
+      if (ifVersion !== undefined) {
+        const result = db
+          .prepare(
+            `UPDATE rights_windows SET channel_id = ?, asset_id = ?, category_id = ?, valid_from = ?,
+               valid_to = ?, version = ?, data = ? WHERE id = ? AND version = ?`,
+          )
+          .run(...params, w.id, ifVersion);
+        return Number(result.changes) === 1;
+      }
+      const result = db
+        .prepare(
+          `INSERT INTO rights_windows (channel_id, asset_id, category_id, valid_from, valid_to, version, data, id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+        )
+        .run(...params, w.id);
+      return Number(result.changes) === 1;
+    },
+    async deleteRightsWindow(id, ifVersion) {
+      const result = db
+        .prepare('DELETE FROM rights_windows WHERE id = ? AND version = ?')
+        .run(id, ifVersion);
+      return Number(result.changes) === 1;
+    },
   };
 
   return {
@@ -222,6 +272,34 @@ export function sqliteScheduleStore(path = ':memory:'): ScheduleStore & { db: Db
         )
         .all(channelId, ...assetIds) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as MediaApproval);
+    },
+    async rightsWindow(id) {
+      const row = db.prepare('SELECT data FROM rights_windows WHERE id = ?').get(id) as
+        { data: string } | undefined;
+      return row ? (JSON.parse(row.data) as RightsWindow) : undefined;
+    },
+    async rightsWindows(channelId, subjects) {
+      const assets = subjects?.assetIds ?? [];
+      const categories = subjects?.categoryIds ?? [];
+      const params: string[] = [channelId];
+      let where = 'channel_id = ?';
+      if (subjects !== undefined) {
+        const any: string[] = [];
+        if (assets.length > 0) {
+          any.push(`asset_id IN (${assets.map(() => '?').join(', ')})`);
+          params.push(...assets);
+        }
+        if (categories.length > 0) {
+          any.push(`category_id IN (${categories.map(() => '?').join(', ')})`);
+          params.push(...categories);
+        }
+        if (any.length === 0) return [];
+        where += ` AND (${any.join(' OR ')})`;
+      }
+      const rows = db
+        .prepare(`SELECT data FROM rights_windows WHERE ${where} ORDER BY valid_from, id`)
+        .all(...params) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as RightsWindow);
     },
     async close() {
       db.close();

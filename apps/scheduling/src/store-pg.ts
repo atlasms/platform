@@ -12,6 +12,7 @@ import {
   type PgPool,
 } from '@atlas/data-pg';
 import type { MediaApproval } from './approvals.ts';
+import type { RightsWindow } from './rights.ts';
 import type { Schedule, ScheduleItem } from './schedule.ts';
 import type { ScheduleStore, ScheduleTx } from './store.ts';
 
@@ -56,6 +57,22 @@ export const pgMigrations: Migration[] = [
            data       jsonb NOT NULL
          );
          CREATE INDEX IF NOT EXISTS media_approvals_channel_idx ON media_approvals (channel_id, asset_id);`,
+  },
+  {
+    id: 'scheduling_rights_windows',
+    up: `CREATE TABLE IF NOT EXISTS rights_windows (
+           id          text PRIMARY KEY,
+           channel_id  text NOT NULL,
+           asset_id    text,
+           category_id text,
+           valid_from  timestamptz NOT NULL,
+           valid_to    timestamptz NOT NULL,
+           version     integer NOT NULL,
+           data        jsonb NOT NULL,
+           CHECK ((asset_id IS NULL) <> (category_id IS NULL))
+         );
+         CREATE INDEX IF NOT EXISTS rights_windows_asset_idx ON rights_windows (channel_id, asset_id);
+         CREATE INDEX IF NOT EXISTS rights_windows_category_idx ON rights_windows (channel_id, category_id);`,
   },
 ];
 
@@ -161,6 +178,39 @@ export function pgScheduleStore(pool: PgPool): ScheduleStore {
             );
             return result.rowCount === 1;
           },
+          async putRightsWindow(w, ifVersion) {
+            const params = [
+              w.channelId,
+              w.assetId ?? null,
+              w.categoryId ?? null,
+              w.validFrom,
+              w.validTo,
+              w.version,
+              JSON.stringify(w),
+              w.id,
+            ];
+            const result =
+              ifVersion !== undefined
+                ? await client.query(
+                    `UPDATE rights_windows SET channel_id = $1, asset_id = $2, category_id = $3,
+                       valid_from = $4, valid_to = $5, version = $6, data = $7
+                     WHERE id = $8 AND version = $9`,
+                    [...params, ifVersion],
+                  )
+                : await client.query(
+                    `INSERT INTO rights_windows (channel_id, asset_id, category_id, valid_from, valid_to, version, data, id)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (id) DO NOTHING`,
+                    params,
+                  );
+            return result.rowCount === 1;
+          },
+          async deleteRightsWindow(id, ifVersion) {
+            const result = await client.query(
+              'DELETE FROM rights_windows WHERE id = $1 AND version = $2',
+              [id, ifVersion],
+            );
+            return result.rowCount === 1;
+          },
         };
         return fn(tx);
       });
@@ -223,6 +273,32 @@ export function pgScheduleStore(pool: PgPool): ScheduleStore {
       const { rows } = await pool.query<{ data: MediaApproval }>(
         'SELECT data FROM media_approvals WHERE channel_id = $1 AND asset_id = ANY($2::text[])',
         [channelId, [...assetIds]],
+      );
+      return rows.map((r) => r.data);
+    },
+    async rightsWindow(id) {
+      const { rows } = await pool.query<{ data: RightsWindow }>(
+        'SELECT data FROM rights_windows WHERE id = $1',
+        [id],
+      );
+      return rows[0]?.data;
+    },
+    async rightsWindows(channelId, subjects) {
+      if (subjects === undefined) {
+        const { rows } = await pool.query<{ data: RightsWindow }>(
+          'SELECT data FROM rights_windows WHERE channel_id = $1 ORDER BY valid_from, id',
+          [channelId],
+        );
+        return rows.map((r) => r.data);
+      }
+      const assets = [...(subjects.assetIds ?? [])];
+      const categories = [...(subjects.categoryIds ?? [])];
+      if (assets.length === 0 && categories.length === 0) return [];
+      const { rows } = await pool.query<{ data: RightsWindow }>(
+        `SELECT data FROM rights_windows
+          WHERE channel_id = $1 AND (asset_id = ANY($2::text[]) OR category_id = ANY($3::text[]))
+          ORDER BY valid_from, id`,
+        [channelId, assets, categories],
       );
       return rows.map((r) => r.data);
     },

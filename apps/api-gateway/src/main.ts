@@ -84,6 +84,8 @@ const routes: RoutingTable = [
   { service: 'logging', origin: config.loggingOrigin, prefix: '/api/v1/retention-policies' },
   // Scheduling (EP-18): the program table.
   { service: 'scheduling', origin: config.schedulingOrigin, prefix: '/api/v1/schedules' },
+  // EP-31: rights windows, Scheduling's (when a channel may air an asset or a category).
+  { service: 'scheduling', origin: config.schedulingOrigin, prefix: '/api/v1/rights-windows' },
   // RIM (EP-15.1): the chunked upload. Its parts are the one body on this platform larger than
   // the JSON cap, so this prefix carries its own.
   {

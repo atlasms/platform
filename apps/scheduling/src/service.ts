@@ -40,6 +40,7 @@ import {
   type UpdateScheduleInput,
 } from './schedule.ts';
 import { APPROVAL_EVENTS, applyAssetEvent, type MediaApproval } from './approvals.ts';
+import type { RightsWindow, RightsWindowInput } from './rights.ts';
 import type { ScheduleStore, ScheduleTx } from './store.ts';
 import { UNCHECKED, validateReel, type IssueKind, type ValidationIssue } from './validation.ts';
 
@@ -133,7 +134,14 @@ export class SchedulingService {
     const approvals = new Map(
       (await this.store.approvals(schedule.channelId, mediaIds)).map((a) => [a.assetId, a]),
     );
-    const issues = validateReel(items, approvals, schedule.timezone);
+    const categoryIds = [
+      ...new Set(items.flatMap((i) => (i.categoryId !== undefined ? [i.categoryId] : []))),
+    ];
+    const rights = await this.store.rightsWindows(schedule.channelId, {
+      assetIds: mediaIds,
+      categoryIds,
+    });
+    const issues = validateReel(items, approvals, schedule.timezone, rights);
     const valid = !issues.some((i) => i.severity === 'critical');
     const validatedAt = this.now().toISOString();
 
@@ -234,6 +242,143 @@ export class SchedulingService {
       outcome = 'applied';
     });
     return outcome;
+  }
+
+  // --- rights windows (EP-31; rights.ts) -------------------------------------------------------------
+  //
+  // An asset's rights are the MAM `rights` field group's business (authorization-model.md §9: the
+  // Librarian holds `asset:write` on `files` and `rights`), so a window — when a channel may air
+  // an asset or a category — is read and written under the same grants, strictly: `asset:read` /
+  // `asset:write` with `fieldGroup: 'rights'`. A writer narrowed to a category subtree is refused,
+  // as in MTS: Scheduling knows a category id, not its path, and strict evaluation denies what it
+  // cannot check. Every write is audited (`rights-window`), in the transaction of the change.
+
+  async listRightsWindows(
+    caller: Caller,
+    filter: { assetId?: string; categoryId?: string } = {},
+  ): Promise<RightsWindow[]> {
+    this.authorizeRights(caller, 'asset:read');
+    if (filter.assetId === undefined && filter.categoryId === undefined) {
+      return this.store.rightsWindows(caller.channelId);
+    }
+    return this.store.rightsWindows(caller.channelId, {
+      ...(filter.assetId !== undefined ? { assetIds: [filter.assetId] } : {}),
+      ...(filter.categoryId !== undefined ? { categoryIds: [filter.categoryId] } : {}),
+    });
+  }
+
+  async getRightsWindow(caller: Caller, id: string): Promise<RightsWindow> {
+    this.authorizeRights(caller, 'asset:read');
+    return this.rightsWindowIn(caller, id);
+  }
+
+  async createRightsWindow(caller: Caller, input: RightsWindowInput): Promise<RightsWindow> {
+    this.authorizeRights(caller, 'asset:write');
+    const at = this.now().toISOString();
+    const window: RightsWindow = {
+      id: ulid(),
+      channelId: caller.channelId,
+      ...input,
+      version: 1,
+      createdBy: caller.userId,
+      createdAt: at,
+      updatedAt: at,
+    };
+    await this.store.transaction(async (tx) => {
+      await tx.putRightsWindow(window);
+      await tx.enqueue(this.rightsAudit(caller, 'rights-window.created', window, undefined));
+    });
+    return window;
+  }
+
+  /** Replace a window's terms, over the version the caller read (409 if it moved). */
+  async updateRightsWindow(
+    caller: Caller,
+    id: string,
+    version: number,
+    input: RightsWindowInput,
+  ): Promise<RightsWindow> {
+    this.authorizeRights(caller, 'asset:write');
+    const current = await this.rightsWindowIn(caller, id);
+    const { assetId: _a, categoryId: _c, territory: _t, notes: _n, ...kept } = current;
+    void _a;
+    void _c;
+    void _t;
+    void _n;
+    const next: RightsWindow = {
+      ...kept,
+      ...input,
+      version: version + 1,
+      updatedAt: this.now().toISOString(),
+    };
+    await this.store.transaction(async (tx) => {
+      if (!(await tx.putRightsWindow(next, version))) {
+        throw new Conflict(`rights window ${id} is not at version ${version}; reload it`);
+      }
+      await tx.enqueue(this.rightsAudit(caller, 'rights-window.updated', next, current));
+    });
+    return next;
+  }
+
+  async deleteRightsWindow(caller: Caller, id: string, version: number): Promise<void> {
+    this.authorizeRights(caller, 'asset:write');
+    const current = await this.rightsWindowIn(caller, id);
+    await this.store.transaction(async (tx) => {
+      if (!(await tx.deleteRightsWindow(id, version))) {
+        throw new Conflict(`rights window ${id} is not at version ${version}; reload it`);
+      }
+      await tx.enqueue(
+        this.rightsAudit(
+          caller,
+          'rights-window.deleted',
+          { ...current, version: current.version + 1 },
+          current,
+          true,
+        ),
+      );
+    });
+  }
+
+  private async rightsWindowIn(caller: Caller, id: string): Promise<RightsWindow> {
+    const window = await this.store.rightsWindow(id);
+    // Another channel's window is not found, not forbidden: a 403 would confirm it exists.
+    if (!window || window.channelId !== caller.channelId) {
+      throw new NotFound(`rights window ${id}`);
+    }
+    return window;
+  }
+
+  private authorizeRights(caller: Caller, permission: 'asset:read' | 'asset:write'): void {
+    const decision = canEnforce(caller.policy, permission, {
+      type: 'asset',
+      channelId: caller.channelId,
+      fieldGroup: 'rights',
+    });
+    if (!decision.allowed) {
+      throw new Forbidden(decision.reason ?? `${permission} on the rights field group required`);
+    }
+  }
+
+  private rightsAudit(
+    caller: Caller,
+    action: string,
+    after: RightsWindow,
+    before: RightsWindow | undefined,
+    deleted = false,
+  ): OutboxRecord {
+    return this.record(caller, after.channelId, 'audit.recorded', {
+      entityType: 'rights-window',
+      entityId: after.id,
+      revision: after.version,
+      action,
+      origin: { service: 'scheduling' },
+      delta: deleted
+        ? delta(before as unknown as Record<string, unknown>, {}) // every field: before, no after
+        : delta(
+            before as unknown as Record<string, unknown> | undefined,
+            after as unknown as Record<string, unknown>,
+          ),
+    } satisfies EventPayloads['audit.recorded']);
   }
 
   // --- writes ---------------------------------------------------------------------------------------------

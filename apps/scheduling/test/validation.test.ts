@@ -3,7 +3,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ulid } from '@atlas/contracts';
-import { clock, endOf, validateReel, type MediaApproval, type ScheduleItem } from '../src/index.ts';
+import {
+  clock,
+  endOf,
+  parseRightsWindowInput,
+  validateReel,
+  type MediaApproval,
+  type ScheduleItem,
+} from '../src/index.ts';
 
 const T0 = Date.parse('2026-09-12T06:00:00.000Z');
 const at = (min: number): string => new Date(T0 + min * 60_000).toISOString();
@@ -119,4 +126,21 @@ test('every verdict that is not an approval is critical, and says which', () => 
 test('times are said in the schedule’s zone; a zone the runtime does not know says UTC', () => {
   assert.equal(clock('Asia/Tehran')('2026-09-12T06:00:00.000Z'), '09:30:00');
   assert.equal(clock('Not/AZone')('2026-09-12T06:00:00.000Z'), '06:00:00 UTC');
+});
+
+test('a rights window names one subject, a real interval and nothing it does not know', () => {
+  const ok = parseRightsWindowInput({ categoryId: ' films ', validFrom: at(0), validTo: at(60) });
+  assert.deepEqual(ok, { categoryId: 'films', validFrom: at(0), validTo: at(60) });
+  for (const [body, reason] of [
+    [{ validFrom: at(0), validTo: at(60) }, /exactly one of assetId or categoryId/],
+    [{ assetId: 'not-a-ulid', validFrom: at(0), validTo: at(60) }, /assetId must be a ULID/],
+    [
+      { categoryId: 'films', validFrom: at(60), validTo: at(60) },
+      /validTo must be after validFrom/,
+    ],
+    [{ categoryId: 'films', validFrom: 'soon', validTo: at(60) }, /validFrom is required/],
+    [{ categoryId: 'films', validFrom: at(0), validTo: at(60), maxRuns: 3 }, /maxRuns is not/],
+  ] as const) {
+    assert.throws(() => parseRightsWindowInput(body), reason);
+  }
 });

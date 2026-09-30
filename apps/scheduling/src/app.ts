@@ -10,6 +10,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { isUlid, ulid } from '@atlas/contracts';
 import type { EffectivePolicy } from '@atlas/policy';
+import { parseRightsWindowInput } from './rights.ts';
 import {
   parseCreateSchedule,
   parseItemInput,
@@ -358,6 +359,48 @@ export async function buildSchedulingApp(options: SchedulingAppOptions): Promise
       for (const issue of report.issues) validationIssues.inc({ kind: issue.kind });
       return report;
     }),
+  );
+
+  // EP-31: rights windows — when the channel may air an asset or a category.
+  const versionOf = (query: Q): number => {
+    const v = Number(query['version']);
+    if (!Number.isInteger(v) || v < 1) {
+      throw new ValidationError(
+        'version is required — the version you read, for the compare-and-set',
+      );
+    }
+    return v;
+  };
+  app.get<{ Querystring: Q }>('/api/v1/rights-windows', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      service.listRightsWindows(caller, {
+        ...(req.query['assetId'] !== undefined ? { assetId: req.query['assetId'] } : {}),
+        ...(req.query['categoryId'] !== undefined ? { categoryId: req.query['categoryId'] } : {}),
+      }),
+    ),
+  );
+  app.post('/api/v1/rights-windows', (req, reply) =>
+    handle(req, reply, 201, (caller) =>
+      service.createRightsWindow(caller, parseRightsWindowInput(req.body)),
+    ),
+  );
+  app.get<{ Params: P }>('/api/v1/rights-windows/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) => service.getRightsWindow(caller, req.params.id)),
+  );
+  app.put<{ Params: P; Querystring: Q }>('/api/v1/rights-windows/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      service.updateRightsWindow(
+        caller,
+        req.params.id,
+        versionOf(req.query),
+        parseRightsWindowInput(req.body),
+      ),
+    ),
+  );
+  app.delete<{ Params: P; Querystring: Q }>('/api/v1/rights-windows/:id', (req, reply) =>
+    handle(req, reply, 204, (caller) =>
+      service.deleteRightsWindow(caller, req.params.id, versionOf(req.query)),
+    ),
   );
 
   app.delete<{ Params: P }>('/api/v1/schedules/:id/items/:itemId', (req, reply) =>
