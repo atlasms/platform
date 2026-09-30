@@ -205,6 +205,24 @@ deployment backfills from history. The record is a read model of facts MAM alrea
 not audited again. Not done in this slice: flagging items on `asset.expired` (validation computes
 it instead), `asset.replaced` (no producer yet), rights windows, availability, the approved-only
 guard at serialization and send-to-air — the last two correctness-critical (§5.7), with MCRList.
+**EP-31, second slice: rights windows** (`rights.ts`, `/rights-windows`). A window licenses the
+channel to air ONE asset or ONE category between `validFrom` and `validTo`; it is permissive, and
+the rule validation holds a reel to is: an item is governed by its **asset's** windows if the asset
+has any, otherwise by its **category's** (the item's `categoryId`, as scheduled), otherwise it is
+**not rights-managed** and nothing is reported — own productions need no licence, and refusing
+everything without one would turn every channel's first validation red. A governed item must lie
+**wholly inside one** window (`rights`, critical); the asset's own windows override its category's,
+so a longer category licence does not rescue an asset licensed more narrowly. `territory` is
+recorded and **not evaluated** — a channel carries no territory yet. Authority is the asset's
+`rights` field group (authorization-model.md §9, the Librarian's grant): `asset:read` /
+`asset:write` with `fieldGroup: 'rights'`, strict, so a writer narrowed to a category subtree is
+refused (Scheduling knows a category id, not its path — MTS's reasoning). Create, a PUT that
+replaces the terms and a DELETE, both compare-and-set on `version`; every write is an
+`audit.recorded` (`rights-window`) in its transaction, and the log reads that history under the
+same `asset:read`/`rights` (logging `visibility.ts` — under the default it was
+`rights-window:read`, which nothing grants). `unchecked` is now `availability` alone. No Studio
+view for windows yet; the editor's report shows the rights issues.
+
 Studio's schedule editor has a **Validate** button (the stored reel only — disabled with unsaved
 edits), the report above the reel, each issue flagged on its row, and the report hidden once the
 version on screen moves past it.

@@ -375,7 +375,7 @@ test('POST /validate: the report over the wire, counted by outcome and by cause'
   const report = res.json();
   assert.equal(report.valid, false);
   assert.equal(report.state, 'draft');
-  assert.deepEqual(report.unchecked, ['rights', 'availability']);
+  assert.deepEqual(report.unchecked, ['availability']);
   assert.deepEqual(
     report.issues.map((i: { kind: string }) => i.kind),
     ['overlap', 'approval', 'approval'],
@@ -423,4 +423,57 @@ test('the approval consumer takes MAM’s envelopes off the bus — one subscrip
     `applied atlas.${CH}.asset.approved`,
   ]);
   assert.equal((await store.approvals(CH, [assetId]))[0]?.state, 'approved');
+});
+
+test('rights windows over the wire: the rights group to write, the version to change, a 422 that names the rule', async () => {
+  const { app, caller } = await harness({
+    permissions: ['schedule:read', 'schedule:write', 'asset:read', 'asset:write'],
+  });
+  const created = await app.inject({
+    method: 'POST',
+    url: '/api/v1/rights-windows',
+    headers: caller,
+    payload: { categoryId: 'films', validFrom: at(0), validTo: at(60), territory: 'GB' },
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  const w = created.json();
+  assert.equal(w.version, 1);
+
+  const both = await app.inject({
+    method: 'POST',
+    url: '/api/v1/rights-windows',
+    headers: caller,
+    payload: { categoryId: 'films', assetId: ulid(), validFrom: at(0), validTo: at(60) },
+  });
+  assert.equal(both.statusCode, 422);
+  assert.match(both.json().message, /exactly one of assetId or categoryId/);
+
+  const unversioned = await app.inject({
+    method: 'PUT',
+    url: `/api/v1/rights-windows/${w.id}`,
+    headers: caller,
+    payload: { categoryId: 'films', validFrom: at(0), validTo: at(90) },
+  });
+  assert.equal(unversioned.statusCode, 422, 'a change names the version it was read at');
+  const put = await app.inject({
+    method: 'PUT',
+    url: `/api/v1/rights-windows/${w.id}?version=1`,
+    headers: caller,
+    payload: { categoryId: 'films', validFrom: at(0), validTo: at(90) },
+  });
+  assert.equal(put.statusCode, 200, put.body);
+  const stale = await app.inject({
+    method: 'DELETE',
+    url: `/api/v1/rights-windows/${w.id}?version=1`,
+    headers: caller,
+  });
+  assert.equal(stale.statusCode, 409);
+  const gone = await app.inject({
+    method: 'DELETE',
+    url: `/api/v1/rights-windows/${w.id}?version=2`,
+    headers: caller,
+  });
+  assert.equal(gone.statusCode, 204);
+  const list = await app.inject({ method: 'GET', url: '/api/v1/rights-windows', headers: caller });
+  assert.deepEqual(list.json(), []);
 });

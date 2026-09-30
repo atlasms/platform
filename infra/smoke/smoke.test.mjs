@@ -1509,7 +1509,7 @@ test('smoke: EP-31 — validation reads MAM’s approvals off the bus, and a cle
   );
   assert.equal(report.valid, false);
   assert.equal(report.state, 'draft');
-  assert.deepEqual(report.unchecked, ['rights', 'availability']);
+  assert.deepEqual(report.unchecked, ['availability']);
   const [issue] = report.issues;
   assert.match(issue.message, new RegExp(`media ${stranger} has no approval from MAM yet`));
 
@@ -1530,6 +1530,31 @@ test('smoke: EP-31 — validation reads MAM’s approvals off the bus, and a cle
   const last = history.revisions.at(-1);
   assert.equal(last.action, 'schedule.validated');
   assert.deepEqual(last.delta.state, { before: 'draft', after: 'validated' });
+
+  // Rights (EP-31): license the asset for only the first ten minutes of its half hour. The same
+  // reel is now outside its rights — critical, and the validated schedule is a draft again.
+  const licensed = await get('/api/v1/rights-windows', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId, validFrom: at(0), validTo: at(10), territory: 'GB' }),
+  });
+  assert.equal(licensed.status, 201, `rights window failed: ${licensed.text}`);
+  const window = json(licensed);
+  try {
+    const unlicensed = await validate();
+    assert.deepEqual([unlicensed.valid, unlicensed.state], [false, 'draft']);
+    assert.deepEqual(unlicensed.unchecked, ['availability']);
+    assert.deepEqual(
+      unlicensed.issues.map((i) => [i.kind, i.severity]),
+      [['rights', 'critical']],
+    );
+  } finally {
+    const removed = await get(`/api/v1/rights-windows/${window.id}?version=${window.version}`, {
+      method: 'DELETE',
+      headers,
+    });
+    assert.equal(removed.status, 204, `rights window delete failed: ${removed.text}`);
+  }
 });
 
 test('smoke: EP-16 — a real transcode: enqueued through the gateway, run by FFmpeg, announced, and mirrored into the asset’s files by MAM', async () => {

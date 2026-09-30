@@ -39,6 +39,16 @@ export const SchedulingOperations = {
   validateSchedule: { method: 'POST', path: '/api/v1/schedules/{id}/validate', params: ['id'] },
   /** Serialize the playlist and trigger HSM delivery (scope schedule:send; audited) */
   sendToAir: { method: 'POST', path: '/api/v1/schedules/{id}/send-to-air', params: ['id'] },
+  /** The channel's rights windows, by validFrom (asset:read on the rights field group) */
+  listRightsWindows: { method: 'GET', path: '/api/v1/rights-windows', params: [] },
+  /** License an asset or a category for a period (asset:write on the rights field group; audited) */
+  createRightsWindow: { method: 'POST', path: '/api/v1/rights-windows', params: [] },
+  /** One rights window */
+  getRightsWindow: { method: 'GET', path: '/api/v1/rights-windows/{id}', params: ['id'] },
+  /** Replace a window's terms over the version read (compare-and-set; audited) */
+  updateRightsWindow: { method: 'PUT', path: '/api/v1/rights-windows/{id}', params: ['id'] },
+  /** Remove a window at the version read (compare-and-set; audited) */
+  deleteRightsWindow: { method: 'DELETE', path: '/api/v1/rights-windows/{id}', params: ['id'] },
   /** List export profiles */
   listExportProfiles: { method: 'GET', path: '/api/v1/export-profiles', params: [] },
   /** Create an export profile (format + destination + path-rewrite) */

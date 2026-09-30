@@ -96,6 +96,24 @@ const approved = (assetId: string, at: string, expiresAt?: string): Message =>
     at,
   );
 
+/** A librarian: asset rights read and written (the `rights` field group), plus scheduling. */
+const librarian = (channelId = CH): Caller => ({
+  userId: 'user-lib',
+  channelId,
+  correlationId: ulid(),
+  policy: compile({
+    subjectId: 'user-lib',
+    permVersion: 1,
+    rules: [
+      { id: 'sched', permissions: ['schedule:read', 'schedule:write'] },
+      { id: 'read', permissions: ['asset:read'] },
+      { id: 'rights', permissions: ['asset:write'], fieldGroups: ['rights'] },
+    ],
+    roles: [],
+    groups: [],
+  }),
+});
+
 export function scheduleStoreConformance(name: string, harness: ScheduleStoreHarness): void {
   async function withFixture(
     fn: (f: {
@@ -497,7 +515,7 @@ export function scheduleStoreConformance(name: string, harness: ScheduleStoreHar
       assert.equal(report.valid, false);
       assert.equal(report.state, 'draft');
       assert.equal(report.version, before.version, 'a failed run on a draft writes nothing');
-      assert.deepEqual(report.unchecked, ['rights', 'availability']);
+      assert.deepEqual(report.unchecked, ['availability']);
       const byItem = (seq: number) => reel.find((i) => i.seq === seq && !i.parentItemId)!.id;
       assert.deepEqual(
         report.issues.map((i) => [i.kind, i.severity, i.seconds]),
@@ -627,6 +645,134 @@ export function scheduleStoreConformance(name: string, harness: ScheduleStoreHar
       };
       await assert.rejects(service.validate(reader, s.id), /schedule:write/);
       await assert.rejects(service.validate(caller('ch99'), s.id), /not found|schedule/i);
+    });
+  });
+
+  // --- EP-31: rights windows ---------------------------------------------------------------------
+
+  test(`[${name}] RIGHTS WINDOWS: written under the rights group, audited, compare-and-set, channel-scoped`, async () => {
+    await withFixture(async ({ service, drain }) => {
+      const asset = ulid();
+      const w = await service.createRightsWindow(librarian(), {
+        assetId: asset,
+        validFrom: at(0),
+        validTo: at(120),
+        territory: 'GB',
+      });
+      assert.equal(w.version, 1);
+      assert.equal(w.channelId, CH);
+      assert.deepEqual(
+        (await service.listRightsWindows(librarian(), { assetId: asset })).map((x) => x.id),
+        [w.id],
+      );
+      const moved = await service.updateRightsWindow(librarian(), w.id, 1, {
+        assetId: asset,
+        validFrom: at(0),
+        validTo: at(240),
+      });
+      assert.equal(moved.version, 2);
+      assert.equal(moved.territory, undefined, 'a PUT replaces the terms — territory was not sent');
+      await assert.rejects(
+        service.updateRightsWindow(librarian(), w.id, 1, {
+          assetId: asset,
+          validFrom: at(0),
+          validTo: at(60),
+        }),
+        /not at version 1/,
+      );
+      await assert.rejects(service.deleteRightsWindow(librarian(), w.id, 1), /not at version 1/);
+
+      // Another channel's window is not found; the channel's list does not hold another's.
+      await assert.rejects(
+        service.getRightsWindow(librarian('ch99'), w.id),
+        /not found|rights window/i,
+      );
+      assert.deepEqual(await service.listRightsWindows(librarian('ch99')), []);
+
+      // A scheduler without the rights group reads nothing and writes nothing here.
+      await assert.rejects(service.listRightsWindows(caller()), /asset:read/);
+      await assert.rejects(
+        service.createRightsWindow(caller(), {
+          categoryId: 'films',
+          validFrom: at(0),
+          validTo: at(1),
+        }),
+        /asset:write/,
+      );
+
+      await service.deleteRightsWindow(librarian(), w.id, 2);
+      assert.deepEqual(await service.listRightsWindows(librarian()), []);
+
+      const audits = (await drain())
+        .filter((e) => e.type === 'audit.recorded')
+        .map((e) => e.payload as unknown as EventPayloads['audit.recorded'])
+        .filter((a) => a.entityType === 'rights-window');
+      assert.deepEqual(
+        audits.map((a) => [a.action, a.revision]),
+        [
+          ['rights-window.created', 1],
+          ['rights-window.updated', 2],
+          ['rights-window.deleted', 3],
+        ],
+      );
+      assert.deepEqual(audits[1]!.delta['validTo'], { before: at(120), after: at(240) });
+      assert.deepEqual(audits[1]!.delta['territory'], { before: 'GB' });
+      assert.deepEqual(
+        audits[2]!.delta['assetId'],
+        { before: asset },
+        'a delete records what went',
+      );
+    });
+  });
+
+  test(`[${name}] VALIDATE: rights — the asset's windows govern, else its category's, else none; wholly inside one`, async () => {
+    await withFixture(async ({ service }) => {
+      const s = await service.create(caller(), { broadcastDate: '2026-09-12', timezone: 'UTC' });
+      const [licensed, film, own] = [ulid(), ulid(), ulid()];
+      for (const a of [licensed, film, own]) {
+        await service.applyAssetEvent(approved(a, '2026-09-01T00:00:00.000Z'));
+      }
+      // `licensed` may air 06:00–06:45; category `films` 06:00–07:00 — but `licensed` is ALSO in
+      // films, and its own window governs, so the category's longer window does not save it.
+      await service.createRightsWindow(librarian(), {
+        assetId: licensed,
+        validFrom: at(0),
+        validTo: at(45),
+      });
+      await service.createRightsWindow(librarian(), {
+        categoryId: 'films',
+        validFrom: at(0),
+        validTo: at(60),
+      });
+      await service.replaceItems(caller(), s.id, [
+        media(0, 0, 30, { mediaId: licensed, categoryId: 'films', mediaTitle: 'Licensed' }), //  inside
+        media(1, 30, 30, { mediaId: licensed, categoryId: 'films', mediaTitle: 'Rerun' }), //    ends 07:00 > 06:45
+        media(2, 60, 30, { mediaId: film, categoryId: 'films', mediaTitle: 'Film' }), //         after 07:00
+        media(3, 90, 30, { mediaId: own, categoryId: 'news', mediaTitle: 'Own' }), //            not managed
+      ]);
+      const report = await service.validate(caller(), s.id);
+      assert.deepEqual(report.unchecked, ['availability']);
+      assert.deepEqual(
+        report.issues.map((i) => [i.kind, i.severity, i.message.split(':')[0]]),
+        [
+          ['rights', 'critical', '“Rerun” at 06'],
+          ['rights', 'critical', '“Film” at 07'],
+        ],
+      );
+      assert.match(
+        report.issues[0]!.message,
+        /outside the media's rights windows \(2026-09-12T06:00–2026-09-12T06:45Z\)$/,
+      );
+      assert.match(report.issues[1]!.message, /outside the category's rights windows/);
+      assert.equal(report.valid, false);
+
+      // Another channel's windows are not this channel's licence.
+      await service.createRightsWindow(librarian('ch99'), {
+        categoryId: 'films',
+        validFrom: at(0),
+        validTo: at(600),
+      });
+      assert.equal((await service.validate(caller(), s.id)).issues.length, 2);
     });
   });
 }

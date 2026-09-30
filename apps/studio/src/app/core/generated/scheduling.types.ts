@@ -140,10 +140,31 @@ export interface ValidationReport {
   /** No critical issue. */
   valid: boolean;
   issues: ValidationIssue[];
-  /** Validators that did not run, and so found nothing: today rights (no rights windows yet) and availability (HSM, EP-14). */
+  /** Validators that did not run, and so found nothing: today availability (HSM, EP-14). */
   unchecked: IssueKind[];
   validatedAt: string;
 }
+
+/** What a window licenses and when. Exactly one of `assetId` and `categoryId`. An item is governed by its asset's windows if the asset has any, else by its category's, else it is not rights-managed; a governed item must lie wholly inside one window. */
+export interface RightsWindowInput {
+  assetId?: Ulid;
+  categoryId?: string;
+  validFrom: string;
+  /** After validFrom. */
+  validTo: string;
+  /** Recorded, not evaluated: a channel carries no territory yet. */
+  territory?: string;
+  notes?: string;
+}
+
+export type RightsWindow = RightsWindowInput & {
+  id: Ulid;
+  channelId: string;
+  version: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export interface SchedulePage {
   items: Schedule[];

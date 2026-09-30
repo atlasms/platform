@@ -76,6 +76,10 @@ export function entityRule(entityType: string): ReadRule {
   // the first producer (RIM's recording holes, EP-39) would have raised alerts nobody could read.
   if (entityType === 'alert') return { permission: 'ops:read' };
   if (FILE_SET.has(entityType)) return { permission: 'asset:read', fieldGroup: 'files' };
+  // A rights window (EP-31) is an asset's rights, kept by Scheduling: it reads as MAM's `rights`
+  // field group does, the grant Scheduling enforces on the window itself. Under the default it was
+  // `rights-window:read`, which no catalogue defines and no role holds.
+  if (entityType === 'rights-window') return { permission: 'asset:read', fieldGroup: 'rights' };
   return { permission: `${entityType}:read` };
 }
 

@@ -45,6 +45,13 @@ export {
   type ValidationIssue,
 } from './validation.ts';
 export { ASSET_EVENTS_PATTERN, startApprovalConsumer } from './consumer.ts';
+export {
+  covered,
+  governingWindows,
+  parseRightsWindowInput,
+  type RightsWindow,
+  type RightsWindowInput,
+} from './rights.ts';
 export type { ScheduleStore, ScheduleTx } from './store.ts';
 export { sqliteScheduleStore, sqliteMigrations } from './store-sqlite.ts';
 export { pgScheduleStore, pgMigrations } from './store-pg.ts';

@@ -7,6 +7,7 @@
 
 import type { OutboxRecord } from '@atlas/messaging';
 import type { MediaApproval } from './approvals.ts';
+import type { RightsWindow } from './rights.ts';
 import type { Schedule, ScheduleItem } from './schedule.ts';
 
 export interface ScheduleStore {
@@ -24,6 +25,15 @@ export interface ScheduleStore {
   onAir(channelId: string, from: string, to: string): Promise<ScheduleItem[]>;
   /** What MAM said about these assets' approval, in this channel (EP-31). Unknown ids are absent. */
   approvals(channelId: string, assetIds: readonly string[]): Promise<MediaApproval[]>;
+  rightsWindow(id: string): Promise<RightsWindow | undefined>;
+  /**
+   * A channel's rights windows for any of these assets or categories — what validation needs for
+   * one reel. With neither list, every window of the channel, by validFrom.
+   */
+  rightsWindows(
+    channelId: string,
+    subjects?: { assetIds?: readonly string[]; categoryIds?: readonly string[] },
+  ): Promise<RightsWindow[]>;
   close(): Promise<void>;
 }
 
@@ -48,4 +58,8 @@ export interface ScheduleTx {
    * created it first, and the caller retries rather than overwrite a fact it never read.
    */
   putApproval(approval: MediaApproval, existed: boolean): Promise<boolean>;
+  /** Write a window; with `ifVersion`, only over that version (`false`: someone wrote first). */
+  putRightsWindow(window: RightsWindow, ifVersion?: number): Promise<boolean>;
+  /** Remove a window, only at that version; `false` if it moved or is gone. */
+  deleteRightsWindow(id: string, ifVersion: number): Promise<boolean>;
 }

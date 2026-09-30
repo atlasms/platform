@@ -122,8 +122,9 @@ paths:
         report says what is wrong with it. Gaps, overlaps and anchor overruns come from the reel;
         approval and expiry from what MAM announced about each item's media (Scheduling keeps it
         from `asset.approved`/`rejected`/`expired`/`deleted`/`updated`), judged at the time the item
-        AIRS, not now. Rights windows and rendition availability are not checked yet and are named
-        in `unchecked`. A run with no critical issue moves a draft to `validated`; any later edit
+        AIRS, not now; rights from the channel's rights windows (the asset's own, else its
+        category's — an item governed by windows must lie wholly inside one). Rendition availability
+        is not checked yet and is named in `unchecked`. A run with no critical issue moves a draft to `validated`; any later edit
         moves it back to `draft`. Every run emits `schedule.validated`.
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
@@ -140,6 +141,58 @@ paths:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
       responses:
         '202': { description: Sending }
+        '409': { $ref: '#/components/responses/Error' }
+  /rights-windows:
+    get:
+      operationId: listRightsWindows
+      tags: [rights]
+      summary: The channel's rights windows, by validFrom (asset:read on the rights field group)
+      parameters:
+        - { name: assetId, in: query, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: categoryId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Windows, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/RightsWindow' } } } } }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createRightsWindow
+      tags: [rights]
+      summary: License an asset or a category for a period (asset:write on the rights field group; audited)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RightsWindowInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/RightsWindow' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /rights-windows/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getRightsWindow
+      tags: [rights]
+      summary: One rights window
+      responses:
+        '200': { description: The window, content: { application/json: { schema: { $ref: '#/components/schemas/RightsWindow' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: updateRightsWindow
+      tags: [rights]
+      summary: Replace a window's terms over the version read (compare-and-set; audited)
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RightsWindowInput' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/RightsWindow' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteRightsWindow
+      tags: [rights]
+      summary: Remove a window at the version read (compare-and-set; audited)
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '204': { description: Removed }
+        '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
   /export-profiles:
     get: { operationId: listExportProfiles, tags: [admin], summary: List export profiles, responses: { '200': { description: Profiles } } }
@@ -288,8 +341,34 @@ components:
         state: { type: string, enum: [draft, validated, sending, sent, failed], description: The schedule's state after this run. }
         valid: { type: boolean, description: No critical issue. }
         issues: { type: array, items: { $ref: '#/components/schemas/ValidationIssue' } }
-        unchecked: { type: array, items: { $ref: '#/components/schemas/IssueKind' }, description: 'Validators that did not run, and so found nothing: today rights (no rights windows yet) and availability (HSM, EP-14).' }
+        unchecked: { type: array, items: { $ref: '#/components/schemas/IssueKind' }, description: 'Validators that did not run, and so found nothing: today availability (HSM, EP-14).' }
         validatedAt: { type: string, format: date-time }
+    RightsWindowInput:
+      type: object
+      description: >-
+        What a window licenses and when. Exactly one of `assetId` and `categoryId`. An item is
+        governed by its asset's windows if the asset has any, else by its category's, else it is not
+        rights-managed; a governed item must lie wholly inside one window.
+      required: [validFrom, validTo]
+      properties:
+        assetId: { $ref: '#/components/schemas/Ulid' }
+        categoryId: { type: string }
+        validFrom: { type: string, format: date-time }
+        validTo: { type: string, format: date-time, description: After validFrom. }
+        territory: { type: string, description: 'Recorded, not evaluated: a channel carries no territory yet.' }
+        notes: { type: string }
+    RightsWindow:
+      allOf:
+        - $ref: '#/components/schemas/RightsWindowInput'
+        - type: object
+          required: [id, channelId, version, createdBy, createdAt, updatedAt]
+          properties:
+            id: { $ref: '#/components/schemas/Ulid' }
+            channelId: { type: string }
+            version: { type: integer, minimum: 1, description: The audit revision and the compare-and-set token. }
+            createdBy: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
     SchedulePage:
       type: object
       required: [items]

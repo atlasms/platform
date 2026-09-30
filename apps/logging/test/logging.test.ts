@@ -292,6 +292,11 @@ test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENT
   assert.deepEqual(requiredRule({ ...base, type: 'recording.segment.completed' }), {
     permission: 'ingest:read',
   });
+  // A rights window (EP-31) reads as an asset's rights: asset:read on the rights group.
+  assert.deepEqual(
+    requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'rights-window' } }),
+    { permission: 'asset:read', fieldGroup: 'rights' },
+  );
   // An alert is operations' (EP-39's recording holes are its first producer).
   assert.deepEqual(requiredRule({ ...base, type: 'alert.raised' }), { permission: 'ops:read' });
   // An ingest JOB is not administration: it stays under ingest:read.
