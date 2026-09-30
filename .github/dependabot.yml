@@ -60,6 +60,13 @@ updates:
       # advisories still come through — only routine version bumps are ignored.
       - dependency-name: amqplib
       - dependency-name: "@types/amqplib"
+      # @opensearch-project/opensearch 3.9.0's generated typings dropped `field` from the terms and
+      # metric aggregations (`TermsAggregationFields`, `MaxAggregation`) — the one parameter those
+      # aggregations cannot do without — so the audit index's `heads()` query stopped typechecking
+      # (#374). The runtime is unchanged; the types are wrong. Held at 3.6 until a release puts
+      # `field` back: remove this entry then, and let the bump through.
+      - dependency-name: "@opensearch-project/opensearch"
+        versions: ["3.9.0"]
 
   # `reference/` is the frozen prototype: not an npm workspace, never installed by the root, never
   # built, never shipped, never run by CI. It is registered here for ONE reason — so a security
