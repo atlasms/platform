@@ -267,7 +267,11 @@
     "none": "No program tables yet.",
     "loadError": "Could not load schedules.",
     "createError": "Could not create the program table.",
-    "tabPrefix": "Schedule"
+    "tabPrefix": "Schedule",
+    "view": {
+      "days": "Days",
+      "rights": "Rights"
+    }
   },
   "transfers": {
     "title": "Transfers",
@@ -546,5 +550,31 @@
     "idle": "not recording now",
     "missed24h": "missed",
     "partial24h": "partial in 24 h"
+  },
+  "rights": {
+    "new": "New rights window",
+    "licenses": "Licenses",
+    "subject": {
+      "asset": "Media",
+      "category": "Category"
+    },
+    "subjectId": {
+      "asset": "Media ID",
+      "category": "Category ID"
+    },
+    "from": "From",
+    "to": "To",
+    "territory": "Territory",
+    "territoryHint": "Recorded only — a channel has no territory to check it against yet.",
+    "notes": "Notes",
+    "localTime": "Times are in your local time zone,",
+    "rule": "Media with windows of its own is held to them, otherwise to its category’s; media with neither is not rights-managed. An item must lie wholly inside one window.",
+    "refresh": "Refresh",
+    "none": "No rights windows in this channel.",
+    "loadError": "Could not load the rights windows.",
+    "conflict": "Someone changed or removed this window since you opened it. Nothing was saved.",
+    "reload": "Reload it",
+    "delete": "Remove window",
+    "deleteWhy": "Media it covered is no longer licensed by it; validation will say so where it is scheduled."
   }
 }

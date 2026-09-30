@@ -220,8 +220,13 @@ refused (Scheduling knows a category id, not its path — MTS's reasoning). Crea
 replaces the terms and a DELETE, both compare-and-set on `version`; every write is an
 `audit.recorded` (`rights-window`) in its transaction, and the log reads that history under the
 same `asset:read`/`rights` (logging `visibility.ts` — under the default it was
-`rights-window:read`, which nothing grants). `unchecked` is now `availability` alone. No Studio
-view for windows yet; the editor's report shows the rights issues.
+`rights-window:read`, which nothing grants). `unchecked` is now `availability` alone. **Studio:**
+the Schedule panel's **Rights** view (revealed by `asset:read` on the rights group; create by
+`asset:write` on it) lists the channel's windows and creates one; a window opens as an editor tab
+where its terms are changed or it is removed — both over the version read, a 409 offering a reload
+and never re-sending. Times are entered in the browser's zone and sent as instants. Nothing
+announces a window's change live (its one event is its audit record), so the list refreshes on
+open and on Refresh.
 
 Studio's schedule editor has a **Validate** button (the stored reel only — disabled with unsaved
 edits), the report above the reel, each issue flagged on its row, and the report hidden once the
