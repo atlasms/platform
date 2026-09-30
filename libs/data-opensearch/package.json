@@ -13,7 +13,7 @@
     "lint": "eslint src test"
   },
   "dependencies": {
-    "@opensearch-project/opensearch": "^3.6.0"
+    "@opensearch-project/opensearch": "^3.9.0"
   },
   "devDependencies": {
     "tsx": "^4.23.13"
