@@ -18,7 +18,7 @@ import {
 import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
-import type { AssetStore, AssetTx } from './store.ts';
+import { StaleWrite, type AssetStore, type AssetTx } from './store.ts';
 import { prefixUpperBound } from './search.ts';
 import type { Tag } from './tag.ts';
 
@@ -146,13 +146,22 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
   };
 
   const tx: AssetTx = {
-    async put(asset) {
-      db.prepare(
-        `INSERT INTO assets (id, channel_id, state, data) VALUES (?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET channel_id = excluded.channel_id,
-                                       state      = excluded.state,
-                                       data       = excluded.data`,
-      ).run(asset.id, asset.channelId, asset.state, JSON.stringify(asset));
+    async put(asset, ifVersion) {
+      const written =
+        ifVersion === undefined
+          ? db
+              .prepare(
+                `INSERT INTO assets (id, channel_id, state, data) VALUES (?, ?, ?, ?)
+                 ON CONFLICT(id) DO NOTHING`,
+              )
+              .run(asset.id, asset.channelId, asset.state, JSON.stringify(asset))
+          : db
+              .prepare(
+                `UPDATE assets SET channel_id = ?, state = ?, data = ?
+                 WHERE id = ? AND json_extract(data, '$.version') = ?`,
+              )
+              .run(asset.channelId, asset.state, JSON.stringify(asset), asset.id, ifVersion);
+      if (Number(written.changes) !== 1) throw new StaleWrite(asset.id, ifVersion);
     },
     async putExtended(assetId, channelId, values) {
       db.prepare(

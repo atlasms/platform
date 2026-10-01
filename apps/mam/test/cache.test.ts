@@ -191,7 +191,9 @@ test('a stale entry on THIS replica cannot poison a write: the version base is t
   const asset = await create();
   // Another replica wrote version 5 behind our back; our cache still says version 1.
   await cache.set(asset.id, 'asset', asset);
-  await store.transaction(async (tx) => tx.put({ ...asset, title: 'Elsewhere', version: 5 }));
+  await store.transaction(async (tx) =>
+    tx.put({ ...asset, title: 'Elsewhere', version: 5 }, asset.version),
+  );
 
   const written = await service.update(caller(), asset.id, { title: 'Ours' });
   assert.equal(written.version, 6, 'built on the stored version, not the cached one');

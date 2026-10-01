@@ -45,7 +45,7 @@ import {
   type FileRef,
 } from './file.ts';
 import type { AssetCache, CacheFamilies, CacheFamily } from './cache.ts';
-import type { AssetStore, AssetTx, ExtendedValues } from './store.ts';
+import { StaleWrite, type AssetStore, type AssetTx, type ExtendedValues } from './store.ts';
 import { groupsForCoreFields, groupsForExtended, type AssetFieldGroup } from './field-groups.ts';
 import { indexTerms, parseQuery } from './search.ts';
 import { parseTagLabels, sameTags, type Tag } from './tag.ts';
@@ -472,6 +472,10 @@ export class MamService {
   }
 
   async update(caller: Caller, id: string, patch: UpdateAssetInput): Promise<Asset> {
+    return this.onCurrent(() => this.updateOnce(caller, id, patch));
+  }
+
+  private async updateOnce(caller: Caller, id: string, patch: UpdateAssetInput): Promise<Asset> {
     const existing = await this.fresh(caller, id);
 
     // ALLOWLIST, not the caller's object. `UpdateAssetInput` omits `state`, but a type is erased
@@ -533,6 +537,15 @@ export class MamService {
     action: LifecycleAction,
     options: { expiresAt?: string; retainUntil?: string; reason?: string } = {},
   ): Promise<Asset> {
+    return this.onCurrent(() => this.transitionOnce(caller, id, action, options));
+  }
+
+  private async transitionOnce(
+    caller: Caller,
+    id: string,
+    action: LifecycleAction,
+    options: { expiresAt?: string; retainUntil?: string; reason?: string },
+  ): Promise<Asset> {
     const existing = await this.fresh(caller, id);
 
     // Approving is its own permission: someone who may edit metadata is not thereby entitled to
@@ -582,6 +595,10 @@ export class MamService {
 
   /** Attach renditions — normally driven by `transcode.completed` from MTS. */
   async attachRenditions(caller: Caller, id: string): Promise<Asset> {
+    return this.onCurrent(() => this.attachRenditionsOnce(caller, id));
+  }
+
+  private async attachRenditionsOnce(caller: Caller, id: string): Promise<Asset> {
     const existing = await this.fresh(caller, id);
     // `files` — renditions are the file set, which §3.1 puts in the Librarian's half, not the
     // Editor's. Normally driven by MTS rather than by a person, but the grant is what it is.
@@ -616,7 +633,13 @@ export class MamService {
   /**
    * `transcode.completed`: every rendition becomes (or replaces) a FileRef, and the asset has
    * renditions — the same bump `attachRenditions` makes, with the same audit action, plus one
-   * audit record per file at the file's own revision.
+   * audit record per file at the file's own revision. An asset that already HAS renditions is not
+   * written at all: a second completion changes its files, not the asset, and a revision whose
+   * delta is empty records nothing (it used to bump anyway, and every such bump was one more writer
+   * racing the editor — #385).
+   *
+   * The asset write is compare-and-set on the version read here: if an editor committed in
+   * between, the StaleWrite goes to the broker and the redelivery reads afresh.
    */
   async mirrorTranscode(msg: Message): Promise<MirrorOutcome> {
     const envelope = this.envelopeOf<EventPayloads['transcode.completed']>(
@@ -638,14 +661,13 @@ export class MamService {
         ...defined({ existing: current.get(fileKey(r.kind, undefined)) }),
       }),
     );
-    const updated: Asset = {
-      ...existing,
-      hasRenditions: true,
-      version: existing.version + 1,
-      updatedAt: now,
-    };
+    const updated: Asset | undefined = existing.hasRenditions
+      ? undefined
+      : { ...existing, hasRenditions: true, version: existing.version + 1, updatedAt: now };
     const caller = systemCaller(envelope.channelId, envelope);
-    const assetAudit = this.auditRecord(caller, updated, existing, 'asset.attachRenditions');
+    const assetAudit = updated
+      ? this.auditRecord(caller, updated, existing, 'asset.attachRenditions')
+      : undefined;
     const fileAudits = files.map((f) =>
       this.fileAudit(caller, f, current.get(fileKey(f.kind, f.variant)), 'transcode.completed'),
     );
@@ -655,12 +677,12 @@ export class MamService {
         outcome = 'duplicate';
         return;
       }
-      await tx.put(updated);
+      if (updated) await tx.put(updated, existing.version);
       for (const f of files) await tx.putFile(f);
-      await tx.enqueue(assetAudit);
+      if (assetAudit) await tx.enqueue(assetAudit);
       for (const a of fileAudits) await tx.enqueue(a);
     });
-    await this.evictCached(assetId);
+    if (updated) await this.evictCached(assetId);
     return outcome;
   }
 
@@ -887,6 +909,14 @@ export class MamService {
     id: string,
     patch: Readonly<Record<string, unknown>>,
   ): Promise<ExtendedValues> {
+    return this.onCurrent(() => this.updateExtendedOnce(caller, id, patch));
+  }
+
+  private async updateExtendedOnce(
+    caller: Caller,
+    id: string,
+    patch: Readonly<Record<string, unknown>>,
+  ): Promise<ExtendedValues> {
     const asset = await this.fresh(caller, id);
 
     const fields = await this.fieldsFor(asset);
@@ -1015,6 +1045,14 @@ export class MamService {
    * about a new term without polling for one.
    */
   async setTags(caller: Caller, id: string, labels: readonly unknown[]): Promise<Tag[]> {
+    return this.onCurrent(() => this.setTagsOnce(caller, id, labels));
+  }
+
+  private async setTagsOnce(
+    caller: Caller,
+    id: string,
+    labels: readonly unknown[],
+  ): Promise<Tag[]> {
     const asset = await this.fresh(caller, id);
     this.authorize(caller, 'asset:write', asset, TAXONOMY_GROUP);
 
@@ -1282,6 +1320,26 @@ export class MamService {
     for (const group of groups) this.authorize(caller, permission, asset, group);
   }
 
+  /**
+   * Run a command that has no client-supplied base again on a {@link StaleWrite} (#385): it read
+   * the asset, another writer committed it first, and the command is re-applied to what is stored
+   * now — re-read, re-authorized, re-validated. A PATCH carries no `If-Match`; its meaning is "these
+   * fields, on the asset as it is", so an editor is not refused because a rendition landed at the
+   * same moment. Bounded: a row that keeps moving under three attempts is a 409.
+   *
+   * Consumers do NOT come through here — a consumer's StaleWrite goes to the broker, which
+   * redelivers, and the redelivery reads afresh.
+   */
+  private async onCurrent<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        if (!(err instanceof StaleWrite) || attempt >= attempts) throw err;
+      }
+    }
+  }
+
   /** Write the record, its event and its audit delta in ONE transaction. */
   private async commit(
     caller: Caller,
@@ -1342,7 +1400,9 @@ export class MamService {
     // to the same connection; on Postgres it is not visible outside the transaction's own client —
     // so a read here would work in tests and return stale data in production.
     await this.options.store.transaction(async (tx) => {
-      await tx.put(asset);
+      // Compare-and-set on the version this mutation was computed from (#385): a new asset is
+      // inserted, an existing one replaced only if nobody committed it in between.
+      await tx.put(asset, before?.version);
       await also?.(tx);
       if (terms) await tx.indexTerms(asset.id, asset.channelId, terms);
       // Domain event first, audit second: the relay publishes in outbox order, and a consumer that

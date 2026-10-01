@@ -202,7 +202,34 @@ test('MVP acceptance — one file: upload → validate → transcode → metadat
     });
 
     await step(
-      '4 · transcode — proxy + thumbnail on their own, broadcast from HSM’s original',
+      '4 · metadata — described, categorised and tagged while its first renditions are still being made',
+      async () => {
+        // DELIBERATELY now, not after the transcodes: an editor describes an asset the moment it
+        // appears, and MTS is making its first renditions at the same time — so MAM's mirror
+        // (`hasRenditions`) and this edit write the same asset concurrently. Before #385 that was a
+        // lost update and a duplicate audit revision; step 9 holds both to account.
+        const patched = await call(`/api/v1/assets/${journey.assetId}`, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({
+            title: `Acceptance ${word} — evening bulletin`,
+            description: 'The MVP acceptance journey, one file from upload to the program table.',
+            categoryId: 'cat-1',
+          }),
+        });
+        assert.equal(patched.status, 200, patched.text);
+        const tagged = await call(`/api/v1/assets/${journey.assetId}/tags`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({ tags: ['acceptance', `tag${word}`] }),
+        });
+        assert.equal(tagged.status, 200, tagged.text);
+        assert.deepEqual(tagged.body.map((tag) => tag.label).sort(), ['acceptance', `tag${word}`]);
+      },
+    );
+
+    await step(
+      '5 · transcode — proxy + thumbnail on their own, broadcast from HSM’s original',
       async () => {
         const jobsOf = async () =>
           (await call(`/api/v1/jobs?assetId=${journey.assetId}`, { headers: auth })).body ?? [];
@@ -259,40 +286,6 @@ test('MVP acceptance — one file: upload → validate → transcode → metadat
           const row = files.find((f) => f.kind === placed.kind);
           assert.equal(row?.checksum?.value, placed.checksum.value, `${placed.kind} mirrored`);
         }
-        // The catalogue has taken BOTH transcodes — one `asset.attachRenditions` per completion —
-        // before anything edits the asset. ⚠️ A WORKAROUND for #385: MAM's asset writes are blind
-        // upserts, so an edit racing the mirror loses one of the two and both commit the same
-        // revision. Remove this wait, and add a deliberate race, when #385 lands.
-        await until(
-          async () =>
-            (await call(`/api/v1/history/asset/${journey.assetId}`, { headers: auth })).body
-              ?.revisions ?? [],
-          (revs) => revs.filter((r) => r.action === 'asset.attachRenditions').length >= 2,
-          'MAM never applied both transcodes to the asset',
-        );
-      },
-    );
-
-    await step(
-      '5 · metadata — described and categorised (the gate needs it), and tagged',
-      async () => {
-        const patched = await call(`/api/v1/assets/${journey.assetId}`, {
-          method: 'PATCH',
-          headers,
-          body: JSON.stringify({
-            title: `Acceptance ${word} — evening bulletin`,
-            description: 'The MVP acceptance journey, one file from upload to the program table.',
-            categoryId: 'cat-1',
-          }),
-        });
-        assert.equal(patched.status, 200, patched.text);
-        const tagged = await call(`/api/v1/assets/${journey.assetId}/tags`, {
-          method: 'PUT',
-          headers,
-          body: JSON.stringify({ tags: ['acceptance', `tag${word}`] }),
-        });
-        assert.equal(tagged.status, 200, tagged.text);
-        assert.deepEqual(tagged.body.map((tag) => tag.label).sort(), ['acceptance', `tag${word}`]);
       },
     );
 
@@ -402,7 +395,27 @@ test('MVP acceptance — one file: upload → validate → transcode → metadat
         assert.equal(ingest[0].action, 'ingest.detected');
         assert.deepEqual(ingest[0].delta.checksum, { after: sha256 });
 
-        const asset = await history('asset', journey.assetId, after('state', 'approved'), 'asset');
+        // The edit made while the renditions landed (step 4) survived beside them, and EVERY
+        // revision MAM committed reached the log exactly once: 1..version, no gap. Before #385 two
+        // writers could commit one revision twice — the sink kept the first and dead-lettered the
+        // other, so the trail had a hole and one of the two changes was gone from the row.
+        const stored = (await call(`/api/v1/assets/${journey.assetId}`, { headers: fresh })).body;
+        assert.deepEqual(
+          [stored.hasRenditions, stored.categoryId, stored.state],
+          [true, 'cat-1', 'approved'],
+          'neither the mirror’s write nor the editor’s was lost',
+        );
+        const asset = await history(
+          'asset',
+          journey.assetId,
+          (revs) => revs.length >= stored.version,
+          `all ${stored.version} revisions of the asset`,
+        );
+        assert.deepEqual(
+          asset.map((r) => r.revision),
+          Array.from({ length: stored.version }, (_, i) => i + 1),
+          'one record per revision, none missing, none twice',
+        );
         assert.equal(asset[0].action, 'asset.created');
         assert.ok(after('categoryId', 'cat-1')(asset), 'the metadata edit, as a delta');
         for (const state of ['processing', 'ready']) {

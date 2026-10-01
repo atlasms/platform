@@ -188,9 +188,17 @@ test('a second transcode.completed REPLACES a kind (MTS re-ran) — same id, nex
   assert.equal(proxy.id, first!.id, 'the row keeps its identity');
   assert.equal(proxy.version, 2);
   assert.equal(proxy.storage.path, '/online/proxy-v2.bin');
-  const audit = (await drain())
-    .map((e) => e.payload as unknown as EventPayloads['audit.recorded'])
-    .find((a) => a.entityType === 'file');
+  const audits = (await drain()).map(
+    (e) => e.payload as unknown as EventPayloads['audit.recorded'],
+  );
+  // The asset already had renditions: its files changed, it did not — no revision recording
+  // nothing, and no write to race an editor with (#385).
+  assert.deepEqual(
+    audits.map((a) => a.entityType),
+    ['file'],
+  );
+  assert.equal((await service.get(caller(), asset.id)).version, 2, 'the asset is not bumped');
+  const audit = audits.find((a) => a.entityType === 'file');
   assert.deepEqual((audit!.delta as Record<string, unknown>)['storage'], {
     before: { path: '/online/proxy.bin', tier: 'online', status: 'available' },
     after: { path: '/online/proxy-v2.bin', tier: 'online', status: 'available' },

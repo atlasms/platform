@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Asset } from './asset.ts';
-import type { AssetStore } from './store.ts';
+import { StaleWrite, type AssetStore } from './store.ts';
 
 export interface StoreHarness {
   /** A clean, empty store. */
@@ -89,18 +89,49 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
-  test(`${name}: put is an upsert, not an insert`, async () => {
+  test(`${name}: put is compare-and-set — a new asset is inserted, a replacement names the version it read`, async () => {
     await withFixture(async ({ store }) => {
       const a = asset();
       await store.transaction(async (tx) => tx.put(a));
-      await store.transaction(async (tx) => tx.put({ ...a, title: 'Renamed', version: 2 }));
+      await assert.rejects(
+        store.transaction(async (tx) => tx.put({ ...a, title: 'Again' })),
+        StaleWrite,
+        'an insert over an existing id is refused, never an overwrite',
+      );
+      await store.transaction(async (tx) => tx.put({ ...a, title: 'Renamed', version: 2 }, 1));
+      await assert.rejects(
+        store.transaction(async (tx) => tx.put({ ...a, title: 'Stale', version: 2 }, 1)),
+        StaleWrite,
+        'a write computed from version 1 lands on nothing once version 2 is stored',
+      );
 
-      assert.equal((await store.get(a.id))?.title, 'Renamed');
+      assert.deepEqual(
+        [(await store.get(a.id))?.title, (await store.get(a.id))?.version],
+        ['Renamed', 2],
+      );
       assert.equal(
         (await store.listByChannel('ch12')).length,
         1,
         'must not have duplicated the row',
       );
+    });
+  });
+
+  test(`${name}: RACE — two writers on one base: exactly one commits, the other is a StaleWrite (#385)`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await store.transaction(async (tx) => tx.put(a));
+      // The mirror and an editor, both computed from version 1. Before #385 both committed
+      // version 2, the second over the first — a lost update with a valid-looking version.
+      const results = await Promise.allSettled(
+        ['From the mirror', 'From the editor'].map((title) =>
+          store.transaction(async (tx) => tx.put({ ...a, title, version: 2 }, 1)),
+        ),
+      );
+      assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
+      const refused = results.find((r) => r.status === 'rejected');
+      assert.ok(refused?.status === 'rejected' && refused.reason instanceof StaleWrite);
+      assert.equal((await store.get(a.id))?.version, 2);
     });
   });
 

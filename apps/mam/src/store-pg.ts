@@ -17,7 +17,7 @@ import {
 import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
-import type { AssetStore, AssetTx } from './store.ts';
+import { StaleWrite, type AssetStore, type AssetTx } from './store.ts';
 import type { Tag } from './tag.ts';
 
 interface TagRow {
@@ -352,16 +352,24 @@ export function pgAssetStore(pool: PgPool): AssetStore {
         };
 
         const tx: AssetTx = {
-          async put(asset) {
-            await client.query(
-              `INSERT INTO assets (id, channel_id, state, data, updated_at)
-               VALUES ($1, $2, $3, $4, now())
-               ON CONFLICT (id) DO UPDATE SET channel_id = excluded.channel_id,
-                                              state      = excluded.state,
-                                              data       = excluded.data,
-                                              updated_at = now()`,
-              [asset.id, asset.channelId, asset.state, JSON.stringify(asset)],
-            );
+          async put(asset, ifVersion) {
+            // Under READ COMMITTED a second writer on the same base blocks on the first's row
+            // lock, then re-evaluates its WHERE against the committed row — whose version has
+            // moved — and updates nothing. That zero is the StaleWrite.
+            const written =
+              ifVersion === undefined
+                ? await client.query(
+                    `INSERT INTO assets (id, channel_id, state, data, updated_at)
+                     VALUES ($1, $2, $3, $4, now())
+                     ON CONFLICT (id) DO NOTHING`,
+                    [asset.id, asset.channelId, asset.state, JSON.stringify(asset)],
+                  )
+                : await client.query(
+                    `UPDATE assets SET channel_id = $2, state = $3, data = $4, updated_at = now()
+                     WHERE id = $1 AND (data->>'version')::int = $5`,
+                    [asset.id, asset.channelId, asset.state, JSON.stringify(asset), ifVersion],
+                  );
+            if (written.rowCount !== 1) throw new StaleWrite(asset.id, ifVersion);
           },
           async putExtended(assetId, channelId, values) {
             await client.query(

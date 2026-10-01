@@ -100,7 +100,13 @@ export {
   type Tag,
   type TagCandidate,
 } from './tag.ts';
-export { type AssetStore, type AssetTx, type ExtendedValues, type ListOptions } from './store.ts';
+export {
+  StaleWrite,
+  type AssetStore,
+  type AssetTx,
+  type ExtendedValues,
+  type ListOptions,
+} from './store.ts';
 export {
   sqliteAssetStore,
   sqliteAssetsMigration,
