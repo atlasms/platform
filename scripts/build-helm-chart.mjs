@@ -52,12 +52,12 @@ const isAtlasImage = (repository) => repository.startsWith('atlas/');
  * Workloads whose replica count is NOT a value.
  *
  * Each is a correctness constraint rather than a capacity choice, and the base says why: IAM
- * generates its signing key ring per process; RIM's staging area and MTS's work area are
- * ReadWriteOnce volumes (until HSM, EP-14, provides shared storage); the data plane is
- * single-writer. A chart that let you raise these would be a chart that lets you
- * break the install from values.yaml.
+ * generates its signing key ring per process; RIM's staging area is a ReadWriteOnce volume; the
+ * data plane is single-writer. A chart that let you raise these would be a chart that lets you
+ * break the install from values.yaml. MTS left this list in EP-16.6: its work area is per-pod
+ * scratch since HSM holds inputs and renditions, and its workers lease from one queue table.
  */
-const PINNED_REPLICAS = new Set(['iam', 'rim', 'mts', 'postgres', 'nats', 'opensearch']);
+const PINNED_REPLICAS = new Set(['iam', 'rim', 'postgres', 'nats', 'opensearch']);
 
 /** The data-plane components a customer may point at their own estate instead. */
 const DATA_PLANE = new Set(['postgres', 'nats', 'opensearch']);
@@ -118,6 +118,7 @@ const values = {
   replicas: {},
   resources: {},
   storage: {},
+  scratch: {},
 };
 
 /** `atlas/mam:dev` → the component name the chart knows it by, and its default repository/tag. */
@@ -250,6 +251,20 @@ function templateDocument(doc) {
   if (!PINNED_REPLICAS.has(name)) {
     values.replicas[camel(name)] = doc.get('spec').get('replicas') ?? 1;
     doc.setIn(['spec', 'replicas'], inline(`{{ .Values.replicas.${camel(name)} }}`));
+  }
+
+  // A bounded emptyDir is per-pod scratch (MTS's work area since EP-16.6): its size is a facility's
+  // decision exactly as a claim's is, so it is a value too.
+  const volumes = doc.getIn(['spec', 'template', 'spec', 'volumes']);
+  for (const [i, volume] of (volumes?.items ?? []).entries()) {
+    const limit = volume.getIn(['emptyDir', 'sizeLimit']);
+    if (limit === undefined) continue;
+    const key = camel(name);
+    values.scratch[key] = String(limit);
+    doc.setIn(
+      ['spec', 'template', 'spec', 'volumes', i, 'emptyDir', 'sizeLimit'],
+      inline(`{{ .Values.scratch.${key} }}`),
+    );
   }
 
   const containers = doc.getIn(['spec', 'template', 'spec', 'containers']);
@@ -385,10 +400,13 @@ ${yaml(values.images)}
 
 # --- scale -------------------------------------------------------------------
 #
-# Only the workloads that CAN scale appear here. IAM (one signing key ring per process), RIM and
-# MTS (ReadWriteOnce volumes, until HSM provides shared storage) and the data plane (single writer)
-# are pinned in the manifests, and a value that let you raise them would be a value that breaks
-# the install.
+# Only the workloads that CAN scale appear here. IAM (one signing key ring per process), RIM (a
+# ReadWriteOnce staging volume) and the data plane (single writer) are pinned in the manifests, and
+# a value that let you raise them would be a value that breaks the install. MTS scales: its workers
+# lease from one queue table and its work area is per-pod scratch (EP-16.6).
+#
+# The defaults keep MTS at one replica, but that means one transcode at a time across the whole
+# platform: a facility sets \`replicas.mts\` to its transcode concurrency.
 #
 # A deployment listed here with more than one replica also gets a PodDisruptionBudget.
 replicas:
@@ -404,6 +422,13 @@ ${yaml(values.resources)}
 storageClass: ""
 storage:
 ${yaml(values.storage)}
+
+# Per-pod scratch (an emptyDir with a size limit): MTS's work area — an input fetched from HSM and
+# its renditions until they are pushed, one job per pod. Size it for the largest master plus its
+# renditions; a pod that outgrows it is evicted rather than filling the node. Add an
+# \`ephemeral-storage\` request under \`resources.mts\` so the scheduler places workers by it.
+scratch:
+${yaml(values.scratch)}
 
 # --- the data plane ----------------------------------------------------------
 #

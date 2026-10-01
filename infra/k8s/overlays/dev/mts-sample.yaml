@@ -1,13 +1,10 @@
-# A sample input for MTS, rendered into its work area on start — DEV ONLY, like the seed user.
+# A sample input for MTS, rendered into its scratch on start — DEV ONLY, like the seed user.
 #
-# Until HSM (EP-14) places files where MTS can read them, nothing in a cluster can hand MTS an
-# input: RIM's staging area is its own volume and a staged path is never on the wire. So the dev
-# overlay makes one, with the same FFmpeg the service uses, and the smoke suite transcodes it end
-# to end — enqueue through the gateway, the worker leases it, `transcode.completed` crosses the
-# broker, and MAM's FileRef mirror (EP-17.8) turns it into the asset's file rows. That is the one
-# path the mirror had never run on in a deployment.
+# The smoke suite's transcodes that take a PATH input read this clip; everything else reads its
+# input from HSM. The work area is per-pod scratch (EP-16.6), so this init container renders the
+# clip into EVERY pod's scratch, and a job leased by either worker finds it.
 #
-# `-n` and the existence test make it idempotent: a pod restart keeps the file it made before.
+# `-n` and the existence test make it idempotent within a pod's life.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

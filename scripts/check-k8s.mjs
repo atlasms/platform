@@ -226,6 +226,7 @@ const CHART_PRODUCTION_VALUES = [
   'ingress.enabled=true',
   'ingress.host=atlas.staging.example',
   'replicas.websocket=2',
+  'replicas.mts=2',
 ];
 
 function helm(args) {

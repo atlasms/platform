@@ -183,8 +183,22 @@ the code owns the FFmpeg runner and a **parameter grammar**; an administrator ow
 - **Studio** edits it in the Admin panel's Transcode profiles view: the structured form, MTS's 422
   placed under the field each rule names, a 409 offered as a reload rather than retried, and
   "Redefine for this channel" on a platform profile a channel administrator cannot write.
-- **Scaling** past one replica still waits on shared storage (HSM, EP-14): the work area is
-  ReadWriteOnce. The lease already lets N workers share the queue.
+- **Scaling** is a replica count (EP-16.6, #145). Each pod leases one job at a time from the
+  queue table; the work area is per-pod scratch (an `emptyDir` with a size limit) since HSM holds
+  every input and rendition. The dev overlay runs two workers so smoke proves they share the queue,
+  staging two behind a PDB, and the Helm chart has `replicas.mts` and `scratch.mts`. What makes N
+  workers safe is the **lease**:
+  - every write a worker makes to a job it holds — progress, completion, failure, a drain's requeue
+    — is compare-and-set on the lease identity (`workerId` + `startedAt`, written at lease time),
+    not on the state alone: a job swept from a slow worker and leased by another is `running` again,
+    and the first worker's late completion must not land on the second's lease;
+  - a **heartbeat** (`heartbeatMs`, 60 s) touches the held row through the phases FFmpeg reports
+    nothing in — fetching a master from HSM, hashing, pushing renditions — so the sweep (5 min) never
+    takes a live job; a beat that finds the lease gone abandons the job;
+  - the sweep requeues only the row it judged stale (`updatedAt` in the guard), so a beat between
+    its read and its write wins.
+  Without HSM (no `ATLAS_HSM_INTERNAL_KEYS`) renditions stay in the pod's scratch and are lost at
+  its restart; MTS says so at startup.
 
 ## 12. Observability
 
@@ -211,8 +225,7 @@ Details and reasons: [`apps/mts/README.md`](../../../apps/mts/README.md).
   lived only as an unacked message could not be read by `GET /jobs/{id}`, counted or resumed, and
   an encode inside the message handler outlives any sane ack deadline.
 - **The worker runs in the service's pod**, one job at a time — scaling is more pods (§8), not a
-  second deployment. Pinned to **one replica** for now, because inputs and renditions live on a
-  ReadWriteOnce work volume until HSM provides shared storage; the code already scales.
+  second deployment; the replica count is a deployment's choice (§11, EP-16.6).
 - **Retries by cause**: a refusal of the input dead-letters at once, a tool/machine fault backs off
   (30 s doubling) and dead-letters after 3 attempts, a drain requeues with the attempt returned.
   `transcode.failed` only when the platform gives up.
@@ -223,8 +236,9 @@ Details and reasons: [`apps/mts/README.md`](../../../apps/mts/README.md).
   cost what a domain event costs and be hash-chained into the audit log once per tick.
 - **Outputs are named by job and preset** (`renditions/<jobId>/<preset>.<ext>`), which gives the
   convergence this section asks of content addressing without hashing a file before it exists.
-- **Until HSM**, `inputPath` must resolve inside MTS's own work root; the dev overlay renders a
-  sample clip there so the smoke suite can transcode end to end.
+- `inputPath` must resolve inside MTS's own work root — per-pod scratch, so only the sample clip
+  the dev overlay renders into EVERY pod's scratch is ever such an input; real inputs come from
+  HSM (`inputFile`).
 
 ### EP-14.7 — renditions go to HSM ([ADR-0009](../../adr/0009-hsm-storage-and-placement.md))
 
@@ -233,8 +247,7 @@ the checksum MTS computes anyway — and the rendition's `path` in the job and i
 `transcode.completed` is HSM's key; the local output is removed. A job may name its input as the
 asset's file in HSM (`inputFile: { kind, variant? }`), fetched to scratch at run time, hashed on the
 way in and compared with HSM's digest. HSM being away is a tool fault — retried. The work area is
-scratch now; the one-replica pin remains only for the sample-clip `inputPath` jobs a deployment
-renders, and lifts once originals come from HSM (RIM, 15.5).
+scratch now, per pod — and since EP-16.6 MTS runs as many replicas as a deployment asks for.
 
 ### EP-15.5 — the first renditions of an ingested asset
 

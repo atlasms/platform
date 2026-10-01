@@ -80,6 +80,17 @@ patches:
   # A live test feed beside each recorder worker, so smoke can record (EP-39, see the file).
   - path: rim-recorder-feed.yaml
 
+  # TWO MTS workers (EP-16.6): the one service whose replica count the smoke suite should exercise —
+  # both lease from the queue table, each with its own scratch and its own sample clip, and smoke's
+  # transcodes land on whichever leases them.
+  - target:
+      kind: Deployment
+      name: mts
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+
   # One replica: a laptop does not need two, and a single pod makes `kubectl logs` legible.
   - target:
       kind: Deployment

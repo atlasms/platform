@@ -58,14 +58,37 @@ export interface JobStore {
   close(): Promise<void>;
 }
 
+/** Which lease a write belongs to — see {@link JobTx.putJob}. */
+export interface LeaseGuard {
+  workerId: string;
+  startedAt: string;
+  updatedAt?: string;
+}
+
+/** The lease a running job was taken under. */
+export function leaseOf(job: TranscodeJob, withUpdatedAt = false): LeaseGuard {
+  return {
+    workerId: job.workerId ?? '',
+    startedAt: job.startedAt ?? '',
+    ...(withUpdatedAt ? { updatedAt: job.updatedAt } : {}),
+  };
+}
+
 /** The write surface, reachable only from inside {@link JobStore.transaction}. */
 export interface JobTx {
   /**
    * Write a job. With `ifState`, only when the stored row is still in that state — the
    * compare-and-set a lease and every transition needs — and returns whether it did. Without, an
    * upsert.
+   *
+   * With `ifLease` as well, only when the row is still THIS lease (EP-16.6): the same `workerId`
+   * and `startedAt` the lease wrote, and — when given — the same `updatedAt`. State alone is not
+   * enough once several workers share the queue: a job swept from a slow worker and leased by
+   * another is `running` again, and the first worker's late completion would land on the second's
+   * lease. `updatedAt` is for the sweep: it requeues only the row it judged stale, so a heartbeat
+   * that lands in between wins.
    */
-  putJob(job: TranscodeJob, ifState?: JobState): Promise<boolean>;
+  putJob(job: TranscodeJob, ifState?: JobState, ifLease?: LeaseGuard): Promise<boolean>;
   /** Enqueue a domain event on the outbox — in THIS transaction, with the row it announces. */
   enqueue(record: OutboxRecord): Promise<void>;
   /**

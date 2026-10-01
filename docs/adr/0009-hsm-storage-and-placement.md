@@ -139,8 +139,8 @@ for hashing — deferred until profiling says Node's streaming hash does not sat
 
 - One more network copy per file placed (the producer's local file → HSM). Accepted for the
   guarantee that no other workload holds storage credentials or a storage mount.
-- MTS no longer needs its work area for outputs; its one-replica pin now holds only for sample
-  inputs, and lifts once originals come from HSM.
+- MTS no longer needs its work area for outputs; since EP-16.6 it is per-pod scratch and MTS
+  scales by replica count (with lease-guarded writes and a heartbeat — mts.md §11).
 - The AWS SDK is a new dependency of HSM alone (not of any library).
 - Until 15.5, the only producer in a deployment is MTS; originals do not yet reach HSM.
 

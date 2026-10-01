@@ -38,3 +38,17 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: rim-recorder
+---
+# MTS (EP-16.6): workers leasing from one queue table. A drain may take one; its running job goes
+# back on the queue with its attempt returned, and the other takes it.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mts
+  labels:
+    app.kubernetes.io/name: mts
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mts
