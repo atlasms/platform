@@ -93,6 +93,29 @@ async function seedToken() {
   return json(login).accessToken;
 }
 
+/**
+ * A program table on a day of its own. One schedule per channel per day, and locally the cluster
+ * outlives a run — after enough runs a random day is already taken, and the create is a 409 that
+ * says nothing about the code. So a taken day is skipped, a few times, and anything else is
+ * returned for the caller to judge.
+ */
+async function scheduleOnFreeDay(headers, body, fromDays, spanDays) {
+  let created;
+  let day;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    day = new Date(Date.now() + (fromDays + Math.floor(Math.random() * spanDays)) * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    created = await get('/api/v1/schedules', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ broadcastDate: day, ...body }),
+    });
+    if (created.status !== 409) break;
+  }
+  return { day, created };
+}
+
 test(`smoke: ${BASE} is reachable and live`, async () => {
   // WAIT FOR THE ORIGIN ITSELF, not just for what it answers.
   //
@@ -1297,41 +1320,51 @@ test('smoke: EP-19.4 — the retention policy is governance: the defaults until 
   assert.ok(inForce.hotDays >= 1);
   assert.equal(typeof inForce.defaults, 'boolean');
 
-  const put = await get('/api/v1/retention-policies', {
-    method: 'PUT',
-    headers,
-    body: JSON.stringify({ hotDays: 45, coldDays: 3650, legalHold: true }),
-  });
-  assert.equal(put.status, 200, `write failed: ${put.text}`);
-  const policy = json(put);
-  assert.equal(policy.hotDays, 45);
-  assert.equal(policy.legalHold, true);
-  assert.equal(policy.defaults, false);
-  assert.equal(policy.version, inForce.version + 1);
+  // Put back in `finally`: a run that fails between the two writes must not leave the channel on
+  // legal hold for the next one — locally the cluster outlives a run, and the next run's delta
+  // assertion would then see no change at all.
+  // A value the policy does not have, so the write is a change whatever a previous run left.
+  const hotDays = inForce.hotDays === 45 ? 46 : 45;
+  try {
+    const put = await get('/api/v1/retention-policies', {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ hotDays, coldDays: 3650, legalHold: true }),
+    });
+    assert.equal(put.status, 200, `write failed: ${put.text}`);
+    const policy = json(put);
+    assert.equal(policy.hotDays, hotDays);
+    assert.equal(policy.legalHold, true);
+    assert.equal(policy.defaults, false);
+    assert.equal(policy.version, inForce.version + 1);
 
-  const after = json(await get('/api/v1/retention-policies', { headers }));
-  assert.equal(after.version, policy.version, 'replaced whole, and read back');
-  assert.equal(after.legalHold, true);
+    const after = json(await get('/api/v1/retention-policies', { headers }));
+    assert.equal(after.version, policy.version, 'replaced whole, and read back');
+    assert.equal(after.legalHold, true);
 
-  const history = json(await get('/api/v1/history/retention-policy/ch12', { headers }));
-  const latest = history.revisions.find((r) => r.revision === policy.version);
-  assert.ok(latest, `revision ${policy.version} in the audit history: ${JSON.stringify(history)}`);
-  assert.equal(latest.action, 'retention-policy.updated');
-  assert.deepEqual(latest.delta.legalHold, {
-    ...(inForce.defaults ? {} : { before: inForce.legalHold }),
-    after: true,
-  });
-
-  const reset = await get('/api/v1/retention-policies', {
-    method: 'PUT',
-    headers,
-    body: JSON.stringify({
-      hotDays: inForce.hotDays,
-      coldDays: inForce.coldDays,
-      legalHold: false,
-    }),
-  });
-  assert.equal(reset.status, 200, `reset failed: ${reset.text}`);
+    const history = json(await get('/api/v1/history/retention-policy/ch12', { headers }));
+    const latest = history.revisions.find((r) => r.revision === policy.version);
+    assert.ok(
+      latest,
+      `revision ${policy.version} in the audit history: ${JSON.stringify(history)}`,
+    );
+    assert.equal(latest.action, 'retention-policy.updated');
+    assert.deepEqual(latest.delta.hotDays, {
+      ...(inForce.defaults ? {} : { before: inForce.hotDays }),
+      after: hotDays,
+    });
+  } finally {
+    const reset = await get('/api/v1/retention-policies', {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        hotDays: inForce.hotDays,
+        coldDays: inForce.coldDays,
+        legalHold: false,
+      }),
+    });
+    assert.equal(reset.status, 200, `reset failed: ${reset.text}`);
+  }
 });
 
 test('smoke: EP-18 — a program table is written thinly, read back in reel order, and audited', async () => {
@@ -1345,14 +1378,12 @@ test('smoke: EP-18 — a program table is written thinly, read back in reel orde
 
   // A unique broadcast day per run: one schedule per channel per day, and the cluster may not be
   // fresh when this runs locally.
-  const day = new Date(Date.now() + Math.floor(Math.random() * 365) * 86_400_000)
-    .toISOString()
-    .slice(0, 10);
-  const created = await get('/api/v1/schedules', {
-    method: 'POST',
+  const { day, created } = await scheduleOnFreeDay(
     headers,
-    body: JSON.stringify({ broadcastDate: day, timezone: 'Europe/London', notes: 'smoke' }),
-  });
+    { timezone: 'Europe/London', notes: 'smoke' },
+    0,
+    365,
+  );
   assert.equal(created.status, 201, `create failed: ${created.text}`);
   const schedule = json(created);
   assert.equal(schedule.state, 'draft');
@@ -1473,16 +1504,9 @@ test('smoke: EP-31 — validation reads MAM’s approvals off the bus, and a cle
   assert.equal(approved.status, 200, `approve failed: ${approved.text}`);
 
   // A day of its own, a reel of the approved asset and one MAM has never heard of.
-  const day = new Date(Date.now() + (400 + Math.floor(Math.random() * 365)) * 86_400_000)
-    .toISOString()
-    .slice(0, 10);
-  const schedule = json(
-    await get('/api/v1/schedules', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ broadcastDate: day, timezone: 'UTC' }),
-    }),
-  );
+  const { day, created: made } = await scheduleOnFreeDay(headers, { timezone: 'UTC' }, 400, 365);
+  assert.equal(made.status, 201, `schedule create failed: ${made.text}`);
+  const schedule = json(made);
   const t0 = Date.parse(`${day}T06:00:00.000Z`);
   const at = (min) => new Date(t0 + min * 60_000).toISOString();
   const stranger = '01H00000000000000000000000';

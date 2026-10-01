@@ -162,7 +162,8 @@ The gateway answers on `http://localhost:30080`, the WebSocket server on `ws://l
 ## 6. Smoke
 
 ```sh
-npm run smoke      # 31 checks against the live cluster
+npm run smoke      # 34 checks against the live cluster
+npm run acceptance # the MVP journey: one file, upload → schedule, audited and live (EP-21.1)
 ```
 
 The suite signs in as the dev overlay's seed account, writes through the gateway, and reads the
@@ -208,7 +209,7 @@ deliberate ([apps/studio/README.md](apps/studio/README.md#signing-in)).
 | a service I want to see on the cluster | `npm run k8s:up` **and** `kubectl -n atlas rollout restart deployment/<name>` — the tag does not change, so `apply` alone keeps the old pod |
 | a manifest under `infra/k8s`           | `npm run k8s:check` (every overlay renders and keeps its conventions), then `npm run k8s:deploy`                                            |
 | an OpenAPI file or a JSON Schema       | `npm run api:types`, and a `libs/contracts/CHANGELOG.md` entry for a schema                                                                 |
-| everything, before a PR                | `npm run verify && npm run smoke`                                                                                                           |
+| everything, before a PR                | `npm run verify && npm run smoke && npm run acceptance`                                                                                     |
 
 Tear down: `kind delete cluster --name atlas-dev` (the cluster and its volumes),
 `docker compose -f infra/docker-compose.dev.yml down -v` (the compose data).
