@@ -37,6 +37,9 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `ingest.detected` carries `ingestJobId` (EP-21.1): the job the detection created. Without it a
+  live view of the ingest queue could not tell which row a detection was — the MVP acceptance
+  journey waited for its upload's detection on the socket and had nothing to match it by.
 - `ingest.accepted` carries what MAM needs to create the asset and what MTS needs to choose its
   first renditions (EP-15.5): `ingestJobId`, `sourceKind`, `filename`, `sizeBytes`, `title`,
   `mediaType`, `fileType`, `createdBy`. Optional; RIM is its first producer. Its description now says

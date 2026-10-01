@@ -368,6 +368,7 @@ export class RimService {
       }
       await tx.enqueue(
         this.record(origin, job.channelId, 'ingest.detected', {
+          ingestJobId: job.id,
           source: job.source,
           sourceKind: job.sourceKind,
           path: assembled.path,
@@ -1018,6 +1019,7 @@ export class RimService {
       await tx.putJob(job);
       await tx.enqueue(
         this.record(origin, job.channelId, 'ingest.detected', {
+          ingestJobId: job.id,
           source: job.source,
           sourceKind: job.sourceKind,
           path: staged.path,

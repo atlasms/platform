@@ -245,6 +245,7 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
         .payload as unknown as EventPayloads['ingest.detected'];
       assert.equal(detected.sourceKind, 'upload');
       assert.equal(detected.sizeBytes, size);
+      assert.equal(detected.ingestJobId, job.id, 'a live view matches the detection to its job');
       const audit = events.find((e) => e.type === 'audit.recorded')!
         .payload as unknown as EventPayloads['audit.recorded'];
       assert.equal(audit.entityType, 'ingest');
