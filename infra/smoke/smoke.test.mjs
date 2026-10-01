@@ -1723,11 +1723,20 @@ test('smoke: EP-16 — a real transcode: enqueued through the gateway, run by FF
     );
   }
 
-  // And the asset knows it has renditions — the mirror's bump, from the same event.
-  const asset = await get(`/api/v1/assets/${assetId}`, {
-    headers: { ...headers, 'cache-control': 'no-cache' },
-  });
-  assert.equal(json(asset).hasRenditions, true);
+  // And the asset knows it has renditions — the mirror's bump, from transcode.completed. Polled:
+  // since EP-14 the file rows ALSO arrive by HSM's file.placed, a separate consumer, so the rows
+  // above can be there before transcode.completed has been applied (#375's first smoke run).
+  const renditionsDeadline = Date.now() + 30_000;
+  let hasRenditions = false;
+  for (;;) {
+    const asset = await get(`/api/v1/assets/${assetId}`, {
+      headers: { ...headers, 'cache-control': 'no-cache' },
+    });
+    hasRenditions = json(asset).hasRenditions === true;
+    if (hasRenditions || Date.now() > renditionsDeadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.equal(hasRenditions, true, 'the asset never learned it has renditions');
 });
 
 test('smoke: EP-16.4 — transcode progress arrives live on a real socket, from live.<channel>, kept by nothing', async () => {
