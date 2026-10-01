@@ -22,6 +22,11 @@ tests, e.g. `cd contracts && node --import tsx --test test/*.test.ts`. (`contrac
 
 **Total: 84 passing tests.**
 
+Frozen is not isolated: these packages read the **live** schemas in `docs/architecture/schemas`, so a
+schema change can break them. CI holds them to it (`npm run reference:test`, after
+`npm ci --prefix reference`) — EP-02.5's `TaskKind` consolidation broke the canvas property form
+and nothing noticed until #382.
+
 ## How they compose
 
 ```
