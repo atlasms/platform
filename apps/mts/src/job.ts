@@ -40,8 +40,13 @@ export interface TranscodeJob {
   assetId: string;
   /** Which presets to produce. Order is the order they run in: cheapest first is the caller's job. */
   presetIds: string[];
-  /** The input, as a path MTS can read. Until HSM (EP-14), that is a path under its work root. */
+  /**
+   * The input, as a path MTS can read: under its work root — a sample a deployment rendered there,
+   * or, for a job whose input is in HSM (`inputFile`), the scratch path it is fetched to.
+   */
   inputPath: string;
+  /** The input is the asset's live file of this kind in HSM (EP-14.7; ADR-0009), fetched at run time. */
+  inputFile?: { kind: string; variant?: string };
   state: JobState;
   /** Delivery attempts made. 1 while the first one runs — an attempt is counted when it starts. */
   attempts: number;

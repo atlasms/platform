@@ -226,6 +226,16 @@ Details and reasons: [`apps/mts/README.md`](../../../apps/mts/README.md).
 - **Until HSM**, `inputPath` must resolve inside MTS's own work root; the dev overlay renders a
   sample clip there so the smoke suite can transcode end to end.
 
+### EP-14.7 — renditions go to HSM ([ADR-0009](../../adr/0009-hsm-storage-and-placement.md))
+
+With `ATLAS_HSM_INTERNAL_KEYS` set, every rendition is pushed to HSM as it is produced — signed over
+the checksum MTS computes anyway — and the rendition's `path` in the job and in
+`transcode.completed` is HSM's key; the local output is removed. A job may name its input as the
+asset's file in HSM (`inputFile: { kind, variant? }`), fetched to scratch at run time, hashed on the
+way in and compared with HSM's digest. HSM being away is a tool fault — retried. The work area is
+scratch now; the one-replica pin remains only for the sample-clip `inputPath` jobs a deployment
+renders, and lifts once originals come from HSM (RIM, 15.5).
+
 ## 14. Open questions / future
 
 - Per-scene/segment parallel transcode for very long files.

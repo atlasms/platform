@@ -108,6 +108,51 @@ function checkEntrypoint(overlay, where, c) {
   }
 }
 
+/**
+ * Only HSM touches storage (ADR-0009, EP-14.7; FR-HSM-5, NFR-SEC-4) — as a property of what is
+ * deployed, not a promise: no workload but `hsm` may mount the storage volume or read the storage
+ * credentials Secret, by a volume, an env reference or an envFrom. Every kind that runs pods is
+ * checked, labelled Atlas or not, so a sidecar or a one-off Job cannot slip past.
+ */
+const POD_KINDS = new Set(['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob', 'Pod']);
+function podSpecOf(doc) {
+  if (doc.kind === 'Pod') return doc.spec;
+  if (doc.kind === 'CronJob') return doc.spec?.jobTemplate?.spec?.template?.spec;
+  return doc.spec?.template?.spec;
+}
+function checkStorageOwnership(overlay, docs) {
+  const touches = (name) =>
+    typeof name === 'string' && /(^|-)hsm-storage(-credentials)?$/.test(name);
+  for (const doc of docs) {
+    if (!POD_KINDS.has(doc?.kind)) continue;
+    const owner = doc.metadata?.name ?? '';
+    if (owner === 'hsm' || owner.endsWith('-hsm')) continue;
+    const spec = podSpecOf(doc) ?? {};
+    const found = [];
+    for (const v of spec.volumes ?? []) {
+      if (touches(v.persistentVolumeClaim?.claimName)) found.push(`volume ${v.name}`);
+      if (touches(v.secret?.secretName)) found.push(`secret volume ${v.name}`);
+      for (const src of v.projected?.sources ?? []) {
+        if (touches(src.secret?.name)) found.push(`projected secret in ${v.name}`);
+      }
+    }
+    for (const c of [...(spec.containers ?? []), ...(spec.initContainers ?? [])]) {
+      for (const e of c.env ?? []) {
+        if (touches(e.valueFrom?.secretKeyRef?.name)) found.push(`env ${e.name} of ${c.name}`);
+      }
+      for (const e of c.envFrom ?? []) {
+        if (touches(e.secretRef?.name)) found.push(`envFrom of ${c.name}`);
+      }
+    }
+    for (const f of found) {
+      problem(
+        overlay,
+        `${doc.kind}/${owner}: ${f} is HSM's storage — only hsm may touch it (ADR-0009)`,
+      );
+    }
+  }
+}
+
 /** The staging overlay is the production shape; the dev overlay is allowed its shortcuts. */
 function checkStaging(overlay, docs) {
   const deployments = docs.filter((d) => d.kind === 'Deployment' && isAtlas(d));
@@ -317,6 +362,8 @@ function checkHelmChart() {
         checkWorkload(label, doc);
     }
   }
+  checkStorageOwnership(`${label} (defaults)`, defaults);
+  checkStorageOwnership(`${label} (production values)`, production);
   checkChart(`${label} (defaults)`, defaults, { production: false });
   checkChart(`${label} (production values)`, production, { production: true });
   checkChartParity(label, defaults);
@@ -351,6 +398,7 @@ for (const overlay of overlays) {
     if ((doc.kind === 'Deployment' || doc.kind === 'StatefulSet') && isAtlas(doc))
       checkWorkload(overlay, doc);
   }
+  checkStorageOwnership(overlay, docs);
   if (overlay === 'staging') checkStaging(overlay, docs);
 }
 

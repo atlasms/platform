@@ -12,7 +12,12 @@ export interface Job {
   channelId: string;
   assetId: Ulid;
   presetIds: string[];
+  /** Under the work root; for an inputFile job, the scratch path it is fetched to. */
   inputPath: string;
+  inputFile?: {
+    kind: 'original' | 'proxy' | 'broadcast' | 'thumbnail' | 'vtt-filmstrip' | 'hover-preview';
+    variant?: string;
+  };
   state: 'queued' | 'running' | 'completed' | 'failed' | 'dead-letter';
   /** Attempts started. An attempt interrupted by a drain is given back. */
   attempts: number;

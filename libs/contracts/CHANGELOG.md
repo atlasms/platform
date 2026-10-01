@@ -37,6 +37,9 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `file.placed` carries `fileId`, `variant` and `sizeBytes`, and `file.moved` carries `fileId` and
+  `variant` (EP-14; ADR-0009) — the ledger row and what tells two files of one kind apart, so MAM's
+  mirror lands a placement or a move on the right row. Optional; HSM is their first producer.
 - `asset.updated` carries `expiresAt` (a date-time, or null when cleared) exactly when
   `changedFields` names it — the one lifecycle value a metadata edit changes, so Scheduling's record
   of approvals (EP-31) never has to read it back from MAM. Optional; nothing else changes.

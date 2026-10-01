@@ -21,6 +21,7 @@ resources:
   - mam.yaml
   - websocket.yaml
   - api-gateway.yaml
+  - hsm.yaml
   - mts.yaml
   - rim.yaml
   - rim-recorder.yaml

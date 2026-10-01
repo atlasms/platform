@@ -13,6 +13,13 @@ export interface RouteTarget {
   origin: string;
   /** Requests to this prefix are proxied. */
   prefix: string;
+  /**
+   * The path must also END with this — for a resource one service owns inside another's prefix:
+   * `/api/v1/assets/{id}/location` is HSM's (ADR-0009) while the rest of `/api/v1/assets` is MAM's.
+   * A matching suffix route beats every prefix-only route; the path is split on `/`, so `/location`
+   * never matches `/relocation`.
+   */
+  suffix?: string;
   /** When true the route is reachable without an access token (login, JWKS). */
   public?: boolean;
   /**
@@ -41,9 +48,20 @@ export type RoutingTable = RouteTarget[];
  */
 export function matchRoute(table: RoutingTable, path: string): RouteTarget | undefined {
   let best: RouteTarget | undefined;
+  const rank = (r: RouteTarget): [number, number] => [r.suffix ? 1 : 0, r.prefix.length];
   for (const route of table) {
     if (!path.startsWith(route.prefix)) continue;
-    if (!best || route.prefix.length > best.prefix.length) best = route;
+    if (route.suffix !== undefined) {
+      const suffix = route.suffix.startsWith('/') ? route.suffix : `/${route.suffix}`;
+      if (!path.endsWith(suffix) || path.length <= route.prefix.length + suffix.length) continue;
+    }
+    if (!best) {
+      best = route;
+      continue;
+    }
+    const [s1, p1] = rank(route);
+    const [s0, p0] = rank(best);
+    if (s1 > s0 || (s1 === s0 && p1 > p0)) best = route;
   }
   return best;
 }

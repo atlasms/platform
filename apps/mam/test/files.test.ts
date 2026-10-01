@@ -385,3 +385,53 @@ test('GET /assets/{id}/files: asset:read on the files group; another channel’s
   await app.close();
   await store.close();
 });
+
+test('file.placed carries HSM’s size and variant; file.moved moves the row — and one before its file is refused, to be redelivered', async () => {
+  const { service, caller, drain } = harness();
+  const asset = await service.create(caller(), {
+    title: 'Bulletin',
+    mediaType: 'video',
+    fileType: 'mxf',
+  });
+  await drain();
+  const movedMessage = (payload: EventPayloads['file.moved']): Message => {
+    const envelope = buildEnvelope({
+      type: 'file.moved',
+      channelId: CHANNEL,
+      payload,
+      actor: { kind: 'service', id: 'hsm' },
+    });
+    return { id: envelope.messageId, subject: `atlas.${CHANNEL}.file.moved`, body: envelope };
+  };
+  const move = movedMessage({
+    assetId: asset.id,
+    renditionKind: 'thumbnail',
+    variant: '02',
+    fromTier: 'online',
+    toTier: 'near-line',
+    path: 'ch12/a/thumbnail.02/b2',
+  });
+  await assert.rejects(service.mirrorMove(move), /no thumbnail file/);
+
+  await service.mirrorPlacement(
+    placedMessage({
+      assetId: asset.id,
+      renditionKind: 'thumbnail',
+      variant: '02',
+      tier: 'online',
+      path: 'ch12/a/thumbnail.02/b1',
+      checksum: { algorithm: 'sha256', value: 'thumb' },
+      sizeBytes: 4096,
+    }),
+  );
+  let [thumb] = await service.files(caller(), asset.id);
+  assert.deepEqual([thumb?.variant, thumb?.sizeBytes], ['02', 4096]);
+
+  assert.equal(await service.mirrorMove(move), 'applied');
+  assert.equal(await service.mirrorMove(move), 'duplicate');
+  [thumb] = await service.files(caller(), asset.id);
+  assert.deepEqual(
+    [thumb?.storage.tier, thumb?.storage.path, thumb?.checksum.value, thumb?.version],
+    ['near-line', 'ch12/a/thumbnail.02/b2', 'thumb', 2],
+  );
+});

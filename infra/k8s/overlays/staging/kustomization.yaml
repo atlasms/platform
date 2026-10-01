@@ -50,6 +50,9 @@ images:
   - name: atlas/mts
     newName: registry.example/atlas/mts
     newTag: 0.1.0
+  - name: atlas/hsm
+    newName: registry.example/atlas/hsm
+    newTag: 0.1.0
 
 # The credentials come from a file kustomize reads at render time and git never sees
 # (`*.env` in this directory is ignored; the `.example` is committed). A secrets backend — vault,
@@ -104,7 +107,7 @@ patches:
       - op: replace
         path: /spec/resources/requests/storage
         value: 200Gi
-  # MTS's work area: every rendition until HSM moves it to its tier.
+  # MTS's work area: scratch since EP-14.7 — a job's inputs and outputs while it runs.
   - target:
       kind: PersistentVolumeClaim
       name: mts-work
@@ -112,3 +115,12 @@ patches:
       - op: replace
         path: /spec/resources/requests/storage
         value: 500Gi
+  # HSM's online tier (ADR-0009) when it is a filesystem: sized for a facility's online masters. A
+  # facility binds it to its SAN/NAS; one on S3 targets keeps this for the bootstrap target only.
+  - target:
+      kind: PersistentVolumeClaim
+      name: hsm-storage
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 2Ti

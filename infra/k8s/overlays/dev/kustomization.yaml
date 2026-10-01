@@ -38,6 +38,8 @@ images:
     newTag: dev
   - name: atlas/mts
     newTag: dev
+  - name: atlas/hsm
+    newTag: dev
 
 # The base declares no credentials at all — it names a Secret and stops there, so nothing in the
 # environment-independent layer can leak one. This generator is the dev value, and it is committed
@@ -56,6 +58,12 @@ secretGenerator:
   - name: rim-internal-keys
     literals:
       - keys=dev-only-rim-internal-signing-key-0000000000
+    options:
+      disableNameSuffixHash: true
+  # HSM's internal signing key (ADR-0009): what MTS signs its renditions with. Dev only, committed.
+  - name: hsm-internal-keys
+    literals:
+      - keys=dev-only-hsm-internal-signing-key-0000000000
     options:
       disableNameSuffixHash: true
 

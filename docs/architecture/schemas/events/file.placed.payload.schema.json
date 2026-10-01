@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas.example/schemas/events/file.placed.payload.schema.json",
   "title": "file.placed payload",
-  "description": "Emitted by HSM when a rendition's bytes are placed on a tier. Consumed by MAM, Logging.",
+  "description": "Emitted by HSM when a file's bytes are placed on a tier — new, or replacing the file of the same asset, kind and variant — in the transaction that records it in the ledger (ADR-0009). The checksum is HSM's own, of the bytes it wrote. Consumed by MAM (the FileRef mirror), Logging.",
   "type": "object",
   "required": ["assetId", "tier", "path"],
   "additionalProperties": false,
@@ -11,6 +11,9 @@
     "renditionKind": { "$ref": "../common.schema.json#/$defs/RenditionKind" },
     "tier": { "$ref": "../common.schema.json#/$defs/Tier" },
     "path": { "type": "string" },
-    "checksum": { "$ref": "../common.schema.json#/$defs/Checksum" }
+    "checksum": { "$ref": "../common.schema.json#/$defs/Checksum" },
+    "fileId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "The ledger row (HSM, ADR-0009): stable across replacements of the same (asset, kind, variant)." },
+    "variant": { "type": "string", "description": "Distinguishes files of one kind (a subtitle language, a thumbnail index)." },
+    "sizeBytes": { "type": "integer", "minimum": 0, "description": "Of the bytes HSM wrote and hashed." }
   }
 }

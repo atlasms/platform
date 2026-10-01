@@ -67,11 +67,21 @@ spec:
                   key: password
             - name: ATLAS_PG_URL
               value: postgres://$(PGUSER):$(PGPASSWORD)@postgres:5432/atlas
-            # EP-16.2. Inputs are read from here and renditions written under `renditions/<job>/`.
-            # Until HSM resolves paths, a job's input must be inside it (service.ts refuses one
-            # that is not).
+            # EP-16.2. Scratch since EP-14.7: renditions are written here, pushed to HSM and removed;
+            # an `inputFile` job's input is fetched here from HSM. A path input must still be inside
+            # it (the sample clip a deployment renders).
             - name: ATLAS_MTS_WORK_DIR
               value: /var/lib/atlas/mts
+            # HSM (ADR-0009): every rendition goes there, signed with HSM's internal key. Optional:
+            # without it renditions stay in the work area, and `inputFile` jobs are refused.
+            - name: ATLAS_HSM_ORIGIN
+              value: http://hsm:3000
+            - name: ATLAS_HSM_INTERNAL_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: hsm-internal-keys
+                  key: keys
+                  optional: true
           volumeMounts:
             - name: work
               mountPath: /var/lib/atlas/mts
