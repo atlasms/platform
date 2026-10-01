@@ -7,6 +7,7 @@
   "required": ["source", "path"],
   "additionalProperties": false,
   "properties": {
+    "ingestJobId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "The ingest job this detection created — what a live view of the queue matches it to." },
     "source": { "type": "string", "description": "Source id that detected the content." },
     "sourceKind": { "enum": ["upload", "ftp", "watch", "recorder"] },
     "path": { "type": "string", "description": "Received/staging path." },

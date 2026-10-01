@@ -63,6 +63,17 @@ owning service after auth. The gateway forwards a signed internal header set
 (`x-atlas-user`, `x-atlas-channel`, `x-atlas-scopes`, `x-correlation-id`) so downstream
 services trust the established identity without re-parsing the JWT.
 
+**Who owns a path is the contracts' to say.** The production table is `productionRoutes` in
+[`apps/api-gateway/src/routing.ts`](../../../apps/api-gateway/src/routing.ts): every path a
+deployed service's OpenAPI contract declares, to that service — including the ones it does not
+serve yet, which then answer the owner's own 404 rather than the gateway's `no route`.
+`test/routes.test.ts` reads the contracts and fails on a declared path no route reaches, on any
+`/internal/` path a route does reach (ADR-0008), and on a public route other than `/auth`. The
+exceptions are written down with a reason: `/api/v1/reference` is the gateway's own aggregate
+(EP-08.5), and IAM's JWKS is read by the gateway, never proxied. The table used to be written by
+hand in `main.ts`, one service at a time, and silently lacked MAM's `/search`, `/tags` and
+`/field-schemas` while Studio called them — found by the MVP acceptance journey (EP-21.1).
+
 ## 5. Messaging
 
 Mostly synchronous, but it participates in two async concerns:

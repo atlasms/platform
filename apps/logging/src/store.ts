@@ -154,6 +154,10 @@ export interface AuditTx {
    * a crash between the two cannot lose a message or double-append one.
    */
   markSeen(messageId: string): Promise<boolean>;
+  /**
+   * The channel's chain head — and the channel's chain, held for the rest of this transaction, so
+   * a concurrent append to the same channel waits rather than colliding on its `seq`.
+   */
   head(channelId: string): Promise<ChainHead | undefined>;
   append(event: AuditEvent): Promise<void>;
   appendHistory(entry: HistoryEntry): Promise<void>;

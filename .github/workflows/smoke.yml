@@ -109,7 +109,7 @@ jobs:
       # would only move the race, since `npm run smoke` after `npm run k8s:up` has the same one.
       - name: Wait for the services
         run: |
-          for d in iam mam websocket api-gateway logging scheduling rim mts; do
+          for d in iam mam websocket api-gateway logging scheduling rim mts hsm; do
             kubectl -n atlas rollout status "deployment/$d" --timeout=180s
           done
           # RIM's recorder workers (EP-39): a StatefulSet, two pods, each with its own volume.
@@ -117,6 +117,14 @@ jobs:
 
       - name: Smoke
         run: npm run smoke
+
+      # EP-21.1 — Phase 1's exit criterion as ONE journey: a file uploaded, validated, transcoded
+      # (proxy + thumbnail + broadcast), described, found by search, approved and scheduled, every
+      # step in the audit history and on a live socket. After the smoke suite, not inside it: smoke
+      # proves each hop with an asset made for the purpose, this proves they compose — and when
+      # both fail, the smoke failure is the one that names the hop.
+      - name: MVP acceptance
+        run: npm run acceptance
 
       # Only on failure, and it is the difference between "CI went red" and knowing why. A smoke
       # failure is a deployment failure: the interesting state is in the pods, and the runner is
@@ -130,7 +138,7 @@ jobs:
           echo "::group::events"
           kubectl -n atlas get events --sort-by=.lastTimestamp | tail -50 || true
           echo "::endgroup::"
-          for d in iam mam websocket api-gateway logging scheduling rim mts; do
+          for d in iam mam websocket api-gateway logging scheduling rim mts hsm; do
             echo "::group::logs $d"
             kubectl -n atlas logs "deployment/$d" --tail=100 --all-containers || true
             echo "::endgroup::"

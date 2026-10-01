@@ -400,6 +400,8 @@ export interface IngestAcceptedPayload {
 
 /** Emitted by RIM when new incoming content is detected, before acceptance. */
 export interface IngestDetectedPayload {
+  /** The ingest job this detection created — what a live view of the queue matches it to. */
+  ingestJobId?: Ulid;
   /** Source id that detected the content. */
   source: string;
   sourceKind?: 'upload' | 'ftp' | 'watch' | 'recorder';

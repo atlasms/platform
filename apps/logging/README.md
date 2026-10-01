@@ -45,9 +45,13 @@ unit of work:
 | History projected, in revision order | two revisions in, two out, channel-scoped, deep-linked by `messageId`                              |
 | Atomic                               | a payload failing its schema rolls back the record **and the claim** — the redelivery is processed |
 
-Two consumers appending to one channel at once collide on `UNIQUE (channel_id, seq)`; the loser
-rolls back, its claim with it, and is redelivered to append at the next seq. Optimistic, and
-correct — and with one replica in dev, never exercised.
+Appends to one channel are **serialized**: `head()` takes the channel's chain with a
+transaction-scoped advisory lock in Postgres (sqlite has one connection, which serializes anyway),
+and `UNIQUE (channel_id, seq)` stays as the backstop. It used to be optimistic — collide on the key,
+roll back, let JetStream redeliver — which held for the sink and failed for the keeper's own write:
+a retention policy has no broker to redeliver it, so it was a 500 whenever the sink was busy (found
+by the MVP acceptance run, EP-21.1). Even one replica races: the consumer runs deliveries
+concurrently, and the HTTP writes run beside it. The conformance suite races eight appends.
 
 ## The hot index (EP-07.4): OpenSearch holds a copy, Postgres holds the log
 

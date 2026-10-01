@@ -37,9 +37,9 @@ export const sqliteMigrations: Migration[] = [
            hash           TEXT NOT NULL,
            UNIQUE (channel_id, seq)
          );
-         -- Append-only, in the database. Two consumers racing to append seq N+1 to one channel
-         -- collide on the UNIQUE above; the loser's transaction rolls back, its seen-mark with it,
-         -- and JetStream redelivers — it then appends at N+2. Optimistic, and correct.
+         -- Append-only, in the database. The UNIQUE above is the backstop for the chain: appends
+         -- to one channel are serialized (one connection here; a per-channel lock taken by
+         -- head() in Postgres), so two never claim the same seq.
          CREATE TRIGGER IF NOT EXISTS audit_events_no_update BEFORE UPDATE ON audit_events
            BEGIN SELECT RAISE(ABORT, 'audit_events is append-only'); END;
          CREATE TRIGGER IF NOT EXISTS audit_events_no_delete BEFORE DELETE ON audit_events

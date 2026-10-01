@@ -98,6 +98,24 @@ export function auditStoreConformance(name: string, harness: AuditStoreHarness):
     });
   });
 
+  test(`[${name}] CONCURRENT appends to one channel all land, gapless — none collides on its seq`, async () => {
+    await withStore(async (store) => {
+      // Concurrent deliveries and the keeper's own writes (a retention policy) append beside each
+      // other. On Postgres two transactions used to read the same head and the second's insert
+      // was refused; every one of these must append, in some order, with the chain intact.
+      const outcomes = await Promise.all(
+        Array.from({ length: 8 }, () => ingest(store, domainMessage())),
+      );
+      assert.deepEqual(outcomes, Array(8).fill('appended'));
+      const chain = await store.chain(CH);
+      assert.deepEqual(
+        chain.map((e) => e.seq),
+        [1, 2, 3, 4, 5, 6, 7, 8],
+      );
+      assert.deepEqual(verifyChain(chain), { ok: true });
+    });
+  });
+
   test(`[${name}] TAMPER-EVIDENT: an altered record breaks every link after it`, async () => {
     // The chain is not decoration. Verification recomputes each hash from its predecessor and
     // its content, so an in-place change — even if the database allowed one — is detectable.

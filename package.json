@@ -41,7 +41,8 @@
     "k8s:up": "npm run k8s:build && npm run k8s:load && npm run k8s:deploy",
     "k8s:observability": "kubectl apply -k infra/k8s/observability",
     "smoke": "node --test infra/smoke/smoke.test.mjs",
-    "bundle": "node scripts/build-bundle.mjs"
+    "bundle": "node scripts/build-bundle.mjs",
+    "acceptance": "node --test infra/smoke/mvp-acceptance.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
