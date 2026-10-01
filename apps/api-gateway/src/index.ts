@@ -4,7 +4,14 @@ export {
   type GatewayOptions,
   type AccessLogRecord,
 } from './app.ts';
-export { matchRoute, defaultRoutes, type RouteTarget, type RoutingTable } from './routing.ts';
+export {
+  matchRoute,
+  defaultRoutes,
+  productionRoutes,
+  type ProductionOrigins,
+  type RouteTarget,
+  type RoutingTable,
+} from './routing.ts';
 export {
   clientAddress,
   RateLimiter,

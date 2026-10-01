@@ -8,7 +8,7 @@ import {
   remoteJwks,
 } from '@atlas/service-kit';
 import { buildGateway } from './index.ts';
-import type { RoutingTable } from './routing.ts';
+import { productionRoutes } from './routing.ts';
 
 const config = loadConfig({
   port: { env: 'PORT', type: 'number', default: 8080 },
@@ -65,60 +65,20 @@ const tracer = createTracer({
  */
 const jwks = remoteJwks(new URL(config.jwksPath, config.iamOrigin));
 
-const routes: RoutingTable = [
-  // Public: obtaining a token cannot itself require one.
-  { service: 'iam', origin: config.iamOrigin, prefix: '/auth', public: true },
-  // Protected: the gateway verifies the token against IAM's JWKS and forwards the established
-  // identity as internal headers. IAM re-authorizes — the gateway authenticates, it does not
-  // authorize.
-  { service: 'iam', origin: config.iamOrigin, prefix: '/api/v1/users' },
-  // EP-10.4: the admin surface — groups and roles. Users were already routed.
-  { service: 'iam', origin: config.iamOrigin, prefix: '/api/v1/groups' },
-  { service: 'iam', origin: config.iamOrigin, prefix: '/api/v1/roles' },
-  // MAM. The gateway adds no domain endpoints of its own — it verifies the token, forwards the
-  // established identity as internal headers, and MAM re-authorizes with its own resource context.
-  { service: 'mam', origin: config.mamOrigin, prefix: '/api/v1/assets' },
-  // Logging (EP-19): the audit history read surface; `/logs` is 19.3.
-  { service: 'logging', origin: config.loggingOrigin, prefix: '/api/v1/history' },
-  { service: 'logging', origin: config.loggingOrigin, prefix: '/api/v1/logs' },
-  // EP-19.4: the audit log's retention policy, governance behind compliance:admin.
-  { service: 'logging', origin: config.loggingOrigin, prefix: '/api/v1/retention-policies' },
-  // Scheduling (EP-18): the program table.
-  { service: 'scheduling', origin: config.schedulingOrigin, prefix: '/api/v1/schedules' },
-  // EP-31: rights windows, Scheduling's (when a channel may air an asset or a category).
-  { service: 'scheduling', origin: config.schedulingOrigin, prefix: '/api/v1/rights-windows' },
-  // RIM (EP-15.1): the chunked upload. Its parts are the one body on this platform larger than
-  // the JSON cap, so this prefix carries its own.
-  {
-    service: 'rim',
-    origin: config.rimOrigin,
-    prefix: '/api/v1/uploads',
-    bodyLimit: config.uploadBodyLimit,
-  },
-  // RIM (EP-15.6, EP-15.3): the ingest queue with its review, and the acceptance rules. JSON, the
-  // default cap.
-  { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/ingest' },
-  { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/acceptance-rules' },
-  { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/watchers' },
-  { service: 'rim', origin: config.rimOrigin, prefix: '/api/v1/recorders' },
-  // HSM (EP-14; ADR-0009): where an asset's files are (a suffix route — the rest of
-  // /api/v1/assets is MAM's), an operation's progress, and the storage targets.
-  { service: 'hsm', origin: config.hsmOrigin, prefix: '/api/v1/assets/', suffix: '/location' },
-  { service: 'hsm', origin: config.hsmOrigin, prefix: '/api/v1/operations' },
-  { service: 'hsm', origin: config.hsmOrigin, prefix: '/api/v1/storage-targets' },
-  // NEVER a route for `/internal/`: those are a service's own components calling each other,
-  // signed (ADR-0008), and must be unreachable from outside. RIM refuses them unsigned anyway.
-  // MTS (EP-16.1): enqueue a transcode and poll it. Normally a broker command from BMS/RIM; this
-  // is the same enqueue for an operator, a tool and the smoke suite.
-  { service: 'mts', origin: config.mtsOrigin, prefix: '/api/v1/jobs' },
-  // EP-16.6: the transcode profile registry (config:admin).
-  { service: 'mts', origin: config.mtsOrigin, prefix: '/api/v1/profiles' },
-];
+const routes = productionRoutes({
+  iam: config.iamOrigin,
+  mam: config.mamOrigin,
+  logging: config.loggingOrigin,
+  scheduling: config.schedulingOrigin,
+  rim: config.rimOrigin,
+  mts: config.mtsOrigin,
+  hsm: config.hsmOrigin,
+  uploadBodyLimit: config.uploadBodyLimit,
+});
 
-// ⚠️ THIS is the production routing table — not `defaultRoutes` in routing.ts, which is the test
-// fixture `buildGateway` falls back to and lists services that do not exist yet. A route added
-// there and not here is a route the deployed gateway has never heard of: the smoke suite's
-// upstream gate fails fast on the gateway's own "no route" 404 for exactly that reason.
+// The table is `productionRoutes` in routing.ts — data, held by test/routes.test.ts to every path
+// the deployed services' contracts declare. `defaultRoutes` there is a test fixture; a route added
+// only to it is one the deployed gateway has never heard of.
 
 const health = new HealthRegistry().register(
   'iam',
