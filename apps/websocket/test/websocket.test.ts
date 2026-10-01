@@ -291,6 +291,30 @@ test('transcode messages read under asset:read on the files group — the grant 
   assert.equal(mayReceive(librarian, 'atlas.ch12.schedule.updated').allowed, false);
 });
 
+test('#384: file messages read as the file set does — asset:read on the files group, never file:read', () => {
+  const as = (rules: NonNullable<Parameters<typeof compile>[0]['rules']>) => ({
+    userId: 'u',
+    channelId: 'ch12',
+    policy: compile({ subjectId: 'u', permVersion: 1, rules }),
+  });
+  const librarian = as([{ id: 'r', permissions: ['asset:read'], fieldGroups: ['files'] }]);
+  const coreOnly = as([{ id: 'r', permissions: ['asset:read'], fieldGroups: ['core'] }]);
+  const fileRead = as([{ id: 'r', permissions: ['file:read'] }]);
+  for (const subject of ['atlas.ch12.file.placed', 'atlas.ch12.file.moved']) {
+    assert.equal(mayReceive(librarian, subject).allowed, true, subject);
+    assert.equal(mayReceive(coreOnly, subject).allowed, false, subject);
+    assert.equal(
+      mayReceive(fileRead, subject).allowed,
+      false,
+      `${subject}: file:read is in no role`,
+    );
+  }
+  assert.equal(maySubscribe(librarian, 'atlas.ch12.file.>').allowed, true);
+  assert.equal(maySubscribe(coreOnly, 'atlas.ch12.file.>').allowed, false);
+  // Still a tenant boundary.
+  assert.equal(mayReceive(librarian, 'atlas.ch99.file.placed').allowed, false);
+});
+
 test('the bridge relays progress from live.> to an eligible socket — once, and it is kept by nothing', async () => {
   const broker = new InMemoryBroker();
   const reg = new ConnectionRegistry();

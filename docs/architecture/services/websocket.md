@@ -85,6 +85,14 @@ Primarily a WSS endpoint, plus minimal HTTP for ops:
 Progress messages are consumed from **best-effort** subjects and may be dropped under load —
 they drive progress bars, not state ([Messaging §1](../04-messaging-and-data.md#1-messaging-model)).
 
+**Who receives a subject** is decided by its domain (`atlas.<channel>.<domain>.…`): the reader
+must hold `<domain>:read` in that channel — except where the domain's data is read under another
+grant everywhere else, and the socket must agree with the API. `transcode` (MTS's jobs) and `file`
+(HSM's `file.placed`/`file.moved`) are an asset's file set, read under `asset:read` on the `files`
+field group, as MAM's `GET /assets/{id}/files` and the audit log's history of both are. Neither
+`transcode:read` nor `file:read` exists in any catalogue or role; under the default rule their
+messages reached nobody (`DOMAIN_READ` in `eligibility.ts`; #384).
+
 ## 6. Key flows
 
 ### 6.1 Subscribe + deliver

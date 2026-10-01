@@ -25,6 +25,10 @@ const ROOTS = new Set(['atlas', 'live']);
  */
 const DOMAIN_READ: Readonly<Record<string, { permission: string; fieldGroup?: string }>> = {
   transcode: { permission: 'asset:read', fieldGroup: 'files' },
+  // HSM's `file.placed` / `file.moved` (ADR-0009): an asset's file set, read as MAM's
+  // `GET /assets/{id}/files` and the audit log's `file` history are. Under the default it was
+  // `file:read` — in no role, in no catalogue — so every file event reached nobody (#384).
+  file: { permission: 'asset:read', fieldGroup: 'files' },
 };
 
 function readRuleFor(domain: string): { permission: string; fieldGroup?: string } {
