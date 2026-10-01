@@ -8,6 +8,7 @@
 // the reverse, and the production store is Postgres.
 
 import type { OutboxRecord } from '@atlas/messaging';
+import { Conflict } from '@atlas/service-kit';
 import type { Asset } from './asset.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
@@ -133,9 +134,35 @@ export interface AssetStore {
   close(): Promise<void>;
 }
 
+/**
+ * A write whose base is no longer the stored row: another writer committed the asset first (#385).
+ * A 409 if it reaches a client; a consumer throws it to the broker, which redelivers; a command
+ * with no client-supplied base re-reads and re-applies (`MamService` retries it, bounded).
+ */
+export class StaleWrite extends Conflict {
+  constructor(id: string, ifVersion: number | undefined) {
+    super(
+      ifVersion === undefined
+        ? `asset ${id} already exists`
+        : `asset ${id} changed since version ${ifVersion} was read`,
+    );
+  }
+}
+
 /** The write surface, reachable only from inside {@link AssetStore.transaction}. */
 export interface AssetTx {
-  put(asset: Asset): Promise<void>;
+  /**
+   * Write the asset — COMPARE-AND-SET on its version (#385). With `ifVersion`, the stored row is
+   * replaced only if its version is still `ifVersion`; without it, the asset is new and is
+   * inserted. Anything else is a {@link StaleWrite}, and the transaction must not commit.
+   *
+   * It used to be a blind upsert: every mutation read the row, computed the next one and wrote it
+   * whole, so two concurrent writers — the rendition mirror and an editor's PATCH — each wrote
+   * over the other's base. One change was lost, and both committed the same revision, so the audit
+   * sink refused the second record. The sqlite double serializes transactions on its one
+   * connection and could never show it; the conformance suite races two writers on Postgres.
+   */
+  put(asset: Asset, ifVersion?: number): Promise<void>;
   /**
    * Replace an asset's extensible document.
    *

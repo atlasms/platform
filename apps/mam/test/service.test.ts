@@ -4,7 +4,15 @@ import { validatePayload, type Envelope, type EventPayloads } from '@atlas/contr
 import { SqliteOutboxStore } from '@atlas/data';
 import { InMemoryBroker, OutboxRelay } from '@atlas/messaging';
 import { compile } from '@atlas/policy';
-import { MamService, sqliteAssetStore, type Caller } from '../src/index.ts';
+import {
+  MamService,
+  sqliteAssetStore,
+  StaleWrite,
+  type Asset,
+  type AssetStore,
+  type AssetTx,
+  type Caller,
+} from '../src/index.ts';
 
 const CHANNEL = 'ch12';
 
@@ -460,4 +468,68 @@ test('the event subject is channel-scoped, so fan-out cannot cross tenants', asy
   await drain();
 
   assert.equal(broker.published[0]?.subject, `atlas.${CHANNEL}.asset.created`);
+});
+
+// =============================================================================
+// #385 — no lost update: a write is compare-and-set on the version it was computed from
+// =============================================================================
+
+/**
+ * A store where ANOTHER writer commits the asset between a command's read and its write — what
+ * happened when the rendition mirror landed while the MVP acceptance journey tagged the asset. The
+ * sqlite double serializes transactions, so the race is staged: before the first transaction the
+ * service opens, `theirs` is committed on the version the service has just read.
+ */
+function racedOnce(store: ReturnType<typeof sqliteAssetStore>, theirs: (a: Asset) => Asset) {
+  let raced = 0;
+  const raced$ = (): number => raced;
+  const wrapped: AssetStore = Object.assign(Object.create(store) as AssetStore, {
+    transaction: async <T>(fn: (tx: AssetTx) => Promise<T>): Promise<T> => {
+      if (raced === 0) {
+        raced++;
+        const current = (await store.listByChannel(CHANNEL))[0]!;
+        await store.transaction((tx) => tx.put(theirs(current), current.version));
+      }
+      return store.transaction(fn);
+    },
+  });
+  return { store: wrapped, raced: raced$ };
+}
+
+test('#385: a PATCH raced by another writer is re-applied to the stored asset — neither change is lost', async () => {
+  const base = sqliteAssetStore();
+  const seed = new MamService({ store: base });
+  const { caller } = harness();
+  const created = await seed.create(caller(), NEW_ASSET);
+
+  // The mirror commits `hasRenditions` between the editor's read and the editor's write.
+  const { store, raced } = racedOnce(base, (a) => ({
+    ...a,
+    hasRenditions: true,
+    version: a.version + 1,
+  }));
+  const service = new MamService({ store });
+  const written = await service.update(caller(), created.id, { description: 'The editor’s words' });
+
+  assert.equal(raced(), 1);
+  const stored = (await base.get(created.id))!;
+  assert.deepEqual(
+    [stored.hasRenditions, stored.description, stored.version],
+    [true, 'The editor’s words', 3],
+    'both writes survive, at successive versions',
+  );
+  assert.equal(written.version, 3);
+});
+
+test('#385: the store refuses a write computed from a version that is no longer stored', async () => {
+  const store = sqliteAssetStore();
+  const service = new MamService({ store });
+  const { caller } = harness();
+  const a = await service.create(caller(), NEW_ASSET);
+  await store.transaction((tx) => tx.put({ ...a, title: 'Theirs', version: 2 }, 1));
+  await assert.rejects(
+    store.transaction((tx) => tx.put({ ...a, title: 'Mine', version: 2 }, 1)),
+    StaleWrite,
+  );
+  assert.equal((await store.get(a.id))?.title, 'Theirs');
 });

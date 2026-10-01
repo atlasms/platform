@@ -228,6 +228,24 @@ index/analyzer config (multilingual, RTL).
   cannot apply are refused to the broker (retry, then dead-letter), never skipped. `file.moved`
   (§5) is not consumed yet — it has no schema; `file.placed` carries the tier.
 
+### Concurrent writes — compare-and-set on `version` (#385)
+
+Every asset write is **compare-and-set on the version it was computed from**: an existing asset
+is replaced only if its stored `version` is still the one the write read; a new one is inserted,
+never upserted. Two writers on one base — the FileRef mirror setting `hasRenditions` while an
+editor tags or describes the asset — used to both commit, the second over the first: one change
+lost, and the same revision committed twice, so the audit sink dead-lettered one record and the
+trail had a hole. Now one commits and the other is a `StaleWrite`:
+
+- a **consumer** (the mirror, `ingest.accepted`) throws it to the broker; the redelivery re-reads;
+- a **command with no client-supplied base** (PATCH, tags, the extended document, a lifecycle
+  step, attaching renditions) re-reads and re-applies, at most three times, then answers 409. A
+  PATCH carries no `If-Match`; it means "these fields on the asset as it is", so an editor is not
+  refused because a rendition landed at the same moment.
+
+A transcode that completes for an asset that already HAS renditions writes its file rows, not the
+asset — a revision whose delta is empty records nothing and is one more writer to race.
+
 ### EP-15.5 — an accepted ingest becomes an asset
 
 MAM consumes `ingest.accepted` (`createFromIngest`, `ingest.ts`): the asset is created under the id
