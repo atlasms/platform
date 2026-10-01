@@ -48,7 +48,10 @@ const config = loadConfig({
   // tables are not. Named after the service; every connection's search_path is pinned to it.
   pgSchema: { env: 'ATLAS_PG_SCHEMA', type: 'string', default: 'rim' },
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
-  relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 1_000 },
+  // 250 ms, not 1 s (EP-21.4): an idle relay holds a committed event for up to one interval, and
+  // NFR-PERF-3 gives a change one second to reach Studio. At 1 s the perf sanity measured p95 at
+  // 684 ms, most of it this wait; at 250 ms it is a quarter. The idle drain is one indexed query.
+  relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 250 },
   policyTtlMs: { env: 'ATLAS_POLICY_TTL_MS', type: 'number', default: 30_000 },
   // The upload (EP-15.1; rim.md §11). The staging area is RIM's own landing zone, a volume of
   // this pod's — NOT the platform's storage, which only HSM writes (FR-HSM-5). The part size is

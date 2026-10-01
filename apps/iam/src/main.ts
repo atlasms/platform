@@ -43,7 +43,10 @@ const config = loadConfig({
   // EP-10.6: the outbox relay. `permissions.changed` and the rest ride out of the same rows the
   // grant was written in.
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
-  relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 1_000 },
+  // 250 ms, not 1 s (EP-21.4): an idle relay holds a committed event for up to one interval, and
+  // NFR-PERF-3 gives a change one second to reach Studio. At 1 s the perf sanity measured p95 at
+  // 684 ms, most of it this wait; at 250 ms it is a quarter. The idle drain is one indexed query.
+  relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 250 },
   // iam.md §11 calls these out as configuration, and a site with an unusual threat model will want
   // them. The defaults come from DEFAULT_LOCKOUT rather than being restated, so there is one place
   // that decides what "ten in fifteen minutes" means.

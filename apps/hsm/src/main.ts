@@ -51,7 +51,10 @@ const config = loadConfig({
   // The keys producers sign placements with (hsm-internal-keys; ADR-0008/0009). Comma-separated.
   internalKeys: { env: 'ATLAS_HSM_INTERNAL_KEYS', type: 'string', default: '' },
   workerIntervalMs: { env: 'ATLAS_HSM_WORKER_INTERVAL_MS', type: 'number', default: 1_000 },
-  relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 1_000 },
+  // 250 ms, not 1 s (EP-21.4): an idle relay holds a committed event for up to one interval, and
+  // NFR-PERF-3 gives a change one second to reach Studio. At 1 s the perf sanity measured p95 at
+  // 684 ms, most of it this wait; at 250 ms it is a quarter. The idle drain is one indexed query.
+  relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 250 },
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
   // still propagates, so a site without a collector pays only the cost of an id.
   otlpEndpoint: { env: 'ATLAS_OTLP_ENDPOINT', type: 'string', default: '' },
