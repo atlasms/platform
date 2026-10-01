@@ -144,6 +144,16 @@ export function pgAuditStore(pool: PgPool): AuditStore {
             return seen.mark(client, messageId);
           },
           async head(channelId) {
+            // The channel's chain is taken for the rest of this transaction before its head is
+            // read: two appends to one channel used to both read seq N and both write N+1, and
+            // the UNIQUE key refused the loser. The sink's loser was redelivered (late, after a
+            // backoff, logged as an error); the keeper's own write — a retention policy, which
+            // has no broker to redeliver it — was a 500. Found by the MVP acceptance run (EP-21.1):
+            // a retention PUT while the sink digested the journey's events failed twice running.
+            // Per channel, so channels never wait on each other; released at COMMIT/ROLLBACK.
+            await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+              `atlas.audit.chain:${channelId}`,
+            ]);
             const { rows } = await client.query<{ seq: string; hash: string }>(
               'SELECT seq, hash FROM audit_events WHERE channel_id = $1 ORDER BY seq DESC LIMIT 1',
               [channelId],
