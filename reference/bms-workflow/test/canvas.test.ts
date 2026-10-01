@@ -80,7 +80,8 @@ test('property forms are derived from the schema $defs', () => {
   assert.ok(timer.find((f) => f.name === 'value' && f.required));
 
   const ht = formFor('human-task');
-  assert.deepEqual(ht.find((f) => f.name === 'taskType')!.enum, ['approve', 'review', 'edit', 'generic']);
+  // `TaskKind`, one $def in common.schema.json since EP-02.5 — reached through the $ref (#382).
+  assert.deepEqual(ht.find((f) => f.name === 'taskType')!.enum, ['approve', 'edit', 'review', 'generic']);
   assert.ok(ht.find((f) => f.name === 'assignee' && f.required));
 });
 
