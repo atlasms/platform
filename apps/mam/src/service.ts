@@ -732,6 +732,70 @@ export class MamService {
     return outcome;
   }
 
+  /**
+   * `ingest.accepted` (EP-15.5; mam.md §5 "create asset"): RIM accepted a file and placed it in HSM
+   * as the original of an asset whose id RIM minted — the job's own id. MAM creates that asset, in
+   * state `created`, with what RIM said about the file (title from the filename, media and file
+   * type from the probe, who brought it in). The seen-mark commits with the asset, so a redelivery
+   * is a duplicate; an asset that already exists in the SAME channel is a duplicate too (the
+   * message was applied before its mark could be checked — or RIM's retry announced it twice); one
+   * in ANOTHER channel is thrown, never overwritten.
+   */
+  async createFromIngest(msg: Message): Promise<MirrorOutcome> {
+    const envelope = this.envelopeOf<EventPayloads['ingest.accepted']>(msg, 'ingest.accepted');
+    const accepted = envelope.payload;
+    const existing = await this.options.store.get(accepted.assetId);
+    if (existing) {
+      if (existing.channelId !== envelope.channelId) {
+        throw new Conflict(`asset ${accepted.assetId} exists in another channel`);
+      }
+      return 'duplicate';
+    }
+    const at = this.now().toISOString();
+    const asset: Asset = {
+      id: accepted.assetId,
+      channelId: envelope.channelId,
+      title: accepted.title ?? accepted.filename ?? accepted.assetId,
+      mediaType: accepted.mediaType ?? 'other',
+      fileType: accepted.fileType ?? 'bin',
+      state: 'created',
+      version: 1,
+      hasRenditions: false,
+      createdBy: accepted.createdBy ?? 'rim',
+      createdAt: at,
+      updatedAt: at,
+      ...defined({ durationSec: accepted.technicalMetadata?.durationSec }),
+    };
+    const caller = systemCaller(envelope.channelId, envelope);
+    const duplicate = new Error('duplicate');
+    try {
+      await this.commitWith(
+        caller,
+        asset,
+        undefined,
+        {
+          type: 'asset.created',
+          payload: {
+            assetId: asset.id,
+            core: {
+              title: asset.title,
+              fileType: asset.fileType,
+              ...defined({ durationSec: asset.durationSec }),
+            },
+          },
+        },
+        async (tx) => {
+          if (!(await tx.markSeen(msg.id))) throw duplicate;
+        },
+        { tagLabels: [], extended: {} },
+      );
+    } catch (err) {
+      if (err === duplicate) return 'duplicate';
+      throw err;
+    }
+    return 'applied';
+  }
+
   /** The envelope, checked for shape, type and payload — a message that is not one is refused for good. */
   private envelopeOf<P extends object>(msg: Message, type: string): Envelope<P> {
     const shape = envelopeShapeErrors(msg.body);

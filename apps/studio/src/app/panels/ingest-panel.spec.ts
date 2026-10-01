@@ -253,6 +253,27 @@ describe('IngestPanel', () => {
     expect(fake.listCalls).toHaveLength(1);
   });
 
+  it('a registered job links to its asset — the asset id is the job id — and opens it as a tab (EP-15.5)', () => {
+    const { fake, fixture } = setup();
+    fake.lists[0]?.next({
+      items: [
+        job({ state: 'registered', assetId: '01ASSETREGISTERED000000001', filename: 'news.mov' }),
+      ],
+    });
+    fixture.detectChanges();
+    const link = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+      'button.job-asset',
+    );
+    expect(link?.textContent?.trim()).toBe('→ ingest.openAsset');
+    link!.click();
+    const tabs = TestBed.inject(EditorStore)
+      .groups()
+      .flatMap((g) => g.tabs);
+    expect(tabs.map((t) => [t.type, t.resourceId, t.title])).toEqual([
+      ['asset', '01ASSETREGISTERED000000001', 'news.mov'],
+    ]);
+  });
+
   it('rejecting carries the operator reason through to the service', () => {
     const { component, fake } = setup();
     fake.lists[0]?.next({ items: [job()] });

@@ -24,6 +24,7 @@ import {
   pgAssetStore,
   startCacheInvalidation,
   startFileMirror,
+  startIngestConsumer,
 } from './index.ts';
 import { PolicyClient } from '@atlas/policy/client';
 
@@ -197,7 +198,21 @@ async function startRelay(): Promise<void> {
         error: (err as Error).message,
       }),
   });
-  log.info('file mirror started', { subjects: ['transcode.completed', 'file.placed'] });
+  log.info('file mirror started', {
+    subjects: ['transcode.completed', 'file.placed', 'file.moved'],
+  });
+  // EP-15.5: an accepted ingest becomes an asset, under the id RIM minted.
+  startIngestConsumer({
+    broker,
+    service,
+    onApplied: (subject, outcome) => log.info('ingest consumed', { subject, outcome }),
+    onError: (err, msg) =>
+      log.warn('ingest consumer refused a message', {
+        subject: msg.subject,
+        messageId: msg.id,
+        error: (err as Error).message,
+      }),
+  });
 
   const tick = async (): Promise<void> => {
     try {

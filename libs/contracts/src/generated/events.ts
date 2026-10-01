@@ -373,7 +373,7 @@ export interface GroupMembershipChangedPayload {
   at: string;
 }
 
-/** Emitted by RIM when media passes acceptance; the fan-out that triggers MAM/MTS/AI. */
+/** Emitted by RIM when an accepted file has been placed in HSM as its asset's original (EP-15.5) — in the transaction that marks the ingest job `registered`. The fan-out: MAM creates the asset under `assetId` (state created), MTS queues the first renditions from HSM's original, AI enrichment later. `assetId` is minted by RIM and held on the job before the bytes move, so a retry places the same bytes under the same asset. */
 export interface IngestAcceptedPayload {
   assetId: Ulid;
   source?: string;
@@ -381,6 +381,21 @@ export interface IngestAcceptedPayload {
   path?: string;
   checksum: Checksum;
   technicalMetadata?: TechnicalMetadata;
+  /** The RIM ingest job this asset came from. */
+  ingestJobId?: Ulid;
+  /** How it arrived: upload, watch, recorder, … (the job's sourceKind). */
+  sourceKind?: string;
+  /** As received. */
+  filename?: string;
+  sizeBytes?: number;
+  /** What MAM names the new asset: the filename without its extension, until an editor changes it. */
+  title?: string;
+  /** video when the probe found a video stream, audio when only audio — MAM's mediaType. */
+  mediaType?: string;
+  /** The file's extension, lowercased — MAM's fileType. */
+  fileType?: string;
+  /** Who brought the file in (the ingest job's createdBy); the asset's createdBy. */
+  createdBy?: string;
 }
 
 /** Emitted by RIM when new incoming content is detected, before acceptance. */

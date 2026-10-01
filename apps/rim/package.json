@@ -16,6 +16,7 @@
     "@atlas/contracts": "*",
     "@atlas/data": "*",
     "@atlas/data-pg": "*",
+    "@atlas/hsm-client": "*",
     "@atlas/messaging": "*",
     "@atlas/messaging-nats": "*",
     "@atlas/policy": "*",

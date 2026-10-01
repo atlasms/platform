@@ -14,6 +14,7 @@ versioned carefully: a change fans out, which is why CI runs **all consumers** o
 | `policy`             | The pure authorization evaluator `can()` — zero runtime deps, **browser-safe**.                                             | _(new)_                                                                    | EP-05    |
 | `reference`          | Admin-editable runtime config: descriptors, validation, scope resolution, snapshot client.                                  | _(new)_                                                                    | EP-06    |
 | `data`               | Store clients, migration-runner conventions, `withTransaction`, SQL-backed outbox.                                          | [`reference/data`](../reference/data/README.md) (6 tests)                  | EP-07    |
+| ✅ `hsm-client`      | A producer's hands on HSM: place a file signed over its SHA-256, read an asset's file back to scratch (ADR-0009).           | _(new)_                                                                    | EP-14.7  |
 | ✅ `data-opensearch` | OpenSearch client, readiness check, idempotent index bootstrap. An index is a **derived view** of Postgres, never a record. | _(new)_                                                                    | EP-07.4  |
 | `bms-workflow`       | Workflow DSL validator, DSL⇄BPMN converter, interpreter, canvas core.                                                       | [`reference/bms-workflow`](../reference/bms-workflow/README.md) (29 tests) | EP-22/23 |
 

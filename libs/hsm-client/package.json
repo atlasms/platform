@@ -1,0 +1,21 @@
+{
+  "name": "@atlas/hsm-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A producer's hands on HSM (ADR-0009): place a file signed over its SHA-256, read an asset's file back to local scratch. The only way any service but HSM moves bytes into or out of storage.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@atlas/service-kit": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.13"
+  }
+}

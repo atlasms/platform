@@ -88,7 +88,8 @@
       "upload": "Web upload",
       "watch": "Folder watcher",
       "recorder": "Recorder"
-    }
+    },
+    "openAsset": "Open the asset"
   },
   "dashboard": {
     "title": "Dashboard",

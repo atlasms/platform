@@ -40,7 +40,7 @@ import {
   type ProfileInput,
   type TranscodeProfile,
 } from './profile.ts';
-import type { FileStore } from './hsm-client.ts';
+import type { FileStore } from '@atlas/hsm-client';
 import type { JobStore } from './store.ts';
 import { TranscodeRefusal, type Transcoder } from './transcoder.ts';
 
@@ -117,6 +117,13 @@ const FILES_GROUP = 'files';
 
 /** What a run of the worker did, for the loop that calls it and for the tests. */
 export type RunOutcome = 'idle' | 'completed' | 'failed' | 'dead-letter' | 'cancelled';
+
+/** The first renditions of a newly ingested asset, by MAM's mediaType (EP-15.5). */
+export const FIRST_RENDITIONS: Readonly<Record<string, readonly string[]>> = {
+  video: ['proxy', 'thumbnail'],
+  audio: ['audio-proxy'],
+  image: ['thumbnail'],
+};
 
 export const DEFAULT_MAX_ATTEMPTS = 3;
 export const DEFAULT_RETRY_BASE_MS = 30_000;
@@ -236,6 +243,59 @@ export class MtsService {
       causationId: envelope.messageId,
     };
 
+    let outcome: 'applied' | 'duplicate' = 'applied';
+    await this.options.store.transaction(async (tx) => {
+      if (!(await tx.markSeen(msg.id))) {
+        outcome = 'duplicate';
+        return;
+      }
+      await tx.putJob(job);
+      await tx.enqueue(this.audit(caller, job, undefined, job, 'transcode.queued'));
+    });
+    return outcome;
+  }
+
+  /**
+   * `ingest.accepted` (EP-15.5; mts.md §5 "auto proxy+thumb"): a new asset's original is in HSM, so
+   * its first renditions are queued from it — proxy and thumbnail for video, the audio proxy for
+   * audio, a thumbnail for an image; nothing for a file the probe could not describe. The input is
+   * the asset's `original` in HSM, fetched at run time. Without HSM configured there is no input to
+   * read, and the event is acknowledged with nothing queued (`skipped`).
+   *
+   * BMS will own this decision when it exists (a workflow's first transcode step); until then this
+   * is the platform's default, the same set for every channel.
+   */
+  async consumeIngestAccepted(msg: Message): Promise<'applied' | 'duplicate' | 'skipped'> {
+    const envelope = this.envelopeOf<EventPayloads['ingest.accepted']>(msg, 'ingest.accepted');
+    const presetIds = FIRST_RENDITIONS[envelope.payload.mediaType ?? 'other'] ?? [];
+    if (presetIds.length === 0 || !this.options.files) return 'skipped';
+    const id = ulid();
+    const at = this.now().toISOString();
+    const correlationId = envelope.correlationId ?? envelope.messageId;
+    const job: TranscodeJob = {
+      id,
+      channelId: envelope.channelId,
+      assetId: envelope.payload.assetId,
+      presetIds: [...presetIds],
+      inputPath: join(this.options.workRoot, 'inputs', id, 'original'),
+      inputFile: { kind: 'original' },
+      state: 'queued',
+      attempts: 0,
+      priority: 0,
+      createdBy: envelope.actor?.id ?? 'rim',
+      createdAt: at,
+      updatedAt: at,
+      version: 1,
+      correlationId,
+      causationId: envelope.messageId,
+    };
+    const caller: Caller = {
+      userId: job.createdBy,
+      channelId: envelope.channelId,
+      actorKind: 'service',
+      correlationId,
+      causationId: envelope.messageId,
+    };
     let outcome: 'applied' | 'duplicate' = 'applied';
     await this.options.store.transaction(async (tx) => {
       if (!(await tx.markSeen(msg.id))) {

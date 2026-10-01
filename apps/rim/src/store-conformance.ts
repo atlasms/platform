@@ -15,6 +15,7 @@
 // windows, planned again when changed, a capture no worker took marked missed, and the lease that
 // never puts the two sides of a cut on one worker.
 
+import { memoryFileStore, type FileStore } from '@atlas/hsm-client';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
@@ -74,7 +75,10 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       /** RIM's watch root; channel ch12's watchers live under `<watchRoot>/ch12/`. */
       watchRoot: string;
       /** Another RIM process on the same store — a second pod, for the lease. */
-      serviceAs: (holder: string, options?: { watchRoot?: string }) => RimService;
+      serviceAs: (
+        holder: string,
+        options?: { watchRoot?: string; files?: FileStore },
+      ) => RimService;
     }) => Promise<void>,
   ): Promise<void> {
     const { store, outbox, cleanup } = await harness.make();
@@ -85,7 +89,10 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
     const relay = new OutboxRelay(outbox, broker);
     const deferred: (() => Promise<void>)[] = [];
     const probe = fakeProbe();
-    const serviceAs = (holder: string, options: { watchRoot?: string } = { watchRoot }) =>
+    const serviceAs = (
+      holder: string,
+      options: { watchRoot?: string; files?: FileStore } = { watchRoot },
+    ) =>
       new RimService({
         store,
         staging: fsStaging(dir),
@@ -98,6 +105,7 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
         ...(options.watchRoot !== undefined ? { watchRoot: options.watchRoot } : {}),
         holder,
         watchLeaseMs: 30_000,
+        ...(options.files !== undefined ? { files: options.files } : {}),
       });
     const service = serviceAs('pod-a');
     const drain = async (): Promise<Envelope[]> => {
@@ -1226,6 +1234,104 @@ export function rimStoreConformance(name: string, harness: RimStoreHarness): voi
       assert.equal(status!.lastMissed?.reason, 'no recorder worker took it');
       // Another channel's recorders are not this one's business.
       assert.deepEqual(await service.recorderStatus(caller('ch99')), []);
+    });
+  });
+
+  // --- EP-15.5: an accepted file becomes an asset, its original in HSM ---------------------------
+
+  test(`[${name}] REGISTER: the original goes to HSM signed over its checksum, then ingest.accepted — and the staged copy goes`, async () => {
+    await withFixture(async ({ serviceAs, uploaded, settle, drain, store, watchRoot }) => {
+      const hsm = memoryFileStore();
+      const job = await uploaded('Evening News.mov', 3000);
+      await settle(); // validated: accepted
+      const accepted = await store.job(job.id);
+      assert.equal(accepted?.state, 'accepted');
+      await drain();
+
+      const svc = serviceAs('pod-a', { watchRoot, files: hsm });
+      const done = (await svc.register(job.id))!;
+      assert.equal(done.state, 'registered');
+      assert.equal(done.assetId, job.id, 'the asset id is the job id — one job, one asset');
+      assert.equal(done.receivedPath, undefined);
+      const held = hsm.files.get(`${job.id}/original/`)!;
+      assert.deepEqual(
+        [held.meta.producedBy, held.meta.jobId, held.meta.channelId],
+        ['ingest', job.id, CH],
+      );
+      assert.equal(held.bytes.length, 3000);
+      await assert.rejects(stat(accepted!.receivedPath!), /ENOENT/, 'the staged copy is gone');
+
+      const events = await drain();
+      const acceptedEvent = events.find((e) => e.type === 'ingest.accepted')!;
+      assert.ok(validatePayload('ingest.accepted', acceptedEvent.payload).valid);
+      const payload = acceptedEvent.payload as unknown as EventPayloads['ingest.accepted'];
+      assert.deepEqual(
+        [
+          payload.assetId,
+          payload.title,
+          payload.mediaType,
+          payload.fileType,
+          payload.createdBy,
+          payload.checksum.value,
+        ],
+        [job.id, 'Evening News', 'video', 'mov', 'user-1', job.checksum],
+      );
+      assert.equal(payload.path, held.path);
+      const audit = events.find(
+        (e) =>
+          e.type === 'audit.recorded' &&
+          (e.payload as { action?: string }).action === 'ingest.registered',
+      );
+      assert.ok(audit, 'the registration is audited');
+
+      // Again: nothing to do, nothing announced.
+      const announced = (await drain()).filter((e) => e.type === 'ingest.accepted').length;
+      assert.equal((await svc.register(job.id))?.state, 'registered');
+      assert.equal((await drain()).filter((e) => e.type === 'ingest.accepted').length, announced);
+    });
+  });
+
+  test(`[${name}] REGISTER: HSM away leaves the job accepted with its bytes; the retry registers it`, async () => {
+    await withFixture(async ({ serviceAs, uploaded, settle, store, watchRoot }) => {
+      const job = await uploaded('take2.wav', 2000);
+      await settle();
+      const away: FileStore = {
+        place: () => Promise.reject(new Error('connect ECONNREFUSED hsm:3000')),
+        fetch: () => Promise.reject(new Error('unused')),
+      };
+      await assert.rejects(
+        serviceAs('pod-a', { watchRoot, files: away }).register(job.id),
+        /ECONNREFUSED/,
+      );
+      const still = (await store.job(job.id))!;
+      assert.equal(still.state, 'accepted');
+      assert.ok(still.receivedPath, 'the bytes stay in staging until HSM holds them');
+
+      const hsm = memoryFileStore();
+      const svc = serviceAs('pod-a', { watchRoot, files: hsm });
+      assert.equal(await svc.registerPending(), 1);
+      const done = (await store.job(job.id))!;
+      assert.deepEqual([done.state, done.assetId], ['registered', job.id]);
+      assert.equal(hsm.files.get(`${job.id}/original/`)!.meta.kind, 'original');
+      // An audio file is audio to MAM.
+      assert.equal(await svc.registerPending(), 0, 'nothing left to register');
+    });
+  });
+
+  test(`[${name}] REGISTER: an operator's acceptance of a quarantined file registers it too`, async () => {
+    await withFixture(async ({ serviceAs, uploaded, settle, store, watchRoot, drain }) => {
+      const hsm = memoryFileStore();
+      const svc = serviceAs('pod-a', { watchRoot, files: hsm });
+      const job = await uploaded('unreadable.mxf', 1000);
+      await settle();
+      assert.equal((await store.job(job.id))?.state, 'quarantined');
+      await svc.acceptJob(caller(), job.id);
+      // The fixture's deferral queue runs the registration the acceptance scheduled.
+      await settle();
+      assert.equal((await store.job(job.id))?.state, 'registered');
+      const payload = (await drain()).find((e) => e.type === 'ingest.accepted')!
+        .payload as unknown as EventPayloads['ingest.accepted'];
+      assert.equal(payload.mediaType, 'other', 'a file the probe could not read is still an asset');
     });
   });
 }

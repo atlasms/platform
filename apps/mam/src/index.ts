@@ -86,6 +86,11 @@ export {
 } from './file.ts';
 export { FILE_MIRROR_PATTERNS, startFileMirror, type FileMirrorOptions } from './files.ts';
 export {
+  INGEST_ACCEPTED_PATTERN,
+  startIngestConsumer,
+  type IngestConsumerOptions,
+} from './ingest.ts';
+export {
   MAX_TAGS_PER_ASSET,
   MAX_TAG_LENGTH,
   normalizeTag,

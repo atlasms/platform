@@ -435,3 +435,53 @@ test('file.placed carries HSM’s size and variant; file.moved moves the row —
     ['near-line', 'ch12/a/thumbnail.02/b2', 'thumb', 2],
   );
 });
+
+test('ingest.accepted: the asset is created under RIM’s id, once; another channel’s id is refused, not overwritten', async () => {
+  const { service, caller, drain, store } = harness();
+  await drain();
+  const assetId = '01K00000000000000000ASSET1';
+  const accepted = (channelId = CHANNEL): Message => {
+    const envelope = buildEnvelope({
+      type: 'ingest.accepted',
+      channelId,
+      payload: {
+        assetId,
+        ingestJobId: assetId,
+        source: 'upload',
+        sourceKind: 'upload',
+        path: `${channelId}/${assetId}/original/b1`,
+        checksum: { algorithm: 'sha256', value: 'abc' },
+        filename: 'Evening News.mov',
+        sizeBytes: 3000,
+        title: 'Evening News',
+        mediaType: 'video',
+        fileType: 'mov',
+        createdBy: 'user-7',
+        technicalMetadata: { container: 'mov', videoCodec: 'h264', durationSec: 42 },
+      },
+      actor: { kind: 'service', id: 'rim' },
+    });
+    return {
+      id: envelope.messageId,
+      subject: `atlas.${channelId}.ingest.accepted`,
+      body: envelope,
+    };
+  };
+  const msg = accepted();
+  assert.equal(await service.createFromIngest(msg), 'applied');
+  assert.equal(await service.createFromIngest(msg), 'duplicate', 'a redelivery creates nothing');
+  const asset = await service.get(caller(), assetId);
+  assert.deepEqual(
+    [asset.title, asset.mediaType, asset.fileType, asset.state, asset.createdBy, asset.durationSec],
+    ['Evening News', 'video', 'mov', 'created', 'user-7', 42],
+  );
+  const events = await drain();
+  assert.deepEqual(
+    events.map((e) => e.type),
+    ['asset.created', 'audit.recorded'],
+  );
+  assert.equal(events[0]!.causationId, msg.id, 'the asset names the message that made it');
+
+  await assert.rejects(service.createFromIngest(accepted('ch99')), /another channel/);
+  assert.equal((await store.get(assetId))?.channelId, CHANNEL);
+});

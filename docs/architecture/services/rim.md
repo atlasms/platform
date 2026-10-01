@@ -287,6 +287,23 @@ recording now (on which worker — two during an overlap) and the missed and par
 last 24 h; Studio's Recorders list shows it. `atlas_rim_captures_missed_total` counts the holes
 with no label. The unicast relay (slice 2b) waits on how a site's unicast feeds reach the cluster.
 
+**EP-15.5 registration — an accepted file becomes an asset** ([ADR-0009](../../adr/0009-hsm-storage-and-placement.md)).
+§6.1's "place bytes, create asset, transcode, emit" is done as one step after acceptance, and
+asynchronously: `accepted` → `registered`. RIM pushes the staged file to HSM as the asset's
+`original` (`@atlas/hsm-client`, signed over the checksum computed when the bytes were received —
+HSM's own hash must equal it), and only once HSM holds it does the job become `registered`, with
+`ingest.accepted` and the audit in one transaction; the staged copy is removed after the commit,
+never before. **The asset id is the job id**: a ULID already, one job is one asset, and deriving it
+means a retry — or two registrars racing — place the same bytes under the same asset (HSM treats the
+same bytes again as a no-op), with nothing to write first. Registration runs right after a validation
+that accepts and after an operator's accept; `registerPending` on the sweep tick takes whatever did
+not finish (HSM away, a crash, a deployment that just gained its HSM key). Without an HSM key RIM
+still accepts, and the jobs wait in staging. `ingest.accepted` carries what MAM creates the asset
+from — title (the filename without its extension), mediaType (video/image/audio/other from the
+probe), fileType (the extension), createdBy (who brought it in) — and what MTS picks the first
+renditions by. MAM creates the asset under that id; MTS queues the first renditions from HSM's
+original. Studio's queue links a registered job to its asset.
+
 ## 14. Open questions / future
 
 - Growing-file / while-recording ingest (edit-while-ingest) — Post-v1.0.

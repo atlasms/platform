@@ -973,7 +973,8 @@ test('smoke: EP-15.4 — the probe reads a real file: a WAV is accepted with its
   };
 
   const tone = await settled((await send('smoke-silence.wav', wav)).id);
-  assert.equal(tone.state, 'accepted', `the WAV: ${JSON.stringify(tone)}`);
+  // Accepted — and, since EP-15.5, registered as an asset moments later; either is the WAV passing.
+  assert.ok(['accepted', 'registered'].includes(tone.state), `the WAV: ${JSON.stringify(tone)}`);
   assert.equal(tone.technicalMetadata?.container, 'wav');
   assert.equal(tone.technicalMetadata?.audioCodec, 'pcm_s16le');
   assert.equal(tone.technicalMetadata?.audioChannels, 1);
@@ -1090,7 +1091,7 @@ test('smoke: EP-39 — a recorder RECORDS: captured by FFmpeg on a worker, hande
     }
     assert.equal(job.sourceKind, 'recorder');
     assert.equal(job.source, recorder.id);
-    assert.equal(job.state, 'accepted', JSON.stringify(job));
+    assert.ok(['accepted', 'registered'].includes(job.state), JSON.stringify(job));
     assert.equal(job.technicalMetadata?.container, 'mpegts');
     assert.equal(job.technicalMetadata?.videoCodec, 'h264');
     // The current minute is planned at once, so the first file may begin when the recorder was
@@ -1251,7 +1252,7 @@ test('smoke: EP-15.2 — a folder watcher takes a settled file into ingest; its 
     assert.ok(job, `no job from watcher ${watcher.id} within 60 s`);
     assert.equal(job.sourceKind, 'watch');
     assert.equal(job.filename, 'smoke-watch.wav');
-    assert.equal(job.state, 'accepted', JSON.stringify(job));
+    assert.ok(['accepted', 'registered'].includes(job.state), JSON.stringify(job));
     assert.equal(job.technicalMetadata?.container, 'wav');
     assert.match(job.checksum, /^[0-9a-f]{64}$/);
   } finally {
@@ -1633,6 +1634,89 @@ test('smoke: EP-14 — HSM holds the renditions: placed signed, located through 
     "MAM's mirror never took HSM's placement",
   );
   assert.equal(files.find((f) => f.kind === 'proxy').checksum.value, proxy.checksum.value);
+});
+
+test('smoke: EP-15.5 — an accepted upload becomes an asset: its original in HSM, the asset in MAM, its first rendition from MTS', async () => {
+  // The whole ingest fan-out on a live cluster. A WAV is uploaded and accepted; RIM places it in
+  // HSM as the asset's ORIGINAL (signed over the checksum it computed on receipt), marks the job
+  // registered and announces ingest.accepted — the asset id is the job id. MAM creates the asset
+  // from that; MTS queues its first rendition (audio-proxy, it is audio) from HSM's original.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const poll = async (fn, done, budgetMs, what) => {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const value = await fn();
+      if (done(value)) return value;
+      assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(value)}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+  const wav = silentWav(2);
+  const upload = json(
+    await get('/api/v1/uploads', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ filename: 'Smoke Ingest.wav', sizeBytes: wav.length }),
+    }),
+  );
+  const put = await get(`/api/v1/uploads/${upload.uploadId}/parts/1`, {
+    method: 'PUT',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' },
+    body: wav,
+  });
+  assert.equal(put.status, 204, put.text);
+  const completed = await get(`/api/v1/uploads/${upload.uploadId}/complete`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(completed.status, 202, completed.text);
+  const jobId = json(completed).id;
+
+  const job = await poll(
+    async () => json(await get(`/api/v1/ingest/${jobId}`, { headers })),
+    (j) => j.state === 'registered' || j.state === 'rejected' || j.state === 'quarantined',
+    60_000,
+    'the job was never registered',
+  );
+  assert.equal(job.state, 'registered', JSON.stringify(job));
+  assert.equal(job.assetId, jobId, 'the asset id is the job id');
+
+  const asset = await poll(
+    async () =>
+      get(`/api/v1/assets/${job.assetId}`, {
+        headers: { ...headers, 'cache-control': 'no-cache' },
+      }),
+    (res) => res.status === 200,
+    30_000,
+    'MAM never created the asset',
+  );
+  assert.deepEqual(
+    [json(asset).title, json(asset).mediaType, json(asset).fileType, json(asset).state],
+    ['Smoke Ingest', 'audio', 'wav', 'created'],
+  );
+
+  const location = json(await get(`/api/v1/assets/${job.assetId}/location`, { headers }));
+  const original = location.find((f) => f.kind === 'original');
+  assert.ok(original, `no original in HSM: ${JSON.stringify(location)}`);
+  assert.equal(original.checksum.value, job.checksum, 'HSM holds the bytes RIM received');
+  assert.equal(original.provenance?.producedBy, 'ingest');
+
+  // MTS's first rendition, from HSM's original.
+  const jobs = await poll(
+    async () => json(await get(`/api/v1/jobs?assetId=${job.assetId}`, { headers })),
+    (list) => list.some((j) => j.state === 'completed' || j.state === 'dead-letter'),
+    90_000,
+    'MTS never finished the first rendition',
+  );
+  const first = jobs.find((j) => j.state === 'completed');
+  assert.ok(first, `the first rendition failed: ${JSON.stringify(jobs)}`);
+  assert.deepEqual([first.presetIds, first.inputFile?.kind], [['audio-proxy'], 'original']);
+  const kinds = json(await get(`/api/v1/assets/${job.assetId}/location`, { headers })).map(
+    (f) => f.kind,
+  );
+  assert.deepEqual(kinds.sort(), ['original', 'proxy']);
 });
 
 test('smoke: EP-16 — a real transcode: enqueued through the gateway, run by FFmpeg, announced, and mirrored into the asset’s files by MAM', async () => {

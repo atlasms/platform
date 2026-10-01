@@ -1,8 +1,9 @@
-// MTS's hands on HSM (EP-14.7; ADR-0009): the only way a rendition reaches storage, and the way an
-// input comes from it. MTS's work area is scratch — what it writes there is pushed to HSM and
-// removed; what it reads from HSM lands there and is removed after the job.
+// A producer's hands on HSM (EP-14.7; ADR-0009): the only way a file reaches storage, and the way
+// an input comes from it — for MTS (renditions, inputs) and RIM (an accepted original, EP-15.5).
+// A producer's local copy is scratch: what it writes there is pushed to HSM and removed; what it
+// reads from HSM lands there and is removed after use.
 //
-// A placement is signed over the rendition's SHA-256 (`signInternalDigest`) — the digest MTS
+// A placement is signed over the file's SHA-256 (`signInternalDigest`) — the digest the producer
 // computes anyway — and streamed; HSM hashes what it writes and the signature only verifies if the
 // two agree. A read is signed, streamed to scratch, hashed on the way in and compared with the
 // digest HSM sends: a corrupt transfer is caught here, not in FFmpeg.
@@ -33,12 +34,15 @@ export interface PlacementMeta {
   assetId: string;
   kind: string;
   variant?: string;
+  /** What made the file (file.schema.json `provenance.producedBy`). Default `transcode`. */
+  producedBy?: 'ingest' | 'transcode' | 'editor' | 'import';
   jobId: string;
-  profile: string;
+  /** The MTS profile, for a rendition; absent for an original. */
+  profile?: string;
   technical?: Record<string, unknown>;
 }
 
-/** HSM, as MTS needs it. A port: `hsmFileStore` over HTTP, `memoryFileStore` for the suites. */
+/** HSM, as a producer needs it. A port: `hsmFileStore` over HTTP, `memoryFileStore` for the suites. */
 export interface FileStore {
   place(meta: PlacementMeta, localPath: string, sha256: string): Promise<Placed>;
   /** An asset's live file of `kind`, written to `destPath`. */
@@ -52,7 +56,7 @@ export interface FileStore {
 
 export function hsmFileStore(options: {
   origin: string;
-  /** The first of HSM's internal keys: MTS signs with it. */
+  /** The first of HSM's internal keys: the producer signs with it. */
   key: string;
   fetchImpl?: typeof fetch;
 }): FileStore {
@@ -62,9 +66,9 @@ export function hsmFileStore(options: {
     async place(meta, localPath, sha256) {
       const query = new URLSearchParams({
         channelId: meta.channelId,
-        producedBy: 'transcode',
+        producedBy: meta.producedBy ?? 'transcode',
         jobId: meta.jobId,
-        profile: meta.profile,
+        ...(meta.profile !== undefined ? { profile: meta.profile } : {}),
         ...(meta.variant !== undefined ? { variant: meta.variant } : {}),
         ...(meta.technical !== undefined ? { technical: JSON.stringify(meta.technical) } : {}),
       });
@@ -94,7 +98,7 @@ export function hsmFileStore(options: {
       };
       if (file.checksum.value !== sha256) {
         // Cannot happen if HSM verified the signature — which is why it is checked.
-        throw new Error(`HSM recorded ${file.checksum.value} for bytes MTS hashed as ${sha256}`);
+        throw new Error(`HSM recorded ${file.checksum.value} for bytes hashed here as ${sha256}`);
       }
       return { path: file.storage.path, sizeBytes: file.sizeBytes, sha256: file.checksum.value };
     },

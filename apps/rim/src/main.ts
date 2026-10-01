@@ -9,6 +9,7 @@
 
 import { mkdir } from 'node:fs/promises';
 import { migrate, openPool, PgOutboxStore } from '@atlas/data-pg';
+import { hsmFileStore } from '@atlas/hsm-client';
 import { OutboxRelay } from '@atlas/messaging';
 import { NatsBroker } from '@atlas/messaging-nats';
 import {
@@ -70,6 +71,10 @@ const config = loadConfig({
   // least 32 bytes, from a Secret — the first signs, all verify, so a key rotates without downtime.
   // Empty: every /internal/ request is refused, and recorders' files cannot be handed over.
   internalKeys: { env: 'ATLAS_RIM_INTERNAL_KEYS', type: 'string', default: '' },
+  // EP-15.5 (ADR-0009): an accepted file goes to HSM as its asset's original, signed with HSM's
+  // internal key. Unset — accepted jobs wait in staging, registered once a key is configured.
+  hsmOrigin: { env: 'ATLAS_HSM_ORIGIN', type: 'string', default: 'http://hsm:3000' },
+  hsmKeys: { env: 'ATLAS_HSM_INTERNAL_KEYS', type: 'string', default: '' },
   // A job still `detected` after this long is one whose validation was lost with the process
   // (EP-15.3); the sweep tick runs it. Longer than any request, shorter than an operator notices.
   validateAfterMs: {
@@ -143,10 +148,16 @@ await mkdir(config.stagingDir, { recursive: true });
 
 const store = pgRimStore(pool);
 const probe = ffprobeProbe({ binary: config.ffprobeBin, timeoutMs: config.probeTimeoutMs });
+const hsmKey = internalKeys(config.hsmKeys)[0];
+if (!hsmKey)
+  log.warn('no HSM key: accepted files wait in staging and are not registered as assets');
 const service = new RimService({
   store,
   staging: fsStaging(config.stagingDir),
   probe,
+  ...(hsmKey !== undefined
+    ? { files: hsmFileStore({ origin: config.hsmOrigin, key: hsmKey }) }
+    : {}),
   partSizeBytes: config.partSizeBytes,
   uploadTtlMs: config.uploadTtlMs,
   validateAfterMs: config.validateAfterMs,
@@ -256,6 +267,13 @@ const sweep = async (): Promise<void> => {
     if (n > 0) log.info('validated jobs left detected', { count: n });
   } catch (err) {
     log.error('recovery failed', { error: (err as Error).message });
+  }
+  try {
+    // EP-15.5: accepted jobs whose registration did not finish — HSM away, a crash, a new key.
+    const n = await service.registerPending();
+    if (n > 0) log.info('registration retried for accepted jobs', { count: n });
+  } catch (err) {
+    log.error('registration retry failed', { error: (err as Error).message });
   }
   sweepTimer = setTimeout(() => void sweep(), config.sweepIntervalMs);
 };
