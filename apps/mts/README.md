@@ -16,8 +16,9 @@ with per-rendition sha256, `transcode.failed`.
 
 **16.6** the profile registry, with GPU encoders tested on the node and a CPU fallback.
 
-**Not built:** scaling past one replica (the work area is ReadWriteOnce until HSM, EP-14),
-`ingest.accepted` → automatic proxy+thumbnail (needs EP-15.5), editor renders.
+**Scaling (16.6)** — replicas share the queue table; the work area is per-pod scratch; every write
+to a held job is guarded by its lease, and a heartbeat keeps a busy worker from being swept
+(docs/architecture/services/mts.md §11). **Not built:** editor renders.
 
 ## The queue is a table, not the broker
 
@@ -70,11 +71,9 @@ on the RESOLVED path, so `..`, an absolute path elsewhere and a sibling that mer
 three attempts and a dead letter later). A broker command may name a file HSM is still placing, so
 that path waits for it through the retry instead.
 
-Two consequences, both temporary and both stated in the manifest: **one replica** (the work area is
-ReadWriteOnce), with a `Recreate` rollout so the new pod is not waiting on the old one's volume; and
-the dev overlay renders a sample clip into the work area (`infra/k8s/overlays/dev/mts-sample.yaml`),
-because nothing else in a cluster can hand MTS an input — RIM's staging area is its own volume and a
-staged path never leaves RIM.
+Since HSM the work area is per-pod scratch (an `emptyDir`), so a path input is only ever the
+sample clip the dev overlay renders into every pod's scratch (`infra/k8s/overlays/dev/mts-sample.yaml`)
+for the smoke suite; real inputs are `inputFile`s fetched from HSM.
 
 ## Authorization
 

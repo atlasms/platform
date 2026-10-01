@@ -63,12 +63,18 @@ export function pgJobStore(pool: PgPool): JobStore {
     async transaction(fn) {
       return withTransaction(pool, async (client) => {
         const tx: JobTx = {
-          async putJob(job, ifState) {
+          async putJob(job, ifState, ifLease) {
             if (ifState !== undefined) {
+              // The lease is matched on the stored DOCUMENT's strings, exactly as the lease wrote
+              // them; `updatedAt` likewise, rather than the timestamptz column, so no precision
+              // or zone round-trip can make a guard that should hold fail or one that should fail
+              // hold.
               const result = await client.query(
                 `UPDATE transcode_jobs
                  SET state = $1, priority = $2, retry_at = $3, updated_at = $4, data = $5
-                 WHERE id = $6 AND state = $7`,
+                 WHERE id = $6 AND state = $7
+                   AND ($8::text IS NULL OR (data->>'workerId' = $8 AND data->>'startedAt' = $9))
+                   AND ($10::text IS NULL OR data->>'updatedAt' = $10)`,
                 [
                   job.state,
                   job.priority,
@@ -77,6 +83,9 @@ export function pgJobStore(pool: PgPool): JobStore {
                   JSON.stringify(job),
                   job.id,
                   ifState,
+                  ifLease?.workerId ?? null,
+                  ifLease?.startedAt ?? null,
+                  ifLease?.updatedAt ?? null,
                 ],
               );
               return result.rowCount === 1;

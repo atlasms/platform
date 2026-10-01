@@ -41,7 +41,7 @@ import {
   type TranscodeProfile,
 } from './profile.ts';
 import type { FileStore } from '@atlas/hsm-client';
-import type { JobStore } from './store.ts';
+import { leaseOf, type JobStore } from './store.ts';
 import { TranscodeRefusal, type Transcoder } from './transcoder.ts';
 
 export interface MtsOptions {
@@ -83,6 +83,15 @@ export interface MtsOptions {
   publishLive?: (msg: Message) => Promise<void>;
   /** At most one progress message per job per this interval. Default 1 s. */
   progressIntervalMs?: number;
+  /**
+   * How often a worker touches the row of the job it holds (EP-16.6), so the sweep — which takes
+   * back a `running` job whose row has not moved for the stale timeout — never takes a LIVE one.
+   * FFmpeg's progress used to be the only thing that moved it, and fetching a master from HSM,
+   * hashing renditions and pushing them write none: a long enough phase would be swept and leased
+   * a second time while the first worker was still busy. Keep it well under the stale timeout
+   * (main.ts: 5 min). Default 60 s.
+   */
+  heartbeatMs?: number;
 }
 
 export interface EnqueueInput {
@@ -126,6 +135,8 @@ export const FIRST_RENDITIONS: Readonly<Record<string, readonly string[]>> = {
 };
 
 export const DEFAULT_MAX_ATTEMPTS = 3;
+/** See {@link MtsOptions.heartbeatMs}. */
+export const DEFAULT_HEARTBEAT_MS = 60_000;
 export const DEFAULT_RETRY_BASE_MS = 30_000;
 const MAX_RETRY_DELAY_MS = 10 * 60_000;
 
@@ -379,13 +390,42 @@ export class MtsService {
     return this.execute(running, signal);
   }
 
-  /** Run every preset of a leased job, then commit what happened. */
+  /**
+   * Run every preset of a leased job, then commit what happened — touching the row on a heartbeat
+   * while it runs, and giving the job up if the heartbeat finds the lease gone (swept, and leased
+   * by another worker): whatever this worker would still write is guarded by its lease and could
+   * not land, and FFmpeg's minutes are better spent on the next job.
+   */
   private async execute(job: TranscodeJob, signal?: AbortSignal): Promise<RunOutcome> {
+    const lost = new AbortController();
+    const combined = signal ? AbortSignal.any([signal, lost.signal]) : lost.signal;
+    const beat = setInterval(() => {
+      void this.heartbeat(job).then((held) => {
+        if (!held) lost.abort();
+      });
+    }, this.options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS);
+    beat.unref?.();
     try {
-      return await this.executePresets(job, signal);
+      const outcome = await this.executePresets(job, combined);
+      return lost.signal.aborted ? 'cancelled' : outcome;
     } finally {
+      clearInterval(beat);
       // However it ended, the throttle has nothing more to remember about this job.
       this.announced.delete(job.id);
+    }
+  }
+
+  /** Touch the held job's row; `false` when it is no longer this worker's lease. */
+  private async heartbeat(job: TranscodeJob): Promise<boolean> {
+    try {
+      const current = await this.options.store.job(job.id);
+      if (!current || current.state !== 'running') return false;
+      return await this.options.store.transaction((tx) =>
+        tx.putJob({ ...current, updatedAt: this.now().toISOString() }, 'running', leaseOf(job)),
+      );
+    } catch {
+      // The database away is not the lease lost: keep working, and let the next beat decide.
+      return true;
     }
   }
 
@@ -423,6 +463,7 @@ export class MtsService {
       if (signal?.aborted) {
         // A drain, not a failure: the job goes back to the queue for whoever is still up, with
         // its attempt count intact — the work was interrupted, not attempted and found wanting.
+        // (Or the lease was lost: then this requeue is refused by its guard, as it should be.)
         await this.requeue(job, 'worker shut down mid-job');
         return 'cancelled';
       }
@@ -444,7 +485,9 @@ export class MtsService {
       await rm(dirname(job.inputPath), { recursive: true, force: true }).catch(() => undefined);
     }
     await this.options.store.transaction(async (tx) => {
-      if (!(await tx.putJob(completed, 'running'))) return;
+      // Guarded by THIS lease, not only the state: a job swept and leased by another worker is
+      // `running` again, and this completion must not land on that worker's lease.
+      if (!(await tx.putJob(completed, 'running', leaseOf(job)))) return;
       await tx.enqueue(
         this.record(this.callerFor(job), job.channelId, 'transcode.completed', {
           jobId: completed.id,
@@ -556,7 +599,11 @@ export class MtsService {
     if ((current.percent ?? 0) >= overall) return;
     await this.options.store
       .transaction((tx) =>
-        tx.putJob({ ...current, percent: overall, updatedAt: this.now().toISOString() }, 'running'),
+        tx.putJob(
+          { ...current, percent: overall, updatedAt: this.now().toISOString() },
+          'running',
+          leaseOf(job),
+        ),
       )
       .catch(() => undefined);
   }
@@ -629,7 +676,7 @@ export class MtsService {
         : { retryAt: new Date(now.getTime() + delay).toISOString() }),
     };
     await this.options.store.transaction(async (tx) => {
-      if (!(await tx.putJob(after, 'running'))) return;
+      if (!(await tx.putJob(after, 'running', leaseOf(job)))) return;
       if (terminal) {
         // `transcode.failed` is emitted when the platform has given up, not on every attempt:
         // mts.md points it at Notifications and BMS, and a notification per retry is a pager that
@@ -660,8 +707,12 @@ export class MtsService {
     return terminal ? 'dead-letter' : 'failed';
   }
 
-  /** Put a job back on the queue — a drain, or the sweep finding a worker that never returned. */
-  private async requeue(job: TranscodeJob, reason: string): Promise<void> {
+  /**
+   * Put a job back on the queue — a drain, or the sweep finding a worker that never returned.
+   * Guarded by the job's lease; the sweep also by the `updatedAt` it judged stale, so a heartbeat
+   * that lands between its read and this write keeps the job where it is.
+   */
+  private async requeue(job: TranscodeJob, reason: string, asSwept = false): Promise<void> {
     const at = this.now().toISOString();
     const requeued: TranscodeJob = {
       ...job,
@@ -674,7 +725,7 @@ export class MtsService {
       version: job.version + 1,
     };
     await this.options.store.transaction(async (tx) => {
-      if (!(await tx.putJob(requeued, 'running'))) return;
+      if (!(await tx.putJob(requeued, 'running', leaseOf(job, asSwept)))) return;
       await tx.enqueue(
         this.audit(this.callerFor(job), requeued, job, requeued, 'transcode.requeued'),
       );
@@ -690,7 +741,7 @@ export class MtsService {
   async sweepStale(olderThanMs: number): Promise<number> {
     const before = new Date(this.now().getTime() - olderThanMs).toISOString();
     const stale = await this.options.store.stale(before);
-    for (const job of stale) await this.requeue(job, 'worker did not return');
+    for (const job of stale) await this.requeue(job, 'worker did not return', true);
     return stale.length;
   }
 

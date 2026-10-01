@@ -11,18 +11,14 @@ metadata:
     app.kubernetes.io/part-of: atlas
     {{- include "atlas.labels" . | nindent 4 }}
 spec:
-  # ONE replica, and today that is a constraint rather than a design: the work area is a
-  # ReadWriteOnce volume, so a second pod could not mount it on another node. MTS is meant to be
-  # the platform's scale-to-many service (mts.md §8) — each pod leases one job at a time from the
-  # table, so the code already scales — and that becomes a replica count the day HSM (EP-14)
-  # provides the shared storage inputs and renditions live on.
-  replicas: 1
-  # Recreate, not RollingUpdate: the new pod cannot mount the RWO volume until the old one lets
-  # go, and a rolling update would sit at "0 of 1 ready" until it timed out. The old pod's drain
-  # puts its running job back on the queue with its attempt returned (service.ts), so nothing is
-  # lost in the gap.
-  strategy:
-    type: Recreate
+  # A replica count, not a constraint (EP-16.6, #145). Every pod leases one job at a time from the
+  # queue TABLE by compare-and-set, so N pods split the work without coordinating; and since HSM
+  # (EP-14.7) holds every input and every rendition, the work area below is per-pod SCRATCH — an
+  # `inputFile` fetched for one job, a rendition until it is pushed — not a volume pods must share.
+  # One here (a laptop); the dev overlay runs two so smoke proves they share the queue, staging two
+  # behind a PDB, and the Helm chart makes it `replicas.mts`. A rolling update is safe: a pod being
+  # replaced drains, putting its running job back on the queue with its attempt returned.
+  replicas: {{ .Values.replicas.mts }}
   selector:
     matchLabels:
       app.kubernetes.io/name: mts
@@ -70,13 +66,14 @@ spec:
                   key: {{ .Values.postgres.auth.passwordKey }}
             - name: ATLAS_PG_URL
               value: postgres://$(PGUSER):$(PGPASSWORD)@{{ .Values.postgres.host }}:{{ .Values.postgres.port }}/{{ .Values.postgres.database }}
-            # EP-16.2. Scratch since EP-14.7: renditions are written here, pushed to HSM and removed;
-            # an `inputFile` job's input is fetched here from HSM. A path input must still be inside
-            # it (the sample clip a deployment renders).
+            # Scratch, per pod (EP-14.7, EP-16.6): renditions are written here, pushed to HSM and
+            # removed; an `inputFile` job's input is fetched here from HSM. A path input must be
+            # inside it — the sample clip the dev overlay renders into EVERY pod's scratch.
             - name: ATLAS_MTS_WORK_DIR
               value: /var/lib/atlas/mts
-            # HSM (ADR-0009): every rendition goes there, signed with HSM's internal key. Optional:
-            # without it renditions stay in the work area, and `inputFile` jobs are refused.
+            # HSM (ADR-0009): every rendition goes there, signed with HSM's internal key. Optional,
+            # like every internal key — but without it renditions stay in the pod's SCRATCH and are
+            # gone at its next restart (main.ts says so at startup), and `inputFile` jobs are refused.
             - name: ATLAS_HSM_ORIGIN
               value: http://hsm:3000
             - name: ATLAS_HSM_INTERNAL_KEYS
@@ -122,32 +119,16 @@ spec:
             periodSeconds: 3
             failureThreshold: 40
       volumes:
+        # Scratch, per pod (see `replicas` above). Bounded: a pod whose transcodes outgrow it is
+        # evicted rather than filling the node — size it for the largest master × concurrent jobs
+        # (one per pod today). Staging sets a facility's size.
         - name: work
-          persistentVolumeClaim:
-            claimName: mts-work
+          emptyDir:
+            sizeLimit: {{ .Values.scratch.mts }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
----
-# The work area: inputs until HSM provides them, and every rendition MTS writes. A laptop's size
-# here; the staging overlay sizes it for a facility.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mts-work
-  labels:
-    app.kubernetes.io/name: mts
-    app.kubernetes.io/part-of: atlas
-    {{- include "atlas.labels" . | nindent 4 }}
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: {{ .Values.storage.mtsWork }}
-  {{- with .Values.storageClass }}
-  storageClassName: {{ . }}
-  {{- end }}
 ---
 apiVersion: v1
 kind: Service

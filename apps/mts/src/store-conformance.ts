@@ -24,7 +24,7 @@ import { InMemoryBroker, OutboxRelay, type Message, type OutboxStore } from '@at
 import { compile, type Rule } from '@atlas/policy';
 import type { ProfileInput } from './profile.ts';
 import { MtsService, type Caller } from './service.ts';
-import type { JobStore } from './store.ts';
+import { leaseOf, type JobStore } from './store.ts';
 import { fakeTranscoder } from './transcoder-fake.ts';
 
 export interface JobStoreHarness {
@@ -54,7 +54,7 @@ export function jobStoreConformance(name: string, harness: JobStoreHarness): voi
       clock: { now: number };
       transcoder: ReturnType<typeof fakeTranscoder>;
     }) => Promise<void>,
-    options: { maxAttempts?: number; retryBaseMs?: number } = {},
+    options: { maxAttempts?: number; retryBaseMs?: number; heartbeatMs?: number } = {},
   ): Promise<void> {
     const { store, outbox, cleanup } = await harness.make();
     const root = await mkdtemp(join(tmpdir(), 'mts-spec-'));
@@ -67,6 +67,7 @@ export function jobStoreConformance(name: string, harness: JobStoreHarness): voi
       workerId: 'worker-a',
       maxAttempts: options.maxAttempts ?? 3,
       retryBaseMs: options.retryBaseMs ?? 60_000,
+      ...(options.heartbeatMs !== undefined ? { heartbeatMs: options.heartbeatMs } : {}),
       now: () => new Date(clock.now),
     });
     const bus = new InMemoryBroker();
@@ -346,6 +347,8 @@ export function jobStoreConformance(name: string, harness: JobStoreHarness): voi
             ...orphan,
             state: 'running',
             attempts: 1,
+            workerId: 'worker-gone',
+            startedAt: new Date(clock.now).toISOString(),
             updatedAt: new Date(clock.now).toISOString(),
           },
           'queued',
@@ -360,6 +363,119 @@ export function jobStoreConformance(name: string, harness: JobStoreHarness): voi
       assert.equal(back.attempts, 0);
       assert.equal(back.reason, 'worker did not return');
     });
+  });
+
+  test(`[${name}] LEASES (EP-16.6): a write under a lease the row no longer holds is refused — state alone is not the guard`, async () => {
+    await withService(async ({ service, store, input }) => {
+      const path = await input('lease.mxf');
+      const job = await service.enqueue(caller, {
+        assetId: ulid(),
+        presetIds: ['proxy'],
+        inputPath: path,
+      });
+      const leaseA = {
+        ...job,
+        state: 'running' as const,
+        workerId: 'worker-a',
+        startedAt: '2026-09-24T12:00:00.000Z',
+        updatedAt: '2026-09-24T12:00:00.000Z',
+      };
+      assert.equal(await store.transaction((tx) => tx.putJob(leaseA, 'queued')), true);
+      // Swept and leased by worker B: `running` again, under ANOTHER lease.
+      const leaseB = {
+        ...leaseA,
+        workerId: 'worker-b',
+        startedAt: '2026-09-24T12:06:00.000Z',
+        updatedAt: '2026-09-24T12:06:00.000Z',
+      };
+      await store.transaction((tx) => tx.putJob(leaseB, 'running'));
+
+      // Worker A's late completion: the state matches, the lease does not.
+      const late = {
+        ...leaseA,
+        state: 'completed' as const,
+        updatedAt: '2026-09-24T12:07:00.000Z',
+      };
+      assert.equal(
+        await store.transaction((tx) => tx.putJob(late, 'running', leaseOf(leaseA))),
+        false,
+      );
+      // Worker B's, under its own lease, lands.
+      const done = {
+        ...leaseB,
+        state: 'completed' as const,
+        updatedAt: '2026-09-24T12:08:00.000Z',
+      };
+      assert.equal(
+        await store.transaction((tx) => tx.putJob(done, 'running', leaseOf(leaseB))),
+        true,
+      );
+      assert.equal((await store.job(job.id))?.workerId, 'worker-b');
+
+      // The sweep's guard is narrower still: the row it judged stale, not just the lease.
+      const again = { ...leaseB, state: 'running' as const, updatedAt: '2026-09-24T12:09:00.000Z' };
+      await store.transaction((tx) => tx.putJob(again, 'completed'));
+      const judged = { ...again, updatedAt: '2026-09-24T12:00:30.000Z' }; // an older read
+      assert.equal(
+        await store.transaction((tx) =>
+          tx.putJob({ ...again, state: 'queued' }, 'running', leaseOf(judged, true)),
+        ),
+        false,
+        'a heartbeat after the sweep read the row wins',
+      );
+    });
+  });
+
+  test(`[${name}] HEARTBEAT (EP-16.6): a busy worker is never swept, and a worker whose job was taken over gives it up`, async () => {
+    await withService(
+      async ({ service, store, input, clock }) => {
+        const path = await input('slow.mxf');
+        const job = await service.enqueue(caller, {
+          assetId: ulid(),
+          presetIds: ['proxy'],
+          inputPath: path,
+        });
+        const running = service.runNext();
+        const waitFor = async (check: () => Promise<boolean>) => {
+          for (let i = 0; i < 200 && !(await check()); i++) {
+            await new Promise((r) => setTimeout(r, 10));
+          }
+        };
+        await waitFor(async () => (await store.job(job.id))?.state === 'running');
+        const leased = (await store.job(job.id))!;
+
+        // Six minutes of wall-clock work with no progress — an HSM fetch, a push — but the worker
+        // beats: the row moves, and the sweep (5 min) leaves it alone.
+        clock.now += 4 * 60_000;
+        await waitFor(async () => (await store.job(job.id))?.updatedAt !== leased.updatedAt);
+        clock.now += 2 * 60_000;
+        assert.equal(await service.sweepStale(5 * 60_000), 0, 'a heartbeating worker is not dead');
+
+        // Another worker takes it over (as if the sweep HAD fired while this one was partitioned).
+        const theirs = {
+          ...(await store.job(job.id))!,
+          workerId: 'worker-b',
+          startedAt: new Date(clock.now).toISOString(),
+          updatedAt: new Date(clock.now).toISOString(),
+        };
+        await store.transaction((tx) => tx.putJob(theirs, 'running'));
+
+        // The next beat finds the lease gone: the slow transcode is abandoned, and nothing this
+        // worker writes lands on worker B's lease — no requeue, no failure.
+        // Bounded: a worker that never notices it lost the job would otherwise hang the suite.
+        const outcome = await Promise.race([
+          running,
+          new Promise<string>((r) => setTimeout(() => r('still running'), 5_000).unref()),
+        ]);
+        assert.equal(outcome, 'cancelled', 'the worker gave the job up');
+        const after = (await store.job(job.id))!;
+        assert.deepEqual(
+          [after.state, after.workerId, after.startedAt],
+          ['running', 'worker-b', theirs.startedAt],
+        );
+      },
+      { heartbeatMs: 20 },
+    );
   });
 
   test(`[${name}] CAUSATION (EP-03.5): a command's chain reaches every event the job causes, the worker's included`, async () => {

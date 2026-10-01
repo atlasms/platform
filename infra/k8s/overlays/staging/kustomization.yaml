@@ -107,14 +107,22 @@ patches:
       - op: replace
         path: /spec/resources/requests/storage
         value: 200Gi
-  # MTS's work area: scratch since EP-14.7 — a job's inputs and outputs while it runs.
+  # MTS (EP-16.6): two workers sharing the queue, behind a PDB (pdb.yaml); each pod's scratch sized
+  # for a facility's masters — an input fetched from HSM plus its renditions, one job per pod — and
+  # requested, so the scheduler only places a worker on a node with that much local disk.
   - target:
-      kind: PersistentVolumeClaim
-      name: mts-work
+      kind: Deployment
+      name: mts
     patch: |-
       - op: replace
-        path: /spec/resources/requests/storage
-        value: 500Gi
+        path: /spec/replicas
+        value: 2
+      - op: replace
+        path: /spec/template/spec/volumes/0/emptyDir/sizeLimit
+        value: 200Gi
+      - op: add
+        path: /spec/template/spec/containers/0/resources/requests/ephemeral-storage
+        value: 200Gi
   # HSM's online tier (ADR-0009) when it is a filesystem: sized for a facility's online masters. A
   # facility binds it to its SAN/NAS; one on S3 targets keeps this for the bootstrap target only.
   - target:

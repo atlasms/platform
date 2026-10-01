@@ -66,12 +66,15 @@ export function sqliteJobStore(path = ':memory:'): JobStore & { db: Db } {
   const seen = new SqliteSeenStore(db);
 
   const tx: JobTx = {
-    async putJob(job, ifState) {
+    async putJob(job, ifState, ifLease) {
       if (ifState !== undefined) {
         const result = db
           .prepare(
             `UPDATE transcode_jobs SET state = ?, priority = ?, retry_at = ?, updated_at = ?, data = ?
-             WHERE id = ? AND state = ?`,
+             WHERE id = ? AND state = ?
+               AND (? IS NULL OR (json_extract(data, '$.workerId') = ?
+                                  AND json_extract(data, '$.startedAt') = ?))
+               AND (? IS NULL OR json_extract(data, '$.updatedAt') = ?)`,
           )
           .run(
             job.state,
@@ -81,6 +84,11 @@ export function sqliteJobStore(path = ':memory:'): JobStore & { db: Db } {
             JSON.stringify(job),
             job.id,
             ifState,
+            ifLease ? 1 : null,
+            ifLease?.workerId ?? null,
+            ifLease?.startedAt ?? null,
+            ifLease?.updatedAt ?? null,
+            ifLease?.updatedAt ?? null,
           );
         return Number(result.changes) === 1;
       }

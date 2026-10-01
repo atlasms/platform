@@ -127,8 +127,14 @@ const transcoder = ffmpegTranscoder({
 });
 const store = pgJobStore(pool);
 const hsmKey = internalKeys(config.hsmKeys)[0];
+// Loud on purpose (EP-16.6): in the manifests the work area is per-pod scratch, so without HSM a
+// rendition lives exactly as long as the pod that made it — and with two workers, a path in MAM
+// names a file on only one of them.
 if (!hsmKey)
-  log.warn('no HSM key: renditions stay in the work area, and inputFile jobs are refused');
+  log.warn(
+    'no HSM key: renditions stay in the work area — per-pod scratch in the manifests, lost at the ' +
+      "pod's next restart and visible to no other worker — and inputFile jobs are refused",
+  );
 const service = new MtsService({
   store,
   transcoder,
