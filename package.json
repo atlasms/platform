@@ -43,7 +43,8 @@
     "smoke": "node --test infra/smoke/smoke.test.mjs",
     "bundle": "node scripts/build-bundle.mjs",
     "acceptance": "node --test infra/smoke/mvp-acceptance.test.mjs",
-    "reference:test": "node scripts/test-reference.mjs"
+    "reference:test": "node scripts/test-reference.mjs",
+    "perf": "node infra/smoke/perf-sanity.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -126,6 +126,13 @@ jobs:
       - name: MVP acceptance
         run: npm run acceptance
 
+      # EP-21.4 — performance SANITY against the MVP NFRs: 40 distinct users at a Studio pace for a
+      # minute; reads, search and write→live-frame percentiles against their targets, and no 429 or
+      # 5xx. A shared runner is slower than a facility's hardware, so a miss here is a real signal.
+      # The table lands in the job summary either way.
+      - name: Performance sanity
+        run: npm run perf
+
       # Only on failure, and it is the difference between "CI went red" and knowing why. A smoke
       # failure is a deployment failure: the interesting state is in the pods, and the runner is
       # destroyed the moment this job ends.

@@ -164,6 +164,7 @@ The gateway answers on `http://localhost:30080`, the WebSocket server on `ws://l
 ```sh
 npm run smoke      # 34 checks against the live cluster
 npm run acceptance # the MVP journey: one file, upload → schedule, audited and live (EP-21.1)
+npm run perf       # performance sanity: 40 users, reads/search/live against the MVP NFRs (EP-21.4)
 ```
 
 The suite signs in as the dev overlay's seed account, writes through the gateway, and reads the
