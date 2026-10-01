@@ -1,8 +1,9 @@
 # ADR-0009 — HSM: two storage drivers behind one port, bytes pushed to HSM over signed calls
 
-- **Status:** Proposed — the three choices below were made by the product owner, 2026-10-01; the
-  rest is the design that follows from them, for review (AGENTS.md §5.7: HSM file operations are
-  correctness-critical — two reviewers and pairing, not AI-fast-tracked)
+- **Status:** Accepted — the three choices below were made by the product owner, 2026-10-01, and
+  the implementation (#375) was merged at the product owner's direction the same day, **before** the
+  two-reviewer pairing AGENTS.md §5.7 asks of HSM file operations. That review is still owed: treat
+  this code as merged-unreviewed until it has had one, and record it here when it has
 - **Date:** 2026-10-01
 - **Stories:** EP-14.1 – EP-14.7 ([#14](https://github.com/atlasms/platform/issues/14))
 - **Code:** [`apps/hsm`](../../apps/hsm/), `signInternalDigest` / `verifyInternalDigest` in
