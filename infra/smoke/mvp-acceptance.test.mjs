@@ -111,7 +111,7 @@ test('MVP acceptance — one file: upload → validate → transcode → metadat
     });
     setTimeout(() => reject(new Error('socket did not open')), TIMEOUT).unref?.();
   });
-  const patterns = ['ingest', 'asset', 'transcode', 'schedule'].map(
+  const patterns = ['ingest', 'asset', 'transcode', 'file', 'schedule'].map(
     (d) => `atlas.${channel}.${d}.>`,
   );
   for (const pattern of patterns) socket.send(JSON.stringify({ type: 'subscribe', pattern }));
@@ -443,6 +443,8 @@ test('MVP acceptance — one file: upload → validate → transcode → metadat
         ['ingest.accepted', journey.assetId],
         ['asset.created', journey.assetId],
         ...journey.transcodeJobIds.map((id) => ['transcode.completed', id]),
+        // HSM's placements reach the socket under the file set's grant (#384).
+        ...journey.fileIds.map((id) => ['file.placed', id]),
         ['asset.updated', journey.assetId],
         ['asset.ready', journey.assetId],
         ['asset.approved', journey.assetId],
