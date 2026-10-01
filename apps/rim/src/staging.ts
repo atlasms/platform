@@ -100,6 +100,12 @@ export function fsStaging(root: string): Staging {
       const tmp = join(dir, `.assembling-${process.pid}-${Date.now()}`);
       const hash = createHash('sha256');
       const out = createWriteStream(tmp, { flags: 'w' });
+      // The output outlives each `pipeline` (`end: false`), and pipeline's listeners go with it:
+      // between parts and during the final `end()` nothing else listens, so a late write error
+      // would be an UNHANDLED 'error' event — a crash of the whole process, not a failed upload.
+      // Held here and rethrown, so it is this upload's failure (#380's shape; not yet caught live).
+      let outError: Error | undefined;
+      out.on('error', (err) => (outError ??= err));
       try {
         for (let n = 1; n <= partCount; n += 1) {
           const part = createReadStream(join(dir, `part-${n}`));
@@ -108,8 +114,9 @@ export function fsStaging(root: string): Staging {
           await pipeline(part, out, { end: false });
         }
       } finally {
-        await new Promise<void>((done) => out.end(done));
+        if (!out.destroyed) await new Promise<void>((done) => out.end(done));
       }
+      if (outError) throw outError;
       await rename(tmp, target);
       for (let n = 1; n <= partCount; n += 1) await rm(join(dir, `part-${n}`), { force: true });
       const written = await stat(target);
