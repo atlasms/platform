@@ -1,7 +1,7 @@
 // Property-form descriptors derived from the config JSON-Schema $def for each kind. The canvas
 // renders the property panel from these (design §12.3) — so a new step kind needs only a schema
 // $def + interpreter handler + BPMN mapping, never new canvas code.
-import { rawSchema } from '../schema.ts';
+import { commonSchema, rawSchema } from '../schema.ts';
 import type { StepKind } from '../types.ts';
 
 export interface FormField {
@@ -26,9 +26,20 @@ export function formFor(kind: StepKind): FormField[] {
   const required: string[] = def.required ?? [];
   return Object.entries<any>(def.properties).map(([name, spec]) => {
     const isFeel = spec?.$ref?.endsWith('/Feel') || spec?.description?.includes('FEEL');
-    const type = spec.enum ? 'enum' : spec.type ?? (spec.$ref ? refName(spec.$ref) : 'object');
-    return clean({ name, type, required: required.includes(name), enum: spec.enum, feel: isFeel || undefined, description: spec.description });
+    // A shared enum is ONE $def in common.schema.json, $ref'd from here (EP-02.5) — follow the ref,
+    // or the form loses its options the day an inline enum is consolidated (#382).
+    const target: any = spec.$ref ? resolveRef(spec.$ref) : undefined;
+    const values: string[] | undefined = spec.enum ?? target?.enum;
+    const type = values ? 'enum' : spec.type ?? (spec.$ref ? refName(spec.$ref) : 'object');
+    return clean({ name, type, required: required.includes(name), enum: values, feel: isFeel || undefined, description: spec.description ?? target?.description });
   });
+}
+
+/** `#/$defs/X` in the workflow schema, or `common.schema.json#/$defs/X`. */
+function resolveRef(ref: string): unknown {
+  const name = refName(ref);
+  const defs = ref.startsWith('common.schema.json') ? commonSchema.$defs : rawSchema.$defs;
+  return (defs as any)[name];
 }
 
 function refName(ref: string): string {

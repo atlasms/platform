@@ -26,4 +26,6 @@ export function validateSchema(def: unknown): SchemaResult {
 }
 
 export const rawSchema = wfSchema as { $defs: Record<string, unknown> };
+/** The shared $defs a workflow schema `$ref`s into (`common.schema.json#/$defs/…`). */
+export const commonSchema = common as { $defs: Record<string, unknown> };
 export type { WorkflowDefinition };

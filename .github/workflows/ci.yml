@@ -192,6 +192,14 @@ jobs:
       - name: Tables are owned, doubled, and channel-scoped (or say why not)
         run: npm run schema:check
 
+      # #382: the frozen prototype reads the LIVE schemas, and nothing ran it — a schema
+      # consolidation broke it and the README kept saying every test passed. Its own dependency
+      # root, so its own install; ~84 tests, seconds.
+      - name: Reference prototype passes against the live schemas
+        run: |
+          npm ci --prefix reference --no-audit --no-fund
+          npm run reference:test
+
       # `scripts/` is not an Nx project, so `nx affected -t lint` never sees it — its eslint block
       # existed from the start and nothing ran it. These scripts are CI's own checks; they get linted.
       - name: Scripts lint
