@@ -42,6 +42,33 @@ export function startJobConsumer(options: JobConsumerOptions): Subscription {
   );
 }
 
+/** Every channel's accepted ingests — a new asset's first renditions (EP-15.5). */
+export const INGEST_ACCEPTED_PATTERN = 'atlas.*.ingest.accepted';
+
+export interface IngestConsumerOptions {
+  broker: Broker;
+  service: MtsService;
+  maxAttempts?: number;
+  onOutcome?: (subject: string, outcome: 'applied' | 'duplicate' | 'skipped') => void;
+  onError?: (err: unknown, msg: Message) => void;
+}
+
+/** `ingest.accepted` → the first renditions, queued; refused messages go to the broker, never acked. */
+export function startIngestConsumer(options: IngestConsumerOptions): Subscription {
+  return options.broker.subscribe(
+    INGEST_ACCEPTED_PATTERN,
+    async (msg: Message) => {
+      try {
+        options.onOutcome?.(msg.subject, await options.service.consumeIngestAccepted(msg));
+      } catch (err) {
+        options.onError?.(err, msg);
+        throw err;
+      }
+    },
+    { maxAttempts: options.maxAttempts ?? 5 },
+  );
+}
+
 export interface WorkerOptions {
   service: MtsService;
   /** How long to wait after finding nothing to do. Default 1s. */

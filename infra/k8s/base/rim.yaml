@@ -79,6 +79,16 @@ spec:
                   name: rim-internal-keys
                   key: keys
                   optional: true
+            # EP-15.5 (ADR-0009): an accepted file goes to HSM as its asset's original, signed with
+            # HSM's key. Optional: without it accepted jobs wait in staging, unregistered.
+            - name: ATLAS_HSM_ORIGIN
+              value: http://hsm:3000
+            - name: ATLAS_HSM_INTERNAL_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: hsm-internal-keys
+                  key: keys
+                  optional: true
           volumeMounts:
             - name: staging
               mountPath: /var/lib/atlas/rim

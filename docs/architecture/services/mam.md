@@ -228,6 +228,15 @@ index/analyzer config (multilingual, RTL).
   cannot apply are refused to the broker (retry, then dead-letter), never skipped. `file.moved`
   (§5) is not consumed yet — it has no schema; `file.placed` carries the tier.
 
+### EP-15.5 — an accepted ingest becomes an asset
+
+MAM consumes `ingest.accepted` (`createFromIngest`, `ingest.ts`): the asset is created under the id
+RIM minted — the ingest job's id — in state `created`, with the title, mediaType, fileType and
+createdBy RIM sent, and `asset.created` + the audit in one transaction with the seen-mark. A
+redelivery is a duplicate; an id that already exists in the same channel is a duplicate too; one in
+another channel is thrown to the broker, never overwritten. The original's FileRef row arrives by
+HSM's `file.placed` — a separate consumer — and the mirror retries a placement that beats the asset.
+
 ## 14. Open questions / future
 
 - Vocabulary governance/merge tooling as taxonomies grow.

@@ -18,6 +18,7 @@ export {
 export {
   DEFAULT_MAX_ATTEMPTS,
   DEFAULT_RETRY_BASE_MS,
+  FIRST_RENDITIONS,
   MtsService,
   type Caller as ServiceCaller,
   type EnqueueInput,
@@ -28,6 +29,9 @@ export {
   JOB_CREATE_PATTERN,
   runWorker,
   startJobConsumer,
+  startIngestConsumer,
+  INGEST_ACCEPTED_PATTERN,
+  type IngestConsumerOptions,
   type JobConsumerOptions,
   type WorkerOptions,
 } from './jobs.ts';
@@ -70,4 +74,4 @@ export {
   type FileStore,
   type Placed,
   type PlacementMeta,
-} from './hsm-client.ts';
+} from '@atlas/hsm-client';

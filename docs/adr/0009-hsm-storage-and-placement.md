@@ -122,8 +122,9 @@ the ledger's; re-reading a written file (a second full read) is the integrity sw
 - **MTS** pushes every rendition to HSM (§3) instead of keeping it, and may take its input from HSM
   (an asset's file by kind, streamed to its scratch space) — the work area stays for the sample
   clips a deployment renders until RIM places originals.
-- **RIM** keeps its staging until an accepted file has an asset to belong to (15.5 — a file belongs
-  to exactly one asset, and an ingest job has none yet). Its staging is intake, not storage.
+- **RIM** places every accepted file in HSM as its asset's `original` (EP-15.5): the asset id is the
+  ingest job's id, the placement is signed over the checksum RIM computed on receipt, and the staged
+  copy is removed only after the job commits `registered`. Its staging is intake, not storage.
 - `k8s:check` fails if any workload but `hsm` mounts the storage volume or the storage credentials
   Secret — so "only HSM touches storage" is a property of the manifests CI renders, not a promise.
 

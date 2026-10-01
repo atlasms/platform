@@ -37,6 +37,10 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `ingest.accepted` carries what MAM needs to create the asset and what MTS needs to choose its
+  first renditions (EP-15.5): `ingestJobId`, `sourceKind`, `filename`, `sizeBytes`, `title`,
+  `mediaType`, `fileType`, `createdBy`. Optional; RIM is its first producer. Its description now says
+  when it is emitted: once the original is in HSM, in the transaction that marks the job registered.
 - `file.placed` carries `fileId`, `variant` and `sizeBytes`, and `file.moved` carries `fileId` and
   `variant` (EP-14; ADR-0009) — the ledger row and what tells two files of one kind apart, so MAM's
   mirror lands a placement or a move on the right row. Optional; HSM is their first producer.

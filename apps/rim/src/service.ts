@@ -39,6 +39,7 @@ import {
   type EventPayloads,
   type TechnicalMetadata,
 } from '@atlas/contracts';
+import type { FileStore } from '@atlas/hsm-client';
 import type { OutboxRecord } from '@atlas/messaging';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import {
@@ -126,6 +127,13 @@ export interface RimServiceOptions {
   holder?: string;
   /** How long a watcher lease lasts; renewed every scan, so this bounds a dead holder's hold. */
   watchLeaseMs?: number;
+  /**
+   * HSM (EP-15.5; ADR-0009): where an accepted file goes as its asset's original. Absent (the
+   * suites that are not about it, a deployment with no HSM key), accepted jobs stay `accepted` with
+   * their bytes in staging, and nothing announces them — `registerPending` registers them once
+   * HSM is configured.
+   */
+  files?: FileStore;
   /** How far ahead recorders' captures are planned (EP-39). */
   planHorizonMs?: number;
 }
@@ -181,6 +189,7 @@ export class RimService {
   private readonly store: RimStore;
   private readonly staging: Staging;
   private readonly probe: Probe;
+  private readonly files: FileStore | undefined;
   private readonly partSizeBytes: number;
   private readonly uploadTtlMs: number;
   private readonly validateAfterMs: number;
@@ -206,6 +215,7 @@ export class RimService {
     this.store = options.store;
     this.staging = options.staging;
     this.probe = options.probe;
+    this.files = options.files;
     this.partSizeBytes = options.partSizeBytes ?? DEFAULT_PART_BYTES;
     this.uploadTtlMs = options.uploadTtlMs ?? DEFAULT_UPLOAD_TTL_MS;
     this.validateAfterMs = options.validateAfterMs ?? DEFAULT_VALIDATE_AFTER_MS;
@@ -484,7 +494,112 @@ export class RimService {
     if (verdict.outcome === 'rejected' && job.receivedPath !== undefined) {
       await this.discardBytes(job.receivedPath, job.id);
     }
+    if (verdict.outcome === 'accepted') this.deferRegister(next.id);
     return next;
+  }
+
+  // --- registration (EP-15.5; ADR-0009) ------------------------------------------------------------
+
+  /**
+   * An accepted job becomes an asset: its bytes are placed in HSM as the asset's ORIGINAL, signed
+   * over the checksum computed when they were received, and only then does the job become
+   * `registered` — with `ingest.accepted` (MAM creates the asset, MTS its first renditions) and the
+   * audit, in one transaction. The staged copy goes after the commit, never before: a crash between
+   * the placement and the commit leaves the bytes in both places, and the retry finds HSM already
+   * holding them (a placement of the same bytes is a no-op there) and commits.
+   *
+   * The asset id IS the job id — a ULID already, one job is one asset, and deriving it means a
+   * retry, or a second registrar racing this one, places under the same asset without anything
+   * having to be written first. Idempotent; a job in any state but `accepted` is returned as it is.
+   */
+  async register(jobId: string): Promise<IngestJob | undefined> {
+    const job = await this.store.job(jobId);
+    if (!job || job.state !== 'accepted' || !this.files) return job;
+    if (job.receivedPath === undefined) {
+      throw new Error(`accepted ingest job ${job.id} has no received bytes to place`);
+    }
+    const assetId = job.assetId ?? job.id;
+    const placed = await this.files.place(
+      {
+        channelId: job.channelId,
+        assetId,
+        kind: 'original',
+        producedBy: 'ingest',
+        jobId: job.id,
+        ...(job.technicalMetadata !== undefined
+          ? { technical: job.technicalMetadata as unknown as Record<string, unknown> }
+          : {}),
+      },
+      job.receivedPath,
+      job.checksum,
+    );
+    const { receivedPath: _staged, ...rest } = job;
+    void _staged;
+    const next: IngestJob = {
+      ...rest,
+      state: 'registered',
+      assetId,
+      updatedAt: this.now().toISOString(),
+      version: job.version + 1,
+    };
+    const origin: Origin = { actor: SERVICE_ACTOR };
+    const applied = await this.store.transaction(async (tx) => {
+      if (!(await tx.putJob(next, 'accepted'))) return false;
+      await tx.enqueue(
+        this.record(origin, job.channelId, 'ingest.accepted', {
+          assetId,
+          ingestJobId: job.id,
+          source: job.source,
+          sourceKind: job.sourceKind,
+          path: placed.path,
+          checksum: { algorithm: 'sha256', value: job.checksum },
+          filename: job.filename,
+          sizeBytes: job.sizeBytes,
+          title: titleOf(job.filename),
+          mediaType: mediaTypeOf(job),
+          fileType: fileTypeOf(job),
+          createdBy: job.createdBy,
+          ...(job.technicalMetadata !== undefined
+            ? { technicalMetadata: job.technicalMetadata }
+            : {}),
+        } satisfies EventPayloads['ingest.accepted']),
+      );
+      await tx.enqueue(this.audit(origin, next, job, next, 'ingest.registered'));
+      return true;
+    });
+    if (!applied) return this.store.job(jobId);
+    await this.discardBytes(job.receivedPath, job.id);
+    return next;
+  }
+
+  /**
+   * Register the accepted jobs that are not yet — a failure after acceptance (HSM away), a crash,
+   * or a deployment that gained its HSM key. Run on a timer by main.ts; returns how many it tried.
+   * A failure on one job is reported and the rest still run.
+   */
+  async registerPending(limit = 50): Promise<number> {
+    if (!this.files) return 0;
+    // Every accepted job up to now inclusive: `jobsInState` is strictly before its bound.
+    const upTo = new Date(this.now().getTime() + 1).toISOString();
+    const pending = await this.store.jobsInState('accepted', upTo, limit);
+    for (const job of pending) {
+      try {
+        await this.register(job.id);
+      } catch (err) {
+        this.onBackgroundError(err, { task: 'register', jobId: job.id });
+      }
+    }
+    return pending.length;
+  }
+
+  private deferRegister(jobId: string): void {
+    if (!this.files) return;
+    this.defer(() =>
+      this.register(jobId).then(
+        () => undefined,
+        (err: unknown) => this.onBackgroundError(err, { task: 'register', jobId }),
+      ),
+    );
   }
 
   /**
@@ -546,6 +661,7 @@ export class RimService {
     await this.transition(job, next, 'quarantined', (tx) =>
       tx.enqueue(this.audit(origin, next, job, next, 'ingest.accept')),
     );
+    this.deferRegister(next.id);
     return next;
   }
 
@@ -1372,4 +1488,32 @@ async function statFile(path: string): Promise<{ size: number; mtimeMs: number }
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw err;
   }
+}
+
+// --- what an accepted file tells MAM about itself (EP-15.5) ------------------------------------
+
+/** The asset's first title: the filename without its extension, until an editor names it. */
+export function titleOf(filename: string): string {
+  const base = filename.replace(/\.[^.]+$/, '').trim();
+  return base.length > 0 ? base : filename;
+}
+
+/**
+ * MAM's mediaType, from what the probe read: a picture that moves is video, one that does not is an
+ * image, sound alone is audio. A file the probe could not describe is `other` — still an asset.
+ */
+export function mediaTypeOf(job: Pick<IngestJob, 'technicalMetadata'>): string {
+  const t = job.technicalMetadata;
+  if (t?.videoCodec !== undefined) {
+    return t.durationSec !== undefined && t.durationSec > 0 ? 'video' : 'image';
+  }
+  if (t?.audioCodec !== undefined) return 'audio';
+  return 'other';
+}
+
+/** MAM's fileType: the extension, lowercased; else the container the probe named. */
+export function fileTypeOf(job: Pick<IngestJob, 'filename' | 'technicalMetadata'>): string {
+  const ext = /\.([A-Za-z0-9]{1,10})$/.exec(job.filename)?.[1];
+  if (ext !== undefined) return ext.toLowerCase();
+  return job.technicalMetadata?.container?.split(',')[0] ?? 'bin';
 }

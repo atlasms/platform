@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ulid, type Envelope, type EventPayloads } from '@atlas/contracts';
+import { buildEnvelope, ulid, type Envelope, type EventPayloads } from '@atlas/contracts';
 import { InMemoryBroker, OutboxRelay } from '@atlas/messaging';
 import { SqliteOutboxStore } from '@atlas/data';
 import { compile } from '@atlas/policy';
@@ -160,6 +160,62 @@ test('HSM away is a tool fault — retried, not a refusal; an inputFile with no 
         inputFile: { kind: 'original' },
       }),
       /exactly one of inputPath and inputFile/,
+    );
+  } finally {
+    await bare.cleanup();
+  }
+});
+
+test('ingest.accepted queues a new asset’s first renditions from its HSM original — by media type, once', async () => {
+  const hsm = memoryFileStore();
+  const h = await harness(hsm);
+  try {
+    const accepted = (mediaType: string) => {
+      const envelope = buildEnvelope({
+        type: 'ingest.accepted',
+        channelId: CH,
+        payload: { assetId: ulid(), checksum: { algorithm: 'sha256', value: 'x' }, mediaType },
+        actor: { kind: 'service', id: 'rim' },
+      });
+      return { id: envelope.messageId, subject: `atlas.${CH}.ingest.accepted`, body: envelope };
+    };
+    const video = accepted('video');
+    assert.equal(await h.service.consumeIngestAccepted(video), 'applied');
+    assert.equal(await h.service.consumeIngestAccepted(video), 'duplicate');
+    assert.equal(await h.service.consumeIngestAccepted(accepted('audio')), 'applied');
+    assert.equal(await h.service.consumeIngestAccepted(accepted('other')), 'skipped');
+    const jobs = (await h.store.jobs({ channelId: CH, limit: 10 })).map((j) => [
+      j.presetIds.join('+'),
+      j.inputFile?.kind,
+      j.causationId !== undefined,
+    ]);
+    assert.deepEqual(jobs.sort(), [
+      ['audio-proxy', 'original', true],
+      ['proxy+thumbnail', 'original', true],
+    ]);
+  } finally {
+    await h.cleanup();
+  }
+  const bare = await harness();
+  try {
+    const envelope = buildEnvelope({
+      type: 'ingest.accepted',
+      channelId: CH,
+      payload: {
+        assetId: ulid(),
+        checksum: { algorithm: 'sha256', value: 'x' },
+        mediaType: 'video',
+      },
+      actor: { kind: 'service', id: 'rim' },
+    });
+    assert.equal(
+      await bare.service.consumeIngestAccepted({
+        id: envelope.messageId,
+        subject: `atlas.${CH}.ingest.accepted`,
+        body: envelope,
+      }),
+      'skipped',
+      'no HSM, no input to read',
     );
   } finally {
     await bare.cleanup();

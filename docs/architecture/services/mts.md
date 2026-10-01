@@ -236,6 +236,15 @@ way in and compared with HSM's digest. HSM being away is a tool fault — retrie
 scratch now; the one-replica pin remains only for the sample-clip `inputPath` jobs a deployment
 renders, and lifts once originals come from HSM (RIM, 15.5).
 
+### EP-15.5 — the first renditions of an ingested asset
+
+MTS consumes `ingest.accepted` and queues the asset's first renditions from its `original` in HSM:
+`proxy` + `thumbnail` for video, `audio-proxy` for audio, `thumbnail` for an image, nothing for a
+file the probe could not describe (`FIRST_RENDITIONS`). One job, its input an `inputFile`, its
+seen-mark in the transaction. Without HSM configured there is no input to read and the event is
+acknowledged with nothing queued. BMS takes this decision over when it exists — a workflow's first
+transcode step; until then it is the platform's default for every channel.
+
 ## 14. Open questions / future
 
 - Per-scene/segment parallel transcode for very long files.

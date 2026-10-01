@@ -27,6 +27,7 @@ import {
   pgJobStore,
   pgMigrations,
   runWorker,
+  startIngestConsumer,
   startJobConsumer,
 } from './index.ts';
 
@@ -212,6 +213,18 @@ async function startBroker(): Promise<void> {
     onDuplicate: (subject) => log.info('job command redelivered', { subject }),
     onError: (err, msg) =>
       log.warn('job command refused', {
+        subject: msg.subject,
+        messageId: msg.id,
+        error: (err as Error).message,
+      }),
+  });
+  // EP-15.5: a newly ingested asset's first renditions, from its original in HSM.
+  startIngestConsumer({
+    broker,
+    service,
+    onOutcome: (subject, outcome) => log.info('ingest consumed', { subject, outcome }),
+    onError: (err, msg) =>
+      log.warn('ingest event refused', {
         subject: msg.subject,
         messageId: msg.id,
         error: (err as Error).message,

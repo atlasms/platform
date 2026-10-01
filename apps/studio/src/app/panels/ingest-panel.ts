@@ -19,6 +19,7 @@ import { WatchersService } from '../core/watchers.service.ts';
 import { RecordersView } from './ingest/recorders-view.ts';
 import { RulesView } from './ingest/rules-view.ts';
 import { WatchersView } from './ingest/watchers-view.ts';
+import { EditorStore } from '../workbench/editor.store.ts';
 
 type IngestView = 'queue' | 'watchers' | 'recorders' | 'rules';
 
@@ -95,7 +96,10 @@ type IngestView = 'queue' | 'watchers' | 'recorders' | 'rules';
                 locale.t('ingest.state.' + job.state)
               }}</span>
               @if (job.assetId) {
-                <span class="job-asset">→ asset {{ job.assetId }}</span>
+                <!-- EP-15.5: a registered job IS an asset now — the asset id is the job id. -->
+                <button type="button" class="job-asset link" (click)="openAsset(job)">
+                  → {{ locale.t('ingest.openAsset') }}
+                </button>
               }
             </div>
             @if (job.technicalMetadata; as tech) {
@@ -268,8 +272,15 @@ type IngestView = 'queue' | 'watchers' | 'recorders' | 'rules';
     }
     .job-asset {
       font-size: 0.75rem;
-      color: var(--color-fg-muted);
-      font-family: monospace;
+      color: var(--color-accent);
+      padding: 0;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font: inherit;
+    }
+    .job-asset:hover {
+      text-decoration: underline;
     }
     .job-tech {
       font-size: 0.8rem;
@@ -331,6 +342,7 @@ export class IngestPanel {
   private readonly permissions = inject(PermissionService);
   private readonly session = inject(SessionStore);
   protected readonly locale = inject(LocaleService);
+  private readonly editors = inject(EditorStore);
   private readonly picker = viewChild<ElementRef<HTMLInputElement>>('picker');
 
   protected readonly jobs = signal<IngestJob[]>([]);
@@ -503,6 +515,17 @@ export class IngestPanel {
       tech.durationSec !== undefined ? `${tech.durationSec} s` : undefined,
     ].filter(Boolean);
     return parts.join(' · ');
+  }
+
+  /** A registered job's asset, as its editor tab — titled by the file it came from. */
+  protected openAsset(job: IngestJob): void {
+    if (!job.assetId) return;
+    this.editors.open({
+      type: 'asset',
+      resourceId: job.assetId,
+      title: job.filename ?? job.assetId,
+      icon: '▤',
+    });
   }
 
   protected formatSize(bytes: number | undefined): string {
