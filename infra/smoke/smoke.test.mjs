@@ -492,7 +492,7 @@ test('smoke: EP-13.2 — a write becomes a live update on a real socket, and the
     assert.equal(created.status, 201, `create failed: ${created.text}`);
     const assetId = json(created).id;
 
-    // Generous, and deliberately so: the relay polls on an interval (1s by default) and JetStream
+    // Generous, and deliberately so: the relay polls on an interval (250 ms by default) and JetStream
     // delivery is asynchronous. A tight bound here would make this the flakiest test in the suite
     // for no extra assurance — it either arrives or the path is broken.
     const arrived = await waitFor(

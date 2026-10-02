@@ -119,7 +119,7 @@ How each NFR class is proven:
 
 | Class | Method |
 |-------|--------|
-| Performance / capacity | Load tests against the baseline scenario in CI-adjacent perf env; published dashboards. |
+| Performance / capacity | Load tests against the baseline scenario in CI-adjacent perf env; published dashboards. **MVP, until that env exists:** a performance *sanity* check (`npm run perf`, [`infra/smoke/perf-sanity.mjs`](../../infra/smoke/perf-sanity.mjs), EP-21.4) runs in the Smoke workflow — 40 distinct users at a Studio pace against a deployed cluster, holding NFR-PERF-1/2/3 to their targets and NFR-PERF-8 to "no 429, no 5xx". It proves the shape, not the baseline library's scale. |
 | Availability / resilience | Chaos/failover drills (kill critical services, broker partition); RTO/RPO measured. |
 | Security | SAST/DAST + dependency scanning in CI; external pen test before GA (NFR-SEC-10). |
 | Maintainability | Coverage gates, contract tests between services, IaC apply from clean state. |

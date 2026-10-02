@@ -40,7 +40,10 @@ const config = loadConfig({
   // tables are not — four services in `public` were four relays draining one `outbox`.
   pgSchema: { env: 'ATLAS_PG_SCHEMA', type: 'string', default: 'scheduling' },
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
-  relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 1_000 },
+  // 250 ms, not 1 s (EP-21.4): an idle relay holds a committed event for up to one interval, and
+  // NFR-PERF-3 gives a change one second to reach Studio. At 1 s the perf sanity measured p95 at
+  // 684 ms, most of it this wait; at 250 ms it is a quarter. The idle drain is one indexed query.
+  relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 250 },
   policyTtlMs: { env: 'ATLAS_POLICY_TTL_MS', type: 'number', default: 30_000 },
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
   // still propagates, so a site without a collector pays only the cost of an id.

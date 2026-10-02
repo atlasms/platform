@@ -38,7 +38,10 @@ const config = loadConfig({
   iamOrigin: { env: 'ATLAS_IAM_ORIGIN', type: 'string', default: 'http://iam:3000' },
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
   policyTtlMs: { env: 'ATLAS_POLICY_TTL_MS', type: 'number', default: 30_000 },
-  relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 1_000 },
+  // 250 ms, not 1 s (EP-21.4): an idle relay holds a committed event for up to one interval, and
+  // NFR-PERF-3 gives a change one second to reach Studio. At 1 s the perf sanity measured p95 at
+  // 684 ms, most of it this wait; at 250 ms it is a quarter. The idle drain is one indexed query.
+  relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 250 },
   // EP-17.7: the in-process read cache. Entries is the LRU bound; 0 turns the cache off. The TTL
   // is the bound on how stale another replica may be while the broker is away — see cache.ts.
   cacheMaxEntries: {
