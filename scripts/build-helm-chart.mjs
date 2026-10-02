@@ -186,6 +186,15 @@ function templateContainer(doc, path, container, workload) {
       );
     } else if (name === 'POSTGRES_DB') {
       doc.setIn([...at, 'value'], inline('{{ .Values.postgres.database }}'));
+    } else if (name === 'OPENSEARCH_JAVA_OPTS') {
+      // The JVM heap follows the memory a site gives the pod (EP-21.2): a pilot that raises
+      // `resources.opensearch` and leaves the heap at the base's 512m has bought nothing.
+      const heap = /-Xmx(\S+)/.exec(String(entry.get('value')))?.[1] ?? '512m';
+      values.opensearchHeap = heap;
+      doc.setIn(
+        [...at, 'value'],
+        inline('-Xms{{ .Values.opensearch.heap }} -Xmx{{ .Values.opensearch.heap }}'),
+      );
     }
     // The credentials: the Secret's NAME and its KEYS are both values. A site with a secrets
     // backend already has a Secret, and it rarely spells its keys the way we would.
@@ -463,6 +472,8 @@ opensearch:
   enabled: true
   host: opensearch
   port: 9200
+  # The JVM heap — half the memory \`resources.opensearch\` gives the pod is the usual choice.
+  heap: ${values.opensearchHeap}
 
 # --- ingress -----------------------------------------------------------------
 #

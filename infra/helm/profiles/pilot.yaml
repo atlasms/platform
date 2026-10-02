@@ -1,0 +1,97 @@
+# The MVP pilot — the minimum viable footprint (EP-21.2; docs/requirements/07 §9).
+#
+#   helm install atlas infra/helm/atlas -n atlas --create-namespace \
+#     -f infra/helm/profiles/pilot.yaml \
+#     --set image.registry=<your registry> --set image.tag=<release> \
+#     --set ingress.enabled=true --set ingress.host=<the pilot's host> \
+#     --set postgres.auth.existingSecret=<a Secret you created>
+#
+# §9's footprint: a 3-node cluster of 8–16 vCPU / 32–64 GB each, one channel, ingest → metadata →
+# transcode → search → schedule, with ONE GPU MTS worker or TWO CPU ones, and a single-instance data
+# plane. This profile is sized for the SMALL end — three nodes of 8 vCPU / 32 GB — so a site with
+# bigger nodes has headroom rather than a shortfall, and `npm run k8s:check` renders the chart with
+# it and fails if its requests stop fitting those three nodes (with a quarter of each left for the
+# kubelet, the system and bursts) or if any one pod would not fit on one node.
+#
+# Outside this file, and the site's: the nodes and their local disk (each MTS worker's scratch is
+# requested as ephemeral storage below), a default StorageClass, an Ingress controller, the TLS
+# certificate, the registry, and the Postgres credentials Secret. The pilot is CPU transcoding; a
+# site with an NVENC card runs one worker on it (replicas.mts: 1 and a GPU transcode profile — EP-16.6).
+#
+# Not here because §9 does not ask for it: HA. The gateway and MAM keep two replicas (behind
+# PodDisruptionBudgets), everything else one; the data plane is single-instance.
+
+replicas:
+  apiGateway: 2
+  mam: 2
+  # Two CPU transcode workers (§9) — each one job at a time, sharing the queue (EP-16.6).
+  mts: 2
+  rimRecorder: 2
+  hsm: 1
+  logging: 1
+  scheduling: 1
+  websocket: 1
+
+resources:
+  # The request tier: proxies and JSON, I/O-bound.
+  apiGateway:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  websocket:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  iam:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  mam:
+    requests: { cpu: 500m, memory: 512Mi }
+    limits: { memory: 1Gi }
+  logging:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 1Gi }
+  scheduling:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  # Bytes and tools: ffprobe on every arrival, FFmpeg on every recorder, SHA-256 on every placement.
+  rim:
+    requests: { cpu: "1", memory: 512Mi }
+    limits: { memory: 1Gi }
+  rimRecorder:
+    requests: { cpu: "1", memory: 512Mi }
+    limits: { memory: 1Gi }
+  hsm:
+    requests: { cpu: "1", memory: 1Gi }
+    limits: { memory: 2Gi }
+  # The transcode workers: an MPEG-2 4:2:2 1080 broadcast encode is the heaviest thing the pilot
+  # runs. Three cores each, and the scratch a master plus its renditions needs, requested so the
+  # scheduler only places a worker on a node with that much local disk.
+  mts:
+    requests: { cpu: "3", memory: 4Gi, ephemeral-storage: 200Gi }
+    limits: { memory: 8Gi }
+  # The data plane, single-instance (§9).
+  postgres:
+    requests: { cpu: "2", memory: 4Gi }
+    limits: { memory: 8Gi }
+  opensearch:
+    requests: { cpu: "1", memory: 6Gi }
+    limits: { memory: 8Gi }
+  nats:
+    requests: { cpu: 500m, memory: 512Mi }
+    limits: { memory: 2Gi }
+
+opensearch:
+  # Half the pod's memory limit, the usual split between the JVM and the page cache.
+  heap: 4g
+
+scratch:
+  mts: 200Gi
+
+storage:
+  postgres: 100Gi
+  opensearch: 100Gi
+  nats: 20Gi
+  # The pilot's active library on the online tier (§9: "sized to the pilot's active library").
+  hsmStorage: 2Ti
+  rimStaging: 200Gi
+  rimRecorder: 50Gi
+  rimWatch: 10Gi
