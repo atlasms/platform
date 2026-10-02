@@ -163,5 +163,13 @@ schedule) for a pilot:
 This is deliberately lean; HA and near-line/offline automation arrive with
 [Phase 3 / v1.0](../roadmap/08-roadmap.md).
 
+**As built (EP-21.2):** the Helm chart's pilot profile,
+[`infra/helm/profiles/pilot.yaml`](../../infra/helm/profiles/pilot.yaml), is this footprint at its
+small end — 16 vCPU / ~24 GiB requested across three 8 vCPU / 32 GiB nodes, two CPU MTS workers
+with 200 GiB scratch each — and `npm run k8s:check` fails CI if it stops fitting. Redis is not part
+of it (deferred until a consumer exists, [ADR-0005](../adr/0005-audit-log-storage.md)), and the
+online tier is HSM's filesystem target or an S3-compatible store
+([ADR-0009](../adr/0009-hsm-storage-and-placement.md)) rather than MinIO specifically.
+
 ---
 _Next: [Delivery Roadmap](../roadmap/08-roadmap.md)._
