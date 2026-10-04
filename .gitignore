@@ -43,3 +43,6 @@ npm-debug.log*
 
 # staging credentials are generated from a file kustomize reads and git never sees
 infra/k8s/overlays/staging/*.env
+
+# Local artefacts of `npm run drill` (EP-21.3): a database dump and a tar of HSM's online tier.
+/tmp/

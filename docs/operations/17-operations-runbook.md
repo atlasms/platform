@@ -140,6 +140,36 @@ namespace at a chosen PITR timestamp, rebuild indices from events, verify a samp
 end-to-end (metadata ↔ file ledger ↔ bytes ↔ checksum). A restore is not "done" until the smoke
 suite passes against it.
 
+> **As built — the first drill, rehearsed (EP-21.3, 2026-10-04).** `npm run drill -- --yes`
+> ([`scripts/restore-drill.mjs`](../../scripts/restore-drill.mjs)) on the kind dev cluster. It is a
+> **logical** drill — `pg_dump` of the one database every service's schema lives in, and a tar of
+> HSM's online tier — because continuous WAL archiving (the table above) is not stood up yet; that
+> needs its own decision (a tool and an archive target) and an ADR. The order is the one a PITR
+> restore must keep too:
+>
+> 1. **Quiesce** — every service outbox drained (logging has none: it is the sink), every service
+>    and the recorder workers stopped, HSM's operation queue idle. HSM stays up only to read its bytes.
+> 2. **Back up and fingerprint** — rows per table in every service schema, the audit log's chain head
+>    (seq and hash) per channel, and every live file's path and checksum.
+> 3. **Destroy** the namespace, volumes included; **reinstall** from the same manifests with every
+>    service held at zero.
+> 4. **Restore the data plane first**: a fresh database, `pg_restore`; then HSM's bytes, with HSM
+>    *started* but not *Ready* — its readiness asks IAM, which is still down, by design.
+> 5. **Verify before anything writes**: the same row counts, the same chain heads, the same ledger,
+>    and every ledger file's bytes hashing to the ledger's checksum.
+> 6. **Start the services.** OpenSearch is NOT restored — the projector rebuilds the hot index from
+>    Postgres ([ADR-0005](../adr/0005-audit-log-storage.md)). Then the smoke suite and the MVP journey.
+>
+> First full run: 2.1 MB database, 757 MB online tier; 55 tables, one chain head
+> (`ch12` at seq 5462), 353 files — every check equal, every file's bytes matching, smoke 34/34,
+> the journey 12/12. **Destroy to smoke-green: 893 s** (RTO < 1 h). The online tier dominates: 7 min
+> to stream 757 MB through `kubectl exec`, 4 min to hash 353 files one exec each — a facility's
+> library makes this the step to engineer (restore from replicated object storage, verify by
+> sampling), as the table above already says. Found on the way: a restore that waits for HSM to be
+> Ready never finishes while IAM is held back; and from Git Bash, a hand-typed
+> `kubectl exec … tar -C /storage` is rewritten to a Windows path — set `MSYS_NO_PATHCONV=1` (the
+> script calls kubectl directly and is not affected).
+
 ## 6. Disaster recovery (meeting RTO < 1 h)
 
 | Scenario | Response |
