@@ -229,6 +229,80 @@ const CHART_PRODUCTION_VALUES = [
   'replicas.mts=2',
 ];
 
+/**
+ * The MVP pilot (EP-21.2): docs/requirements/07 §9's minimum viable footprint, at its SMALL end —
+ * three nodes of 8 vCPU / 32 GiB — and the values profile sized for it. A quarter of every node is
+ * left for the kubelet, the system and bursts; a request total above the rest is a pilot that does
+ * not fit the hardware it was quoted on, found here rather than on the customer's cluster.
+ */
+const PILOT_PROFILE = join(ROOT, 'infra/helm/profiles/pilot.yaml');
+const FOOTPRINT = { nodes: 3, cpu: 8, memoryGi: 32, usable: 0.75, mtsCpuWorkers: 2 };
+const PILOT_VALUES = [
+  'image.registry=registry.example',
+  'image.tag=0.1.0',
+  'ingress.enabled=true',
+  'ingress.host=atlas.pilot.example',
+];
+
+const cpuOf = (v) =>
+  v === undefined ? 0 : String(v).endsWith('m') ? Number.parseFloat(v) / 1000 : Number(v);
+const memoryGiOf = (v) => {
+  if (v === undefined) return 0;
+  const units = { Ki: 1 / 1024 ** 2, Mi: 1 / 1024, Gi: 1, Ti: 1024 };
+  const m = /^([\d.]+)(Ki|Mi|Gi|Ti)?$/.exec(String(v));
+  if (!m) return Number.NaN;
+  return m[2] ? Number(m[1]) * units[m[2]] : Number(m[1]) / 1024 ** 3;
+};
+
+/** What the scheduler reserves for one pod: the larger of its containers' sum and any init's. */
+function podRequest(spec) {
+  const sum = (cs, f) => (cs ?? []).reduce((n, c) => n + f(c.resources?.requests ?? {}), 0);
+  const max = (cs, f) => Math.max(0, ...(cs ?? []).map((c) => f(c.resources?.requests ?? {})));
+  const cpu = (r) => cpuOf(r.cpu);
+  const mem = (r) => memoryGiOf(r.memory);
+  return {
+    cpu: Math.max(sum(spec.containers, cpu), max(spec.initContainers, cpu)),
+    memoryGi: Math.max(sum(spec.containers, mem), max(spec.initContainers, mem)),
+  };
+}
+
+function checkFootprint(label, docs) {
+  const node = {
+    cpu: FOOTPRINT.cpu * FOOTPRINT.usable,
+    memoryGi: FOOTPRINT.memoryGi * FOOTPRINT.usable,
+  };
+  const total = { cpu: 0, memoryGi: 0 };
+  for (const d of docs.filter((x) => x.kind === 'Deployment' || x.kind === 'StatefulSet')) {
+    const pod = podRequest(d.spec.template.spec);
+    const replicas = d.spec.replicas ?? 1;
+    total.cpu += pod.cpu * replicas;
+    total.memoryGi += pod.memoryGi * replicas;
+    if (pod.cpu > node.cpu || pod.memoryGi > node.memoryGi)
+      problem(
+        label,
+        `${d.kind}/${d.metadata.name}: one pod requests ${pod.cpu} vCPU / ${pod.memoryGi} GiB — more than one ${FOOTPRINT.cpu} vCPU / ${FOOTPRINT.memoryGi} GiB node can give it`,
+      );
+  }
+  const cap = { cpu: node.cpu * FOOTPRINT.nodes, memoryGi: node.memoryGi * FOOTPRINT.nodes };
+  if (total.cpu > cap.cpu)
+    problem(
+      label,
+      `requests ${total.cpu.toFixed(2)} vCPU; ${FOOTPRINT.nodes} nodes give ${cap.cpu}`,
+    );
+  if (total.memoryGi > cap.memoryGi)
+    problem(
+      label,
+      `requests ${total.memoryGi.toFixed(1)} GiB; ${FOOTPRINT.nodes} nodes give ${cap.memoryGi}`,
+    );
+  const mts = docs.find((x) => x.kind === 'Deployment' && x.metadata?.name === 'mts');
+  if ((mts?.spec?.replicas ?? 0) < FOOTPRINT.mtsCpuWorkers)
+    problem(
+      label,
+      `MTS runs ${mts?.spec?.replicas ?? 0} workers; §9's CPU pilot needs ${FOOTPRINT.mtsCpuWorkers}`,
+    );
+  return total;
+}
+
 function helm(args) {
   const result = spawnSync('helm', args, { encoding: 'utf8', maxBuffer: 64 << 20 });
   if (result.status !== 0) {
@@ -369,7 +443,31 @@ function checkHelmChart() {
   checkChart(`${label} (production values)`, production, { production: true });
   checkChartParity(label, defaults);
 
-  return defaults.length + production.length;
+  // EP-21.2: the pilot profile renders, keeps every convention, and fits §9's footprint.
+  const pilot = parse(
+    helm([
+      'template',
+      'atlas',
+      CHART,
+      '-f',
+      PILOT_PROFILE,
+      ...PILOT_VALUES.flatMap((v) => ['--set', v]),
+    ]),
+  );
+  for (const doc of pilot) {
+    if ((doc.kind === 'Deployment' || doc.kind === 'StatefulSet') && isAtlas(doc))
+      checkWorkload(`${label} (pilot)`, doc);
+  }
+  checkStorageOwnership(`${label} (pilot)`, pilot);
+  checkChart(`${label} (pilot)`, pilot, { production: true });
+  const fit = checkFootprint(`${label} (pilot)`, pilot);
+  console.log(
+    `  pilot profile requests ${fit.cpu.toFixed(2)} vCPU / ${fit.memoryGi.toFixed(1)} GiB of ` +
+      `${FOOTPRINT.nodes} × ${FOOTPRINT.cpu} vCPU / ${FOOTPRINT.memoryGi} GiB ` +
+      `(${Math.round(FOOTPRINT.usable * 100)}% of each usable)`,
+  );
+
+  return defaults.length + production.length + pilot.length;
 }
 
 const overlays = readdirSync(OVERLAYS, { withFileTypes: true })

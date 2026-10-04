@@ -53,6 +53,20 @@ readiness probes enforce this without manual sequencing.
 > overlay an install starts from — registry images by release tag, one TLS Ingress, PDBs, a sized
 > data plane, credentials from a Secret git never sees. `npm run k8s:check` holds every overlay to
 > those conventions in CI. A Helm chart for customer distribution remains additive.
+>
+> **The MVP pilot** ([EP-21.2](../roadmap/21-epic-breakdown.md)) installs with the chart
+> ([ADR-0006](../adr/0006-helm-chart.md)) and its pilot profile,
+> [`infra/helm/profiles/pilot.yaml`](../../infra/helm/profiles/pilot.yaml), sized for the
+> [minimum viable footprint](../requirements/07-hardware-requirements.md#9-minimum-viable-footprint-for-the-mvp-milestone)
+> at its small end (3 × 8 vCPU / 32 GiB, two CPU transcode workers):
+>
+> ```sh
+> helm install atlas infra/helm/atlas -n atlas --create-namespace >   -f infra/helm/profiles/pilot.yaml >   --set image.registry=<registry> --set image.tag=<release> >   --set ingress.enabled=true --set ingress.host=<host> >   --set postgres.auth.existingSecret=<secret>
+> ```
+>
+> `npm run k8s:check` renders the chart with that profile in CI and fails if its requests stop
+> fitting three such nodes with a quarter of each left over, or if one pod would not fit one node.
+> The nodes' local disk must hold each MTS worker's 200 GiB scratch (requested as ephemeral storage).
 
 1. Point at the registry; apply the platform Helm umbrella chart (`values.yaml` sets channel(s),
    storage classes, replica counts, external IdP if any).

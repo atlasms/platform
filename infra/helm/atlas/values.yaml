@@ -211,6 +211,8 @@ opensearch:
   enabled: true
   host: opensearch
   port: 9200
+  # The JVM heap — half the memory `resources.opensearch` gives the pod is the usual choice.
+  heap: 512m
 
 # --- ingress -----------------------------------------------------------------
 #
