@@ -62,7 +62,7 @@ spec:
             # Half the container's memory limit, as the JVM guidance says; the rest is page cache,
             # which is what makes a search engine fast.
             - name: OPENSEARCH_JAVA_OPTS
-              value: -Xms512m -Xmx512m
+              value: -Xms{{ .Values.opensearch.heap }} -Xmx{{ .Values.opensearch.heap }}
             - name: bootstrap.memory_lock
               value: "false"
           securityContext:
