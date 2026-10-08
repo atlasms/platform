@@ -33,7 +33,11 @@
       "unsavedChanges": "● unsaved",
       "panelsVisible": "of panels visible",
       "live": "● live",
-      "polling": "○ polling"
+      "polling": "○ polling",
+      "errorRef": "error ref",
+      "refCopied": "copied",
+      "copyRef": "Copy this reference into a bug report — it finds the request in the logs",
+      "dismissRef": "Dismiss the error reference"
     },
     "sideBar": {
       "resize": "Resize side bar"

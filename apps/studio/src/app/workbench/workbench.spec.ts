@@ -15,6 +15,7 @@ import { provideRouter } from '@angular/router';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AuthService } from '../core/auth.service.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { ErrorReferenceStore } from '../core/error-reference.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { PANELS } from './panels.ts';
 import { Workbench } from './workbench.ts';
@@ -93,6 +94,31 @@ const moveTo = (el: HTMLElement, clientX: number): void => {
 
 describe('Workbench', () => {
   beforeEach(() => TestBed.resetTestingModule());
+
+  describe('the error reference (EP-21.5)', () => {
+    it('shows the last refused request’s status and reference, and dismisses it', () => {
+      const { fixture } = setup();
+      const errors = TestBed.inject(ErrorReferenceStore);
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('.ref')).toBeNull();
+
+      errors.record({
+        correlationId: '01K8ZQ0A1B2C3D4E5F6G7H8J9K',
+        status: 500,
+        method: 'POST',
+        path: '/api/v1/assets',
+        at: '2026-10-09T10:00:00.000Z',
+      });
+      fixture.detectChanges();
+      const ref = fixture.nativeElement.querySelector('.ref') as HTMLElement;
+      expect(ref.textContent).toContain('500');
+      expect(ref.textContent).toContain('01K8ZQ0A1B2C3D4E5F6G7H8J9K');
+
+      (ref.nextElementSibling as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('.ref')).toBeNull();
+    });
+  });
 
   describe('the side-bar divider', () => {
     it('LTR: dragging right widens the side bar', () => {

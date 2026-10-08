@@ -1,0 +1,53 @@
+name: Triage
+
+# EP-21.5 — the pilot feedback loop's two automatic halves (docs/operations/pilot-feedback.md):
+#
+# - every Bug or Pilot feedback issue, as it is opened or edited, gets the labels its form's answers
+#   call for (severity, data integrity/authorization, escaped defect) — so the board can filter
+#   and the report can age by severity. Triage itself stays a person's call.
+# - every Monday, the triage report — what is waiting, what is past its clock, what escaped — goes
+#   to this workflow's job summary for the weekly review.
+
+on:
+  issues:
+    types: [opened, edited]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  label:
+    name: label from the form
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: node scripts/triage-labels.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  report:
+    name: weekly triage report
+    if: github.event_name != 'issues'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: node scripts/triage-report.mjs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

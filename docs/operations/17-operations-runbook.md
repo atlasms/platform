@@ -204,6 +204,10 @@ a data import:
 - **Golden signals** per service (latency, error rate, saturation) + Atlas specifics: **DLQ depth,
   restore-ETA accuracy, checksum-mismatch count, export duration** ([HSM §12](../architecture/services/hsm.md#12-observability)).
 
+**Pilot feedback and defects** follow [pilot feedback & triage](pilot-feedback.md): reports carry
+Studio's `error ref` (the correlation id), a **critical** report is an incident handled from §6, and
+triage runs daily during pilot weeks.
+
 ## 9. Routine operations
 
 | Task | How |

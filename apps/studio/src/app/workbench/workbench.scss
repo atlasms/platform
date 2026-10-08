@@ -118,6 +118,13 @@
   background: var(--color-accent);
 }
 
+// The last error's reference (EP-21.5): read off a screen and typed into a report, so every
+// character must be unambiguous — a monospace face, and the value never truncated.
+.ref {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  white-space: nowrap;
+}
+
 .spacer {
   margin-inline-start: auto;
 }

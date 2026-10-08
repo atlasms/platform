@@ -33,6 +33,7 @@ area you care about.
 | 06 | [Non-Functional Requirements](requirements/06-non-functional-requirements.md) | Architects, QA, ops | Performance, availability, security, compliance targets. |
 | 07 | [Hardware & Infrastructure](requirements/07-hardware-requirements.md) | Ops, sales engineering | Minimum and recommended hardware per deployment tier. |
 | 17 | [Operations Runbook](operations/17-operations-runbook.md) | Ops, SRE | Install (incl. air-gapped), zero-downtime upgrade/rollback, backup & restore (RPO), disaster recovery (RTO), cutover, and the smoke/health suite. |
+| — | [Pilot feedback & defect triage](operations/pilot-feedback.md) | Delivery, support, the pilot | How pilot reports reach the team, severity clocks, the daily/weekly rhythm, escaped defects. |
 | 08 | [Delivery Roadmap](roadmap/08-roadmap.md) | Leadership, delivery | Phased plan from MVP to first stable full-feature release (v1.0). |
 | 09 | [Resourcing, Time & Cost](roadmap/09-resourcing-estimates.md) | Leadership, finance | Team shape, effort estimates, timeline and budget scenarios. |
 | 15 | [Review Lifecycle — Implementation Plan](roadmap/15-review-lifecycle-implementation-plan.md) | Engineers, delivery | Step-by-step build plan for manual review, approval expiry, category-inherited expiry, and rejected-retention purge (Beta / Phase 2). |
