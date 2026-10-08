@@ -31,7 +31,13 @@ export interface PanelDefinition {
 }
 
 /** What reveals the Admin panel: any of its views' permissions (admin-panel.ts). */
-export const ADMIN_PERMISSIONS: readonly string[] = ['user:admin', 'config:read', 'config:admin'];
+export const ADMIN_PERMISSIONS: readonly string[] = [
+  'user:admin',
+  'config:read',
+  'config:admin',
+  // #260: the Categories view.
+  'taxonomy:admin',
+];
 
 export const PANELS: readonly PanelDefinition[] = [
   {

@@ -8,7 +8,8 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { AssetsService, type ListOptions, type Page } from '../core/assets.service.ts';
-import type { Asset, Tag } from '../core/generated/mam.types.ts';
+import type { Asset, Category, Tag } from '../core/generated/mam.types.ts';
+import { CategoriesService } from '../core/categories.service.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { WebSocketService } from '../core/websocket.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
@@ -65,6 +66,30 @@ class FakeAssets {
   }
 }
 
+/** The channel's category tree, answered by hand like the asset reads (#260). */
+class FakeCategories {
+  list$ = new Subject<Category[]>();
+  list() {
+    return this.list$;
+  }
+}
+
+const node = (id: string, path: string, parentId?: string): Category => ({
+  id,
+  channelId: 'ch12',
+  key: path.split('/').filter(Boolean).at(-1)!,
+  path,
+  depth: path.split('/').filter(Boolean).length,
+  labels: { en: id },
+  sortOrder: 0,
+  mediaAddable: true,
+  version: 1,
+  createdBy: 'u1',
+  createdAt: '2026-10-09T00:00:00.000Z',
+  updatedAt: '2026-10-09T00:00:00.000Z',
+  ...(parentId ? { parentId } : {}),
+});
+
 /** The English strings for the keys this panel uses — enough to assert on text, not keys. */
 class FakeLocale {
   locale = () => 'en';
@@ -73,6 +98,7 @@ class FakeLocale {
     const translations: Record<string, string> = {
       'mediaPanel.recent': 'Recent',
       'mediaPanel.results': 'Results',
+      'mediaPanel.inCategory': 'In',
     };
     return translations[key] ?? key;
   }
@@ -80,15 +106,22 @@ class FakeLocale {
 
 function panel() {
   const fake = new FakeAssets();
+  const categories = new FakeCategories();
   TestBed.configureTestingModule({
     providers: [
       EditorStore,
       { provide: AssetsService, useValue: fake },
+      { provide: CategoriesService, useValue: categories },
       { provide: LocaleService, useClass: FakeLocale },
     ],
   });
   const fixture = TestBed.createComponent(MediaPanel);
-  return { fixture, component: fixture.componentInstance as unknown as InternalPanel, fake };
+  return {
+    fixture,
+    component: fixture.componentInstance as unknown as InternalPanel,
+    fake,
+    categories,
+  };
 }
 
 /** The panel's protected surface, which the test drives directly rather than through the DOM. */
@@ -103,6 +136,9 @@ interface InternalPanel {
   toggleTag(tag: Tag): void;
   loadMore(): void;
   open(asset: Asset): void;
+  rows: () => { category: Category; level: number }[];
+  toggle(id: string): void;
+  select(category: Category | undefined): void;
 }
 
 describe('MediaPanel', () => {
@@ -200,6 +236,35 @@ describe('MediaPanel', () => {
     expect(component.tags()).toEqual([]);
     expect(component.error()).toBeNull();
     expect(component.assets().length).toBe(1);
+  });
+
+  it('#260 the browse tree: expand to see children; choosing one lists it AND everything below it', () => {
+    const { fake, component, categories } = harness;
+    const sports = node('Sports', '/sports/');
+    const football = node('Football', '/sports/football/', 'Sports');
+    categories.list$.next([node('News', '/news/'), sports, football]);
+    expect(component.rows().map((r) => r.category.id)).toEqual(['News', 'Sports']);
+    component.toggle('Sports');
+    expect(component.rows().map((r) => [r.category.id, r.level])).toEqual([
+      ['News', 0],
+      ['Sports', 0],
+      ['Football', 1],
+    ]);
+
+    component.select(sports);
+    expect(fake.listCalls.at(-1)).toEqual({ order: 'desc', categoryId: 'Sports', subtree: true });
+    expect(component.heading()).toBe('In Sports');
+    // More of the same subtree, not of the whole channel.
+    fake.list$.next({ items: [asset('a1')], nextCursor: 'a1' });
+    component.loadMore();
+    expect(fake.listCalls.at(-1)).toEqual({
+      order: 'desc',
+      categoryId: 'Sports',
+      subtree: true,
+      cursor: 'a1',
+    });
+    component.select(undefined);
+    expect(fake.listCalls.at(-1)).toEqual({ order: 'desc' });
   });
 
   it('opening an asset adds a tab identified by the contract-required id', () => {

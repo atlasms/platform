@@ -46,7 +46,21 @@ import {
 } from './file.ts';
 import type { AssetCache, CacheFamilies, CacheFamily } from './cache.ts';
 import { StaleWrite, type AssetStore, type AssetTx, type ExtendedValues } from './store.ts';
-import { groupsForCoreFields, groupsForExtended, type AssetFieldGroup } from './field-groups.ts';
+import {
+  childPath,
+  createProblems,
+  labelOf,
+  MAX_CATEGORY_DEPTH,
+  moved,
+  refuse,
+  updateProblems,
+  within,
+  type Category,
+  type CreateCategoryInput,
+  type UpdateCategoryInput,
+} from './category.ts';
+import { StaleCategory } from './store.ts';
+import { groupsForCoreFields, groupsForExtended } from './field-groups.ts';
 import { indexTerms, parseQuery } from './search.ts';
 import { parseTagLabels, sameTags, type Tag } from './tag.ts';
 import {
@@ -153,6 +167,16 @@ export interface ListPage {
   cursor?: string;
   /** `desc` reads newest-first — what a "Recent" listing means (EP-20.1). Default `asc`. */
   order?: 'asc' | 'desc';
+  /** Only assets in this category (#260) — the Media panel's browse tree. */
+  categoryId?: string;
+  /** With `categoryId`: that category AND everything below it. */
+  subtree?: boolean;
+}
+
+/** What an authorization check knows about the asset it is asked about. */
+interface AssetScope {
+  categoryPath?: string;
+  ownerId?: string;
 }
 
 /**
@@ -238,7 +262,19 @@ export type MirrorOutcome = 'applied' | 'duplicate';
  */
 export interface MamReferenceSnapshot {
   configVersion: number;
-  vocabularies: { tag: Array<{ id: string; key: string; label: string }> };
+  vocabularies: {
+    tag: Array<{ id: string; key: string; label: string }>;
+    /** The live tree (#260): what a client validates a `categoryId` against. */
+    category: Array<{
+      id: string;
+      key: string;
+      label: string;
+      labels: Record<string, string>;
+      parentId?: string;
+      path: string;
+      mediaAddable: boolean;
+    }>;
+  };
 }
 
 export class MamService {
@@ -261,7 +297,7 @@ export class MamService {
   async get(caller: Caller, id: string, options: ReadOptions = {}): Promise<Asset> {
     const asset = await this.cachedAsset(id, options.fresh ?? false);
     if (!asset || asset.channelId !== caller.channelId) throw new NotFound(`no asset ${id}`);
-    this.authorize(caller, 'asset:read', asset);
+    this.authorize(caller, 'asset:read', await this.scopeOf(asset));
     return asset;
   }
 
@@ -378,6 +414,10 @@ export class MamService {
     }
 
     const limit = Math.min(Math.max(options.limit ?? DEFAULT_PAGE_LIMIT, 1), MAX_PAGE_LIMIT);
+    const categoryIds =
+      options.categoryId === undefined
+        ? undefined
+        : await this.categoryFilter(caller.channelId, options.categoryId, options.subtree ?? false);
     const items: Asset[] = [];
     let cursor = options.cursor;
     let more = true;
@@ -392,10 +432,12 @@ export class MamService {
       const fetch = limit * PAGE_OVERFETCH;
       const page = await this.options.store.listByChannel(caller.channelId, {
         limit: fetch,
-        ...defined({ after: cursor, order: options.order }),
+        ...defined({ after: cursor, order: options.order, categoryIds }),
       });
       // A short page from the store means the channel is exhausted; a full one means there is more.
       more = page.length === fetch;
+      // One query for the page's category paths, not one per asset.
+      const paths = await this.pathsOf(page);
 
       for (const asset of page) {
         if (items.length >= limit) {
@@ -407,7 +449,7 @@ export class MamService {
         // end of the store's page would skip every row this loop never reached; advancing it only
         // on a match would re-scan the filtered ones forever.
         cursor = asset.id;
-        if (this.mayRead(caller, asset)) items.push(asset);
+        if (this.mayRead(caller, asset, paths)) items.push(asset);
       }
     }
 
@@ -421,7 +463,18 @@ export class MamService {
     // channel, which is the part that must never be omitted, and narrowed to the field groups the
     // input actually touches. Creating an asset WITH an expiry is a rights write; creating one
     // without is not, and an Editor should not need a Librarian's grant for the ordinary case.
-    this.authorizeGroups(caller, 'asset:write', undefined, groupsForCoreFields(Object.keys(input)));
+    // With a category, the check is against ITS path (#260): a writer scoped to /news/ creates in
+    // /news/, and nowhere else. Without one, the broad question, as before.
+    const category =
+      input.categoryId === undefined
+        ? undefined
+        : await this.requireCategory(caller.channelId, input.categoryId);
+    this.authorizeGroups(
+      caller,
+      'asset:write',
+      { ...defined({ categoryPath: category?.path }) },
+      groupsForCoreFields(Object.keys(input)),
+    );
 
     if (!input.title?.trim()) throw new ValidationError('title is required');
     if (!input.mediaType?.trim()) throw new ValidationError('mediaType is required');
@@ -494,7 +547,23 @@ export class MamService {
     // Authorized on the groups the CHANGED fields belong to, after the no-op check — so a form
     // resubmitting an untouched `expiresAt` does not demand a rights grant to change a title.
     // A patch spanning several groups needs all of them; holding one is not holding the others.
-    this.authorizeGroups(caller, 'asset:write', existing, groupsForCoreFields(changedFields));
+    this.authorizeGroups(
+      caller,
+      'asset:write',
+      await this.scopeOf(existing),
+      groupsForCoreFields(changedFields),
+    );
+    // Moving an asset INTO a category is a write there too: a writer scoped to /news/ cannot
+    // file an asset under /sports/ (#260). The target must also be a live, addable category.
+    if (changedFields.includes('categoryId') && safe.categoryId !== undefined) {
+      const target = await this.requireCategory(caller.channelId, safe.categoryId);
+      this.authorizeGroups(
+        caller,
+        'asset:write',
+        { categoryPath: target.path, ...defined({ ownerId: existing.createdBy }) },
+        groupsForCoreFields(['categoryId']),
+      );
+    }
 
     const updated: Asset = {
       ...existing,
@@ -552,7 +621,7 @@ export class MamService {
     // sign an asset off for air.
     const permission =
       action === 'approve' || action === 'reject' ? 'asset:approve' : 'asset:write';
-    this.authorize(caller, permission, existing);
+    this.authorize(caller, permission, await this.scopeOf(existing));
 
     // The contract makes `reason` required on asset.rejected, and it is right to. A rejection with
     // no stated cause leaves whoever has to fix the asset with nothing to act on — and it would be
@@ -602,7 +671,7 @@ export class MamService {
     const existing = await this.fresh(caller, id);
     // `files` — renditions are the file set, which §3.1 puts in the Librarian's half, not the
     // Editor's. Normally driven by MTS rather than by a person, but the grant is what it is.
-    this.authorize(caller, 'asset:write', existing, 'files');
+    this.authorize(caller, 'asset:write', await this.scopeOf(existing), 'files');
     const updated: Asset = {
       ...existing,
       hasRenditions: true,
@@ -626,7 +695,7 @@ export class MamService {
   /** The asset's files as last mirrored. `files` is the Librarian's group (§3.1), read here. */
   async files(caller: Caller, assetId: string): Promise<FileRef[]> {
     const asset = await this.get(caller, assetId);
-    this.authorize(caller, 'asset:read', asset, 'files');
+    this.authorize(caller, 'asset:read', await this.scopeOf(asset), 'files');
     return this.options.store.filesOf(assetId);
   }
 
@@ -868,6 +937,263 @@ export class MamService {
     return this.eventRecord(caller, file.channelId, 'audit.recorded', payload);
   }
 
+  // --- the category tree (#260; data-model.md §2.6) ------------------------------------------------
+  //
+  // A tree per channel, its paths built from immutable keys. Read under `taxonomy:read`, written
+  // under `taxonomy:admin` over the node's path — a channel's sports editor may hold it over
+  // `/sports/` alone — with the write's field group: `core` (labels, kind, order, description) or
+  // `policies` (mediaAddable, deprecation), as the authorization model groups a category. Every
+  // write is a revision: the row (compare-and-set on its version), `taxonomy.updated` and an
+  // `audit.recorded` delta commit together.
+
+  /** The channel's tree in path order — the live part, unless the deprecated is asked for. */
+  async categories(
+    caller: Caller,
+    options: { includeDeprecated?: boolean } = {},
+  ): Promise<Category[]> {
+    this.authorize(caller, 'taxonomy:read');
+    const all = await this.options.store.categories(caller.channelId);
+    return options.includeDeprecated ? all : live(all);
+  }
+
+  async category(caller: Caller, id: string): Promise<Category> {
+    this.authorize(caller, 'taxonomy:read');
+    return this.categoryInChannel(caller.channelId, id);
+  }
+
+  async createCategory(caller: Caller, input: Partial<CreateCategoryInput>): Promise<Category> {
+    refuse(createProblems(input));
+    const valid = input as CreateCategoryInput;
+    const parent =
+      valid.parentId === undefined
+        ? undefined
+        : await this.categoryInChannel(caller.channelId, valid.parentId);
+    const path = childPath(parent?.path, valid.key);
+    const depth = (parent?.depth ?? 0) + 1;
+    this.authorizeCategory(caller, path, [
+      'core',
+      ...(valid.mediaAddable !== undefined ? ['policies'] : []),
+    ]);
+    if (depth > MAX_CATEGORY_DEPTH) {
+      throw new ValidationError(`a category may be at most ${MAX_CATEGORY_DEPTH} levels deep`);
+    }
+    if (parent && (await this.deprecatedAt(parent))) {
+      throw new ValidationError(`${parent.path} is deprecated — restore it before adding below it`);
+    }
+    const at = this.now().toISOString();
+    const category: Category = {
+      id: ulid(),
+      channelId: caller.channelId,
+      key: valid.key,
+      path,
+      depth,
+      labels: trimmedLabels(valid.labels),
+      sortOrder: valid.sortOrder ?? 0,
+      mediaAddable: valid.mediaAddable ?? true,
+      version: 1,
+      createdBy: caller.userId,
+      createdAt: at,
+      updatedAt: at,
+      ...defined({
+        parentId: parent?.id,
+        kind: valid.kind?.trim() || undefined,
+        description: valid.description,
+      }),
+    };
+    await this.options.store.transaction(async (tx) => {
+      await tx.putCategory(category);
+      await tx.enqueue(this.categoryEvent(caller, category, 'created'));
+      await tx.enqueue(this.categoryAudit(caller, category, undefined, 'category.created'));
+    });
+    return category;
+  }
+
+  async updateCategory(
+    caller: Caller,
+    id: string,
+    version: number,
+    input: Partial<UpdateCategoryInput> & Record<string, unknown>,
+  ): Promise<Category> {
+    refuse(updateProblems(input));
+    const existing = await this.categoryInChannel(caller.channelId, id);
+    const groups = [
+      ...(['labels', 'kind', 'sortOrder', 'description'].some((f) => input[f] !== undefined)
+        ? ['core']
+        : []),
+      ...(input.mediaAddable !== undefined || input.deprecated !== undefined ? ['policies'] : []),
+    ];
+    this.authorizeCategory(caller, existing.path, groups);
+    if (existing.version !== version) throw new StaleCategory(id, version);
+
+    const next: Category = {
+      ...existing,
+      ...defined({
+        labels: input.labels === undefined ? undefined : trimmedLabels(input.labels),
+        kind: input.kind,
+        sortOrder: input.sortOrder,
+        mediaAddable: input.mediaAddable,
+        description: input.description,
+      }),
+    };
+    if (input.deprecated === true && existing.deprecatedAt === undefined) {
+      next.deprecatedAt = this.now().toISOString();
+    }
+    if (input.deprecated === false) delete next.deprecatedAt;
+    if (JSON.stringify(next) === JSON.stringify(existing)) return existing; // nothing to record
+
+    next.version = existing.version + 1;
+    next.updatedAt = this.now().toISOString();
+    const action =
+      input.deprecated === true && existing.deprecatedAt === undefined ? 'deprecated' : 'updated';
+    await this.options.store.transaction(async (tx) => {
+      await tx.putCategory(next, existing.version);
+      await tx.enqueue(this.categoryEvent(caller, next, action));
+      await tx.enqueue(this.categoryAudit(caller, next, existing, `category.${action}`));
+    });
+    return next;
+  }
+
+  /**
+   * Move a category, and everything below it, under another parent (or to the root) — in ONE
+   * transaction, every node a revision. Grants follow the position: a grant on the old path stops
+   * covering the subtree, one on the new path starts to — so the mover must hold `taxonomy:admin`
+   * over BOTH (data-model.md §2.6).
+   */
+  async moveCategory(
+    caller: Caller,
+    id: string,
+    input: { parentId?: string | null; version?: unknown },
+  ): Promise<Category> {
+    if (typeof input.version !== 'number' || !Number.isInteger(input.version)) {
+      throw new ValidationError('version is required — the version of the category as read');
+    }
+    const existing = await this.categoryInChannel(caller.channelId, id);
+    const target =
+      input.parentId === undefined || input.parentId === null
+        ? undefined
+        : await this.categoryInChannel(caller.channelId, input.parentId);
+    const destination = childPath(target?.path, existing.key);
+    this.authorizeCategory(caller, existing.path, ['core']);
+    this.authorizeCategory(caller, destination, ['core']);
+    if (existing.version !== input.version) throw new StaleCategory(id, input.version);
+    if ((target?.id ?? undefined) === existing.parentId) return existing; // already there
+    if (target && within(target.path, existing.path)) {
+      throw new ValidationError('a category cannot move under itself or one of its descendants');
+    }
+
+    const all = await this.options.store.categories(caller.channelId);
+    const subtree = all.filter((c) => within(c.path, existing.path));
+    const after = moved(subtree, existing, target);
+    const deepest = Math.max(...after.map((c) => c.depth));
+    if (deepest > MAX_CATEGORY_DEPTH) {
+      throw new ValidationError(
+        `the move would put a category ${deepest} levels deep; at most ${MAX_CATEGORY_DEPTH}`,
+      );
+    }
+    const at = this.now().toISOString();
+    const before = new Map(subtree.map((c) => [c.id, c]));
+    const writes = after.map((c) => ({ ...c, version: c.version + 1, updatedAt: at }));
+    await this.options.store.transaction(async (tx) => {
+      for (const c of writes) {
+        const was = before.get(c.id)!;
+        await tx.putCategory(c, was.version);
+        await tx.enqueue(this.categoryAudit(caller, c, was, 'category.moved'));
+      }
+      await tx.enqueue(this.categoryEvent(caller, writes[0]!, 'moved'));
+    });
+    return writes.find((c) => c.id === id)!;
+  }
+
+  private authorizeCategory(caller: Caller, path: string, groups: readonly string[]): void {
+    for (const group of groups.length > 0 ? groups : [undefined]) {
+      const decision = canEnforce(caller.policy, 'taxonomy:admin', {
+        channelId: caller.channelId,
+        categoryPath: path,
+        ...defined({ fieldGroup: group }),
+      });
+      if (!decision.allowed) throw new Forbidden(decision.reason ?? 'missing taxonomy:admin');
+    }
+  }
+
+  private async categoryInChannel(channelId: string, id: string): Promise<Category> {
+    const category = await this.options.store.category(id);
+    // Another channel's category is NOT FOUND, like another channel's asset.
+    if (!category || category.channelId !== channelId) throw new NotFound(`no category ${id}`);
+    return category;
+  }
+
+  /** When the category or an ancestor was deprecated — a deprecated branch takes no new media. */
+  private async deprecatedAt(category: Category): Promise<string | undefined> {
+    if (category.deprecatedAt) return category.deprecatedAt;
+    const all = await this.options.store.categories(category.channelId);
+    return all.find((c) => c.deprecatedAt && within(category.path, c.path))?.deprecatedAt;
+  }
+
+  /**
+   * The category an asset is being put in: one of this channel's, live (neither it nor an ancestor
+   * deprecated), and taking media directly (#260). A 422 otherwise — `categoryId` was an opaque
+   * string nothing checked, and an asset could be filed under a category that did not exist.
+   */
+  private async requireCategory(channelId: string, id: string): Promise<Category> {
+    const category = await this.options.store.category(id);
+    if (!category || category.channelId !== channelId) {
+      throw new ValidationError(`categoryId ${id} names no category of this channel`);
+    }
+    if (await this.deprecatedAt(category)) {
+      throw new ValidationError(`${category.path} is deprecated — choose another category`);
+    }
+    if (!category.mediaAddable) {
+      throw new ValidationError(
+        `media cannot be added directly to ${category.path} — choose a category below it`,
+      );
+    }
+    return category;
+  }
+
+  /** The category ids a browse filter matches: the one, or the one and everything below it. */
+  private async categoryFilter(channelId: string, id: string, subtree: boolean): Promise<string[]> {
+    if (!subtree) return [id];
+    const all = await this.options.store.categories(channelId);
+    const root = all.find((c) => c.id === id);
+    return root ? all.filter((c) => within(c.path, root.path)).map((c) => c.id) : [];
+  }
+
+  private categoryEvent(
+    caller: Caller,
+    category: Category,
+    action: 'created' | 'updated' | 'moved' | 'deprecated',
+  ): ReturnType<MamService['eventRecord']> {
+    return this.eventRecord(caller, category.channelId, 'taxonomy.updated', {
+      kind: 'category',
+      action,
+      id: category.id,
+      label: labelOf(category),
+      path: category.path,
+      ...defined({ parentId: category.parentId }),
+    } satisfies EventPayloads['taxonomy.updated']);
+  }
+
+  /** The audit record of one category revision: entity `category`, revision its own version. */
+  private categoryAudit(
+    caller: Caller,
+    category: Category,
+    before: Category | undefined,
+    action: string,
+  ): ReturnType<MamService['eventRecord']> {
+    const payload: EventPayloads['audit.recorded'] = {
+      entityType: 'category',
+      entityId: category.id,
+      revision: category.version,
+      action,
+      origin: { service: 'mam' },
+      delta: delta(
+        before as unknown as Record<string, unknown> | undefined,
+        category as unknown as Record<string, unknown>,
+      ),
+    };
+    return this.eventRecord(caller, category.channelId, 'audit.recorded', payload);
+  }
+
   // --- extensible metadata (EP-17.2) -----------------------------------------
 
   /**
@@ -934,7 +1260,7 @@ export class MamService {
     this.authorizeGroups(
       caller,
       'asset:write',
-      asset,
+      await this.scopeOf(asset),
       groupsForExtended(fields, Object.keys(patch)),
     );
 
@@ -1026,13 +1352,26 @@ export class MamService {
    */
   async referenceSnapshot(caller: Caller): Promise<MamReferenceSnapshot> {
     this.authorize(caller, 'taxonomy:read');
-    const [configVersion, tags] = await Promise.all([
+    const [configVersion, tags, categories] = await Promise.all([
       this.options.store.configVersion(),
       this.options.store.listTags(caller.channelId),
+      this.options.store.categories(caller.channelId),
     ]);
     return {
       configVersion,
-      vocabularies: { tag: tags.map((t) => ({ id: t.id, key: t.normalized, label: t.label })) },
+      vocabularies: {
+        tag: tags.map((t) => ({ id: t.id, key: t.normalized, label: t.label })),
+        // The LIVE tree — what a picker offers and what an asset write is validated against.
+        category: live(categories).map((c) => ({
+          id: c.id,
+          key: c.key,
+          label: labelOf(c),
+          labels: c.labels,
+          path: c.path,
+          mediaAddable: c.mediaAddable,
+          ...defined({ parentId: c.parentId }),
+        })),
+      },
     };
   }
 
@@ -1054,7 +1393,7 @@ export class MamService {
     labels: readonly unknown[],
   ): Promise<Tag[]> {
     const asset = await this.fresh(caller, id);
-    this.authorize(caller, 'asset:write', asset, TAXONOMY_GROUP);
+    this.authorize(caller, 'asset:write', await this.scopeOf(asset), TAXONOMY_GROUP);
 
     const parsed = parseTagLabels(labels);
     if (parsed.errors.length > 0) throw new ValidationError(parsed.errors.join('; '));
@@ -1164,7 +1503,7 @@ export class MamService {
       // Belt and braces on the channel: the store filters by it, and a hit that somehow escaped
       // that filter must not be rescued by a permissive policy.
       if (!asset || asset.channelId !== caller.channelId) continue;
-      if (!this.mayRead(caller, asset)) continue;
+      if (!this.mayRead(caller, asset, await this.pathsOf([asset]))) continue;
       assets.push(asset);
     }
     return assets;
@@ -1228,20 +1567,50 @@ export class MamService {
   }
 
   /** Lenient-free read check for one asset. Same strict evaluator, no exception thrown. */
-  private mayRead(caller: Caller, asset: Asset): boolean {
+  private mayRead(caller: Caller, asset: Asset, paths: ReadonlyMap<string, string>): boolean {
     return canEnforce(caller.policy, 'asset:read', {
       channelId: caller.channelId,
-      ...defined({ categoryPath: asset.categoryId, ownerId: asset.createdBy }),
+      ...defined({
+        categoryPath: asset.categoryId === undefined ? undefined : paths.get(asset.categoryId),
+        ownerId: asset.createdBy,
+      }),
     }).allowed;
+  }
+
+  /**
+   * What a check knows about an asset: its owner, and its category's PATH (#260) — looked up at
+   * the time of the check, so a moved category is authorized where it is now. Before #260 the raw
+   * `categoryId` was passed as the path, and a grant scoped to `/news/` matched no real asset. An
+   * asset whose category does not exist has no path, and a category-scoped grant does not reach
+   * it: fail closed.
+   */
+  private async scopeOf(asset: Asset): Promise<AssetScope> {
+    const paths = await this.pathsOf([asset]);
+    return {
+      ...defined({
+        categoryPath: asset.categoryId === undefined ? undefined : paths.get(asset.categoryId),
+        ownerId: asset.createdBy,
+      }),
+    };
+  }
+
+  /** The category paths of these assets, by category id — one query. */
+  private async pathsOf(assets: readonly Asset[]): Promise<Map<string, string>> {
+    const ids = assets.map((a) => a.categoryId).filter((id): id is string => id !== undefined);
+    return ids.length === 0 ? new Map() : this.options.store.categoryPaths(ids);
   }
 
   /** The resolved field definitions for one asset. */
   private async fieldsFor(asset: Asset): Promise<FieldDefinition[]> {
-    const schemas = await this.options.store.schemas(asset.channelId);
+    const [schemas, scope] = await Promise.all([
+      this.options.store.schemas(asset.channelId),
+      this.scopeOf(asset),
+    ]);
+    // By the category's PATH (#260): a schema keyed `/sports/` applies to everything under Sports.
     return resolveFields(schemas, {
       channelId: asset.channelId,
       mediaType: asset.mediaType,
-      ...defined({ categoryPath: asset.categoryId }),
+      ...defined({ categoryPath: scope.categoryPath }),
     });
   }
 
@@ -1287,10 +1656,15 @@ export class MamService {
    * passed wherever the write belongs to a known group. Core and file writes do not name theirs
    * yet, so field-group scoping is only partly enforced — a gap, not a decision.
    */
-  private authorize(caller: Caller, permission: string, asset?: Asset, fieldGroup?: string): void {
+  private authorize(
+    caller: Caller,
+    permission: string,
+    scope?: AssetScope,
+    fieldGroup?: string,
+  ): void {
     const decision = canEnforce(caller.policy, permission, {
       channelId: caller.channelId,
-      ...defined({ categoryPath: asset?.categoryId, ownerId: asset?.createdBy, fieldGroup }),
+      ...defined({ categoryPath: scope?.categoryPath, ownerId: scope?.ownerId, fieldGroup }),
     });
     if (!decision.allowed) throw new Forbidden(decision.reason ?? `missing ${permission}`);
   }
@@ -1310,14 +1684,14 @@ export class MamService {
   private authorizeGroups(
     caller: Caller,
     permission: string,
-    asset: Asset | undefined,
-    groups: readonly AssetFieldGroup[],
+    scope: AssetScope | undefined,
+    groups: readonly string[],
   ): void {
     if (groups.length === 0) {
-      this.authorize(caller, permission, asset);
+      this.authorize(caller, permission, scope);
       return;
     }
-    for (const group of groups) this.authorize(caller, permission, asset, group);
+    for (const group of groups) this.authorize(caller, permission, scope, group);
   }
 
   /**
@@ -1595,4 +1969,18 @@ function defined<T extends Record<string, unknown>>(
   return Object.fromEntries(Object.entries(source).filter(([, value]) => value !== undefined)) as {
     [K in keyof T]?: Exclude<T[K], undefined>;
   };
+}
+
+/**
+ * The live part of a tree: neither deprecated nor below something deprecated. A deprecated branch
+ * disappears from pickers as a whole, though its descendants keep their own state — restoring the
+ * branch restores them (data-model.md §2.6).
+ */
+function live(all: readonly Category[]): Category[] {
+  const dead = all.filter((c) => c.deprecatedAt).map((c) => c.path);
+  return all.filter((c) => !dead.some((path) => within(c.path, path)));
+}
+
+function trimmedLabels(labels: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(labels).map(([k, v]) => [k, v.trim()]));
 }

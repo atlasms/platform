@@ -81,6 +81,9 @@ export function entityRule(entityType: string): ReadRule {
   // field group does, the grant Scheduling enforces on the window itself. Under the default it was
   // `rights-window:read`, which no catalogue defines and no role holds.
   if (entityType === 'rights-window') return { permission: 'asset:read', fieldGroup: 'rights' };
+  // A category (#260) is a term of the taxonomy, which `taxonomy:read` governs (authorization-model
+  // §3). Under the default it was `category:read`, which no catalogue defines and no role holds.
+  if (entityType === 'category') return { permission: 'taxonomy:read' };
   return { permission: `${entityType}:read` };
 }
 

@@ -639,6 +639,8 @@ export interface TaxonomyUpdatedPayload {
   label?: string;
   /** For hierarchical categories. */
   parentId?: string;
+  /** For a category: its materialized path after this change (/sports/football/). A move changes it for the node and every descendant; this is the moved node's. */
+  path?: string;
   /** For action `merged`: the surviving term old references redirect to. */
   replacedById?: string;
   /** Snapshot version after this change; consumers may revalidate their cached reference snapshot. */

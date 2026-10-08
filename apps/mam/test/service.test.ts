@@ -6,18 +6,18 @@ import { InMemoryBroker, OutboxRelay } from '@atlas/messaging';
 import { compile } from '@atlas/policy';
 import {
   MamService,
-  sqliteAssetStore,
   StaleWrite,
   type Asset,
   type AssetStore,
   type AssetTx,
   type Caller,
 } from '../src/index.ts';
+import { seededStore } from './categories.fixture.ts';
 
 const CHANNEL = 'ch12';
 
 function harness(permissions: string[] = ['asset:read', 'asset:write', 'asset:approve']) {
-  const store = sqliteAssetStore();
+  const store = seededStore();
   // The relay reads the same database the service writes to — which is the point: it drains what
   // the domain transaction committed, never a copy handed to it.
   const outbox = new SqliteOutboxStore(store.db);
@@ -480,7 +480,7 @@ test('the event subject is channel-scoped, so fan-out cannot cross tenants', asy
  * sqlite double serializes transactions, so the race is staged: before the first transaction the
  * service opens, `theirs` is committed on the version the service has just read.
  */
-function racedOnce(store: ReturnType<typeof sqliteAssetStore>, theirs: (a: Asset) => Asset) {
+function racedOnce(store: ReturnType<typeof seededStore>, theirs: (a: Asset) => Asset) {
   let raced = 0;
   const raced$ = (): number => raced;
   const wrapped: AssetStore = Object.assign(Object.create(store) as AssetStore, {
@@ -497,7 +497,7 @@ function racedOnce(store: ReturnType<typeof sqliteAssetStore>, theirs: (a: Asset
 }
 
 test('#385: a PATCH raced by another writer is re-applied to the stored asset — neither change is lost', async () => {
-  const base = sqliteAssetStore();
+  const base = seededStore();
   const seed = new MamService({ store: base });
   const { caller } = harness();
   const created = await seed.create(caller(), NEW_ASSET);
@@ -522,7 +522,7 @@ test('#385: a PATCH raced by another writer is re-applied to the stored asset �
 });
 
 test('#385: the store refuses a write computed from a version that is no longer stored', async () => {
-  const store = sqliteAssetStore();
+  const store = seededStore();
   const service = new MamService({ store });
   const { caller } = harness();
   const a = await service.create(caller(), NEW_ASSET);

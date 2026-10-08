@@ -54,7 +54,12 @@
     "emptyChannel": "No media in this channel yet.",
     "loading": "Loading assets…",
     "error": "Could not load assets",
-    "loadMore": "Load more"
+    "loadMore": "Load more",
+    "categories": "Categories",
+    "allMedia": "All media",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "inCategory": "In"
   },
   "search": {
     "title": "Search",
@@ -182,7 +187,9 @@
       "completed": "Completed",
       "failed": "Waiting to retry",
       "dead-letter": "Gave up"
-    }
+    },
+    "chooseCategory": "Choose a category…",
+    "unknownCategory": "(not in the tree)"
   },
   "editor": {
     "close": "Close",
@@ -434,7 +441,8 @@
     "sampleRate": "Sample rate",
     "mtsDefault": "MTS default",
     "channels": "Channels",
-    "bitrateKbps": "Bit rate (kb/s)"
+    "bitrateKbps": "Bit rate (kb/s)",
+    "categories": "Categories"
   },
   "watchers": {
     "new": "New watcher",
@@ -581,5 +589,33 @@
     "reload": "Reload it",
     "delete": "Remove window",
     "deleteWhy": "Media it covered is no longer licensed by it; validation will say so where it is scheduled."
+  },
+  "categories": {
+    "new": "New category",
+    "parent": "Parent",
+    "root": "(top level)",
+    "key": "Key",
+    "keyHint": "Lower-case letters, digits and hyphens. Permanent — the category's path, which grants and field schemas match, is built from keys.",
+    "keyFixed": "Permanent: the path is built from keys.",
+    "labelEn": "Label (English)",
+    "labelAr": "Label (Arabic)",
+    "kind": "Kind",
+    "sortOrder": "Order",
+    "description": "Description",
+    "mediaAddable": "Media can be added directly here",
+    "showDeprecated": "Show deprecated",
+    "none": "No categories yet.",
+    "deprecated": "deprecated",
+    "noMedia": "no media directly",
+    "conflict": "Someone changed this category since you opened it.",
+    "reload": "Reload",
+    "move": "Move",
+    "chooseParent": "Move under…",
+    "moveWhy": "Moves this category and everything below it.",
+    "moveConfirm": "Move",
+    "moveGrants": "Grants scoped to a category follow its position: whoever is scoped to the old place stops covering this branch, and whoever is scoped to the new place starts to.",
+    "deprecate": "Deprecate",
+    "restore": "Restore",
+    "deprecateWhy": "Hides this branch from pickers and stops new media going in; existing media keep it."
   }
 }

@@ -295,6 +295,40 @@ trigger fires and reported back via delivery receipts (Integration/Feeds).
 > (usable-until → re-review). A clip may be usable for 3 airings, kept online 30 days after the last,
 > then near-lined — while still being *approved and usable* until its separate expiry.
 
+### 2.6 As built — the tree, its keys and its paths (#260, the first EP-28 story)
+
+The first slice is the **tree itself**; inheritance (§2.2), the xref defaults and the EPG/web
+profile follow in EP-28. Decided with the product owner:
+
+- **A category is a hierarchical vocabulary term** ([configuration §2.3](configuration-and-reference-data.md#23-tier-2--vocabularies-pure-data))
+  with the aggregate's own fields: stable `id`; a **`key`** slug (`^[a-z0-9][a-z0-9-]*$`, ≤ 64);
+  i18n **`labels`** (renaming never changes anything else); `parentId`; **`path`**; `kind`
+  (department / program / season / … — a free word, not an enum: code never branches on it);
+  `sortOrder`; `mediaAddable` (default true); `deprecatedAt`; `version` for compare-and-set.
+- **The materialized `path` is built from KEYS**: `/sports/football/highlights/` — the parent's path
+  plus the node's key and a trailing slash, so `/sports/` is a prefix of everything under Sports and
+  never of `/sportsnight/`. Readable in grants (`categoryPaths`), field schemas, logs and audit.
+  The **key is immutable** once created: a path changes only when the node or an ancestor MOVES.
+  A key is unique among its siblings, so a path is unique per channel. At most **20** levels.
+- **Moving is an audited operation**: `POST /categories/{id}/move` with the new parent (or none) and
+  the node's `version`. It rewrites the node's and every descendant's `parentId`/`path` in **one
+  transaction**, each a revision with its own `audit.recorded` delta, plus one
+  `taxonomy.updated` (`moved`). A node cannot move under itself or its descendants, nor onto a
+  sibling key already taken there, nor past 20 levels. **Grants follow the position**: a grant on
+  `/sports/` stops covering a subtree moved to `/archive/`, and one on `/archive/` starts to — the
+  authorizer of the move must hold `taxonomy:admin` over BOTH the old and the new position, and
+  Studio says so before the move is confirmed.
+- **Deprecate, never delete.** A deprecated category — and the branch below it — disappears from
+  pickers, from the reference snapshot and from the default listing, and refuses new media and new
+  children; every existing reference keeps resolving. The descendants keep their own state (nothing
+  is rewritten), so restoring the node restores the branch.
+- **An asset's `categoryId` is validated on write** — it must name a live (not deprecated)
+  category of the asset's channel whose `mediaAddable` is true — and **resolved for
+  authorization**: MAM evaluates a category-scoped grant against the category's `path`, looked up
+  at the time of the check. (Before #260 the raw `categoryId` was passed as the path, so a grant
+  scoped to `/news/` matched no real asset.) An asset whose category no longer exists has no path,
+  and a category-scoped grant does not reach it — fail closed.
+
 ## 3. The Schedule aggregate
 
 A channel's schedule is a **reel**: an ordered sequence of items across a **broadcast day**, each with

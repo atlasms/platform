@@ -10,6 +10,7 @@ import { WatcherEditor } from '../editors/watcher-editor.ts';
 import { RuleSetEditor } from '../editors/rule-set-editor.ts';
 import { RecorderEditor } from '../editors/recorder-editor.ts';
 import { RightsWindowEditor } from '../editors/rights-window-editor.ts';
+import { CategoryEditor } from '../editors/category-editor.ts';
 import { Dashboard } from '../panels/dashboard.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { EditorStore } from './editor.store.ts';
@@ -46,6 +47,7 @@ import { EditorStore } from './editor.store.ts';
     RuleSetEditor,
     RecorderEditor,
     RightsWindowEditor,
+    CategoryEditor,
   ],
   template: `
     @if (store.isEmpty()) {
@@ -192,6 +194,15 @@ import { EditorStore } from './editor.store.ts';
                     @case ('rules') {
                       @defer (on immediate) {
                         <atlas-rule-set-editor [setId]="tab.resourceId" [tabId]="tab.id" />
+                      } @placeholder {
+                        <p class="muted">{{ locale.t('editor.loading') }}</p>
+                      } @error {
+                        <p class="error" role="alert">{{ locale.t('editor.loadFailed') }}</p>
+                      }
+                    }
+                    @case ('category') {
+                      @defer (on immediate) {
+                        <atlas-category-editor [categoryId]="tab.resourceId" [tabId]="tab.id" />
                       } @placeholder {
                         <p class="muted">{{ locale.t('editor.loading') }}</p>
                       } @error {

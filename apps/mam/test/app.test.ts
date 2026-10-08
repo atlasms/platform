@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compile, type EffectivePolicy } from '@atlas/policy';
-import { buildMamApp, MamService, sqliteAssetStore } from '../src/index.ts';
+import { buildMamApp, MamService } from '../src/index.ts';
+import { seededStore } from './categories.fixture.ts';
 
 const CHANNEL = 'ch12';
 
 function app(permissions = ['asset:read', 'asset:write', 'asset:approve']) {
-  const service = new MamService({ store: sqliteAssetStore() });
+  const service = new MamService({ store: seededStore() });
 
   const policies = new Map<string, EffectivePolicy>([
     [

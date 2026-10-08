@@ -12,6 +12,7 @@
     "id": { "type": "string" },
     "label": { "type": "string" },
     "parentId": { "type": "string", "description": "For hierarchical categories." },
+    "path": { "type": "string", "description": "For a category: its materialized path after this change (/sports/football/). A move changes it for the node and every descendant; this is the moved node's." },
     "replacedById": { "type": "string", "description": "For action `merged`: the surviving term old references redirect to." },
     "configVersion": { "type": "integer", "minimum": 0, "description": "Snapshot version after this change; consumers may revalidate their cached reference snapshot." }
   }

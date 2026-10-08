@@ -15,9 +15,16 @@ import {
   type PgPool,
 } from '@atlas/data-pg';
 import type { Asset } from './asset.ts';
+import type { Category } from './category.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
-import { StaleWrite, type AssetStore, type AssetTx } from './store.ts';
+import {
+  CategoryPathTaken,
+  StaleCategory,
+  StaleWrite,
+  type AssetStore,
+  type AssetTx,
+} from './store.ts';
 import type { Tag } from './tag.ts';
 
 interface TagRow {
@@ -176,6 +183,24 @@ export const pgFilesMigration: Migration = {
        CREATE INDEX IF NOT EXISTS asset_files_asset_idx ON asset_files (asset_id, kind, variant);`,
 };
 
+// The category tree (#260). `text_pattern_ops` so a subtree is an index range scan on the path
+// prefix whatever the database collation; the assets' categoryId by expression for the browse tree.
+export const pgCategoriesMigration: Migration = {
+  id: 'mam_categories',
+  up: `CREATE TABLE IF NOT EXISTS categories (
+         id         text PRIMARY KEY,
+         channel_id text NOT NULL,
+         parent_id  text,
+         path       text NOT NULL,
+         data       jsonb NOT NULL,
+         CONSTRAINT categories_channel_path_key UNIQUE (channel_id, path)
+       );
+       CREATE INDEX IF NOT EXISTS categories_path_idx
+         ON categories (channel_id, path text_pattern_ops);
+       CREATE INDEX IF NOT EXISTS assets_category_idx
+         ON assets (channel_id, (data->>'categoryId'));`,
+};
+
 /** Everything MAM's database needs, in order. Applied at startup under an advisory lock. */
 export const mamMigrations: Migration[] = [
   outboxMigration,
@@ -190,6 +215,7 @@ export const mamMigrations: Migration[] = [
   // EP-17.8: the first broker consumer in MAM brings the seen-mark, and the files it mirrors.
   seenMigration,
   pgFilesMigration,
+  pgCategoriesMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
@@ -214,6 +240,11 @@ export function pgAssetStore(pool: PgPool): AssetStore {
       // The cursor comparison flips with the order: a keyset cursor only means "the next page"
       // relative to the direction it was produced in.
       if (options.after !== undefined) sql += ` AND id ${desc ? '<' : '>'} ${p(options.after)}`;
+      if (options.categoryIds !== undefined) {
+        // An empty set matches nothing — a subtree that turned out empty, not "every category".
+        if (options.categoryIds.length === 0) return [];
+        sql += ` AND data->>'categoryId' = ANY(${p([...options.categoryIds])}::text[])`;
+      }
       sql += desc ? ' ORDER BY id DESC' : ' ORDER BY id';
       if (options.limit !== undefined) sql += ` LIMIT ${p(options.limit)}`;
 
@@ -452,6 +483,43 @@ export function pgAssetStore(pool: PgPool): AssetStore {
           async markSeen(messageId) {
             return seen.mark(client, messageId);
           },
+          async putCategory(category, ifVersion) {
+            try {
+              const written =
+                ifVersion === undefined
+                  ? await client.query(
+                      `INSERT INTO categories (id, channel_id, parent_id, path, data)
+                       VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+                      [
+                        category.id,
+                        category.channelId,
+                        category.parentId ?? null,
+                        category.path,
+                        JSON.stringify(category),
+                      ],
+                    )
+                  : await client.query(
+                      `UPDATE categories SET parent_id = $2, path = $3, data = $4
+                       WHERE id = $1 AND (data->>'version')::int = $5`,
+                      [
+                        category.id,
+                        category.parentId ?? null,
+                        category.path,
+                        JSON.stringify(category),
+                        ifVersion,
+                      ],
+                    );
+              if (written.rowCount !== 1) throw new StaleCategory(category.id, ifVersion);
+              // The tree is in the reference snapshot: a new snapshot version, with the change.
+              await bumpConfig();
+            } catch (err) {
+              const e = err as { code?: string; constraint?: string };
+              if (e.code === '23505' && e.constraint === 'categories_channel_path_key') {
+                throw new CategoryPathTaken(category.path);
+              }
+              throw err;
+            }
+          },
           async putFile(file) {
             await client.query(
               `INSERT INTO asset_files (id, channel_id, asset_id, kind, variant, data) VALUES ($1, $2, $3, $4, $5, $6)
@@ -469,6 +537,32 @@ export function pgAssetStore(pool: PgPool): AssetStore {
         };
         return fn(tx);
       });
+    },
+
+    async categories(channelId) {
+      const { rows } = await pool.query<{ data: Category }>(
+        'SELECT data FROM categories WHERE channel_id = $1 ORDER BY path',
+        [channelId],
+      );
+      return rows.map((r) => r.data);
+    },
+
+    async category(id) {
+      const { rows } = await pool.query<{ data: Category }>(
+        'SELECT data FROM categories WHERE id = $1',
+        [id],
+      );
+      return rows[0]?.data;
+    },
+
+    async categoryPaths(ids) {
+      const unique = [...new Set(ids)];
+      if (unique.length === 0) return new Map();
+      const { rows } = await pool.query<{ id: string; path: string }>(
+        'SELECT id, path FROM categories WHERE id = ANY($1::text[])',
+        [unique],
+      );
+      return new Map(rows.map((r) => [r.id, r.path]));
     },
 
     async filesOf(assetId) {

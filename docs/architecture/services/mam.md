@@ -246,6 +246,19 @@ trail had a hole. Now one commits and the other is a `StaleWrite`:
 A transcode that completes for an asset that already HAS renditions writes its file rows, not the
 asset — a revision whose delta is empty records nothing and is one more writer to race.
 
+### Categories — the tree (#260)
+
+MAM owns the category tree ([data model §2.6](../data-model.md#26-as-built--the-tree-its-keys-and-its-paths-260-the-first-ep-28-story)):
+`GET /categories` (the channel's tree, flat and in path order; `taxonomy:read`), `GET /categories/{id}`,
+`POST /categories`, `PATCH /categories/{id}?version=` (labels, kind, sortOrder, description under
+`core`; `mediaAddable` and deprecation under `policies`), `POST /categories/{id}/move`. Writes need
+`taxonomy:admin` over the node's path (both paths, for a move); every write is a revision with an
+`audit.recorded` delta and a `taxonomy.updated` in the same transaction. The reference snapshot carries
+the tree under `vocabularies.category`, so a client validates against the snapshot. `GET /assets`
+takes `categoryId` (and `subtree=true` for everything below it) — the Media panel's browse tree.
+An asset's `categoryId` is validated on create/update and resolved to its `path` for every
+authorization check and for field-schema selection.
+
 ### EP-15.5 — an accepted ingest becomes an asset
 
 MAM consumes `ingest.accepted` (`createFromIngest`, `ingest.ts`): the asset is created under the id

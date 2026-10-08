@@ -170,6 +170,9 @@ if (seedUser && seedPassword) {
           'asset:write',
           'asset:approve',
           'taxonomy:read',
+          // #260: the category tree, so the suites can file assets under a real category and the
+          // smoke suite can build, move and read back a tree.
+          'taxonomy:admin',
           'logs:read',
           // EP-18: the program table, so the smoke suite can write a reel and read it back.
           'schedule:read',

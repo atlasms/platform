@@ -101,6 +101,8 @@ export {
   type TagCandidate,
 } from './tag.ts';
 export {
+  CategoryPathTaken,
+  StaleCategory,
   StaleWrite,
   type AssetStore,
   type AssetTx,
@@ -127,3 +129,13 @@ export {
 // anything already importing it from here.
 export { PolicyClient, type PolicyClientOptions } from '@atlas/policy/client';
 export { buildMamApp, type MamAppOptions } from './app.ts';
+export {
+  childPath,
+  labelOf,
+  MAX_CATEGORY_DEPTH,
+  moved,
+  within,
+  type Category,
+  type CreateCategoryInput,
+  type UpdateCategoryInput,
+} from './category.ts';

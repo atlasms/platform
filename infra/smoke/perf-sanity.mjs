@@ -107,6 +107,18 @@ async function principals(admin) {
 
 /** Assets to read and a word to search for — made by the admin, once per run. */
 async function library(admin, word) {
+  // A real category (#260): found by its path, or made once.
+  const listed = await call('/api/v1/categories', { headers: json(admin) });
+  let categoryId = listed.body?.find((c) => c.path === '/perf/')?.id;
+  if (!categoryId) {
+    const made = await call('/api/v1/categories', {
+      method: 'POST',
+      headers: json(admin),
+      body: JSON.stringify({ key: 'perf', labels: { en: 'Performance sanity' } }),
+    });
+    if (made.status !== 201) throw new Error(`category create: ${made.text}`);
+    categoryId = made.body.id;
+  }
   const ids = [];
   for (let i = 0; i < 30; i++) {
     const res = await call('/api/v1/assets', {
@@ -117,7 +129,7 @@ async function library(admin, word) {
         description: `Evening news item ${i} for the performance sanity run`,
         mediaType: 'video',
         fileType: 'mxf',
-        categoryId: 'cat-1',
+        categoryId,
       }),
     });
     if (res.status !== 201) throw new Error(`asset create: ${res.text}`);

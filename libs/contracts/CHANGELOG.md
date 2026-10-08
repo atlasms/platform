@@ -37,6 +37,8 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `taxonomy.updated` carries an optional `path` (#260): for a category, its materialized path after
+  the change — a consumer that keys anything by category path learns a move without a fetch.
 - `ingest.detected` carries `ingestJobId` (EP-21.1): the job the detection created. Without it a
   live view of the ingest queue could not tell which row a detection was — the MVP acceptance
   journey waited for its upload's detection on the socket and had nothing to match it by.
