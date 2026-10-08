@@ -9,6 +9,7 @@ import {
 import { Router, RouterLink, RouterOutlet } from '@angular/router';
 import { AuthService } from '../core/auth.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
+import { ErrorReferenceStore } from '../core/error-reference.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { WebSocketService } from '../core/websocket.service.ts';
 import { LocaleService } from '../core/locale.service.ts';
@@ -99,6 +100,30 @@ const MAX_SIDE_BAR = 640;
             }}
           </span>
         }
+        <!-- The last refused or failed request's reference (EP-21.5): the string a bug report
+             needs, the one that finds the request in every service's logs. Click copies it. -->
+        @if (errors.last(); as ref) {
+          <span class="sep">·</span>
+          <button
+            type="button"
+            class="link ref"
+            [title]="locale.t('workbench.statusBar.copyRef')"
+            (click)="copyRef(ref.correlationId)"
+          >
+            {{
+              locale.t(copied() ? 'workbench.statusBar.refCopied' : 'workbench.statusBar.errorRef')
+            }}
+            {{ ref.status }} · {{ ref.correlationId }}
+          </button>
+          <button
+            type="button"
+            class="link"
+            [attr.aria-label]="locale.t('workbench.statusBar.dismissRef')"
+            (click)="errors.clear()"
+          >
+            ×
+          </button>
+        }
         @if (editors.hasUnsavedChanges()) {
           <span class="sep">·</span>
           <span>{{ locale.t('workbench.statusBar.unsavedChanges') }}</span>
@@ -135,7 +160,23 @@ export class Workbench {
   private readonly permissions = inject(PermissionService);
   private readonly auth = inject(AuthService);
   protected readonly ws = inject(WebSocketService);
+  protected readonly errors = inject(ErrorReferenceStore);
+  protected readonly copied = signal(false);
   private readonly router = inject(Router);
+
+  /**
+   * Copy the reference for a report. The clipboard can refuse (no permission, an insecure origin);
+   * the reference is still on screen to be read off, so a refusal is not an error worth showing.
+   */
+  protected async copyRef(correlationId: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(correlationId);
+      this.copied.set(true);
+      setTimeout(() => this.copied.set(false), 2_000);
+    } catch {
+      // Left on screen to be read off.
+    }
+  }
 
   protected async signOut(): Promise<void> {
     await this.auth.signOut();

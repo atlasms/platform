@@ -3,12 +3,15 @@ import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { routes } from './app.routes.ts';
 import { authInterceptor } from './core/auth.interceptor.ts';
+import { errorReferenceInterceptor } from './core/error-reference.ts';
 
 export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
     provideRouter(routes, withComponentInputBinding()),
-    provideHttpClient(withInterceptors([authInterceptor])),
+    // Outermost first: the error reference sees each request's FINAL outcome, after auth has
+    // refreshed and retried an expired token (EP-21.5).
+    provideHttpClient(withInterceptors([errorReferenceInterceptor, authInterceptor])),
   ],
 };
 

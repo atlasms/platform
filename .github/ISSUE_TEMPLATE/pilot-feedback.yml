@@ -1,0 +1,82 @@
+name: Pilot feedback
+description: Something went wrong, or got in your way, while using Atlas at the pilot.
+title: "Pilot: "
+projects: ["atlasms/2"]
+labels: ["pilot", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you — this goes straight to the team's daily triage
+        ([how it is handled](https://github.com/atlasms/platform/blob/main/docs/operations/pilot-feedback.md)).
+        You do not need to know whether it is a bug: describe what happened, and we will sort it.
+
+  - type: textarea
+    id: doing
+    attributes:
+      label: What were you doing?
+      description: The task, in your words — "approving tonight's bulletin", "uploading a match".
+    validations:
+      required: true
+
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened, and what did you expect?
+      value: |
+        **What happened:**
+        **What I expected:**
+    validations:
+      required: true
+
+  - type: input
+    id: reference
+    attributes:
+      label: The error reference
+      description: >-
+        If Studio showed "error ref" at the bottom of the screen, click it to copy it and paste it
+        here (it looks like `500 · 01K8ZQ0A1B2C3D4E5F6G7H8J9K`). It lets us find exactly what
+        happened in the logs. Leave empty if there was none.
+
+  - type: input
+    id: when
+    attributes:
+      label: When?
+      description: Date and time, as close as you can — "today 10:40".
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where in Studio?
+      options:
+        - Media
+        - Ingest (upload, queue, watchers, recorders)
+        - Search
+        - Schedule
+        - Dashboard
+        - Admin
+        - Signing in
+        - Somewhere else
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: How much does it get in your way?
+      options:
+        - "Blocking — media cannot be ingested, approved or scheduled"
+        - "I can't do this task, but there is a way around it"
+        - "It works, but it is slower or harder than it should be"
+        - "Cosmetic — wording, layout, translation"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: data
+    attributes:
+      label: Anything worse?
+      options:
+        - label: "Something I saved was lost or changed, or I could see or do something I should not have"

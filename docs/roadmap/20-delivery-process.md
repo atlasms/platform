@@ -278,7 +278,7 @@ the UI to the seven values in [§8.3](#83-fields) (the default field can't be re
 | **WIP** | Leading indicator — rising WIP predicts falling throughput |
 | **Throughput** (stories/iteration) | Forecasting input, more stable than points |
 | **Blocked age** | Surfaces dependency pain early |
-| **Escaped defects** per phase | Whether the Definition of Done is real |
+| **Escaped defects** per phase | Whether the Definition of Done is real — labelled `escaped-defect`, counted by `npm run triage`, reviewed each retro ([pilot feedback & triage](../operations/pilot-feedback.md)) |
 | **DLQ depth, failed CI on trunk** | Engineering health ([observability baseline](16-system-implementation-plan.md#36-observability-baseline)) |
 
 **Don't track: velocity as a performance target.** At 5–6 people it is statistical noise and

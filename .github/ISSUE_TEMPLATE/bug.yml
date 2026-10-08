@@ -3,7 +3,7 @@ description: A defect in delivered work.
 title: "Bug: "
 type: Bug
 projects: ["atlasms/2"]
-labels: ["bug"]
+labels: ["bug", "triage"]
 body:
   - type: textarea
     id: expected
@@ -30,7 +30,9 @@ body:
     id: correlation
     attributes:
       label: Correlation ID
-      description: From the log/trace, if you have one — it ties the whole flow together across services.
+      description: >-
+        From the log/trace, or Studio's status bar ("error ref 500 · 01K…" — click to copy it) — it ties
+        the whole flow together across services.
 
   - type: dropdown
     id: service

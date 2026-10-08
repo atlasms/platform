@@ -40,7 +40,7 @@ not a skin.
 | **Activity Bar** (left icon rail) | One icon per **view container**; click switches the Primary Side Bar. Badges show counts (inbox, tasks). |
 | **Primary Side Bar** | Hosts the active view container's **views** — each a **collapsible sub-panel** (`▸/▾`), reorderable, resizable. |
 | **Editor Area** | **Tabbed**, and **splittable into editor groups** (side-by-side). Any number of items open at once ([FR-UI-7](../requirements/05-functional-requirements.md#studio)). |
-| **Status Bar** (bottom) | System health, current channel, live-sync indicator, background-job summary, notifications bell, current user ([FR-UI-8](../requirements/05-functional-requirements.md#studio)). |
+| **Status Bar** (bottom) | System health, current channel, live-sync indicator, background-job summary, notifications bell, current user ([FR-UI-8](../requirements/05-functional-requirements.md#studio)); and the **last error's reference** — `error ref <status> · <correlation id>`, click to copy — the string a bug report needs to find the request in every service's logs ([pilot feedback](../operations/pilot-feedback.md), EP-21.5). |
 | **Notifications / Toasts** (bottom-right) | Transient alerts; **grouped transfer tray** for uploads/downloads, **minimizable** ([FR-UI-9](../requirements/05-functional-requirements.md#studio)). |
 | **Command Palette** (Ctrl/Cmd-P style) | Quick navigation + actions, permission-filtered. *(Should)* |
 
