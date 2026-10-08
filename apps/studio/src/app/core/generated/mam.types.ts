@@ -100,6 +100,62 @@ export interface UpdateAssetInput {
   expiresAt?: string;
 }
 
+/** A node of the channel's category tree (../data-model.md §2.6): a hierarchical vocabulary term whose path is built from immutable keys. */
+export interface Category {
+  id: string;
+  channelId: string;
+  /** Absent at the root. */
+  parentId?: string;
+  /** Fixed at creation; unique among its siblings. */
+  key: string;
+  /** The keys from the root, slash-separated with a trailing slash: /sports/football/. What category-scoped grants and field schemas match by prefix. */
+  path: string;
+  depth: number;
+  /** Display labels by locale tag (en, ar, ...). Mutable. */
+  labels: Record<string, string>;
+  description?: string;
+  /** The node's role — department, program, season, ... A word, not an enum: code never branches on it. */
+  kind?: string;
+  sortOrder: number;
+  /** Whether media may be put directly here; usually false on organizational nodes. */
+  mediaAddable: boolean;
+  /** Hidden from pickers and refuses new media; existing references keep resolving. */
+  deprecatedAt?: string;
+  version: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateCategoryInput {
+  /** Absent for a root category. */
+  parentId?: string;
+  key: string;
+  labels: Record<string, string>;
+  description?: string;
+  kind?: string;
+  sortOrder?: number;
+  mediaAddable?: boolean;
+}
+
+/** Omitted fields are unchanged. The key and the parent are not here — the key never changes, the parent changes by a move. */
+export interface UpdateCategoryInput {
+  labels?: Record<string, string>;
+  description?: string;
+  kind?: string;
+  sortOrder?: number;
+  mediaAddable?: boolean;
+  /** true deprecates, false restores. */
+  deprecated?: boolean;
+}
+
+export interface MoveCategoryInput {
+  /** The new parent; null or absent moves the category to the root. */
+  parentId?: string | null;
+  /** The category's version as read. */
+  version: number;
+}
+
 export interface Person {
   id?: Ulid;
   name: string;

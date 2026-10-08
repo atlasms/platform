@@ -7,13 +7,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compile, type Rule } from '@atlas/policy';
-import {
-  buildMamApp,
-  MamService,
-  sqliteAssetStore,
-  type Asset,
-  type Caller,
-} from '../src/index.ts';
+import { buildMamApp, MamService, type Asset, type Caller } from '../src/index.ts';
+import { seededStore } from './categories.fixture.ts';
 
 const CHANNEL = 'ch12';
 
@@ -32,7 +27,7 @@ const EDITOR: Rule[] = [
 ];
 
 function harness(rules: Rule[] = EDITOR) {
-  const store = sqliteAssetStore();
+  const store = seededStore();
   const service = new MamService({ store });
   const caller = (over: Partial<Caller> = {}): Caller => ({
     userId: 'user-1',
@@ -273,7 +268,7 @@ test('reindex only touches the caller’s channel', async () => {
 // =============================================================================
 
 test('over HTTP: GET /search, with q required and limit validated', async () => {
-  const service = new MamService({ store: sqliteAssetStore() });
+  const service = new MamService({ store: seededStore() });
   const app = buildMamApp({
     service,
     policyFor: () => compile({ subjectId: 'user-1', permVersion: 1, rules: EDITOR }),
@@ -309,7 +304,7 @@ test('over HTTP: GET /search, with q required and limit validated', async () => 
 
 test('over HTTP: search needs the gateway’s identity headers', async () => {
   const app = buildMamApp({
-    service: new MamService({ store: sqliteAssetStore() }),
+    service: new MamService({ store: seededStore() }),
     policyFor: () => compile({ subjectId: 'user-1', permVersion: 1, rules: EDITOR }),
   });
   assert.equal((await app.inject({ method: 'GET', url: '/api/v1/search?q=x' })).statusCode, 401);

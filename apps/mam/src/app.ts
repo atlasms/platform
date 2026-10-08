@@ -225,10 +225,12 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
   // every client forgets to read, which turns "there is more" into "there is nothing".
   app.get('/api/v1/assets', async (req, reply) =>
     handle(req, reply, async () => {
-      const { limit, cursor, order } = req.query as {
+      const { limit, cursor, order, categoryId, subtree } = req.query as {
         limit?: string;
         cursor?: string;
         order?: string;
+        categoryId?: string;
+        subtree?: string;
       };
       const parsed = limit === undefined ? undefined : Number(limit);
       if (parsed !== undefined && !Number.isInteger(parsed)) {
@@ -243,8 +245,57 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
         ...(parsed === undefined ? {} : { limit: parsed }),
         ...(cursor === undefined ? {} : { cursor }),
         ...(order === undefined ? {} : { order }),
+        ...(categoryId === undefined ? {} : { categoryId }),
+        ...(subtree === 'true' ? { subtree: true } : {}),
       });
     }),
+  );
+
+  // The category tree (#260; data-model.md §2.6).
+  app.get('/api/v1/categories', async (req, reply) =>
+    handle(req, reply, async () => {
+      const { includeDeprecated } = req.query as { includeDeprecated?: string };
+      return options.service.categories(await callerOf(req), {
+        includeDeprecated: includeDeprecated === 'true',
+      });
+    }),
+  );
+  app.post('/api/v1/categories', async (req, reply) =>
+    handle(req, reply, async () => {
+      const created = await options.service.createCategory(
+        await callerOf(req),
+        (req.body ?? {}) as never,
+      );
+      return reply.code(201).send(created);
+    }),
+  );
+  app.get('/api/v1/categories/:id', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.category(await callerOf(req), (req.params as { id: string }).id),
+    ),
+  );
+  app.patch('/api/v1/categories/:id', async (req, reply) =>
+    handle(req, reply, async () => {
+      const version = Number((req.query as { version?: string }).version);
+      if (!Number.isInteger(version) || version < 1) {
+        throw new ValidationError('version is required — the version of the category as read');
+      }
+      return options.service.updateCategory(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+        version,
+        (req.body ?? {}) as never,
+      );
+    }),
+  );
+  app.post('/api/v1/categories/:id/move', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.moveCategory(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+        (req.body ?? {}) as never,
+      ),
+    ),
   );
 
   app.post('/api/v1/assets', async (req, reply) =>

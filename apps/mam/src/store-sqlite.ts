@@ -16,9 +16,16 @@ import {
   type Migration,
 } from '@atlas/data';
 import type { Asset } from './asset.ts';
+import type { Category } from './category.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
-import { StaleWrite, type AssetStore, type AssetTx } from './store.ts';
+import {
+  CategoryPathTaken,
+  StaleCategory,
+  StaleWrite,
+  type AssetStore,
+  type AssetTx,
+} from './store.ts';
 import { prefixUpperBound } from './search.ts';
 import type { Tag } from './tag.ts';
 
@@ -111,6 +118,23 @@ export const sqliteFilesMigration: Migration = {
        CREATE INDEX IF NOT EXISTS asset_files_asset_idx ON asset_files (asset_id, kind, variant);`,
 };
 
+// The category tree (#260): the document beside the columns the reads, the prefix match and the
+// uniqueness need. A path is unique per channel — a key unique among its siblings — and the
+// assets' categoryId is matched by expression for the browse tree.
+export const sqliteCategoriesMigration: Migration = {
+  id: 'mam_categories',
+  up: `CREATE TABLE IF NOT EXISTS categories (
+         id         TEXT PRIMARY KEY,
+         channel_id TEXT NOT NULL,
+         parent_id  TEXT,
+         path       TEXT NOT NULL,
+         data       TEXT NOT NULL,
+         UNIQUE (channel_id, path)
+       );
+       CREATE INDEX IF NOT EXISTS assets_category_idx
+         ON assets (channel_id, json_extract(data, '$.categoryId'));`,
+};
+
 export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
   const db = openDb(path);
   migrate(db, [
@@ -126,6 +150,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     // EP-17.8: the first broker consumer in MAM brings the seen-mark, and the files it mirrors.
     seenMigration,
     sqliteFilesMigration,
+    sqliteCategoriesMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
   const seen = new SqliteSeenStore(db);
@@ -228,6 +253,47 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     },
     async markSeen(messageId) {
       return seen.mark(db, messageId);
+    },
+    async putCategory(category, ifVersion) {
+      try {
+        const written =
+          ifVersion === undefined
+            ? db
+                .prepare(
+                  `INSERT INTO categories (id, channel_id, parent_id, path, data) VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT (id) DO NOTHING`,
+                )
+                .run(
+                  category.id,
+                  category.channelId,
+                  category.parentId ?? null,
+                  category.path,
+                  JSON.stringify(category),
+                )
+            : db
+                .prepare(
+                  `UPDATE categories SET parent_id = ?, path = ?, data = ?
+                   WHERE id = ? AND json_extract(data, '$.version') = ?`,
+                )
+                .run(
+                  category.parentId ?? null,
+                  category.path,
+                  JSON.stringify(category),
+                  category.id,
+                  ifVersion,
+                );
+        if (Number(written.changes) !== 1) throw new StaleCategory(category.id, ifVersion);
+        // The tree is in the reference snapshot, so a change to it is a new snapshot version —
+        // committed with the change, like a minted tag.
+        bump();
+      } catch (err) {
+        if (
+          /UNIQUE constraint failed: categories\.channel_id, categories\.path/.test(String(err))
+        ) {
+          throw new CategoryPathTaken(category.path);
+        }
+        throw err;
+      }
     },
     async putFile(file) {
       db.prepare(
@@ -368,6 +434,14 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         where.push(desc ? 'id < ?' : 'id > ?');
         params.push(options.after);
       }
+      if (options.categoryIds !== undefined) {
+        // An empty set matches nothing — a subtree that turned out empty, not "every category".
+        if (options.categoryIds.length === 0) return [];
+        where.push(
+          `json_extract(data, '$.categoryId') IN (${options.categoryIds.map(() => '?').join(', ')})`,
+        );
+        params.push(...options.categoryIds);
+      }
       let sql =
         `SELECT data FROM assets WHERE ${where.join(' AND ')} ORDER BY id` + (desc ? ' DESC' : '');
       if (options.limit !== undefined) {
@@ -397,6 +471,27 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         .prepare('SELECT data FROM asset_files WHERE asset_id = ? ORDER BY kind, variant')
         .all(assetId) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as FileRef);
+    },
+    async categories(channelId) {
+      const rows = db
+        .prepare('SELECT data FROM categories WHERE channel_id = ? ORDER BY path')
+        .all(channelId) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as Category);
+    },
+    async category(id) {
+      const row = db.prepare('SELECT data FROM categories WHERE id = ?').get(id) as
+        { data: string } | undefined;
+      return row ? (JSON.parse(row.data) as Category) : undefined;
+    },
+    async categoryPaths(ids) {
+      const unique = [...new Set(ids)];
+      if (unique.length === 0) return new Map();
+      const rows = db
+        .prepare(
+          `SELECT id, path FROM categories WHERE id IN (${unique.map(() => '?').join(', ')})`,
+        )
+        .all(...unique) as { id: string; path: string }[];
+      return new Map(rows.map((r) => [r.id, r.path]));
     },
     async transaction(fn) {
       return withTransactionAsync(db, () => fn(tx));

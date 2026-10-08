@@ -87,7 +87,9 @@ Machine contract: [`policy-rule.schema.json`](schemas/policy-rule.schema.json).
 }
 ```
 
-**Category-subtree scoping** uses the category's **materialized `path`** ([data model §2](data-model.md#2-the-category-aggregate)),
+**Category-subtree scoping** (as built, #260: MAM resolves the asset's `categoryId` to the
+category's key-built path at check time — `/sports/football/` — and an asset whose category does
+not exist has no path, so a category-scoped grant does not reach it) uses the category's **materialized `path`** ([data model §2](data-model.md#2-the-category-aggregate)),
 so one grant covers a whole department/program branch by prefix — cheap on both sides, and correct for
 a tree that nests ~20 deep.
 

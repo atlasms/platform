@@ -7,7 +7,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compile, type Rule } from '@atlas/policy';
-import { buildMamApp, MamService, sqliteAssetStore, type Caller } from '../src/index.ts';
+import { buildMamApp, MamService, type Caller } from '../src/index.ts';
+import { seededStore } from './categories.fixture.ts';
 
 const CHANNEL = 'ch12';
 
@@ -25,7 +26,7 @@ const NEWS_ONLY: Rule[] = [
 ];
 
 function harness() {
-  const store = sqliteAssetStore();
+  const store = seededStore();
   const service = new MamService({ store });
   const caller = (rules: Rule[] = FULL, over: Partial<Caller> = {}): Caller => ({
     userId: 'user-1',
@@ -205,7 +206,7 @@ test('limit is honoured and capped', async () => {
 // =============================================================================
 
 test('over HTTP: the listing is an object with a cursor, not a bare array', async () => {
-  const store = sqliteAssetStore();
+  const store = seededStore();
   const service = new MamService({ store });
   const app = buildMamApp({
     service,

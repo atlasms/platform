@@ -9,21 +9,23 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AssetsService } from '../core/assets.service.ts';
-import type { Asset, Tag } from '../core/generated/mam.types.ts';
+import type { Asset, Category, Tag } from '../core/generated/mam.types.ts';
+import { CategoriesService } from '../core/categories.service.ts';
+import { categoryLabel, visibleRows } from '../core/category-tree.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { WebSocketService } from '../core/websocket.service.ts';
 
 /**
- * The Media panel (EP-20.1) — recent, search, and tag filters, against real MAM data.
+ * The Media panel (EP-20.1) — recent, search, tag filters and the **browse tree**, against real
+ * MAM data.
  *
- * WHAT IS NOT HERE, and why. The story also names a **browse tree**, and it is not built because
- * there is nothing to build it from: MAM stores `categoryId` on an asset but categories do not
- * exist as entities — no hierarchy, no store, no endpoint (`/categories` is in mam.yaml and
- * unimplemented; the service's own comment reads "categoryId is one until categories exist").
- * A tree rendered from nothing would be a mock in production clothing, so the panel shows the
- * filters that do have a backend and the tree waits for the taxonomy story.
+ * The tree (#260) is MAM's category tree: expand a node to see its children, select one to list
+ * that category AND everything below it (`?categoryId=&subtree=true`), newest first. It was the one
+ * part of EP-20.1 not built, because there was nothing to build it from — categories were an opaque
+ * id on the asset. It follows `taxonomy.updated` live, so a node another editor adds or moves
+ * appears without a reload. Search is not narrowed by it: MAM's search has no category facet yet.
  *
  * "Recent" is a real newest-first read, not a client-side sort of whatever arrived: page one of an
  * ascending list is the OLDEST assets in the channel.
@@ -43,6 +45,48 @@ import { WebSocketService } from '../core/websocket.service.ts';
         (input)="onQuery($any($event.target).value)"
       />
     </label>
+
+    @if (rows().length > 0) {
+      <nav class="tree" [attr.aria-label]="locale.t('mediaPanel.categories')">
+        <button type="button" class="node all" [class.on]="!selected()" (click)="select(undefined)">
+          {{ locale.t('mediaPanel.allMedia') }}
+        </button>
+        <ul role="tree">
+          @for (row of rows(); track row.category.id) {
+            <li
+              role="treeitem"
+              [attr.aria-expanded]="row.hasChildren ? row.expanded : null"
+              [attr.aria-selected]="selected()?.id === row.category.id"
+              [style.padding-inline-start.rem]="row.level * 0.75"
+            >
+              @if (row.hasChildren) {
+                <button
+                  type="button"
+                  class="twisty"
+                  [attr.aria-label]="
+                    locale.t(row.expanded ? 'mediaPanel.collapse' : 'mediaPanel.expand')
+                  "
+                  (click)="toggle(row.category.id)"
+                >
+                  {{ row.expanded ? '▾' : '▸' }}
+                </button>
+              } @else {
+                <span class="twisty"></span>
+              }
+              <button
+                type="button"
+                class="node"
+                [class.on]="selected()?.id === row.category.id"
+                [title]="row.category.path"
+                (click)="select(row.category)"
+              >
+                {{ label(row.category) }}
+              </button>
+            </li>
+          }
+        </ul>
+      </nav>
+    }
 
     @if (tags().length > 0) {
       <ul class="tags" [aria-label]="locale.t('mediaPanel.filterByTags')">
@@ -138,6 +182,53 @@ import { WebSocketService } from '../core/websocket.service.ts';
       color: var(--color-fg);
       border-color: currentColor;
     }
+    .tree {
+      margin-block-end: var(--space-2);
+      font-size: 0.8125rem;
+    }
+    .tree ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .tree li {
+      display: flex;
+      align-items: center;
+    }
+    .twisty {
+      inline-size: 1.25rem;
+      flex: none;
+      padding: 0;
+      color: var(--color-fg-muted);
+      background: none;
+      border: none;
+      cursor: pointer;
+    }
+    .node {
+      flex: 1;
+      overflow: hidden;
+      padding: 0 var(--space-1);
+      text-align: start;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: inherit;
+      background: none;
+      border: none;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+    }
+    .node:hover {
+      background: var(--color-bg-hover);
+    }
+    .node.on {
+      color: var(--color-accent);
+      font-weight: 600;
+    }
+    .node.all {
+      display: block;
+      inline-size: 100%;
+      margin-block-end: var(--space-1);
+    }
     .mode {
       margin: 0 0 var(--space-1);
       font-size: 0.6875rem;
@@ -210,6 +301,7 @@ import { WebSocketService } from '../core/websocket.service.ts';
 })
 export class MediaPanel {
   private readonly assetsApi = inject(AssetsService);
+  private readonly categoriesApi = inject(CategoriesService);
   private readonly editors = inject(EditorStore);
   protected readonly locale = inject(LocaleService);
   private readonly session = inject(SessionStore);
@@ -224,9 +316,19 @@ export class MediaPanel {
   /** Present only while browsing; a search returns one page and no cursor. */
   protected readonly cursor = signal<string | undefined>(undefined);
 
-  protected readonly heading = computed(() =>
-    this.query() ? this.locale.t('mediaPanel.results') : this.locale.t('mediaPanel.recent'),
-  );
+  /** The channel's live category tree (#260), and what of it is open and chosen. */
+  private readonly categories = signal<Category[]>([]);
+  private readonly expanded = signal<ReadonlySet<string>>(new Set());
+  protected readonly selected = signal<Category | undefined>(undefined);
+  protected readonly rows = computed(() => visibleRows(this.categories(), this.expanded()));
+
+  protected readonly heading = computed(() => {
+    if (this.query()) return this.locale.t('mediaPanel.results');
+    const chosen = this.selected();
+    return chosen
+      ? `${this.locale.t('mediaPanel.inCategory')} ${this.label(chosen)}`
+      : this.locale.t('mediaPanel.recent');
+  });
 
   /**
    * Guards against an out-of-order response overwriting a newer one.
@@ -242,6 +344,8 @@ export class MediaPanel {
     // A tag list that fails is not worth an error banner: the filters simply do not appear, and
     // everything else on the panel still works.
     this.assetsApi.tags().subscribe({ next: (t) => this.tags.set(t), error: () => undefined });
+    // Likewise the tree: a reader without taxonomy:read simply has no tree.
+    this.loadCategories();
 
     // Subscribe to live asset updates for this channel. The service queues the pattern if the
     // socket is not open yet, so mounting before the connection lands is not a silent loss.
@@ -249,6 +353,8 @@ export class MediaPanel {
       const channelId = this.session.channelId();
       if (channelId) {
         void this.ws.subscribe(`atlas.${channelId}.asset.>`);
+        // A category added, renamed, moved or deprecated anywhere: the tree re-reads (#260).
+        void this.ws.subscribe(`atlas.${channelId}.taxonomy.>`);
       }
     });
 
@@ -256,7 +362,8 @@ export class MediaPanel {
     // and destroyed with the routed view, and a leaked subscription would keep refetching for a
     // panel that no longer exists.
     this.ws.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(({ subject, payload }) => {
-      this.handleAssetEvent(subject, payload);
+      if (subject.split('.')[2] === 'taxonomy') this.loadCategories();
+      else this.handleAssetEvent(subject, payload);
     });
 
     // The socket came back after a gap, or is down and this is the polling cadence (EP-09.4):
@@ -285,9 +392,47 @@ export class MediaPanel {
   protected loadMore(): void {
     const after = this.cursor();
     if (after === undefined) return;
-    this.run(this.requestId + 1, this.assetsApi.list({ order: 'desc', cursor: after }), {
+    this.run(this.requestId + 1, this.assetsApi.list({ ...this.browse(), cursor: after }), {
       append: true,
     });
+  }
+
+  protected label(category: Category): string {
+    return categoryLabel(category, this.locale.locale());
+  }
+
+  protected toggle(id: string): void {
+    this.expanded.update((open) => {
+      const next = new Set(open);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  /** Browse a category and everything below it — or, with none, the whole channel. */
+  protected select(category: Category | undefined): void {
+    this.selected.set(category);
+    this.query.set('');
+    this.loadRecent();
+  }
+
+  private loadCategories(): void {
+    this.categoriesApi.list().subscribe({
+      next: (all) => {
+        this.categories.set(all);
+        // A chosen category that was deprecated or moved away: keep it if it still exists.
+        const chosen = this.selected();
+        if (chosen) this.selected.set(all.find((c) => c.id === chosen.id));
+      },
+      error: () => undefined,
+    });
+  }
+
+  /** The list request the browse view makes: newest first, narrowed to the chosen subtree. */
+  private browse(): { order: 'desc'; categoryId?: string; subtree?: boolean } {
+    const chosen = this.selected();
+    return chosen ? { order: 'desc', categoryId: chosen.id, subtree: true } : { order: 'desc' };
   }
 
   protected open(asset: Asset): void {
@@ -296,7 +441,7 @@ export class MediaPanel {
 
   private loadRecent(): void {
     // `order: 'desc'` is the whole reason MAM grew the option — see assets.service.ts.
-    this.run(this.requestId + 1, this.assetsApi.list({ order: 'desc' }), { append: false });
+    this.run(this.requestId + 1, this.assetsApi.list(this.browse()), { append: false });
   }
 
   private run(

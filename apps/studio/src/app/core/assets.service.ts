@@ -30,6 +30,10 @@ export interface ListOptions {
    * sorting what arrives would put a "Recent" heading over precisely the wrong records.
    */
   order?: 'asc' | 'desc';
+  /** Only assets in this category — the browse tree (#260). */
+  categoryId?: string;
+  /** With `categoryId`: that category and everything below it. */
+  subtree?: boolean;
 }
 
 @Injectable({ providedIn: 'root' })

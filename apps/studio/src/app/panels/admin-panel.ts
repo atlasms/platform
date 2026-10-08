@@ -2,12 +2,13 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { SessionStore } from '../core/session.store.ts';
+import { CategoriesView } from './admin/categories-view.ts';
 import { GroupsView } from './admin/groups-view.ts';
 import { ProfilesView } from './admin/profiles-view.ts';
 import { RolesView } from './admin/roles-view.ts';
 import { UsersView } from './admin/users-view.ts';
 
-type AdminView = 'users' | 'groups' | 'roles' | 'profiles';
+type AdminView = 'users' | 'groups' | 'roles' | 'profiles' | 'categories';
 
 /** What reveals each view. The panel itself is revealed by any of these (panels.ts). */
 const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
@@ -15,6 +16,8 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
   { id: 'groups', permissions: ['user:admin'] },
   { id: 'roles', permissions: ['user:admin'] },
   { id: 'profiles', permissions: ['config:read', 'config:admin'] },
+  // #260: the category tree — taxonomy administration.
+  { id: 'categories', permissions: ['taxonomy:admin'] },
 ];
 
 /**
@@ -31,7 +34,7 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
 @Component({
   selector: 'atlas-admin-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UsersView, GroupsView, RolesView, ProfilesView],
+  imports: [UsersView, GroupsView, RolesView, ProfilesView, CategoriesView],
   template: `
     <h2 class="panel-title">{{ locale.t('workbench.panels.admin') }}</h2>
     <nav class="views" role="tablist" [attr.aria-label]="locale.t('workbench.panels.admin')">
@@ -59,6 +62,9 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
       }
       @case ('profiles') {
         <atlas-profiles-view />
+      }
+      @case ('categories') {
+        <atlas-categories-view />
       }
     }
   `,

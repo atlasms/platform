@@ -116,6 +116,30 @@ async function scheduleOnFreeDay(headers, body, fromDays, spanDays) {
   return { day, created };
 }
 
+/**
+ * The category smoke files its assets under. Since #260 a `categoryId` must name a real, addable
+ * category of the channel — the made-up `'cat-1'` every test used to send is a 422 now. Found by
+ * its path, or created once, through the gateway like everything else here.
+ */
+let smokeCategory;
+async function categoryFor(token, key = 'smoke') {
+  smokeCategory ??= (async () => {
+    const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+    const list = await get('/api/v1/categories', { headers });
+    assert.equal(list.status, 200, `categories: ${list.text}`);
+    const found = json(list).find((c) => c.path === `/${key}/`);
+    if (found) return found.id;
+    const made = await get('/api/v1/categories', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ key, labels: { en: 'Smoke' } }),
+    });
+    assert.equal(made.status, 201, `category create: ${made.text}`);
+    return json(made).id;
+  })();
+  return smokeCategory;
+}
+
 test(`smoke: ${BASE} is reachable and live`, async () => {
   // WAIT FOR THE ORIGIN ITSELF, not just for what it answers.
   //
@@ -293,7 +317,7 @@ test('smoke: the full write path — gateway → MAM → Postgres → outbox', a
       title: 'Smoke clip',
       mediaType: 'video',
       fileType: 'mxf',
-      categoryId: 'cat-1',
+      categoryId: await categoryFor(token),
     }),
   });
   assert.equal(created.status, 201, `create failed: ${created.text}`);
@@ -486,7 +510,7 @@ test('smoke: EP-13.2 — a write becomes a live update on a real socket, and the
         title: 'Smoke live-update clip',
         mediaType: 'video',
         fileType: 'mxf',
-        categoryId: 'cat-1',
+        categoryId: await categoryFor(token),
       }),
     });
     assert.equal(created.status, 201, `create failed: ${created.text}`);
@@ -533,7 +557,7 @@ test('smoke: EP-19.1 — a write is in the audit history, with its delta, throug
       title: 'Audited clip',
       mediaType: 'video',
       fileType: 'mxf',
-      categoryId: 'cat-1',
+      categoryId: await categoryFor(token),
     }),
   });
   assert.equal(created.status, 201, `create failed: ${created.text}`);
@@ -575,7 +599,7 @@ test('smoke: EP-19.3 — the audit log browse finds a write by its correlation i
       title: 'Browsed clip',
       mediaType: 'video',
       fileType: 'mxf',
-      categoryId: 'cat-1',
+      categoryId: await categoryFor(token),
     }),
   });
   assert.equal(created.status, 201, `create failed: ${created.text}`);
@@ -1470,7 +1494,7 @@ test('smoke: EP-31 — validation reads MAM’s approvals off the bus, and a cle
       title: 'Smoke approval',
       mediaType: 'video',
       fileType: 'mp4',
-      categoryId: 'cat-1',
+      categoryId: await categoryFor(token),
     }),
   });
   assert.equal(created.status, 201, `asset create failed: ${created.text}`);
@@ -2012,6 +2036,95 @@ test('smoke: EP-16.6 — a channel profile is a preset id: written, run on the r
     body: JSON.stringify({ assetId, presetIds: ['smoke-proxy'], inputPath: 'samples/smoke.mp4' }),
   });
   assert.equal(refused.status, 422, `a disabled profile should be unknown: ${refused.text}`);
+});
+
+test('smoke: #260 — the category tree through the gateway: keys build paths, a move is audited, the browse filter follows it', async () => {
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const run = `t${Date.now().toString(36)}`;
+  const post = (path, body) => get(path, { method: 'POST', headers, body: JSON.stringify(body) });
+
+  const root = await post('/api/v1/categories', {
+    key: run,
+    labels: { en: 'Smoke tree' },
+    mediaAddable: false,
+  });
+  assert.equal(root.status, 201, root.text);
+  const parent = json(root);
+  assert.equal(parent.path, `/${run}/`);
+  const child = json(
+    await post('/api/v1/categories', {
+      parentId: parent.id,
+      key: 'clips',
+      labels: { en: 'Clips' },
+    }),
+  );
+  assert.equal(child.path, `/${run}/clips/`);
+  const other = json(
+    await post('/api/v1/categories', { key: `${run}-b`, labels: { en: 'Elsewhere' } }),
+  );
+
+  // A non-addable category and an unknown one are refused for an asset; the child takes it.
+  const asset = (categoryId) =>
+    post('/api/v1/assets', {
+      title: 'In a category',
+      mediaType: 'video',
+      fileType: 'mxf',
+      categoryId,
+    });
+  assert.equal((await asset(parent.id)).status, 422);
+  assert.equal((await asset('01H00000000000000000000000')).status, 422);
+  const filed = json(await asset(child.id));
+
+  // A rename is compare-and-set on the version; a stale one is a 409.
+  const renamed = await get(`/api/v1/categories/${child.id}?version=1`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ labels: { en: 'Clips (renamed)' } }),
+  });
+  assert.equal(renamed.status, 200, renamed.text);
+  const stale = await get(`/api/v1/categories/${child.id}?version=1`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ sortOrder: 3 }),
+  });
+  assert.equal(stale.status, 409);
+
+  // The browse filter: the parent's subtree holds the asset; after moving the child away, the
+  // other category's does.
+  const browse = async (id) =>
+    json(await get(`/api/v1/assets?categoryId=${id}&subtree=true`, { headers })).items.map(
+      (a) => a.id,
+    );
+  assert.deepEqual(await browse(parent.id), [filed.id]);
+  const moved = await post(`/api/v1/categories/${child.id}/move`, {
+    parentId: other.id,
+    version: json(renamed).version,
+  });
+  assert.equal(moved.status, 200, moved.text);
+  assert.equal(json(moved).path, `/${run}-b/clips/`);
+  assert.deepEqual(await browse(parent.id), []);
+  assert.deepEqual(await browse(other.id), [filed.id]);
+
+  // The category's own history, read under taxonomy:read through the audit log.
+  const deadline = Date.now() + 20_000;
+  let revisions = [];
+  for (;;) {
+    const res = await get(`/api/v1/history/category/${child.id}`, { headers });
+    assert.equal(res.status, 200, res.text);
+    revisions = json(res).revisions;
+    if (revisions.length >= 3 || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.deepEqual(
+    revisions.map((r) => r.action),
+    ['category.created', 'category.updated', 'category.moved'],
+  );
+  assert.deepEqual(revisions[2].delta.path, {
+    before: `/${run}/clips/`,
+    after: `/${run}-b/clips/`,
+  });
 });
 
 test('smoke: the state-counts aggregate answers, and is not read as an asset id', async () => {

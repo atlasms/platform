@@ -11,7 +11,9 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AssetsService } from '../core/assets.service.ts';
-import type { Asset, FileRef, UpdateAssetInput } from '../core/generated/mam.types.ts';
+import type { Asset, Category, FileRef, UpdateAssetInput } from '../core/generated/mam.types.ts';
+import { CategoriesService } from '../core/categories.service.ts';
+import { pickerOptions } from '../core/category-tree.ts';
 import type { Job } from '../core/generated/mts.types.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
@@ -172,12 +174,32 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
             <div class="grid">
               <label>
                 {{ locale.t('assetEditor.categoryId') }}
-                <input
+                <!-- The live tree (#260): a node media cannot go in directly is shown, for its
+                     place in the tree, but cannot be chosen. A category the asset has that is no
+                     longer offered (deprecated, or never existed) is kept visible as itself. -->
+                <select
                   name="categoryId"
                   [disabled]="!canEdit('taxonomy')"
                   [value]="form.categoryId"
-                  (input)="change('categoryId', $any($event.target).value)"
-                />
+                  (change)="change('categoryId', $any($event.target).value)"
+                >
+                  <option value="" disabled>{{ locale.t('assetEditor.chooseCategory') }}</option>
+                  @if (form.categoryId && !categoryKnown(form.categoryId)) {
+                    <option [value]="form.categoryId">
+                      {{ locale.t('assetEditor.unknownCategory') }} {{ form.categoryId }}
+                    </option>
+                  }
+                  @for (option of categoryOptions(); track option.id) {
+                    <option
+                      [value]="option.id"
+                      [disabled]="!option.choosable"
+                      [selected]="option.id === form.categoryId"
+                      [title]="option.path"
+                    >
+                      {{ option.label }}
+                    </option>
+                  }
+                </select>
               </label>
               <label>
                 {{ locale.t('assetEditor.structureId') }}
@@ -346,6 +368,12 @@ export class AssetEditor implements OnInit {
   readonly tabId = input.required<string>();
 
   private readonly assetsApi = inject(AssetsService);
+  private readonly categoriesApi = inject(CategoriesService);
+  /** The live category tree as choices (#260); empty without taxonomy:read — the field stays. */
+  private readonly categories = signal<Category[]>([]);
+  protected readonly categoryOptions = computed(() =>
+    pickerOptions(this.categories(), this.locale.locale()),
+  );
   private readonly permissions = inject(PermissionService);
   private readonly editors = inject(EditorStore);
   protected readonly locale = inject(LocaleService);
@@ -406,7 +434,15 @@ export class AssetEditor implements OnInit {
     this.loadFiles(asset.id);
   });
 
+  protected categoryKnown(id: string): boolean {
+    return this.categories().some((c) => c.id === id);
+  }
+
   ngOnInit(): void {
+    this.categoriesApi.list().subscribe({
+      next: (all) => this.categories.set(all),
+      error: () => undefined,
+    });
     this.reload();
   }
 

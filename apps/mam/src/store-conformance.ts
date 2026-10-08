@@ -10,7 +10,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Asset } from './asset.ts';
-import { StaleWrite, type AssetStore } from './store.ts';
+import type { Category } from './category.ts';
+import { CategoryPathTaken, StaleCategory, StaleWrite, type AssetStore } from './store.ts';
 
 export interface StoreHarness {
   /** A clean, empty store. */
@@ -114,6 +115,83 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
         1,
         'must not have duplicated the row',
       );
+    });
+  });
+
+  const category = (id: string, path: string, over: Partial<Category> = {}): Category => ({
+    id,
+    channelId: 'ch12',
+    key: path.split('/').filter(Boolean).at(-1)!,
+    path,
+    depth: path.split('/').filter(Boolean).length,
+    labels: { en: id },
+    sortOrder: 0,
+    mediaAddable: true,
+    version: 1,
+    createdBy: 'u1',
+    createdAt: '2026-10-09T00:00:00.000Z',
+    updatedAt: '2026-10-09T00:00:00.000Z',
+    ...over,
+  });
+
+  test(`${name}: CATEGORIES (#260) — the tree in path order, a path unique per channel, writes compare-and-set`, async () => {
+    await withFixture(async ({ store }) => {
+      await store.transaction(async (tx) => {
+        await tx.putCategory(category('S', '/sports/'));
+        await tx.putCategory(category('F', '/sports/football/', { parentId: 'S' }));
+        await tx.putCategory(category('N', '/news/'));
+        await tx.putCategory(category('X', '/news/', { channelId: 'ch99' }));
+      });
+      assert.deepEqual(
+        (await store.categories('ch12')).map((c) => c.path),
+        ['/news/', '/sports/', '/sports/football/'],
+      );
+      assert.equal((await store.category('F'))?.parentId, 'S');
+      // A sibling with the same key is the same path: refused, and nothing else of the
+      // transaction lands.
+      await assert.rejects(
+        store.transaction((tx) => tx.putCategory(category('S2', '/sports/'))),
+        CategoryPathTaken,
+      );
+      await assert.rejects(
+        store.transaction((tx) => tx.putCategory({ ...category('S', '/sports/'), version: 2 }, 7)),
+        StaleCategory,
+      );
+      await store.transaction((tx) =>
+        tx.putCategory({ ...category('S', '/sport/'), labels: { en: 'Sport' }, version: 2 }, 1),
+      );
+      assert.deepEqual(
+        [(await store.category('S'))?.path, (await store.category('S'))?.version],
+        ['/sport/', 2],
+      );
+      // The paths an authorizer resolves, one query; an unknown id is simply absent.
+      const paths = await store.categoryPaths(['F', 'N', 'nope', 'F']);
+      assert.deepEqual([...paths.entries()].sort(), [
+        ['F', '/sports/football/'],
+        ['N', '/news/'],
+      ]);
+    });
+  });
+
+  test(`${name}: CATEGORIES (#260) — a listing filtered by category ids; an empty set matches nothing`, async () => {
+    await withFixture(async ({ store }) => {
+      const inNews = asset({ categoryId: 'N' });
+      const inSports = asset({ categoryId: 'S' });
+      const none = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(inNews);
+        await tx.put(inSports);
+        await tx.put(none);
+      });
+      assert.deepEqual(
+        (await store.listByChannel('ch12', { categoryIds: ['N'] })).map((a) => a.id),
+        [inNews.id],
+      );
+      assert.deepEqual(
+        (await store.listByChannel('ch12', { categoryIds: ['N', 'S'] })).map((a) => a.id).sort(),
+        [inNews.id, inSports.id].sort(),
+      );
+      assert.deepEqual(await store.listByChannel('ch12', { categoryIds: [] }), []);
     });
   });
 

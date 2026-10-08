@@ -10,6 +10,7 @@
 import type { OutboxRecord } from '@atlas/messaging';
 import { Conflict } from '@atlas/service-kit';
 import type { Asset } from './asset.ts';
+import type { Category } from './category.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
 import type { ParsedQuery, SearchHit } from './search.ts';
@@ -44,6 +45,11 @@ export interface ListOptions {
    * cursor only means "the next page" relative to the order it was produced in.
    */
   order?: 'asc' | 'desc';
+  /**
+   * Only assets whose `categoryId` is one of these (#260) — the Media panel's browse tree. The
+   * service expands "this category and below" into the ids; the store only matches.
+   */
+  categoryIds?: readonly string[];
 }
 
 /**
@@ -128,6 +134,15 @@ export interface AssetStore {
   /** The asset's files as last mirrored from HSM/MTS (EP-17.8), by kind then variant. */
   filesOf(assetId: string): Promise<FileRef[]>;
 
+  /** A channel's whole category tree, deprecated nodes included, in path order (#260). */
+  categories(channelId: string): Promise<Category[]>;
+  category(id: string): Promise<Category | undefined>;
+  /**
+   * The paths of these categories, by id — what MAM authorizes a category-scoped grant against
+   * (an id with no category is simply absent: fail closed). One query for a whole page.
+   */
+  categoryPaths(ids: readonly string[]): Promise<Map<string, string>>;
+
   /** One unit of work. Everything written inside commits together, or none of it does. */
   transaction<T>(fn: (tx: AssetTx) => Promise<T>): Promise<T>;
 
@@ -149,6 +164,24 @@ export class StaleWrite extends Conflict {
   }
 }
 
+/** A category write whose base is no longer the stored row. */
+export class StaleCategory extends Conflict {
+  constructor(id: string, ifVersion: number | undefined) {
+    super(
+      ifVersion === undefined
+        ? `category ${id} already exists`
+        : `category ${id} changed since version ${ifVersion} was read — reload it`,
+    );
+  }
+}
+
+/** The channel already has a category at this path: a sibling with the same key. */
+export class CategoryPathTaken extends Conflict {
+  constructor(path: string) {
+    super(`a category already exists at ${path} — a key is unique among its siblings`);
+  }
+}
+
 /** The write surface, reachable only from inside {@link AssetStore.transaction}. */
 export interface AssetTx {
   /**
@@ -163,6 +196,12 @@ export interface AssetTx {
    * connection and could never show it; the conformance suite races two writers on Postgres.
    */
   put(asset: Asset, ifVersion?: number): Promise<void>;
+  /**
+   * Write a category — compare-and-set like `put`: with `ifVersion` only over that version
+   * (otherwise a {@link StaleCategory}), without it a new category is inserted. A path already
+   * taken in the channel — a sibling with the same key — is a {@link CategoryPathTaken}.
+   */
+  putCategory(category: Category, ifVersion?: number): Promise<void>;
   /**
    * Replace an asset's extensible document.
    *

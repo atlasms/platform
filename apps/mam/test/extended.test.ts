@@ -7,7 +7,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compile } from '@atlas/policy';
-import { MamService, sqliteAssetStore, type Caller, type FieldSchema } from '../src/index.ts';
+import { MamService, type Caller, type FieldSchema } from '../src/index.ts';
+import { seededStore } from './categories.fixture.ts';
 
 const CHANNEL = 'ch12';
 
@@ -15,7 +16,7 @@ function harness(
   permissions: string[] = ['asset:read', 'asset:write', 'asset:approve', 'taxonomy:admin'],
   vocabularies?: ReadonlyMap<string, ReadonlySet<string>>,
 ) {
-  const store = sqliteAssetStore();
+  const store = seededStore();
   const service = new MamService({
     store,
     ...(vocabularies ? { vocabularies: () => vocabularies } : {}),

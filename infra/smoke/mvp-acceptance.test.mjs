@@ -142,6 +142,23 @@ test('MVP acceptance — one file: upload → validate → transcode → metadat
       );
     });
 
+    // The category the editor will file the asset under (#260: a real, addable category of the
+    // channel — found by its path, or made once).
+    {
+      const list = await call('/api/v1/categories', { headers: auth });
+      assert.equal(list.status, 200, list.text);
+      journey.categoryId = list.body.find((c) => c.path === '/acceptance/')?.id;
+      if (!journey.categoryId) {
+        const made = await call('/api/v1/categories', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ key: 'acceptance', labels: { en: 'Acceptance' } }),
+        });
+        assert.equal(made.status, 201, made.text);
+        journey.categoryId = made.body.id;
+      }
+    }
+
     await step('1 · upload — a video file in server-sized parts, through the gateway', async () => {
       const started = await call('/api/v1/uploads', {
         method: 'POST',
@@ -214,7 +231,7 @@ test('MVP acceptance — one file: upload → validate → transcode → metadat
           body: JSON.stringify({
             title: `Acceptance ${word} — evening bulletin`,
             description: 'The MVP acceptance journey, one file from upload to the program table.',
-            categoryId: 'cat-1',
+            categoryId: journey.categoryId,
           }),
         });
         assert.equal(patched.status, 200, patched.text);
@@ -402,7 +419,7 @@ test('MVP acceptance — one file: upload → validate → transcode → metadat
         const stored = (await call(`/api/v1/assets/${journey.assetId}`, { headers: fresh })).body;
         assert.deepEqual(
           [stored.hasRenditions, stored.categoryId, stored.state],
-          [true, 'cat-1', 'approved'],
+          [true, journey.categoryId, 'approved'],
           'neither the mirror’s write nor the editor’s was lost',
         );
         const asset = await history(
@@ -417,7 +434,7 @@ test('MVP acceptance — one file: upload → validate → transcode → metadat
           'one record per revision, none missing, none twice',
         );
         assert.equal(asset[0].action, 'asset.created');
-        assert.ok(after('categoryId', 'cat-1')(asset), 'the metadata edit, as a delta');
+        assert.ok(after('categoryId', journey.categoryId)(asset), 'the metadata edit, as a delta');
         for (const state of ['processing', 'ready']) {
           assert.ok(after('state', state)(asset), `the move to ${state}`);
         }

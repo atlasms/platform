@@ -53,10 +53,16 @@ export const MamOperations = {
   listTags: { method: 'GET', path: '/api/v1/tags', params: [] },
   /** Create a tag (scope taxonomy:admin) */
   createTag: { method: 'POST', path: '/api/v1/tags', params: [] },
-  /** List categories (hierarchical) */
+  /** The channel's category tree, flat and in path order (scope taxonomy:read). See ../data-model.md §2.6. */
   listCategories: { method: 'GET', path: '/api/v1/categories', params: [] },
-  /** Create a category */
+  /** Create a category under a parent, or at the root (scope taxonomy:admin over the new path; audited). Its key is fixed for good: the path is built from keys. */
   createCategory: { method: 'POST', path: '/api/v1/categories', params: [] },
+  /** One category (scope taxonomy:read) */
+  getCategory: { method: 'GET', path: '/api/v1/categories/{id}', params: ['id'] },
+  /** Change labels, kind, sort order, description (core) or mediaAddable and deprecation (policies) over the version read (compare-and-set; taxonomy:admin over its path; audited). Not the key, not the parent: see move. */
+  updateCategory: { method: 'PATCH', path: '/api/v1/categories/{id}', params: ['id'] },
+  /** Move a category and its subtree under another parent, or to the root, in one transaction (taxonomy:admin over BOTH positions; every node a revision, audited). Grants follow the position: one scoped to the old path stops covering the subtree. */
+  moveCategory: { method: 'POST', path: '/api/v1/categories/{id}/move', params: ['id'] },
   /** List subjects (controlled vocabulary) */
   listSubjects: { method: 'GET', path: '/api/v1/subjects', params: [] },
   /** Create a subject */
