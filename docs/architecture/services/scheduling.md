@@ -228,6 +228,24 @@ and never re-sending. Times are entered in the browser's zone and sent as instan
 announces a window's change live (its one event is its audit record), so the list refreshes on
 open and on Refresh.
 
+**EP-31: copy a range** (`copy.ts`, `POST /schedules/{id}/copy`; data-model §3.7, FR-SCH-13). The
+top-level items that **start** in `[from, to)` of the source — the whole reel without a range — are
+copied with their sub-schedules, shifted so the range's start lands at `at`, with new ids, onto a
+target schedule of the same channel (or the source itself). `merge` adds them; `overwrite` first
+removes the target's top-level items that **start** in the destination range — the selection's own
+rule, so what an overwrite clears is what the same copy would have taken. Nothing is cut at an edge:
+an item crossing one is judged by its start, and an overlap the copy leaves is `/validate`'s to
+name. Anchors, overrides, in/out points and notes travel; the media is the same media — a placement,
+so an airing. `seq` is renumbered over the merged reel (at a tie, what was there first). One write on
+the target: a compare-and-set on the `targetVersion` the caller read (an overwrite over a reel
+someone else has since edited would remove items they never saw — a 409, reload), the reel replaced,
+`schedule.updated`, and an `audit.recorded` with action `schedule.copied` whose delta is the reel
+before and after plus `copiedFrom` (source, range, landing, mode). `schedule:read` on the source,
+`schedule:write` on the target, both the caller's channel. **Studio:** the editor's *Copy to another
+day…* — wall-clock times in the schedule's zone (a range ending before it starts runs past midnight,
+since a broadcast day need not end at 00:00), the target day found by date or made in the same zone,
+the stored reel only (disabled with unsaved edits), and a 409 that says the target changed.
+
 Studio's schedule editor has a **Validate** button (the stored reel only — disabled with unsaved
 edits), the report above the reel, each issue flagged on its row, and the report hidden once the
 version on screen moves past it.

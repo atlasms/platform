@@ -1468,6 +1468,89 @@ test('smoke: EP-18 — a program table is written thinly, read back in reel orde
   assert.ok(history.revisions[1].delta.items, 'the reel change rode in the delta');
 });
 
+test('smoke: EP-31 — a range copied onto another day: one audited write over the target version', async () => {
+  // §3.7 on a live cluster: two days, a reel on the first, its first hour copied onto the second at
+  // 20:00 by overwrite — the items re-timed with new ids, the target one version on, a stale
+  // target version refused, and the copy in the target's audit history saying where it came from.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const made = async () => {
+    const { day, created } = await scheduleOnFreeDay(headers, { timezone: 'UTC' }, 800, 365);
+    assert.equal(created.status, 201, `create failed: ${created.text}`);
+    return { day, schedule: json(created) };
+  };
+  const source = await made();
+  const target = await made();
+  const t0 = Date.parse(`${source.day}T06:00:00.000Z`);
+  const at = (min) => new Date(t0 + min * 60_000).toISOString();
+  const saved = await get(`/api/v1/schedules/${source.schedule.id}/items`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify([
+      { seq: 0, start: at(0), durationSec: 1800, itemType: 'title', fixed: true },
+      {
+        seq: 1,
+        start: at(30),
+        durationSec: 1800,
+        itemType: 'media',
+        mediaId: '01H00000000000000000000000',
+      },
+      {
+        seq: 2,
+        start: at(60),
+        durationSec: 1800,
+        itemType: 'filler',
+        mediaId: '01H00000000000000000000000',
+      },
+    ]),
+  });
+  assert.equal(saved.status, 200, `reel save failed: ${saved.text}`);
+
+  const body = {
+    from: at(0),
+    to: at(60),
+    targetScheduleId: target.schedule.id,
+    targetVersion: target.schedule.version,
+    at: `${target.day}T20:00:00.000Z`,
+    mode: 'overwrite',
+  };
+  const copied = await get(`/api/v1/schedules/${source.schedule.id}/copy`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  assert.equal(copied.status, 200, `copy failed: ${copied.text}`);
+  const out = json(copied);
+  assert.deepEqual([out.copied, out.removed, out.schedule.version], [2, 0, 2]);
+  assert.deepEqual(
+    out.items.map((i) => [i.seq, i.start, i.fixed]),
+    [
+      [0, `${target.day}T20:00:00.000Z`, true],
+      [1, `${target.day}T20:30:00.000Z`, false],
+    ],
+  );
+
+  const stale = await get(`/api/v1/schedules/${source.schedule.id}/copy`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  assert.equal(stale.status, 409, `a stale target version must be refused: ${stale.text}`);
+
+  const deadline = Date.now() + 20_000;
+  let revisions = [];
+  for (;;) {
+    const res = await get(`/api/v1/history/schedule/${target.schedule.id}`, { headers });
+    revisions = json(res).revisions ?? [];
+    if (revisions.some((r) => r.action === 'schedule.copied') || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  const copy = revisions.find((r) => r.action === 'schedule.copied');
+  assert.ok(copy, `the sink never saw the copy: ${JSON.stringify(revisions.map((r) => r.action))}`);
+  assert.equal(copy.delta.copiedFrom.after.scheduleId, source.schedule.id);
+});
+
 test('smoke: EP-31 — validation reads MAM’s approvals off the bus, and a clean reel is validated', async () => {
   // The whole of it on a live cluster: an asset made approvable the only way there is (a real
   // transcode gives it renditions), approved in MAM, the approval crossing the broker into

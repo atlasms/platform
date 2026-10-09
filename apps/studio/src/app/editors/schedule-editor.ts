@@ -11,6 +11,7 @@ import {
 } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { of, switchMap } from 'rxjs';
 import type {
   IssueKind,
   ItemType,
@@ -72,6 +73,18 @@ interface NewItemForm {
   mediaId: string;
   title: string;
   fixed: boolean;
+}
+
+/** The copy-a-range form (EP-31, data-model §3.7): wall-clock times in the schedule's zone. */
+interface CopyForm {
+  /** `HH:mm`, both or neither — neither is the whole reel. */
+  from: string;
+  to: string;
+  /** The target broadcast day, `YYYY-MM-DD`; its schedule is made when there is none. */
+  date: string;
+  /** `HH:mm` on the target day: where the range's start lands. */
+  at: string;
+  mode: 'merge' | 'overwrite';
 }
 
 const EMPTY_FORM: NewItemForm = {
@@ -387,6 +400,78 @@ const EMPTY_FORM: NewItemForm = {
           </button>
           <span>{{ top().length }} {{ locale.t('scheduleEditor.items') }}</span>
         </div>
+
+        <details class="copy">
+          <summary>{{ locale.t('scheduleEditor.copy.title') }}</summary>
+          <form class="add-item" (submit)="copy($event)">
+            <label>
+              {{ locale.t('scheduleEditor.copy.from') }}
+              <input
+                name="copyFrom"
+                type="time"
+                [value]="copyForm().from"
+                (input)="setCopy('from', $any($event.target).value)"
+              />
+            </label>
+            <label>
+              {{ locale.t('scheduleEditor.copy.to') }}
+              <input
+                name="copyTo"
+                type="time"
+                [value]="copyForm().to"
+                (input)="setCopy('to', $any($event.target).value)"
+              />
+            </label>
+            <label>
+              {{ locale.t('scheduleEditor.copy.date') }}
+              <input
+                name="copyDate"
+                type="date"
+                required
+                [value]="copyForm().date"
+                (input)="setCopy('date', $any($event.target).value)"
+              />
+            </label>
+            <label>
+              {{ locale.t('scheduleEditor.copy.at') }}
+              <input
+                name="copyAt"
+                type="time"
+                required
+                [value]="copyForm().at"
+                (input)="setCopy('at', $any($event.target).value)"
+              />
+            </label>
+            <label>
+              {{ locale.t('scheduleEditor.copy.mode') }}
+              <select
+                name="copyMode"
+                [value]="copyForm().mode"
+                (change)="setCopy('mode', $any($event.target).value)"
+              >
+                <option value="merge">{{ locale.t('scheduleEditor.copy.merge') }}</option>
+                <option value="overwrite">{{ locale.t('scheduleEditor.copy.overwrite') }}</option>
+              </select>
+            </label>
+            <button
+              type="submit"
+              [disabled]="copying() || dirty()"
+              [title]="dirty() ? locale.t('scheduleEditor.validateSaveFirst') : ''"
+            >
+              {{
+                copying()
+                  ? locale.t('scheduleEditor.copy.copying')
+                  : locale.t('scheduleEditor.copy.submit')
+              }}
+            </button>
+          </form>
+          <p class="hint">{{ locale.t('scheduleEditor.copy.hint') }}</p>
+          @if (copyError()) {
+            <p class="message error" role="alert">{{ copyError() }}</p>
+          } @else if (copyDone()) {
+            <p class="message" role="status">{{ copyDone() }}</p>
+          }
+        </details>
       }
     }
   `,
@@ -415,6 +500,16 @@ export class ScheduleEditor implements OnInit {
   protected readonly form = signal<NewItemForm>(EMPTY_FORM);
   protected readonly formError = signal<string | null>(null);
   protected readonly validating = signal(false);
+  protected readonly copyForm = signal<CopyForm>({
+    from: '',
+    to: '',
+    date: '',
+    at: '06:00',
+    mode: 'merge',
+  });
+  protected readonly copying = signal(false);
+  protected readonly copyError = signal<string | null>(null);
+  protected readonly copyDone = signal<string | null>(null);
   protected readonly validateError = signal<string | null>(null);
   /** The last run's report — shown only while it describes the version on screen. */
   private readonly lastReport = signal<ValidationReport | null>(null);
@@ -467,6 +562,11 @@ export class ScheduleEditor implements OnInit {
         this.rows.set(fromItems(items));
         this.setDirty(false);
         this.loading.set(false);
+        // The usual copy is onto the next day; the form keeps whatever was typed after that.
+        if (this.copyForm().date === '') {
+          const next = new Date(Date.parse(`${header.broadcastDate}T00:00:00Z`) + 86_400_000);
+          this.copyForm.update((f) => ({ ...f, date: next.toISOString().slice(0, 10) }));
+        }
       },
       error: () => {
         this.loadError.set(this.locale.t('scheduleEditor.loadError'));
@@ -590,6 +690,87 @@ export class ScheduleEditor implements OnInit {
     });
   }
 
+  protected setCopy<K extends keyof CopyForm>(field: K, value: CopyForm[K]): void {
+    this.copyForm.update((f) => ({ ...f, [field]: value }));
+    this.copyError.set(null);
+    this.copyDone.set(null);
+  }
+
+  /**
+   * Copy a range of the reel AS STORED onto a day (EP-31, data-model §3.7) — the service does it, in
+   * one audited write over the target version read here. The target day's schedule is found, or
+   * made in this schedule's zone. A range ending at or before its start runs past midnight: the
+   * broadcast day need not end at 00:00 (§3.1).
+   */
+  protected copy(event: Event): void {
+    event.preventDefault();
+    const schedule = this.schedule();
+    if (!schedule || this.copying() || this.dirty()) return;
+    const f = this.copyForm();
+    const fail = (key: string): void => this.copyError.set(this.locale.t(key));
+    if ((f.from === '') !== (f.to === '')) return fail('scheduleEditor.copy.rangeBoth');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date)) return fail('scheduleEditor.copy.dateRequired');
+    const at = instantAt(f.date, f.at, schedule.timezone);
+    if (at === null) return fail('scheduleEditor.invalidTime');
+    let range: { from: string; to: string } | undefined;
+    if (f.from !== '') {
+      const from = instantAt(schedule.broadcastDate, f.from, schedule.timezone);
+      let to = instantAt(schedule.broadcastDate, f.to, schedule.timezone);
+      if (from === null || to === null) return fail('scheduleEditor.invalidTime');
+      if (Date.parse(to) <= Date.parse(from)) {
+        to = new Date(Date.parse(to) + 86_400_000).toISOString();
+      }
+      range = { from, to };
+    }
+    this.copying.set(true);
+    this.copyError.set(null);
+    this.copyDone.set(null);
+    this.schedulesApi
+      .list({ broadcastDate: f.date, limit: 1 })
+      .pipe(
+        switchMap((page) =>
+          page.items[0]
+            ? of(page.items[0])
+            : this.schedulesApi.create({ broadcastDate: f.date, timezone: schedule.timezone }),
+        ),
+        switchMap((target) =>
+          this.schedulesApi.copy(schedule.id, {
+            ...range,
+            targetScheduleId: target.id,
+            targetVersion: target.version,
+            at,
+            mode: f.mode,
+          }),
+        ),
+      )
+      .subscribe({
+        next: (result) => {
+          this.copying.set(false);
+          this.copyDone.set(
+            this.locale
+              .t('scheduleEditor.copy.done')
+              .replace('{copied}', String(result.copied))
+              .replace('{removed}', String(result.removed))
+              .replace('{date}', result.schedule.broadcastDate),
+          );
+          if (result.schedule.id === schedule.id) this.reload();
+        },
+        error: (err: unknown) => {
+          this.copying.set(false);
+          if (err instanceof HttpErrorResponse && err.status === 409) {
+            return fail('scheduleEditor.copy.conflict');
+          }
+          const problem =
+            err instanceof HttpErrorResponse && err.status === 422
+              ? (err.error as { detail?: string; message?: string } | null)
+              : null;
+          this.copyError.set(
+            problem?.detail ?? problem?.message ?? this.locale.t('scheduleEditor.copy.error'),
+          );
+        },
+      });
+  }
+
   // --- rendering helpers -------------------------------------------------------------------------------
 
   /** What the current report says about one saved row. An unsaved row has no id, and no report. */
@@ -663,13 +844,7 @@ export class ScheduleEditor implements OnInit {
    */
   private startFromTime(time: string): string | null {
     const schedule = this.schedule();
-    if (!schedule || !/^\d{2}:\d{2}(:\d{2})?$/.test(time)) return null;
-    const wall = Date.parse(
-      `${schedule.broadcastDate}T${time.length === 5 ? `${time}:00` : time}Z`,
-    );
-    if (!Number.isFinite(wall)) return null;
-    const first = wall - zoneOffsetMs(schedule.timezone, wall);
-    return new Date(wall - zoneOffsetMs(schedule.timezone, first)).toISOString();
+    return schedule ? instantAt(schedule.broadcastDate, time, schedule.timezone) : null;
   }
 
   private handleScheduleEvent(subject: string, payload: unknown): void {
@@ -683,6 +858,18 @@ export class ScheduleEditor implements OnInit {
     if (this.dirty()) return;
     this.reload();
   }
+}
+
+/**
+ * A wall-clock `HH:mm[:ss]` on `date` in `zone`, as an instant. The offset is MEASURED (see
+ * `startFromTime`): read at the wall clock taken as UTC, then once more at the result.
+ */
+export function instantAt(date: string, time: string, zone: string): string | null {
+  if (!/^\d{2}:\d{2}(:\d{2})?$/.test(time)) return null;
+  const wall = Date.parse(`${date}T${time.length === 5 ? `${time}:00` : time}Z`);
+  if (!Number.isFinite(wall)) return null;
+  const first = wall - zoneOffsetMs(zone, wall);
+  return new Date(wall - zoneOffsetMs(zone, first)).toISOString();
 }
 
 /** The zone's UTC offset at `atMs`, in milliseconds (positive east of UTC). */

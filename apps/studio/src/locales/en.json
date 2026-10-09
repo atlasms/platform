@@ -267,6 +267,24 @@
       "expiry": "Approval expires",
       "rights": "Rights",
       "availability": "Availability"
+    },
+    "copy": {
+      "title": "Copy to another day…",
+      "from": "From",
+      "to": "To",
+      "date": "Onto day",
+      "at": "Landing at",
+      "mode": "Mode",
+      "merge": "Merge — keep what is there",
+      "overwrite": "Overwrite — replace what starts in the range",
+      "submit": "Copy",
+      "copying": "Copying…",
+      "hint": "Copies the saved reel. Items are taken by their start; leave From and To empty for the whole day. Anchors, overrides and notes travel; overlaps are left for Validate to name.",
+      "rangeBoth": "Give both From and To, or neither for the whole day.",
+      "dateRequired": "Choose the day to copy onto.",
+      "done": "Copied {copied} item(s) to {date}; {removed} replaced.",
+      "conflict": "The target day changed while you were copying. Try again.",
+      "error": "Could not copy the reel."
     }
   },
   "schedulePanel": {

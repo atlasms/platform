@@ -236,3 +236,19 @@ tr.flagged td.title .flag[data-severity='warning'] {
   color: var(--color-warning);
   background: var(--color-warning-bg);
 }
+
+/* Copy to another day (EP-31): folded away until asked for; the form is the add-item form's shape. */
+.copy {
+  margin-block-start: var(--space-3);
+}
+
+.copy summary {
+  cursor: pointer;
+  margin-block-end: var(--space-2);
+}
+
+.copy .hint {
+  color: var(--color-fg-muted);
+  margin: var(--space-1) 0;
+  font-size: 0.85em;
+}

@@ -81,10 +81,10 @@ now.
 
 Validation (`POST /validate`: gaps, overlaps, fixed anchors, rights, rendition availability),
 the approved-only guard at serialization, the pluggable playlist serializer (Cinegy MCRList first),
-`POST /send-to-air`, export profiles, the copy-a-range operation (§3.7), schedulability intake
+`POST /send-to-air`, export profiles, schedulability intake
 from MAM's lifecycle events. The reference slice in `reference/scheduling-service/` proved the
 guard and the intake; it is lifted, not copied — it uses constructor parameter properties, which
-the containers' strip-only loader refuses.
+the containers' strip-only loader refuses. Copy-a-range (§3.7) is `POST /schedules/{id}/copy` (`copy.ts`).
 
 ## Run
 
