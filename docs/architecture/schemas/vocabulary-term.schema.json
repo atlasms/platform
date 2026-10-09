@@ -66,7 +66,12 @@
       "readOnly": true,
       "description": "Denormalized reference count, maintained asynchronously. Drives the 'safe to delete?' affordance; never authoritative for enforcement."
     },
-    "createdBy": { "$ref": "common.schema.json#/$defs/Ulid" },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bumped on every revision; an update or a merge is a compare-and-set on the version read (EP-28.3)."
+    },
+    "createdBy": { "type": "string", "description": "The user who created the term." },
     "createdAt": { "type": "string", "format": "date-time" },
     "updatedAt": { "type": "string", "format": "date-time" }
   },

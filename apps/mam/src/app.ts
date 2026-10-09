@@ -274,6 +274,57 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
       options.service.category(await callerOf(req), (req.params as { id: string }).id),
     ),
   );
+  // EP-28.3: controlled vocabularies — stable id, mutable label, deprecate-not-delete, merge.
+  type V = { vocabulary: string; id: string };
+  app.get('/api/v1/vocabularies/:vocabulary', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.terms(await callerOf(req), (req.params as V).vocabulary, {
+        includeDeprecated:
+          (req.query as { includeDeprecated?: string }).includeDeprecated === 'true',
+      }),
+    ),
+  );
+  app.post('/api/v1/vocabularies/:vocabulary', async (req, reply) =>
+    handle(req, reply, async () => {
+      const term = await options.service.createTerm(
+        await callerOf(req),
+        (req.params as V).vocabulary,
+        (req.body ?? {}) as never,
+      );
+      return reply.code(201).send(term);
+    }),
+  );
+  app.get('/api/v1/vocabularies/:vocabulary/:id', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.term(await callerOf(req), (req.params as V).vocabulary, (req.params as V).id),
+    ),
+  );
+  app.patch('/api/v1/vocabularies/:vocabulary/:id', async (req, reply) =>
+    handle(req, reply, async () => {
+      const version = Number((req.query as { version?: string }).version);
+      if (!Number.isInteger(version) || version < 1) {
+        throw new ValidationError('version is required — the version of the term as read');
+      }
+      return options.service.updateTerm(
+        await callerOf(req),
+        (req.params as V).vocabulary,
+        (req.params as V).id,
+        version,
+        (req.body ?? {}) as never,
+      );
+    }),
+  );
+  app.post('/api/v1/vocabularies/:vocabulary/:id/merge', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.mergeTerm(
+        await callerOf(req),
+        (req.params as V).vocabulary,
+        (req.params as V).id,
+        (req.body ?? {}) as never,
+      ),
+    ),
+  );
+
   // EP-28.2: what the category inherits from its ancestors, each value with its origin.
   app.get('/api/v1/categories/:id/inherited', async (req, reply) =>
     handle(req, reply, async () =>

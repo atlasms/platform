@@ -11,6 +11,7 @@ import type { OutboxRecord } from '@atlas/messaging';
 import { Conflict } from '@atlas/service-kit';
 import type { Asset } from './asset.ts';
 import type { Category } from './category.ts';
+import type { VocabularyTerm } from './vocabulary.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
 import type { ParsedQuery, SearchHit } from './search.ts';
@@ -143,6 +144,10 @@ export interface AssetStore {
    */
   categoryPaths(ids: readonly string[]): Promise<Map<string, string>>;
 
+  /** A vocabulary's terms in a channel, deprecated and merged included, by sortOrder then key. */
+  terms(channelId: string, vocabulary: string): Promise<VocabularyTerm[]>;
+  term(id: string): Promise<VocabularyTerm | undefined>;
+
   /** One unit of work. Everything written inside commits together, or none of it does. */
   transaction<T>(fn: (tx: AssetTx) => Promise<T>): Promise<T>;
 
@@ -182,6 +187,24 @@ export class CategoryPathTaken extends Conflict {
   }
 }
 
+/** A vocabulary term write whose base is no longer the stored row (EP-28.3). */
+export class StaleTerm extends Conflict {
+  constructor(id: string, ifVersion: number | undefined) {
+    super(
+      ifVersion === undefined
+        ? `term ${id} already exists`
+        : `term ${id} changed since version ${ifVersion} was read — reload it`,
+    );
+  }
+}
+
+/** The vocabulary already has a term with this key in the channel. */
+export class TermKeyTaken extends Conflict {
+  constructor(vocabulary: string, key: string) {
+    super(`${vocabulary} already has a term with the key ${key} — a key is unique per vocabulary`);
+  }
+}
+
 /** The write surface, reachable only from inside {@link AssetStore.transaction}. */
 export interface AssetTx {
   /**
@@ -202,6 +225,11 @@ export interface AssetTx {
    * taken in the channel — a sibling with the same key — is a {@link CategoryPathTaken}.
    */
   putCategory(category: Category, ifVersion?: number): Promise<void>;
+  /**
+   * Write a vocabulary term — compare-and-set like `putCategory` ({@link StaleTerm}); a key taken
+   * in the vocabulary and channel is a {@link TermKeyTaken}. Bumps the reference snapshot.
+   */
+  putTerm(term: VocabularyTerm, ifVersion?: number): Promise<void>;
   /**
    * Replace an asset's extensible document.
    *

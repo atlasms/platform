@@ -7,7 +7,7 @@
   "required": ["kind", "action", "id"],
   "additionalProperties": false,
   "properties": {
-    "kind": { "enum": ["tag", "category", "subject", "classification", "structure"] },
+    "kind": { "enum": ["tag", "category", "subject", "classification", "structure", "genre", "supply-type", "production-group", "cast-role"] },
     "action": { "enum": ["created", "updated", "deleted", "moved", "deprecated", "merged"] },
     "id": { "type": "string" },
     "label": { "type": "string" },

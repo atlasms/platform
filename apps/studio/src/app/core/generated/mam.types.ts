@@ -48,13 +48,13 @@ export interface Asset {
   durationSec?: number;
   fileType: string;
   categoryId?: string;
-  /** A media default (EP-28.2): inherited from the category chain when absent. */
+  /** A media default (EP-28.2): the id of a live structure term (EP-28.3); inherited from the category chain when absent. */
   structureId?: string;
-  /** A media default (EP-28.2): set here it overrides the category's; absent, the category chain supplies it (GET /assets/{id}/inherited). */
+  /** A media default (EP-28.2): the id of a live genre term (EP-28.3). Set here it overrides the category's; absent, the category chain supplies it (GET /assets/{id}/inherited). */
   genre?: string;
-  /** A media default (EP-28.2). */
+  /** A media default (EP-28.2): the id of a live supply-type term (EP-28.3). */
   supplyType?: string;
-  /** A media default (EP-28.2). */
+  /** A media default (EP-28.2): the id of a live production-group term (EP-28.3). */
   productionGroup?: string;
   /** A media default (EP-28.2). */
   productionDate?: string;
@@ -93,11 +93,11 @@ export interface CreateAssetInput {
   description?: string;
   categoryId?: string;
   structureId?: string;
-  /** A media default (EP-28.2): set here it overrides the category's; absent, the category chain supplies it (GET /assets/{id}/inherited). */
+  /** A media default (EP-28.2): the id of a live genre term (EP-28.3). Set here it overrides the category's; absent, the category chain supplies it (GET /assets/{id}/inherited). */
   genre?: string;
-  /** A media default (EP-28.2). */
+  /** A media default (EP-28.2): the id of a live supply-type term (EP-28.3). */
   supplyType?: string;
-  /** A media default (EP-28.2). */
+  /** A media default (EP-28.2): the id of a live production-group term (EP-28.3). */
   productionGroup?: string;
   /** A media default (EP-28.2). */
   productionDate?: string;
@@ -113,11 +113,11 @@ export interface UpdateAssetInput {
   description?: string;
   categoryId?: string;
   structureId?: string;
-  /** A media default (EP-28.2): set here it overrides the category's; absent, the category chain supplies it (GET /assets/{id}/inherited). */
+  /** A media default (EP-28.2): the id of a live genre term (EP-28.3). Set here it overrides the category's; absent, the category chain supplies it (GET /assets/{id}/inherited). */
   genre?: string;
-  /** A media default (EP-28.2). */
+  /** A media default (EP-28.2): the id of a live supply-type term (EP-28.3). */
   supplyType?: string;
-  /** A media default (EP-28.2). */
+  /** A media default (EP-28.2): the id of a live production-group term (EP-28.3). */
   productionGroup?: string;
   /** A media default (EP-28.2). */
   productionDate?: string;
@@ -291,16 +291,56 @@ export interface EditProject {
   updatedAt?: string;
 }
 
-/** See ../schemas/vocabulary-term.schema.json. */
+/** The flat vocabularies MAM manages (EP-28.3). The SET is code-known; the terms are data. Categories and tags have their own resources. */
+export type VocabularyName =
+  | 'structure'
+  | 'genre'
+  | 'supply-type'
+  | 'production-group'
+  | 'classification'
+  | 'subject'
+  | 'cast-role';
+
+/** A term of a controlled vocabulary — see ../schemas/vocabulary-term.schema.json and ../configuration-and-reference-data.md §2.3: stable id, mutable label, deprecate-not-delete, merge via replacedById. */
 export interface VocabularyTerm {
-  id?: Ulid;
-  vocabulary: string;
+  id: Ulid;
+  vocabulary: VocabularyName;
+  channelId: string;
+  /** Fixed at creation; unique per vocabulary and channel — what imports and feeds map by. */
   key: string;
   labels: Record<string, string>;
-  parentId?: Ulid;
-  sortOrder?: number;
-  deprecatedAt?: string | null;
+  description?: string;
+  sortOrder: number;
+  colour?: string;
+  /** Third-party identifiers (EPG codes, ...). */
+  external?: Record<string, string>;
+  /** Out of the pickers; every reference still resolves. */
+  deprecatedAt?: string;
   replacedById?: Ulid;
+  version: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTermInput {
+  key: string;
+  labels: Record<string, string>;
+  description?: string;
+  sortOrder?: number;
+  colour?: string;
+  external?: Record<string, string>;
+}
+
+/** Omitted fields are unchanged. Not the key; not the replacement — that is a merge. */
+export interface UpdateTermInput {
+  labels?: Record<string, string>;
+  description?: string;
+  sortOrder?: number;
+  colour?: string;
+  external?: Record<string, string>;
+  /** true deprecates, false restores (not a merged term). */
+  deprecated?: boolean;
 }
 
 /** Versioned bundle of this service's reference data. See ../configuration-and-reference-data.md §5. */

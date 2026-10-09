@@ -89,25 +89,31 @@ export const MamOperations = {
   renderEditProject: { method: 'POST', path: '/api/v1/edit-projects/{id}/render', params: ['id'] },
   /** The cached reference snapshot MAM owns (vocabularies + resolved settings) with a configVersion (scope config:read). Supports If-None-Match. See ../configuration-and-reference-data.md §5. */
   getReferenceSnapshot: { method: 'GET', path: '/api/v1/reference', params: [] },
-  /** List terms of a vocabulary (scope taxonomy:read) */
+  /** A vocabulary's live terms by sortOrder then key — the deprecated and merged too with includeDeprecated (scope taxonomy:read; EP-28.3) */
   listVocabularyTerms: {
     method: 'GET',
     path: '/api/v1/vocabularies/{vocabulary}',
     params: ['vocabulary'],
   },
-  /** Add a term (scope taxonomy:admin) */
+  /** Add a term (scope taxonomy:admin in the channel — not a category-scoped grant; audited) */
   createVocabularyTerm: {
     method: 'POST',
     path: '/api/v1/vocabularies/{vocabulary}',
     params: ['vocabulary'],
   },
-  /** Rename / reorder / deprecate a term (scope taxonomy:admin). Never hard-deletes an in-use term. */
+  /** One term, deprecated or merged included — every reference still resolves (scope taxonomy:read) */
+  getVocabularyTerm: {
+    method: 'GET',
+    path: '/api/v1/vocabularies/{vocabulary}/{termId}',
+    params: ['vocabulary', 'termId'],
+  },
+  /** Rename / reorder / annotate / deprecate or restore a term over the version read (compare-and-set; scope taxonomy:admin; audited). The key never changes; a merged term cannot be restored. Never deletes. */
   updateVocabularyTerm: {
     method: 'PATCH',
     path: '/api/v1/vocabularies/{vocabulary}/{termId}',
     params: ['vocabulary', 'termId'],
   },
-  /** Merge this term into another; old references redirect via replacedById (scope taxonomy:admin, one audited event) */
+  /** Merge this term into another live term of the same vocabulary — it is deprecated with replacedById; ONE audited write, no asset rewritten (scope taxonomy:admin) */
   mergeVocabularyTerm: {
     method: 'POST',
     path: '/api/v1/vocabularies/{vocabulary}/{termId}/merge',

@@ -37,6 +37,10 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `taxonomy.updated` (EP-28.3): `kind` takes the flat vocabularies MAM now manages — `genre`,
+  `supply-type`, `production-group`, `cast-role` — beside the existing ones.
+- `vocabulary-term` (EP-28.3): `version`, for the compare-and-set on update and merge; `createdBy`
+  is a user id as text, not a ULID (IAM's ids are not all ULIDs).
 - `taxonomy.updated` carries an optional `path` (#260): for a category, its materialized path after
   the change — a consumer that keys anything by category path learns a move without a fetch.
 - `ingest.detected` carries `ingestJobId` (EP-21.1): the job the detection created. Without it a

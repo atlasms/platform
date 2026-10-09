@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { Subject } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssetsService } from '../core/assets.service.ts';
 import type {
@@ -7,7 +7,10 @@ import type {
   AssetInheritance,
   FileRef,
   UpdateAssetInput,
+  VocabularyName,
+  VocabularyTerm,
 } from '../core/generated/mam.types.ts';
+import { VocabulariesService } from '../core/vocabularies.service.ts';
 import type { Job } from '../core/generated/mts.types.ts';
 import { TranscodeJobsService } from '../core/transcode-jobs.service.ts';
 import { SessionStore } from '../core/session.store.ts';
@@ -61,6 +64,42 @@ class FakeAssets {
     const result = new Subject<AssetInheritance>();
     this.inheritances.push({ id, result });
     return result;
+  }
+}
+
+const term = (
+  id: string,
+  vocabulary: VocabularyName,
+  en: string,
+  over: Partial<VocabularyTerm> = {},
+) =>
+  ({
+    id,
+    vocabulary,
+    channelId: 'ch12',
+    key: en.toLowerCase(),
+    labels: { en },
+    sortOrder: 0,
+    version: 1,
+    createdBy: 'u1',
+    createdAt: '2026-10-09T00:00:00.000Z',
+    updatedAt: '2026-10-09T00:00:00.000Z',
+    ...over,
+  }) satisfies VocabularyTerm;
+
+/** The vocabularies the editor's term pickers read (EP-28.3). */
+class FakeVocabularies {
+  readonly lists: Array<{ vocabulary: VocabularyName; includeDeprecated: boolean }> = [];
+  readonly terms: Partial<Record<VocabularyName, VocabularyTerm[]>> = {
+    genre: [
+      term('G-DRAMA', 'genre', 'Drama'),
+      term('G-COMEDY', 'genre', 'Comedy'),
+      term('G-OLD', 'genre', 'Melodrama', { deprecatedAt: '2026-10-01T00:00:00.000Z' }),
+    ],
+  };
+  list(vocabulary: VocabularyName, includeDeprecated = false) {
+    this.lists.push({ vocabulary, includeDeprecated });
+    return of(this.terms[vocabulary] ?? []);
   }
 }
 
@@ -161,6 +200,7 @@ function setup(fieldGroups: string[] = ['core', 'taxonomy', 'rights']) {
       EditorStore,
       { provide: AssetsService, useValue: fake },
       { provide: TranscodeJobsService, useValue: jobs },
+      { provide: VocabulariesService, useValue: new FakeVocabularies() },
       { provide: LocaleService, useClass: FakeLocale },
     ],
   });
@@ -192,6 +232,30 @@ function setup(fieldGroups: string[] = ['core', 'taxonomy', 'rights']) {
 describe('AssetEditor', () => {
   beforeEach(() => TestBed.resetTestingModule());
 
+  it('a term field is a picker of LIVE terms by label; an old value stays visible, marked; empty names what it inherits (EP-28.3)', () => {
+    const { fixture, fake } = setup();
+    fake.gets[0]?.result.next(record({ genre: 'G-OLD' }));
+    fake.inheritances[0]?.result.next({
+      assetId: record().id,
+      defaults: { supplyType: { value: 'S-X', from: { categoryId: 'drama', path: '/drama/' } } },
+      policies: {},
+    });
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const genre = root.querySelector<HTMLSelectElement>('select[name="genre"]')!;
+    const options = [...genre.options].map((o) => [o.value, o.textContent?.trim()]);
+    expect(options).toEqual([
+      ['', '— Not set'],
+      ['G-OLD', 'Melodrama (categories.deprecated)'],
+      ['G-DRAMA', 'Drama'],
+      ['G-COMEDY', 'Comedy'],
+    ]);
+    expect(genre.value).toBe('G-OLD');
+    // A term the editor cannot name is shown by its id rather than hidden.
+    const supply = root.querySelector<HTMLSelectElement>('select[name="supplyType"]')!;
+    expect(supply.options[0]?.textContent?.trim()).toBe('— assetEditor.inherits S-X');
+  });
+
   describe('inheritance (EP-28.2)', () => {
     const DRAMA = { categoryId: 'drama', path: '/drama/' };
     const inherits = (defaults: AssetInheritance['defaults']): AssetInheritance => ({
@@ -208,9 +272,9 @@ describe('AssetEditor', () => {
       fake.inheritances[0]?.result.next(inherits({ genre: { value: 'drama', from: DRAMA } }));
       fixture.detectChanges();
       const root = fixture.nativeElement as HTMLElement;
-      const genre = root.querySelector<HTMLInputElement>('input[name="genre"]');
+      const genre = root.querySelector<HTMLSelectElement>('select[name="genre"]');
       expect(genre?.value).toBe('');
-      expect(genre?.placeholder).toBe('drama');
+      expect(genre?.options[0]?.textContent?.trim()).toBe('— assetEditor.inherits drama');
       expect(genre?.closest('label')?.textContent).toContain('/drama/');
       expect(root.textContent).toContain('assetEditor.reviewNeeded');
     });

@@ -15,10 +15,17 @@ import type {
   CategoryInheritance,
   MediaDefaultField,
   UpdateCategoryInput,
+  VocabularyTerm,
 } from '../core/generated/mam.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
+import {
+  TERM_FIELD_VOCABULARY,
+  termLabel,
+  VocabulariesService,
+  type TermField,
+} from '../core/vocabularies.service.ts';
 
 /** The media defaults a category may set (EP-28.2) — the order the editor shows them in. */
 const DEFAULT_FIELDS: readonly MediaDefaultField[] = [
@@ -210,48 +217,91 @@ export function openCategory(editors: EditorStore, category: Category, locale: s
           <fieldset class="fields" [disabled]="!mayGroup('defaults')">
             <label>
               <span>{{ locale.t('categories.default.structureId') }}</span>
-              <input
+              <!-- EP-28.3: a term of the vocabulary; empty inherits from above. -->
+              <select
                 name="default-structureId"
-                [placeholder]="inherited('structureId')"
                 [ngModel]="d().defaults.structureId"
                 (ngModelChange)="setDefault('structureId', $event)"
-              />
+              >
+                <option value="">{{ inheritOption('structureId') }}</option>
+                @if (d().defaults.structureId && !isLive('structureId', d().defaults.structureId)) {
+                  <option [value]="d().defaults.structureId">
+                    {{ termName('structureId', d().defaults.structureId) }}
+                  </option>
+                }
+                @for (t of liveTerms('structureId'); track t.id) {
+                  <option [value]="t.id">{{ termName('structureId', t.id) }}</option>
+                }
+              </select>
               @if (origin('structureId'); as from) {
                 <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
               }
             </label>
             <label>
               <span>{{ locale.t('categories.default.genre') }}</span>
-              <input
+              <!-- EP-28.3: a term of the vocabulary; empty inherits from above. -->
+              <select
                 name="default-genre"
-                [placeholder]="inherited('genre')"
                 [ngModel]="d().defaults.genre"
                 (ngModelChange)="setDefault('genre', $event)"
-              />
+              >
+                <option value="">{{ inheritOption('genre') }}</option>
+                @if (d().defaults.genre && !isLive('genre', d().defaults.genre)) {
+                  <option [value]="d().defaults.genre">
+                    {{ termName('genre', d().defaults.genre) }}
+                  </option>
+                }
+                @for (t of liveTerms('genre'); track t.id) {
+                  <option [value]="t.id">{{ termName('genre', t.id) }}</option>
+                }
+              </select>
               @if (origin('genre'); as from) {
                 <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
               }
             </label>
             <label>
               <span>{{ locale.t('categories.default.supplyType') }}</span>
-              <input
+              <!-- EP-28.3: a term of the vocabulary; empty inherits from above. -->
+              <select
                 name="default-supplyType"
-                [placeholder]="inherited('supplyType')"
                 [ngModel]="d().defaults.supplyType"
                 (ngModelChange)="setDefault('supplyType', $event)"
-              />
+              >
+                <option value="">{{ inheritOption('supplyType') }}</option>
+                @if (d().defaults.supplyType && !isLive('supplyType', d().defaults.supplyType)) {
+                  <option [value]="d().defaults.supplyType">
+                    {{ termName('supplyType', d().defaults.supplyType) }}
+                  </option>
+                }
+                @for (t of liveTerms('supplyType'); track t.id) {
+                  <option [value]="t.id">{{ termName('supplyType', t.id) }}</option>
+                }
+              </select>
               @if (origin('supplyType'); as from) {
                 <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
               }
             </label>
             <label>
               <span>{{ locale.t('categories.default.productionGroup') }}</span>
-              <input
+              <!-- EP-28.3: a term of the vocabulary; empty inherits from above. -->
+              <select
                 name="default-productionGroup"
-                [placeholder]="inherited('productionGroup')"
                 [ngModel]="d().defaults.productionGroup"
                 (ngModelChange)="setDefault('productionGroup', $event)"
-              />
+              >
+                <option value="">{{ inheritOption('productionGroup') }}</option>
+                @if (
+                  d().defaults.productionGroup &&
+                  !isLive('productionGroup', d().defaults.productionGroup)
+                ) {
+                  <option [value]="d().defaults.productionGroup">
+                    {{ termName('productionGroup', d().defaults.productionGroup) }}
+                  </option>
+                }
+                @for (t of liveTerms('productionGroup'); track t.id) {
+                  <option [value]="t.id">{{ termName('productionGroup', t.id) }}</option>
+                }
+              </select>
               @if (origin('productionGroup'); as from) {
                 <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
               }
@@ -476,6 +526,15 @@ export class CategoryEditor implements OnInit {
 
   ngOnInit(): void {
     this.reload();
+    for (const [field, vocabulary] of Object.entries(TERM_FIELD_VOCABULARY) as [
+      TermField,
+      (typeof TERM_FIELD_VOCABULARY)[TermField],
+    ][]) {
+      this.vocabularies.list(vocabulary, true).subscribe({
+        next: (list) => this.terms.update((t) => ({ ...t, [field]: list })),
+        error: () => undefined,
+      });
+    }
   }
 
   protected reload(): void {
@@ -486,6 +545,33 @@ export class CategoryEditor implements OnInit {
       error: () => this.loadError.set(this.locale.t('admin.loadError')),
     });
     this.api.list(true).subscribe({ next: (all) => this.all.set(all), error: () => undefined });
+  }
+
+  /** The terms each term default offers (EP-28.3) — deprecated too, to name an old value. */
+  private readonly vocabularies = inject(VocabulariesService);
+  private readonly terms = signal<Partial<Record<TermField, VocabularyTerm[]>>>({});
+
+  protected liveTerms(field: TermField): VocabularyTerm[] {
+    return (this.terms()[field] ?? []).filter((t) => !t.deprecatedAt);
+  }
+
+  protected isLive(field: TermField, id: string): boolean {
+    return this.liveTerms(field).some((t) => t.id === id);
+  }
+
+  protected termName(field: TermField, id: string): string {
+    const term = (this.terms()[field] ?? []).find((t) => t.id === id);
+    if (!term) return id;
+    const name = termLabel(term, this.locale.locale());
+    return term.deprecatedAt ? `${name} (${this.locale.t('categories.deprecated')})` : name;
+  }
+
+  /** The empty choice: what this node would inherit for the field, or that nothing is set. */
+  protected inheritOption(field: TermField): string {
+    const value = this.inherited(field);
+    return value
+      ? `${this.locale.t('categories.inherit')} — ${this.termName(field, value)}`
+      : this.locale.t('categories.inherit');
   }
 
   /** The value this node would inherit for a field, or ''. */

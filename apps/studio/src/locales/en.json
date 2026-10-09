@@ -202,7 +202,8 @@
     "reviewNeeded": "review needed",
     "reviewNotNeeded": "no review needed",
     "defaultExpiry": "expires after approval:",
-    "keepOnline": "kept online after use:"
+    "keepOnline": "kept online after use:",
+    "inherits": "inherits"
   },
   "editor": {
     "close": "Close",
@@ -473,7 +474,8 @@
     "mtsDefault": "MTS default",
     "channels": "Channels",
     "bitrateKbps": "Bit rate (kb/s)",
-    "categories": "Categories"
+    "categories": "Categories",
+    "vocabularies": "Vocabularies"
   },
   "watchers": {
     "new": "New watcher",
@@ -666,5 +668,26 @@
     "defaultExpiry": "Default expiry",
     "defaultExpiryWhy": "An instant, or a duration from approval (P1Y). Fixed into the media when it is approved.",
     "inheritedFrom": "Inherited from"
+  },
+  "vocab": {
+    "vocabulary": "Vocabulary",
+    "name": {
+      "structure": "Structures",
+      "genre": "Genres",
+      "supply-type": "Supply types",
+      "production-group": "Production groups",
+      "classification": "Classifications",
+      "subject": "Subjects",
+      "cast-role": "Cast & crew roles"
+    },
+    "new": "New term",
+    "keyHint": "The key is permanent: imports and feeds map by it.",
+    "none": "No terms yet.",
+    "edit": "Edit…",
+    "mergeInto": "Merge into…",
+    "merge": "Merge",
+    "mergeWhy": "Merging deprecates this term and points it at the one chosen; nothing that uses it is rewritten.",
+    "mergedInto": "Merged into",
+    "conflict": "This term changed while you were editing it. It has been reloaded."
   }
 }

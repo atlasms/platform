@@ -633,7 +633,16 @@ export interface TaskUpdatedPayload {
 
 /** Emitted by MAM when an operator-managed vocabulary entry changes. Consumed by Search, WebSocket. The `kind` enum is Tier 0 (the SET of vocabularies is code-known); the terms themselves are data — see docs/architecture/configuration-and-reference-data.md. */
 export interface TaxonomyUpdatedPayload {
-  kind: 'tag' | 'category' | 'subject' | 'classification' | 'structure';
+  kind:
+    | 'tag'
+    | 'category'
+    | 'subject'
+    | 'classification'
+    | 'structure'
+    | 'genre'
+    | 'supply-type'
+    | 'production-group'
+    | 'cast-role';
   action: 'created' | 'updated' | 'deleted' | 'moved' | 'deprecated' | 'merged';
   id: string;
   label?: string;

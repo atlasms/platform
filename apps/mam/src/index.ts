@@ -24,6 +24,7 @@ export {
   type CacheOutcome,
   type MirrorOutcome,
   type MamReferenceSnapshot,
+  type VocabularyTermRef,
   type Caller,
   type MamOptions,
   type ReadOptions,
@@ -139,6 +140,18 @@ export {
   type CreateCategoryInput,
   type UpdateCategoryInput,
 } from './category.ts';
+export {
+  isVocabulary,
+  resolveTerm,
+  TERM_FIELDS,
+  termLabel,
+  VOCABULARIES,
+  type CreateTermInput,
+  type TermField,
+  type UpdateTermInput,
+  type Vocabulary,
+  type VocabularyTerm,
+} from './vocabulary.ts';
 export {
   addDuration,
   chainOf,

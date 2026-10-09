@@ -366,6 +366,35 @@ asset's own list **replaces** the category's, the same rule as every scalar here
   Search does not index inherited values yet: that is EP-28.6's decision (resolve at query time, or
   project effective values and re-project a subtree on `taxonomy.updated`).
 
+### 2.8 As built — controlled vocabularies (EP-28.3)
+
+[Configuration §2.3](configuration-and-reference-data.md#23-tier-2--vocabularies-pure-data), for the
+flat vocabularies: `structure`, `genre`, `supply-type`, `production-group`, `classification`,
+`subject`, `cast-role` (the set is Tier 0; categories and tags have their own resources). One table,
+`vocabulary_terms`, a key unique per (channel, vocabulary). A term is the shared shape — stable `id`,
+permanent `key`, mutable i18n `labels`, `sortOrder`, `description`, `colour`, `external` ids — with
+`version` for compare-and-set.
+
+- **Decided with the product owner: the media-default fields hold TERM ids.** `structureId`,
+  `genre`, `supplyType` and `productionGroup` — on an asset and in a category's `defaults` — must
+  name a live term of their vocabulary in the channel when written: free text is a 422, as is
+  another vocabulary's or channel's term. A value is checked when it is WRITTEN or changed; one
+  already stored is left alone, so an edit to the title never trips over an old value. Renaming a
+  term rewrites nothing (rule 1).
+- **Deprecate, never delete** (rule 2): a deprecated term leaves the pickers and the reference
+  snapshot, still resolves (`GET …/{termId}`), and is refused for a new write; restoring brings it
+  back.
+- **Merge** (rule 3): `POST /vocabularies/{v}/{termId}/merge { into, version }` deprecates the term
+  with `replacedById` — ONE write, one `taxonomy.updated` (`merged`) and one `audit.recorded`; no
+  asset is rewritten. A write naming the merged term is refused with the survivor's key and id. A
+  merged term cannot be restored.
+- **Who may**: `taxonomy:read` to read, `taxonomy:admin` in the CHANNEL to write — checked with no
+  category path, so a grant narrowed to a subtree cannot edit a channel-wide vocabulary. Every write
+  is a revision (`vocabulary-term`), its history read under `taxonomy:read`.
+- The reference snapshot carries each vocabulary's live terms beside `tag` and `category`.
+- Not yet: the `usageCount` and the zero-reference hard delete (rule 2's exception); the asset's
+  LIST fields that classifications, subjects and cast roles feed (EP-28.4/28.5).
+
 ## 3. The Schedule aggregate
 
 A channel's schedule is a **reel**: an ordered sequence of items across a **broadcast day**, each with
