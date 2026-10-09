@@ -60,6 +60,17 @@ spec:
                   key: {{ .Values.postgres.auth.passwordKey }}
             - name: ATLAS_PG_URL
               value: postgres://$(PGUSER):$(PGPASSWORD)@{{ .Values.postgres.host }}:{{ .Values.postgres.port }}/{{ .Values.postgres.database }}
+            # HSM, asked where renditions are when a reel is validated (EP-31), signed with a READ
+            # key HSM accepts on its availability route only. Optional: without it validation reports
+            # availability as unchecked.
+            - name: ATLAS_HSM_ORIGIN
+              value: http://hsm:3000
+            - name: ATLAS_HSM_READ_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: hsm-read-keys
+                  key: keys
+                  optional: true
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

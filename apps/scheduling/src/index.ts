@@ -38,12 +38,21 @@ export {
 } from './approvals.ts';
 export {
   clock,
-  UNCHECKED,
   validateReel,
   type IssueKind,
+  type ReelAvailability,
   type Severity,
   type ValidationIssue,
 } from './validation.ts';
+export {
+  DEFAULT_RENDITION,
+  fakeAvailability,
+  hsmAvailability,
+  renditionKey,
+  type AvailabilitySource,
+  type RenditionQuery,
+  type RenditionState,
+} from './availability.ts';
 export { ASSET_EVENTS_PATTERN, startApprovalConsumer } from './consumer.ts';
 export {
   parseCopyRequest,

@@ -31,6 +31,9 @@ release is a statement of what changed, not a deploy step.
 
 ### Changed
 
+- `schedule.validated` (EP-31): the `availability` issue kind is now produced — the rendition an
+  item airs is not online, intact and the channel's in HSM; the description says what `rights` and
+  `availability` mean instead of what they waited for.
 - `alert.raised` is emitted by the service watching the condition, not only Logging & Analytics:
   RIM raises `recording-missed` (critical) and `recording-partial` (warning) for a hole in a
   recording (EP-39). Description only; the payload is unchanged.

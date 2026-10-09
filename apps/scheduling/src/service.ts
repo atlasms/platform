@@ -43,7 +43,18 @@ import { APPROVAL_EVENTS, applyAssetEvent, type MediaApproval } from './approval
 import { planCopy, type CopyRequest } from './copy.ts';
 import type { RightsWindow, RightsWindowInput } from './rights.ts';
 import type { ScheduleStore, ScheduleTx } from './store.ts';
-import { UNCHECKED, validateReel, type IssueKind, type ValidationIssue } from './validation.ts';
+import {
+  DEFAULT_RENDITION,
+  renditionKey,
+  type AvailabilitySource,
+  type RenditionState,
+} from './availability.ts';
+import {
+  validateReel,
+  type IssueKind,
+  type ReelAvailability,
+  type ValidationIssue,
+} from './validation.ts';
 
 /** What `POST /schedules/{id}/validate` answers (scheduling.yaml `ValidationReport`). */
 export interface ValidationReport {
@@ -71,17 +82,25 @@ export interface SchedulingServiceOptions {
   now?: () => Date;
   /** Trace context captured into the event where it is created (EP-13.3). */
   traceHeaders?: () => Record<string, string> | undefined;
+  /** HSM, asked where renditions are (availability.ts). Omit and availability is `unchecked`. */
+  availability?: AvailabilitySource;
+  /** Why HSM could not be asked — the log's business; the report only says `unchecked`. */
+  onAvailabilityError?: (err: unknown, context: { scheduleId: string }) => void;
 }
 
 export class SchedulingService {
   private readonly store: ScheduleStore;
   private readonly now: () => Date;
   private readonly traceHeaders: () => Record<string, string> | undefined;
+  private readonly availability: AvailabilitySource | undefined;
+  private readonly onAvailabilityError: (err: unknown, context: { scheduleId: string }) => void;
 
   constructor(options: SchedulingServiceOptions) {
     this.store = options.store;
     this.now = options.now ?? (() => new Date());
     this.traceHeaders = options.traceHeaders ?? (() => undefined);
+    this.availability = options.availability;
+    this.onAvailabilityError = options.onAvailabilityError ?? (() => undefined);
   }
 
   // --- reads ---------------------------------------------------------------------------------------------
@@ -142,7 +161,8 @@ export class SchedulingService {
       assetIds: mediaIds,
       categoryIds,
     });
-    const issues = validateReel(items, approvals, schedule.timezone, rights);
+    const availability = await this.reelAvailability(schedule.channelId, id, items);
+    const issues = validateReel(items, approvals, schedule.timezone, rights, availability);
     const valid = !issues.some((i) => i.severity === 'critical');
     const validatedAt = this.now().toISOString();
 
@@ -188,8 +208,38 @@ export class SchedulingService {
       state: next.state,
       valid,
       issues,
-      unchecked: [...UNCHECKED],
+      unchecked: availability === undefined ? ['availability'] : [],
       validatedAt,
+    };
+  }
+
+  /**
+   * HSM's answer for every rendition the reel airs — or `undefined` when it cannot be had (not
+   * configured, or HSM away), so the validator does not run and the report says so.
+   */
+  private async reelAvailability(
+    channelId: string,
+    scheduleId: string,
+    items: readonly ScheduleItem[],
+  ): Promise<ReelAvailability | undefined> {
+    if (this.availability === undefined) return undefined;
+    const queries = new Map<string, { assetId: string; kind: string }>();
+    for (const item of items) {
+      if (item.mediaId === undefined) continue;
+      const kind = item.renditionKind ?? DEFAULT_RENDITION;
+      queries.set(renditionKey(item.mediaId, kind), { assetId: item.mediaId, kind });
+    }
+    if (queries.size === 0) return { channelId, states: new Map() };
+    let answers: RenditionState[];
+    try {
+      answers = await this.availability.check([...queries.values()]);
+    } catch (err) {
+      this.onAvailabilityError(err, { scheduleId });
+      return undefined;
+    }
+    return {
+      channelId,
+      states: new Map(answers.map((a) => [renditionKey(a.assetId, a.kind), a])),
     };
   }
 
