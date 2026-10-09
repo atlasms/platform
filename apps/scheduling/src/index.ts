@@ -46,6 +46,13 @@ export {
 } from './validation.ts';
 export { ASSET_EVENTS_PATTERN, startApprovalConsumer } from './consumer.ts';
 export {
+  parseCopyRequest,
+  planCopy,
+  type CopyMode,
+  type CopyPlan,
+  type CopyRequest,
+} from './copy.ts';
+export {
   covered,
   governingWindows,
   parseRightsWindowInput,

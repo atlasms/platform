@@ -35,6 +35,8 @@ export const SchedulingOperations = {
     path: '/api/v1/schedules/{id}/items/{itemId}',
     params: ['id', 'itemId'],
   },
+  /** Copy a time-range of this reel onto another schedule, or itself (FR-SCH-13; scope schedule:read on the source, schedule:write on the target) */
+  copySchedule: { method: 'POST', path: '/api/v1/schedules/{id}/copy', params: ['id'] },
   /** Validate the reel on demand (scope schedule:write; FR-SCH-2/3) */
   validateSchedule: { method: 'POST', path: '/api/v1/schedules/{id}/validate', params: ['id'] },
   /** Serialize the playlist and trigger HSM delivery (scope schedule:send; audited) */

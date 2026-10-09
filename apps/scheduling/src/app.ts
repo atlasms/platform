@@ -10,6 +10,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { isUlid, ulid } from '@atlas/contracts';
 import type { EffectivePolicy } from '@atlas/policy';
+import { parseCopyRequest } from './copy.ts';
 import { parseRightsWindowInput } from './rights.ts';
 import {
   parseCreateSchedule,
@@ -339,6 +340,13 @@ export async function buildSchedulingApp(options: SchedulingAppOptions): Promise
       void _mid;
       return service.updateItem(caller, req.params.id, req.params.itemId, patch);
     }),
+  );
+
+  // EP-31: copy a range of this reel onto another (or itself) — §3.7, FR-SCH-13.
+  app.post<{ Params: P }>('/api/v1/schedules/:id/copy', (req, reply) =>
+    handle(req, reply, 200, (caller) =>
+      service.copy(caller, req.params.id, parseCopyRequest(req.body)),
+    ),
   );
 
   // EP-31: on-demand validation. Advisory — the report is the answer, whatever it finds.

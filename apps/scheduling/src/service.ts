@@ -40,6 +40,7 @@ import {
   type UpdateScheduleInput,
 } from './schedule.ts';
 import { APPROVAL_EVENTS, applyAssetEvent, type MediaApproval } from './approvals.ts';
+import { planCopy, type CopyRequest } from './copy.ts';
 import type { RightsWindow, RightsWindowInput } from './rights.ts';
 import type { ScheduleStore, ScheduleTx } from './store.ts';
 import { UNCHECKED, validateReel, type IssueKind, type ValidationIssue } from './validation.ts';
@@ -455,6 +456,59 @@ export class SchedulingService {
     return inReelOrder(items);
   }
 
+  /**
+   * Copy a range of one reel onto another (§3.7, FR-SCH-13; copy.ts plans it). The source is read
+   * under `schedule:read`, the target written under `schedule:write` — both this caller's channel —
+   * and the write is a compare-and-set on the version the caller read of the TARGET: an overwrite
+   * over a reel someone else has since edited would remove items they never saw. One write: the
+   * target's whole reel, its `schedule.updated` and an `audit.recorded` (action `schedule.copied`)
+   * whose delta is the reel before and after plus where it came from.
+   */
+  async copy(
+    caller: Caller,
+    sourceId: string,
+    request: CopyRequest,
+  ): Promise<{ schedule: Schedule; items: ScheduleItem[]; copied: number; removed: number }> {
+    await this.get(caller, sourceId);
+    const target = await this.get(caller, request.targetScheduleId);
+    this.authorize(caller, 'schedule:write');
+    if (target.version !== request.targetVersion) {
+      throw new Conflict(
+        `schedule ${target.id} is at version ${target.version}, not ${request.targetVersion}: reload it`,
+      );
+    }
+    const source = await this.store.items(sourceId);
+    const before = sourceId === target.id ? source : await this.store.items(target.id);
+    const plan = planCopy(source, before, target.id, request);
+    checkReel(plan.items);
+    const next = this.bump(target);
+    await this.commit(
+      caller,
+      next,
+      target,
+      { itemCount: plan.items.length },
+      async (tx) => tx.replaceItems(target.id, plan.items),
+      {
+        items: { before: inReelOrder(before), after: inReelOrder(plan.items) },
+        copiedFrom: {
+          after: {
+            scheduleId: sourceId,
+            ...(request.from !== undefined ? { from: request.from, to: request.to } : {}),
+            at: request.at,
+            mode: request.mode,
+          },
+        },
+      },
+      { action: 'schedule.copied', ifVersion: target.version },
+    );
+    return {
+      schedule: next,
+      items: inReelOrder(plan.items),
+      copied: plan.copied,
+      removed: plan.removed,
+    };
+  }
+
   async addItem(
     caller: Caller,
     scheduleId: string,
@@ -590,7 +644,9 @@ export class SchedulingService {
     await this.store.transaction(async (tx) => {
       if (!(await tx.put(schedule, options.ifVersion))) {
         throw new Conflict(
-          `schedule ${schedule.id} changed while it was being validated; validate it again`,
+          options.action === 'schedule.validated'
+            ? `schedule ${schedule.id} changed while it was being validated; validate it again`
+            : `schedule ${schedule.id} changed under this write; reload it and try again`,
         );
       }
       await also?.(tx);

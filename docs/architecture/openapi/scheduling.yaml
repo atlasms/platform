@@ -112,6 +112,29 @@ paths:
       responses:
         '204': { description: Removed }
         '404': { $ref: '#/components/responses/Error' }
+  /schedules/{id}/copy:
+    post:
+      operationId: copySchedule
+      tags: [schedules]
+      summary: Copy a time-range of this reel onto another schedule, or itself (FR-SCH-13; scope schedule:read on the source, schedule:write on the target)
+      description: >-
+        data-model §3.7. The TOP-LEVEL items that START in `[from, to)` — the whole reel when both
+        are absent — are copied with their sub-schedules, shifted so that `from` (or the first
+        item's start) lands at `at`, with new ids; everything else travels as it is (fixed anchors,
+        title and category overrides, in/out points, notes). `merge` adds them to the target;
+        `overwrite` first removes the target's top-level items that START in the destination range
+        (`[at, at + (to - from))`). Nothing is cut at an edge: an overlap the copy leaves is
+        `POST /validate`'s to name. One write on the target, a compare-and-set on `targetVersion`
+        — a stale one is a 409 — with `schedule.updated` and an `audit.recorded` (action
+        `schedule.copied`) whose delta is the reel before and after and where it came from.
+      parameters:
+        - { name: id, in: path, required: true, description: The source schedule., schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CopyScheduleInput' } } } }
+      responses:
+        '200': { description: The target after the copy, content: { application/json: { schema: { $ref: '#/components/schemas/CopyResult' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /schedules/{id}/validate:
     post:
       operationId: validateSchedule
@@ -210,6 +233,25 @@ components:
       type: string
       description: 'HH:MM:SS:FF — the playout applies it (data-model §3.3).'
       pattern: '^\\d{2}:\\d{2}:\\d{2}:\\d{2}$'
+    CopyScheduleInput:
+      type: object
+      required: [targetScheduleId, targetVersion, at, mode]
+      additionalProperties: false
+      properties:
+        from: { type: string, format: date-time, description: 'The source range, by item start — with `to`, or neither (the whole reel).' }
+        to: { type: string, format: date-time }
+        targetScheduleId: { $ref: '#/components/schemas/Ulid' }
+        targetVersion: { type: integer, minimum: 1, description: "The target's version, read: the copy is a compare-and-set on it." }
+        at: { type: string, format: date-time, description: "Where the range's start lands." }
+        mode: { type: string, enum: [merge, overwrite] }
+    CopyResult:
+      type: object
+      required: [schedule, items, copied, removed]
+      properties:
+        schedule: { $ref: '#/components/schemas/Schedule' }
+        items: { type: array, items: { $ref: '#/components/schemas/ScheduleItem' } }
+        copied: { type: integer, description: 'Items copied, sub-schedule items included.' }
+        removed: { type: integer, description: 'Target items an overwrite removed, sub-schedule items included.' }
     Schedule:
       type: object
       description: The header of one channel's program table for one broadcast day (data-model §3.1).

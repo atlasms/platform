@@ -3,7 +3,11 @@ import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type {
+  CopyResult,
+  CopyScheduleInput,
+  CreateSchedule,
   Schedule,
+  SchedulePage,
   ScheduleItem,
   ScheduleItemInput,
   ScheduleWithItems,
@@ -76,6 +80,27 @@ class FakeSchedules {
     return result;
   }
 
+  readonly lists: Array<{ broadcastDate?: string; result: Subject<SchedulePage> }> = [];
+  list(options: { broadcastDate?: string }) {
+    const result = new Subject<SchedulePage>();
+    this.lists.push({ ...options, result });
+    return result;
+  }
+
+  readonly creates: Array<{ body: CreateSchedule; result: Subject<Schedule> }> = [];
+  create(body: CreateSchedule) {
+    const result = new Subject<Schedule>();
+    this.creates.push({ body, result });
+    return result;
+  }
+
+  readonly copies: Array<{ id: string; body: CopyScheduleInput; result: Subject<CopyResult> }> = [];
+  copy(id: string, body: CopyScheduleInput) {
+    const result = new Subject<CopyResult>();
+    this.copies.push({ id, body, result });
+    return result;
+  }
+
   readonly validations: Array<{ id: string; result: Subject<ValidationReport> }> = [];
   validate(id: string) {
     const result = new Subject<ValidationReport>();
@@ -116,6 +141,11 @@ interface Internal {
   report: () => ValidationReport | null;
   validateError: () => string | null;
   schedule: () => Schedule | null;
+  setCopy(field: string, value: string): void;
+  copy(event: Event): void;
+  copyForm: () => { from: string; to: string; date: string; at: string; mode: string };
+  copyError: () => string | null;
+  copyDone: () => string | null;
 }
 
 function setup(permissions: string[] = ['schedule:read', 'schedule:write']) {
@@ -425,6 +455,103 @@ describe('ScheduleEditor', () => {
     t.fixture.detectChanges();
     expect(t.component.report()).toBeNull();
     expect(root.querySelector('section.report')).toBeNull();
+  });
+
+  it('COPY: a range in the schedule’s zone onto the next day, found by date — a range past midnight runs into the next day', () => {
+    const t = setup();
+    t.fake.gets[0]?.result.next({ ...header({ timezone: 'Europe/London' }), items: [] });
+    t.fixture.detectChanges();
+    expect(t.component.copyForm().date).toBe('2026-09-13');
+    t.component.setCopy('from', '18:00');
+    t.component.setCopy('to', '01:00');
+    t.component.setCopy('at', '06:00');
+    t.component.setCopy('mode', 'overwrite');
+    t.component.copy(new Event('submit'));
+
+    expect(t.fake.lists[0]?.broadcastDate).toBe('2026-09-13');
+    const target = header({
+      id: '01K0000000000000000000TRGT',
+      broadcastDate: '2026-09-13',
+      version: 4,
+    });
+    t.fake.lists[0]?.result.next({ items: [target] });
+    expect(t.fake.creates).toHaveLength(0);
+    // London is UTC+1 in September: 18:00 → 17:00Z, and 01:00 is the NEXT morning.
+    expect(t.fake.copies[0]).toMatchObject({
+      id: SID,
+      body: {
+        from: '2026-09-12T17:00:00.000Z',
+        to: '2026-09-13T00:00:00.000Z',
+        targetScheduleId: target.id,
+        targetVersion: 4,
+        at: '2026-09-13T05:00:00.000Z',
+        mode: 'overwrite',
+      },
+    });
+    t.fake.copies[0]?.result.next({
+      schedule: { ...target, version: 5 },
+      items: [],
+      copied: 3,
+      removed: 1,
+    });
+    expect(t.component.copyDone()).toBe('scheduleEditor.copy.done');
+    expect(t.fake.gets).toHaveLength(1); // another schedule: this one is not reloaded
+  });
+
+  it('COPY: no target day yet makes one in this zone; the whole reel when no range; refused while dirty', () => {
+    const t = loaded(setup());
+    t.component.copy(new Event('submit'));
+    t.fake.lists[0]?.result.next({ items: [] });
+    expect(t.fake.creates[0]?.body).toEqual({ broadcastDate: '2026-09-13', timezone: 'UTC' });
+    t.fake.creates[0]?.result.next(header({ id: '01K0000000000000000000NEWD', version: 1 }));
+    const body = t.fake.copies[0]?.body;
+    expect(body?.from).toBeUndefined();
+    expect(body?.to).toBeUndefined();
+    expect(body).toMatchObject({ at: '2026-09-13T06:00:00.000Z', mode: 'merge', targetVersion: 1 });
+    t.fake.copies[0]?.result.next({
+      schedule: header({ id: '01K0000000000000000000NEWD', version: 2 }),
+      items: [],
+      copied: 3,
+      removed: 0,
+    });
+
+    t.component.setCopy('from', '07:00');
+    t.component.copy(new Event('submit'));
+    expect(t.component.copyError()).toBe('scheduleEditor.copy.rangeBoth');
+
+    t.component.setDuration('a', '45');
+    t.component.setCopy('to', '08:00');
+    t.component.copy(new Event('submit'));
+    expect(t.fake.lists).toHaveLength(1); // dirty: nothing sent
+  });
+
+  it('COPY: a 409 says the target changed; a 422 shows the service’s words; onto itself reloads', () => {
+    const t = loaded(setup());
+    t.component.setCopy('date', '2026-09-12');
+    t.component.copy(new Event('submit'));
+    t.fake.lists[0]?.result.next({ items: [header()] });
+    t.fake.copies[0]?.result.error(new HttpErrorResponse({ status: 409 }));
+    expect(t.component.copyError()).toBe('scheduleEditor.copy.conflict');
+
+    t.component.copy(new Event('submit'));
+    t.fake.lists[1]?.result.next({ items: [header()] });
+    t.fake.copies[1]?.result.error(
+      new HttpErrorResponse({
+        status: 422,
+        error: { detail: 'nothing starts in that range: nothing to copy' },
+      }),
+    );
+    expect(t.component.copyError()).toBe('nothing starts in that range: nothing to copy');
+
+    t.component.copy(new Event('submit'));
+    t.fake.lists[2]?.result.next({ items: [header()] });
+    t.fake.copies[2]?.result.next({
+      schedule: header({ version: 2 }),
+      items: [],
+      copied: 3,
+      removed: 0,
+    });
+    expect(t.fake.gets).toHaveLength(2); // the reel on screen is the target: reloaded
   });
 
   it('VALIDATE: a 409 says the schedule changed, anything else that it could not validate', () => {

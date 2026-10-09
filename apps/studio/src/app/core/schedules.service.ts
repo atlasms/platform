@@ -1,6 +1,8 @@
 import { Injectable, inject } from '@angular/core';
 import { ApiClient } from './api-client.ts';
 import type {
+  CopyResult,
+  CopyScheduleInput,
   CreateSchedule,
   Schedule,
   ScheduleItem,
@@ -43,6 +45,15 @@ export class SchedulesService {
    */
   validate(id: string) {
     return this.api.call(ops.validateSchedule, { params: { id } }).as<ValidationReport>();
+  }
+
+  /**
+   * Copy a range of the stored reel `id` onto another schedule, or itself (EP-31, data-model §3.7):
+   * a compare-and-set on the target's `targetVersion`, so a 409 means the target changed since it
+   * was read.
+   */
+  copy(id: string, body: CopyScheduleInput) {
+    return this.api.call(ops.copySchedule, { params: { id }, body }).as<CopyResult>();
   }
 
   /** The editor's save: the reel as given, ids kept where sent. Returns the reel as stored. */

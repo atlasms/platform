@@ -12,6 +12,27 @@ export type ItemType = 'media' | 'live' | 'title' | 'filler' | 'break';
 /** HH:MM:SS:FF — the playout applies it (data-model §3.3). */
 export type Timecode = string;
 
+export interface CopyScheduleInput {
+  /** The source range, by item start — with `to`, or neither (the whole reel). */
+  from?: string;
+  to?: string;
+  targetScheduleId: Ulid;
+  /** The target's version, read: the copy is a compare-and-set on it. */
+  targetVersion: number;
+  /** Where the range's start lands. */
+  at: string;
+  mode: 'merge' | 'overwrite';
+}
+
+export interface CopyResult {
+  schedule: Schedule;
+  items: ScheduleItem[];
+  /** Items copied, sub-schedule items included. */
+  copied: number;
+  /** Target items an overwrite removed, sub-schedule items included. */
+  removed: number;
+}
+
 /** The header of one channel's program table for one broadcast day (data-model §3.1). */
 export interface Schedule {
   id: Ulid;

@@ -775,4 +775,71 @@ export function scheduleStoreConformance(name: string, harness: ScheduleStoreHar
       assert.equal((await service.validate(caller(), s.id)).issues.length, 2);
     });
   });
+  test(`[${name}] a copy (§3.7) is ONE write on the target: the reel, schedule.updated and an audit record saying where it came from`, async () => {
+    await withFixture(async ({ service, store, drain }) => {
+      const a = await service.create(caller(), { broadcastDate: '2026-09-12', timezone: 'UTC' });
+      const b = await service.create(caller(), { broadcastDate: '2026-09-13', timezone: 'UTC' });
+      await service.replaceItems(caller(), a.id, [media(0, 0, 30), media(1, 30, 30)]);
+      await service.replaceItems(caller(), b.id, [media(0, 1440, 30), media(1, 1500, 30)]);
+      const target = await service.get(caller(), b.id);
+      await drain();
+
+      const out = await service.copy(caller(), a.id, {
+        from: at(0),
+        to: at(60),
+        targetScheduleId: b.id,
+        targetVersion: target.version,
+        at: at(1440),
+        mode: 'overwrite',
+      });
+      assert.deepEqual([out.copied, out.removed, out.schedule.version], [2, 1, target.version + 1]);
+      const reel = await store.items(b.id);
+      assert.deepEqual(
+        reel.map((i) => [i.seq, i.start]),
+        [
+          [0, at(1440)],
+          [1, at(1470)],
+          [2, at(1500)],
+        ],
+      );
+      const events = (await drain()).slice(-2);
+      assert.deepEqual(
+        events.map((e) => e.type),
+        ['schedule.updated', 'audit.recorded'],
+      );
+      const audit = events[1]!.payload as unknown as EventPayloads['audit.recorded'];
+      assert.equal(audit.action, 'schedule.copied');
+      assert.equal(audit.entityId, b.id);
+      assert.deepEqual((audit.delta as Record<string, { after?: unknown }>)['copiedFrom']?.after, {
+        scheduleId: a.id,
+        from: at(0),
+        to: at(60),
+        at: at(1440),
+        mode: 'overwrite',
+      });
+      assert.ok(validatePayload('audit.recorded', audit).valid);
+
+      // Over a version the target has moved past: refused, and nothing written.
+      await assert.rejects(
+        service.copy(caller(), a.id, {
+          targetScheduleId: b.id,
+          targetVersion: target.version,
+          at: at(1440),
+          mode: 'merge',
+        }),
+        /reload/,
+      );
+      assert.equal((await store.items(b.id)).length, 3);
+      // Another channel's target is not found, whatever its id.
+      await assert.rejects(
+        service.copy(caller('ch99'), a.id, {
+          targetScheduleId: b.id,
+          targetVersion: out.schedule.version,
+          at: at(1440),
+          mode: 'merge',
+        }),
+        /not found|schedule/i,
+      );
+    });
+  });
 }
