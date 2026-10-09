@@ -43,6 +43,8 @@ export const MamOperations = {
   getAssetExtended: { method: 'GET', path: '/api/v1/assets/{id}/extended', params: ['id'] },
   /** Merge extended values; each is validated against its field definition (scope asset:write) */
   updateAssetExtended: { method: 'PATCH', path: '/api/v1/assets/{id}/extended', params: ['id'] },
+  /** What the asset inherits from its category chain, live, each value with its origin (scope asset:read; EP-28.2) */
+  getAssetInherited: { method: 'GET', path: '/api/v1/assets/{id}/inherited', params: ['id'] },
   /** The asset's files as mirrored from the HSM ledger (scope asset:read / files) */
   listAssetFiles: { method: 'GET', path: '/api/v1/assets/{id}/files', params: ['id'] },
   /** The asset's free-form tags (FR-TAX-1) */
@@ -59,8 +61,14 @@ export const MamOperations = {
   createCategory: { method: 'POST', path: '/api/v1/categories', params: [] },
   /** One category (scope taxonomy:read) */
   getCategory: { method: 'GET', path: '/api/v1/categories/{id}', params: ['id'] },
-  /** Change labels, kind, sort order, description (core) or mediaAddable and deprecation (policies) over the version read (compare-and-set; taxonomy:admin over its path; audited). Not the key, not the parent: see move. */
+  /** Change labels, kind, sort order, description (core), media defaults (defaults) or mediaAddable, deprecation, reviewNeeded, keepDuration, defaultExpiry (policies) over the version read (compare-and-set; taxonomy:admin over its path, in each group touched; audited). Not the key, not the parent: see move. */
   updateCategory: { method: 'PATCH', path: '/api/v1/categories/{id}', params: ['id'] },
+  /** What the category inherits from its ancestors — each default and policy it does not set, with its origin (scope taxonomy:read; EP-28.2) */
+  getCategoryInherited: {
+    method: 'GET',
+    path: '/api/v1/categories/{id}/inherited',
+    params: ['id'],
+  },
   /** Move a category and its subtree under another parent, or to the root, in one transaction (taxonomy:admin over BOTH positions; every node a revision, audited). Grants follow the position: one scoped to the old path stops covering the subtree. */
   moveCategory: { method: 'POST', path: '/api/v1/categories/{id}/move', params: ['id'] },
   /** List subjects (controlled vocabulary) */

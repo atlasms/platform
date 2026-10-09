@@ -8,6 +8,15 @@
 // whole subtree in one transaction (service.ts).
 
 import { ValidationError } from '@atlas/service-kit';
+import {
+  defaultsProblems,
+  inheritProblems,
+  MEDIA_DEFAULT_FIELDS,
+  POLICY_FIELDS,
+  policyProblems,
+  type CategoryPolicies,
+  type MediaDefaults,
+} from './inheritance.ts';
 
 export interface Category {
   id: string;
@@ -24,6 +33,12 @@ export interface Category {
   kind?: string;
   sortOrder: number;
   mediaAddable: boolean;
+  /** Media defaults this node SETS (EP-28.2) — inherited below it unless overridden. */
+  defaults?: MediaDefaults;
+  /** Policies this node sets (EP-28.2); absent ones are inherited from above. */
+  reviewNeeded?: CategoryPolicies['reviewNeeded'];
+  keepDuration?: CategoryPolicies['keepDuration'];
+  defaultExpiry?: CategoryPolicies['defaultExpiry'];
   deprecatedAt?: string;
   version: number;
   createdBy: string;
@@ -31,7 +46,7 @@ export interface Category {
   updatedAt: string;
 }
 
-export interface CreateCategoryInput {
+export interface CreateCategoryInput extends CategoryPolicies {
   parentId?: string;
   key: string;
   labels: Record<string, string>;
@@ -39,16 +54,24 @@ export interface CreateCategoryInput {
   kind?: string;
   sortOrder?: number;
   mediaAddable?: boolean;
+  defaults?: MediaDefaults;
 }
 
-export interface UpdateCategoryInput {
+export interface UpdateCategoryInput extends CategoryPolicies {
   labels?: Record<string, string>;
   description?: string;
   kind?: string;
   sortOrder?: number;
   mediaAddable?: boolean;
   deprecated?: boolean;
+  /** Merged into the node's defaults: a field given here is set, the rest are kept. */
+  defaults?: MediaDefaults;
+  /** Fields this node stops setting, so they are inherited again: media defaults or policies. */
+  inherit?: string[];
 }
+
+/** What `inherit` may name on a category. */
+export const CATEGORY_INHERITABLE: readonly string[] = [...MEDIA_DEFAULT_FIELDS, ...POLICY_FIELDS];
 
 /** data-model.md §2.1: "nests arbitrarily deep — up to ~20 levels". */
 export const MAX_CATEGORY_DEPTH = 20;
@@ -94,6 +117,15 @@ export function updateProblems(
     problems.push('deprecated must be true or false');
   }
   problems.push(...commonProblems(input, false));
+  problems.push(...inheritProblems(input.inherit, CATEGORY_INHERITABLE));
+  const inherit = Array.isArray(input.inherit) ? (input.inherit as unknown[]) : [];
+  const both = inherit.filter(
+    (f) =>
+      typeof f === 'string' &&
+      ((input.defaults as Record<string, unknown> | undefined)?.[f] !== undefined ||
+        input[f] !== undefined),
+  );
+  if (both.length > 0) problems.push(`${both.join(', ')}: set and inherited at once — choose one`);
   return problems;
 }
 
@@ -125,6 +157,23 @@ function commonProblems(input: Partial<UpdateCategoryInput>, labelsRequired: boo
   if (input.description !== undefined && typeof input.description !== 'string') {
     problems.push('description must be text');
   }
+  const defaults = input.defaults as unknown;
+  if (defaults !== undefined) {
+    if (typeof defaults !== 'object' || defaults === null || Array.isArray(defaults)) {
+      problems.push('defaults must be an object of media defaults');
+    } else {
+      const unknown = Object.keys(defaults).filter(
+        (k) => !(MEDIA_DEFAULT_FIELDS as readonly string[]).includes(k),
+      );
+      if (unknown.length > 0) {
+        problems.push(
+          `defaults may set ${MEDIA_DEFAULT_FIELDS.join(', ')} — not ${unknown.join(', ')}`,
+        );
+      }
+      problems.push(...defaultsProblems(defaults as Record<string, unknown>, 'defaults.'));
+    }
+  }
+  problems.push(...policyProblems(input as Record<string, unknown>));
   return problems;
 }
 

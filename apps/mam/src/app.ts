@@ -274,6 +274,12 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
       options.service.category(await callerOf(req), (req.params as { id: string }).id),
     ),
   );
+  // EP-28.2: what the category inherits from its ancestors, each value with its origin.
+  app.get('/api/v1/categories/:id/inherited', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.categoryInherited(await callerOf(req), (req.params as { id: string }).id),
+    ),
+  );
   app.patch('/api/v1/categories/:id', async (req, reply) =>
     handle(req, reply, async () => {
       const version = Number((req.query as { version?: string }).version);
@@ -318,6 +324,13 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
   app.get('/api/v1/assets/:id', async (req, reply) =>
     handle(req, reply, async () =>
       options.service.get(await callerOf(req), (req.params as { id: string }).id, readOptions(req)),
+    ),
+  );
+
+  // EP-28.2: what the asset inherits from its category chain — live, with each value's origin.
+  app.get('/api/v1/assets/:id/inherited', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.inherited(await callerOf(req), (req.params as { id: string }).id),
     ),
   );
 

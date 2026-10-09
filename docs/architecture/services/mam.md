@@ -259,6 +259,18 @@ takes `categoryId` (and `subtree=true` for everything below it) — the Media pa
 An asset's `categoryId` is validated on create/update and resolved to its `path` for every
 authorization check and for field-schema selection.
 
+### Inheritance — defaults and policies (EP-28.2)
+
+Live per-field inheritance ([data model §2.7](../data-model.md#27-as-built--live-inheritance-ep-282)):
+a category sets media `defaults` (structure, genre, supply type, production group/date) and
+policies (`reviewNeeded`, `keepDuration`, `defaultExpiry`); an asset or a category reads, for each
+field it does not set, the nearest ancestor's value with its origin — `GET /assets/{id}/inherited`,
+`GET /categories/{id}/inherited` — resolved at read, never copied. `PATCH /assets/{id}` takes
+`inherit: [field]` to reset to the category's value; a category's `defaults` merge and its `inherit`
+takes values off the node. The mandatory gate judges the effective asset; approval snapshots the
+chain's `defaultExpiry` into `expiresAt` with `expirySource: category`. Category writes are
+authorized per field group: `core`, `defaults`, `policies`.
+
 ### EP-15.5 — an accepted ingest becomes an asset
 
 MAM consumes `ingest.accepted` (`createFromIngest`, `ingest.ts`): the asset is created under the id

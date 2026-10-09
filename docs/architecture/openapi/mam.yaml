@@ -230,6 +230,20 @@ paths:
     # schema, authorized on its own, and unbounded in size — so a catalogue listing never carries it.
     get: { operationId: getAssetExtended, tags: [assets], summary: The asset's extended values with the field definitions that govern them (scope asset:read), parameters: [{ $ref: '#/components/parameters/CacheControl' }], responses: { '200': { description: 'Extended values, fields and orphaned keys' } } }
     patch: { operationId: updateAssetExtended, tags: [assets], summary: Merge extended values; each is validated against its field definition (scope asset:write), responses: { '200': { description: The extended values after the merge }, '4XX': { $ref: '#/components/responses/Error' } } }
+  /assets/{id}/inherited:
+    parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
+    get:
+      operationId: getAssetInherited
+      tags: [assets]
+      summary: What the asset inherits from its category chain, live, each value with its origin (scope asset:read; EP-28.2)
+      description: >-
+        data-model §2.2. Each media default the asset does not set itself, from the nearest category
+        up its chain that does; and the policies of that chain (an asset sets none). Resolved when
+        read, never stored — a category edit is at once every descendant's value. Empty for an
+        asset with no category.
+      responses:
+        '200': { description: The inherited values, content: { application/json: { schema: { $ref: '#/components/schemas/AssetInheritance' } } } }
+        '404': { $ref: '#/components/responses/Error' }
   /assets/{id}/files:
     parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
     get:
@@ -310,7 +324,7 @@ paths:
     patch:
       operationId: updateCategory
       tags: [taxonomy]
-      summary: 'Change labels, kind, sort order, description (core) or mediaAddable and deprecation (policies) over the version read (compare-and-set; taxonomy:admin over its path; audited). Not the key, not the parent: see move.'
+      summary: 'Change labels, kind, sort order, description (core), media defaults (defaults) or mediaAddable, deprecation, reviewNeeded, keepDuration, defaultExpiry (policies) over the version read (compare-and-set; taxonomy:admin over its path, in each group touched; audited). Not the key, not the parent: see move.'
       parameters:
         - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateCategoryInput' } } } }
@@ -319,6 +333,16 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
+  /categories/{id}/inherited:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getCategoryInherited
+      tags: [taxonomy]
+      summary: What the category inherits from its ancestors — each default and policy it does not set, with its origin (scope taxonomy:read; EP-28.2)
+      responses:
+        '200': { description: The inherited values, content: { application/json: { schema: { $ref: '#/components/schemas/CategoryInheritance' } } } }
+        '404': { $ref: '#/components/responses/Error' }
   /categories/{id}/move:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -523,7 +547,11 @@ components:
         durationSec: { type: number }
         fileType: { type: string }
         categoryId: { type: string }
-        structureId: { type: string }
+        structureId: { type: string, description: 'A media default (EP-28.2): inherited from the category chain when absent.' }
+        genre: { type: string, maxLength: 128, description: 'A media default (EP-28.2): set here it overrides the category''s; absent, the category chain supplies it (GET /assets/{id}/inherited).' }
+        supplyType: { type: string, maxLength: 128, description: A media default (EP-28.2). }
+        productionGroup: { type: string, maxLength: 128, description: A media default (EP-28.2). }
+        productionDate: { type: string, format: date, description: A media default (EP-28.2). }
         state: { type: string, enum: [created, processing, ready, approved, expired, rejected, replaced, purged] }
         episodeNo: { type: integer }
         allowedBroadcastCount: { type: integer }
@@ -531,6 +559,7 @@ components:
         recommendedBroadcastEnd: { type: string, format: date-time }
         version: { type: integer }
         expiresAt: { type: string, format: date-time, description: 'Usable-until; past this the media is unusable and needs re-review (FR-APP-7). Absent = permanent.' }
+        expirySource: { type: string, enum: [asset, category], description: 'category when expiresAt is the category''s defaultExpiry, snapshotted at approval (FR-TAX-7); absent when the asset''s own.' }
         retainUntil: { type: string, format: date-time, description: 'For rejected media: purge time (FR-APP-8).' }
         replacesId: { $ref: '#/components/schemas/Ulid' }
         hasRenditions: { type: boolean, description: True once MTS renditions have been attached; individual files arrive through the FileRef projection (EP-17.8). }
@@ -547,6 +576,10 @@ components:
         description: { type: string }
         categoryId: { type: string }
         structureId: { type: string }
+        genre: { type: string, maxLength: 128, description: 'A media default (EP-28.2): set here it overrides the category''s; absent, the category chain supplies it (GET /assets/{id}/inherited).' }
+        supplyType: { type: string, maxLength: 128, description: A media default (EP-28.2). }
+        productionGroup: { type: string, maxLength: 128, description: A media default (EP-28.2). }
+        productionDate: { type: string, format: date, description: A media default (EP-28.2). }
         episodeNo: { type: integer }
         durationSec: { type: number }
         allowedBroadcastCount: { type: integer }
@@ -559,10 +592,18 @@ components:
         description: { type: string }
         categoryId: { type: string }
         structureId: { type: string }
+        genre: { type: string, maxLength: 128, description: 'A media default (EP-28.2): set here it overrides the category''s; absent, the category chain supplies it (GET /assets/{id}/inherited).' }
+        supplyType: { type: string, maxLength: 128, description: A media default (EP-28.2). }
+        productionGroup: { type: string, maxLength: 128, description: A media default (EP-28.2). }
+        productionDate: { type: string, format: date, description: A media default (EP-28.2). }
         episodeNo: { type: integer }
         durationSec: { type: number }
         allowedBroadcastCount: { type: integer }
         expiresAt: { type: string, format: date-time }
+        inherit:
+          type: array
+          items: { $ref: '#/components/schemas/MediaDefaultField' }
+          description: 'Media defaults the asset stops setting, so its category''s value shows through again — reset to inherited (EP-28.2). Not with a value for the same field.'
     Category:
       type: object
       description: 'A node of the channel''s category tree (../data-model.md §2.6): a hierarchical vocabulary term whose path is built from immutable keys.'
@@ -579,6 +620,10 @@ components:
         kind: { type: string, maxLength: 32, description: 'The node''s role — department, program, season, ... A word, not an enum: code never branches on it.' }
         sortOrder: { type: integer }
         mediaAddable: { type: boolean, description: 'Whether media may be put directly here; usually false on organizational nodes.' }
+        defaults: { $ref: '#/components/schemas/MediaDefaults' }
+        reviewNeeded: { type: boolean, description: 'A policy (EP-28.2): media here needs manual approval. Absent: inherited from the nearest ancestor that sets it.' }
+        keepDuration: { type: string, description: 'A policy: ISO-8601 duration media stays ONLINE after use (data-model §2.5). Inherited when absent.' }
+        defaultExpiry: { type: string, description: 'A policy: an instant, or an ISO-8601 duration from approval — the expiresAt media approved here without one receives, snapshotted (FR-TAX-7). Inherited when absent.' }
         deprecatedAt: { type: string, format: date-time, description: Hidden from pickers and refuses new media; existing references keep resolving. }
         version: { type: integer, minimum: 1 }
         createdBy: { type: string }
@@ -595,6 +640,10 @@ components:
         kind: { type: string, maxLength: 32 }
         sortOrder: { type: integer }
         mediaAddable: { type: boolean, default: true }
+        defaults: { $ref: '#/components/schemas/MediaDefaults' }
+        reviewNeeded: { type: boolean, description: 'A policy (EP-28.2): media here needs manual approval. Absent: inherited from the nearest ancestor that sets it.' }
+        keepDuration: { type: string, description: 'A policy: ISO-8601 duration media stays ONLINE after use (data-model §2.5). Inherited when absent.' }
+        defaultExpiry: { type: string, description: 'A policy: an instant, or an ISO-8601 duration from approval — the expiresAt media approved here without one receives, snapshotted (FR-TAX-7). Inherited when absent.' }
     UpdateCategoryInput:
       type: object
       description: Omitted fields are unchanged. The key and the parent are not here — the key never changes, the parent changes by a move.
@@ -605,6 +654,80 @@ components:
         sortOrder: { type: integer }
         mediaAddable: { type: boolean }
         deprecated: { type: boolean, description: 'true deprecates, false restores.' }
+        defaults: { $ref: '#/components/schemas/MediaDefaults' }
+        reviewNeeded: { type: boolean, description: 'A policy (EP-28.2): media here needs manual approval. Absent: inherited from the nearest ancestor that sets it.' }
+        keepDuration: { type: string, description: 'A policy: ISO-8601 duration media stays ONLINE after use (data-model §2.5). Inherited when absent.' }
+        defaultExpiry: { type: string, description: 'A policy: an instant, or an ISO-8601 duration from approval — the expiresAt media approved here without one receives, snapshotted (FR-TAX-7). Inherited when absent.' }
+        inherit:
+          type: array
+          items: { type: string, enum: [structureId, genre, supplyType, productionGroup, productionDate, reviewNeeded, keepDuration, defaultExpiry] }
+          description: 'Defaults or policies this node stops setting, so they are inherited again. Not with a value for the same field.'
+    MediaDefaultField:
+      type: string
+      enum: [structureId, genre, supplyType, productionGroup, productionDate]
+      description: 'A media default (data-model §2.1): a field of the asset a category supplies when the asset sets none.'
+    MediaDefaults:
+      type: object
+      additionalProperties: false
+      description: 'The media defaults a category SETS (EP-28.2); merged on update — a field given is set, the rest kept.'
+      properties:
+        structureId: { type: string, maxLength: 128 }
+        genre: { type: string, maxLength: 128 }
+        supplyType: { type: string, maxLength: 128 }
+        productionGroup: { type: string, maxLength: 128 }
+        productionDate: { type: string, format: date }
+    InheritedString:
+      type: object
+      required: [value, from]
+      properties:
+        value: { type: string }
+        from: { $ref: '#/components/schemas/InheritedFrom' }
+    InheritedBoolean:
+      type: object
+      required: [value, from]
+      properties:
+        value: { type: boolean }
+        from: { $ref: '#/components/schemas/InheritedFrom' }
+    InheritedFrom:
+      type: object
+      required: [categoryId, path]
+      description: The category the value is set on — the nearest up the chain that sets it.
+      properties:
+        categoryId: { type: string }
+        path: { type: string }
+    Inheritance:
+      type: object
+      required: [defaults, policies]
+      properties:
+        defaults:
+          type: object
+          description: 'Each media default NOT set locally, from the nearest category that sets it. A field absent here is set locally, or set nowhere.'
+          properties:
+            structureId: { $ref: '#/components/schemas/InheritedString' }
+            genre: { $ref: '#/components/schemas/InheritedString' }
+            supplyType: { $ref: '#/components/schemas/InheritedString' }
+            productionGroup: { $ref: '#/components/schemas/InheritedString' }
+            productionDate: { $ref: '#/components/schemas/InheritedString' }
+        policies:
+          type: object
+          properties:
+            reviewNeeded: { $ref: '#/components/schemas/InheritedBoolean' }
+            keepDuration: { $ref: '#/components/schemas/InheritedString' }
+            defaultExpiry: { $ref: '#/components/schemas/InheritedString' }
+    AssetInheritance:
+      allOf:
+        - $ref: '#/components/schemas/Inheritance'
+        - type: object
+          required: [assetId]
+          properties:
+            assetId: { $ref: '#/components/schemas/Ulid' }
+    CategoryInheritance:
+      allOf:
+        - $ref: '#/components/schemas/Inheritance'
+        - type: object
+          required: [categoryId]
+          properties:
+            categoryId: { type: string }
     MoveCategoryInput:
       type: object
       required: [version]

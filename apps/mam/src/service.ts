@@ -61,6 +61,19 @@ import {
 } from './category.ts';
 import { StaleCategory } from './store.ts';
 import { groupsForCoreFields, groupsForExtended } from './field-groups.ts';
+import {
+  chainOf,
+  defaultsProblems,
+  effectiveAsset,
+  expiryFrom,
+  inheritedByAsset,
+  inheritedByCategory,
+  inheritProblems,
+  MEDIA_DEFAULT_FIELDS,
+  POLICY_FIELDS,
+  type Inheritance,
+  type MediaDefaultField,
+} from './inheritance.ts';
 import { indexTerms, parseQuery } from './search.ts';
 import { parseTagLabels, sameTags, type Tag } from './tag.ts';
 import {
@@ -398,6 +411,23 @@ export class MamService {
    * A refusal is not a regression for those callers. Studio falls back to counting through
    * `list()`, which is per-asset filtered and therefore right for them — just bounded.
    */
+  /**
+   * What the asset inherits (EP-28.2): each media default it does not set, and the policies of its
+   * category's chain, each with the category it comes from. Live — read, never stored.
+   */
+  async inherited(caller: Caller, id: string): Promise<Inheritance & { assetId: string }> {
+    const asset = await this.get(caller, id, { fresh: true });
+    return { assetId: asset.id, ...(await this.inheritanceOf(asset)) };
+  }
+
+  /** The asset's inheritance from its category chain; nothing when it has no category. */
+  private async inheritanceOf(asset: Asset): Promise<Inheritance> {
+    if (asset.categoryId === undefined) return { defaults: {}, policies: {} };
+    const tree = await this.options.store.categories(asset.channelId);
+    const node = tree.find((c) => c.id === asset.categoryId);
+    return node ? inheritedByAsset(asset, chainOf(tree, node)) : { defaults: {}, policies: {} };
+  }
+
   async counts(caller: Caller): Promise<Record<string, number>> {
     if (!canEnforce(caller.policy, 'asset:read', { channelId: caller.channelId }).allowed) {
       throw new Forbidden(
@@ -479,6 +509,7 @@ export class MamService {
     if (!input.title?.trim()) throw new ValidationError('title is required');
     if (!input.mediaType?.trim()) throw new ValidationError('mediaType is required');
     if (!input.fileType?.trim()) throw new ValidationError('fileType is required');
+    refuse(defaultsProblems(input as unknown as Record<string, unknown>));
 
     const at = this.now().toISOString();
     const asset: Asset = {
@@ -497,6 +528,10 @@ export class MamService {
         description: input.description,
         categoryId: input.categoryId,
         structureId: input.structureId,
+        genre: input.genre,
+        supplyType: input.supplyType,
+        productionGroup: input.productionGroup,
+        productionDate: input.productionDate,
         episodeNo: input.episodeNo,
         durationSec: input.durationSec,
         allowedBroadcastCount: input.allowedBroadcastCount,
@@ -524,11 +559,32 @@ export class MamService {
     return asset;
   }
 
-  async update(caller: Caller, id: string, patch: UpdateAssetInput): Promise<Asset> {
+  /**
+   * Change an asset's core metadata. `inherit` names media defaults the asset stops setting, so its
+   * category's value shows through again (EP-28.2) — the "reset to inherited" of data-model §2.2.
+   */
+  async update(
+    caller: Caller,
+    id: string,
+    patch: UpdateAssetInput & { inherit?: unknown },
+  ): Promise<Asset> {
     return this.onCurrent(() => this.updateOnce(caller, id, patch));
   }
 
-  private async updateOnce(caller: Caller, id: string, patch: UpdateAssetInput): Promise<Asset> {
+  private async updateOnce(
+    caller: Caller,
+    id: string,
+    patch: UpdateAssetInput & { inherit?: unknown },
+  ): Promise<Asset> {
+    refuse([
+      ...defaultsProblems(patch as unknown as Record<string, unknown>),
+      ...inheritProblems(patch.inherit, MEDIA_DEFAULT_FIELDS),
+    ]);
+    const inherit = (patch.inherit ?? []) as MediaDefaultField[];
+    const clash = inherit.filter((f) => patch[f] !== undefined);
+    if (clash.length > 0) {
+      throw new ValidationError(`${clash.join(', ')}: set and inherited at once — choose one`);
+    }
     const existing = await this.fresh(caller, id);
 
     // ALLOWLIST, not the caller's object. `UpdateAssetInput` omits `state`, but a type is erased
@@ -536,9 +592,13 @@ export class MamService {
     // route straight around review. Same for id, channelId, version and the audit fields.
     const safe = pickUpdatable(patch);
 
-    const changedFields = (Object.keys(safe) as (keyof UpdateAssetInput)[]).filter(
-      (key) => safe[key] !== undefined && safe[key] !== existing[key],
-    );
+    const changedFields = [
+      ...(Object.keys(safe) as (keyof UpdateAssetInput)[]).filter(
+        (key) => safe[key] !== undefined && safe[key] !== existing[key],
+      ),
+      // Inheriting a field the asset set is a change; inheriting one it never set is not.
+      ...inherit.filter((f) => existing[f] !== undefined),
+    ];
     // No-op PATCHes are common from UIs that submit whole forms. Emitting `asset.updated` with an
     // empty changedFields would both violate the contract (minItems: 1) and wake every consumer
     // for nothing.
@@ -571,6 +631,9 @@ export class MamService {
       version: existing.version + 1,
       updatedAt: this.now().toISOString(),
     };
+    for (const field of inherit) delete updated[field];
+    // An expiry set by hand is the asset's own, whatever a category default once put there.
+    if (changedFields.includes('expiresAt')) delete updated.expirySource;
 
     await this.commit(
       caller,
@@ -643,6 +706,17 @@ export class MamService {
       updatedAt: this.now().toISOString(),
       ...defined({ expiresAt: options.expiresAt, retainUntil: options.retainUntil }),
     };
+    // FR-APP-7 / FR-TAX-7: approved with no expiry of its own and none given, the media takes its
+    // category's `defaultExpiry` — SNAPSHOTTED here (data-model §2.2's one exception to live
+    // inheritance), so a later category edit never re-expires media already approved.
+    if (action === 'approve' && updated.expiresAt === undefined) {
+      const spec = (await this.inheritanceOf(existing)).policies.defaultExpiry;
+      const expiresAt = spec ? expiryFrom(spec.value, updated.updatedAt) : undefined;
+      if (expiresAt !== undefined) {
+        updated.expiresAt = expiresAt;
+        updated.expirySource = 'category';
+      }
+    }
 
     const eventType = eventFor(action);
     if (eventType === undefined) {
@@ -961,6 +1035,17 @@ export class MamService {
     return this.categoryInChannel(caller.channelId, id);
   }
 
+  /** What a category inherits from its ancestors: each default and policy it does not set. */
+  async categoryInherited(
+    caller: Caller,
+    id: string,
+  ): Promise<Inheritance & { categoryId: string }> {
+    this.authorize(caller, 'taxonomy:read');
+    const node = await this.categoryInChannel(caller.channelId, id);
+    const tree = await this.options.store.categories(caller.channelId);
+    return { categoryId: node.id, ...inheritedByCategory(chainOf(tree, node)) };
+  }
+
   async createCategory(caller: Caller, input: Partial<CreateCategoryInput>): Promise<Category> {
     refuse(createProblems(input));
     const valid = input as CreateCategoryInput;
@@ -972,7 +1057,10 @@ export class MamService {
     const depth = (parent?.depth ?? 0) + 1;
     this.authorizeCategory(caller, path, [
       'core',
-      ...(valid.mediaAddable !== undefined ? ['policies'] : []),
+      ...(valid.defaults !== undefined ? ['defaults'] : []),
+      ...(valid.mediaAddable !== undefined || POLICY_FIELDS.some((f) => valid[f] !== undefined)
+        ? ['policies']
+        : []),
     ]);
     if (depth > MAX_CATEGORY_DEPTH) {
       throw new ValidationError(`a category may be at most ${MAX_CATEGORY_DEPTH} levels deep`);
@@ -998,6 +1086,11 @@ export class MamService {
         parentId: parent?.id,
         kind: valid.kind?.trim() || undefined,
         description: valid.description,
+        defaults:
+          valid.defaults && Object.keys(valid.defaults).length > 0 ? valid.defaults : undefined,
+        reviewNeeded: valid.reviewNeeded,
+        keepDuration: valid.keepDuration,
+        defaultExpiry: valid.defaultExpiry,
       }),
     };
     await this.options.store.transaction(async (tx) => {
@@ -1016,11 +1109,24 @@ export class MamService {
   ): Promise<Category> {
     refuse(updateProblems(input));
     const existing = await this.categoryInChannel(caller.channelId, id);
+    // The category's own groups (authorization-model.md §4): `defaults` — what the media below
+    // inherit — and `policies` — how the platform treats them — beside `core`; an `inherit` of a
+    // field needs that field's group, since taking a value away is as much a change as setting one.
+    const inherit = input.inherit ?? [];
     const groups = [
       ...(['labels', 'kind', 'sortOrder', 'description'].some((f) => input[f] !== undefined)
         ? ['core']
         : []),
-      ...(input.mediaAddable !== undefined || input.deprecated !== undefined ? ['policies'] : []),
+      ...(input.defaults !== undefined ||
+      inherit.some((f) => (MEDIA_DEFAULT_FIELDS as readonly string[]).includes(f))
+        ? ['defaults']
+        : []),
+      ...(input.mediaAddable !== undefined ||
+      input.deprecated !== undefined ||
+      POLICY_FIELDS.some((f) => input[f] !== undefined) ||
+      inherit.some((f) => (POLICY_FIELDS as readonly string[]).includes(f))
+        ? ['policies']
+        : []),
     ];
     this.authorizeCategory(caller, existing.path, groups);
     if (existing.version !== version) throw new StaleCategory(id, version);
@@ -1033,8 +1139,21 @@ export class MamService {
         sortOrder: input.sortOrder,
         mediaAddable: input.mediaAddable,
         description: input.description,
+        reviewNeeded: input.reviewNeeded,
+        keepDuration: input.keepDuration,
+        defaultExpiry: input.defaultExpiry,
       }),
     };
+    // Defaults MERGE: a field given is set, the rest kept; `inherit` takes a field off the node.
+    const defaults: Record<string, string> = { ...existing.defaults, ...input.defaults };
+    for (const field of inherit) {
+      delete defaults[field];
+      if ((POLICY_FIELDS as readonly string[]).includes(field)) {
+        delete next[field as (typeof POLICY_FIELDS)[number]];
+      }
+    }
+    if (Object.keys(defaults).length > 0) next.defaults = defaults;
+    else delete next.defaults;
     if (input.deprecated === true && existing.deprecatedAt === undefined) {
       next.deprecatedAt = this.now().toISOString();
     }
@@ -1623,9 +1742,10 @@ export class MamService {
    */
   async contextFor(asset: Asset): Promise<LifecycleContext> {
     const extra = this.options.mandatoryFieldsFor?.(asset) ?? [];
-    const [fields, values] = await Promise.all([
+    const [fields, values, inheritance] = await Promise.all([
       this.fieldsFor(asset),
       this.options.store.extended(asset.id),
+      this.inheritanceOf(asset),
     ]);
 
     const requiredExtended = requiredFieldNames(fields).map((n) => `${EXTENDED_PREFIX}${n}`);
@@ -1637,7 +1757,9 @@ export class MamService {
       state: asset.state,
       hasRenditions: asset.hasRenditions,
       mandatoryFields: [...new Set([...BASE_MANDATORY_FIELDS, ...extra, ...requiredExtended])],
-      presentFields: [...presentFieldsOf(asset), ...presentExtended],
+      // A media default the category supplies is present (EP-28.2): requiring `genre` of a
+      // drama season whose category sets it must not make every episode type it again.
+      presentFields: [...presentFieldsOf(effectiveAsset(asset, inheritance)), ...presentExtended],
       ...defined({ expiresAt: asset.expiresAt, retainUntil: asset.retainUntil }),
     };
   }
@@ -1904,11 +2026,9 @@ export class MamService {
           ...defined({ retainUntil: asset.retainUntil }),
         };
       case 'asset.expired':
-        // `expirySource` records where `expiresAt` came from — a per-asset override or an
-        // inherited category default (FR-TAX-7). Always 'asset' today: category-inherited expiry
-        // arrives with the taxonomy work, and claiming 'category' before then would be a lie in
-        // the audit record.
-        return { assetId: asset.id, expiredAt: at, expirySource: 'asset' };
+        // `expirySource` records where `expiresAt` came from — a per-asset value or the category
+        // default snapshotted at approval (FR-TAX-7, EP-28.2).
+        return { assetId: asset.id, expiredAt: at, expirySource: asset.expirySource ?? 'asset' };
       default:
         return { assetId: asset.id };
     }
@@ -1928,6 +2048,10 @@ const UPDATABLE_FIELDS = [
   'description',
   'categoryId',
   'structureId',
+  'genre',
+  'supplyType',
+  'productionGroup',
+  'productionDate',
   'episodeNo',
   'durationSec',
   'allowedBroadcastCount',

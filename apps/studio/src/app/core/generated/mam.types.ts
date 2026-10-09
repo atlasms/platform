@@ -48,7 +48,16 @@ export interface Asset {
   durationSec?: number;
   fileType: string;
   categoryId?: string;
+  /** A media default (EP-28.2): inherited from the category chain when absent. */
   structureId?: string;
+  /** A media default (EP-28.2): set here it overrides the category's; absent, the category chain supplies it (GET /assets/{id}/inherited). */
+  genre?: string;
+  /** A media default (EP-28.2). */
+  supplyType?: string;
+  /** A media default (EP-28.2). */
+  productionGroup?: string;
+  /** A media default (EP-28.2). */
+  productionDate?: string;
   state:
     | 'created'
     | 'processing'
@@ -65,6 +74,8 @@ export interface Asset {
   version: number;
   /** Usable-until; past this the media is unusable and needs re-review (FR-APP-7). Absent = permanent. */
   expiresAt?: string;
+  /** category when expiresAt is the category's defaultExpiry, snapshotted at approval (FR-TAX-7); absent when the asset's own. */
+  expirySource?: 'asset' | 'category';
   /** For rejected media: purge time (FR-APP-8). */
   retainUntil?: string;
   replacesId?: Ulid;
@@ -82,6 +93,14 @@ export interface CreateAssetInput {
   description?: string;
   categoryId?: string;
   structureId?: string;
+  /** A media default (EP-28.2): set here it overrides the category's; absent, the category chain supplies it (GET /assets/{id}/inherited). */
+  genre?: string;
+  /** A media default (EP-28.2). */
+  supplyType?: string;
+  /** A media default (EP-28.2). */
+  productionGroup?: string;
+  /** A media default (EP-28.2). */
+  productionDate?: string;
   episodeNo?: number;
   durationSec?: number;
   allowedBroadcastCount?: number;
@@ -94,10 +113,20 @@ export interface UpdateAssetInput {
   description?: string;
   categoryId?: string;
   structureId?: string;
+  /** A media default (EP-28.2): set here it overrides the category's; absent, the category chain supplies it (GET /assets/{id}/inherited). */
+  genre?: string;
+  /** A media default (EP-28.2). */
+  supplyType?: string;
+  /** A media default (EP-28.2). */
+  productionGroup?: string;
+  /** A media default (EP-28.2). */
+  productionDate?: string;
   episodeNo?: number;
   durationSec?: number;
   allowedBroadcastCount?: number;
   expiresAt?: string;
+  /** Media defaults the asset stops setting, so its category's value shows through again — reset to inherited (EP-28.2). Not with a value for the same field. */
+  inherit?: MediaDefaultField[];
 }
 
 /** A node of the channel's category tree (../data-model.md §2.6): a hierarchical vocabulary term whose path is built from immutable keys. */
@@ -119,6 +148,13 @@ export interface Category {
   sortOrder: number;
   /** Whether media may be put directly here; usually false on organizational nodes. */
   mediaAddable: boolean;
+  defaults?: MediaDefaults;
+  /** A policy (EP-28.2): media here needs manual approval. Absent: inherited from the nearest ancestor that sets it. */
+  reviewNeeded?: boolean;
+  /** A policy: ISO-8601 duration media stays ONLINE after use (data-model §2.5). Inherited when absent. */
+  keepDuration?: string;
+  /** A policy: an instant, or an ISO-8601 duration from approval — the expiresAt media approved here without one receives, snapshotted (FR-TAX-7). Inherited when absent. */
+  defaultExpiry?: string;
   /** Hidden from pickers and refuses new media; existing references keep resolving. */
   deprecatedAt?: string;
   version: number;
@@ -136,6 +172,13 @@ export interface CreateCategoryInput {
   kind?: string;
   sortOrder?: number;
   mediaAddable?: boolean;
+  defaults?: MediaDefaults;
+  /** A policy (EP-28.2): media here needs manual approval. Absent: inherited from the nearest ancestor that sets it. */
+  reviewNeeded?: boolean;
+  /** A policy: ISO-8601 duration media stays ONLINE after use (data-model §2.5). Inherited when absent. */
+  keepDuration?: string;
+  /** A policy: an instant, or an ISO-8601 duration from approval — the expiresAt media approved here without one receives, snapshotted (FR-TAX-7). Inherited when absent. */
+  defaultExpiry?: string;
 }
 
 /** Omitted fields are unchanged. The key and the parent are not here — the key never changes, the parent changes by a move. */
@@ -147,7 +190,74 @@ export interface UpdateCategoryInput {
   mediaAddable?: boolean;
   /** true deprecates, false restores. */
   deprecated?: boolean;
+  defaults?: MediaDefaults;
+  /** A policy (EP-28.2): media here needs manual approval. Absent: inherited from the nearest ancestor that sets it. */
+  reviewNeeded?: boolean;
+  /** A policy: ISO-8601 duration media stays ONLINE after use (data-model §2.5). Inherited when absent. */
+  keepDuration?: string;
+  /** A policy: an instant, or an ISO-8601 duration from approval — the expiresAt media approved here without one receives, snapshotted (FR-TAX-7). Inherited when absent. */
+  defaultExpiry?: string;
+  /** Defaults or policies this node stops setting, so they are inherited again. Not with a value for the same field. */
+  inherit?: (
+    | 'structureId'
+    | 'genre'
+    | 'supplyType'
+    | 'productionGroup'
+    | 'productionDate'
+    | 'reviewNeeded'
+    | 'keepDuration'
+    | 'defaultExpiry'
+  )[];
 }
+
+/** A media default (data-model §2.1): a field of the asset a category supplies when the asset sets none. */
+export type MediaDefaultField =
+  'structureId' | 'genre' | 'supplyType' | 'productionGroup' | 'productionDate';
+
+/** The media defaults a category SETS (EP-28.2); merged on update — a field given is set, the rest kept. */
+export interface MediaDefaults {
+  structureId?: string;
+  genre?: string;
+  supplyType?: string;
+  productionGroup?: string;
+  productionDate?: string;
+}
+
+export interface InheritedString {
+  value: string;
+  from: InheritedFrom;
+}
+
+export interface InheritedBoolean {
+  value: boolean;
+  from: InheritedFrom;
+}
+
+/** The category the value is set on — the nearest up the chain that sets it. */
+export interface InheritedFrom {
+  categoryId: string;
+  path: string;
+}
+
+export interface Inheritance {
+  /** Each media default NOT set locally, from the nearest category that sets it. A field absent here is set locally, or set nowhere. */
+  defaults: {
+    structureId?: InheritedString;
+    genre?: InheritedString;
+    supplyType?: InheritedString;
+    productionGroup?: InheritedString;
+    productionDate?: InheritedString;
+  };
+  policies: {
+    reviewNeeded?: InheritedBoolean;
+    keepDuration?: InheritedString;
+    defaultExpiry?: InheritedString;
+  };
+}
+
+export type AssetInheritance = Inheritance & { assetId: Ulid };
+
+export type CategoryInheritance = Inheritance & { categoryId: string };
 
 export interface MoveCategoryInput {
   /** The new parent; null or absent moves the category to the root. */

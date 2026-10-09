@@ -390,6 +390,28 @@ on-demand, deliberately not a write gate.
 | **EP-32 Integration inbound** | Inbound feed authoring · JSON/XML mapping templates · scheduling + retries · `feed.item.received` · delivery log |
 | **EP-33 Config admin** | Generated settings UI from descriptors · vocabulary admin (deprecate/merge) · registry admin · seed export/import CLI · CI drift report |
 
+### EP-28 — Classification & discovery (refined 2026-10-09)
+
+The first Phase 2 epic refined into stories, because its first story shipped early: the category
+tree (#260) unblocked the Media panel's browse tree in Phase 1. Decided with the product owner:
+**inheritance is live per field** (data-model §2.2) and **an asset's own list replaces the
+category's** — for subjects, classifications and tags alike; cast inherits **per role**.
+
+| ID | Story | Est |
+|----|-------|:---:|
+| 28.1 | ✅ Category tree as an entity — immutable keys, materialized paths, audited move, paths resolved for authorization (#260) | 5 |
+| 28.2 | **Live per-field inheritance** — category scalar defaults (structure, genre, supply type, production group/date) and policies (`reviewNeeded`, `keepDuration`, `defaultExpiry`) resolved nearest-ancestor-wins; an asset reads its effective values with their origin; the mandatory-metadata gate reads effective values; `defaultExpiry` snapshotted into `expiresAt` at approval (FR-TAX-7/9, FR-APP-7). Studio: defaults/policies on the category editor, *inherited* + reset-to-inherited on the asset editor | 8 |
+| 28.3 | Controlled vocabularies — subjects, structures, classifications, cast roles: operator-managed, deprecate-not-delete, in the reference snapshot (FR-TAX-3/4/8) | 5 |
+| 28.4 | Xref defaults — subjects, classifications, tags on a category, inherited onto media; an asset's own list replaces the category's | 5 |
+| 28.5 | People register + cast & crew with **per-role** inheritance (FR-TAX-9a) | 5 |
+| 28.6 | Faceted search across category, subject, classification, tag and person — over EFFECTIVE values, so a category edit is findable at once (FR-TAX-5/6) | 8 |
+| 28.7 | Policies take effect — `reviewNeeded` gates approval (with EP-24); `keepDuration` handed to HSM tiering (EP-36) | 3 |
+
+**Decision points:** 28.6 must choose how inherited values reach the search index — resolve at
+query time (a category join) or project effective values and re-project a subtree on
+`taxonomy.updated`; 28.7's `reviewNeeded: false` means *auto-approve* or *approval optional*, a
+product call with EP-24.
+
 ---
 
 # Phase 3 — Full-feature, integrations & HA → v1.0 (S20–S28)

@@ -11,7 +11,13 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AssetsService } from '../core/assets.service.ts';
-import type { Asset, Category, FileRef, UpdateAssetInput } from '../core/generated/mam.types.ts';
+import type {
+  Asset,
+  AssetInheritance,
+  Category,
+  FileRef,
+  UpdateAssetInput,
+} from '../core/generated/mam.types.ts';
 import { CategoriesService } from '../core/categories.service.ts';
 import { pickerOptions } from '../core/category-tree.ts';
 import type { Job } from '../core/generated/mts.types.ts';
@@ -27,7 +33,9 @@ type EditorSection = 'basic' | 'files';
 /** After a transcode completes: how often, and how many times, to look for its rows in MAM. */
 const RENDITION_WAIT_MS = 1_000;
 const RENDITION_WAIT_ATTEMPTS = 15;
-type EditableField = keyof UpdateAssetInput;
+type EditableField = Exclude<keyof UpdateAssetInput, 'inherit'>;
+/** The fields a category can supply when the asset sets none (EP-28.2, data-model §2.2). */
+type MediaDefault = 'structureId' | 'genre' | 'supplyType' | 'productionGroup' | 'productionDate';
 type FieldGroup = 'core' | 'taxonomy' | 'rights';
 type Draft = Record<EditableField, string>;
 
@@ -38,6 +46,10 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
   durationSec: 'core',
   categoryId: 'taxonomy',
   structureId: 'taxonomy',
+  genre: 'taxonomy',
+  supplyType: 'core',
+  productionGroup: 'core',
+  productionDate: 'core',
   allowedBroadcastCount: 'rights',
   expiresAt: 'rights',
 };
@@ -207,8 +219,133 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                   name="structureId"
                   [disabled]="!canEdit('taxonomy')"
                   [value]="form.structureId"
+                  [placeholder]="inheritedOf('structureId')?.value ?? ''"
                   (input)="change('structureId', $any($event.target).value)"
                 />
+                @if (inheritedOf('structureId'); as hit) {
+                  <small class="inherited">
+                    {{ locale.t('assetEditor.inheritedFrom') }} {{ hit.from.path }}
+                  </small>
+                } @else if (ownsField('structureId') && canEdit('taxonomy')) {
+                  <button
+                    type="button"
+                    class="inherit"
+                    [disabled]="dirtyCount() > 0 || saving()"
+                    (click)="resetToInherited('structureId')"
+                  >
+                    {{ locale.t('assetEditor.useInherited') }}
+                  </button>
+                }
+              </label>
+              <label>
+                {{ locale.t('assetEditor.genre') }}
+                <input
+                  name="genre"
+                  [disabled]="!canEdit('taxonomy')"
+                  [value]="form.genre"
+                  [placeholder]="inheritedOf('genre')?.value ?? ''"
+                  (input)="change('genre', $any($event.target).value)"
+                />
+                @if (inheritedOf('genre'); as hit) {
+                  <small class="inherited">
+                    {{ locale.t('assetEditor.inheritedFrom') }} {{ hit.from.path }}
+                  </small>
+                } @else if (ownsField('genre') && canEdit('taxonomy')) {
+                  <button
+                    type="button"
+                    class="inherit"
+                    [disabled]="dirtyCount() > 0 || saving()"
+                    (click)="resetToInherited('genre')"
+                  >
+                    {{ locale.t('assetEditor.useInherited') }}
+                  </button>
+                }
+              </label>
+            </div>
+          </section>
+
+          <section class="field-group">
+            <div class="group-heading">
+              <h3>{{ locale.t('assetEditor.production') }}</h3>
+              <span>{{
+                canEdit('core')
+                  ? locale.t('assetEditor.editable')
+                  : locale.t('assetEditor.readOnly')
+              }}</span>
+            </div>
+            <div class="grid">
+              <label>
+                {{ locale.t('assetEditor.supplyType') }}
+                <input
+                  name="supplyType"
+                  [disabled]="!canEdit('core')"
+                  [value]="form.supplyType"
+                  [placeholder]="inheritedOf('supplyType')?.value ?? ''"
+                  (input)="change('supplyType', $any($event.target).value)"
+                />
+                @if (inheritedOf('supplyType'); as hit) {
+                  <small class="inherited">
+                    {{ locale.t('assetEditor.inheritedFrom') }} {{ hit.from.path }}
+                  </small>
+                } @else if (ownsField('supplyType') && canEdit('core')) {
+                  <button
+                    type="button"
+                    class="inherit"
+                    [disabled]="dirtyCount() > 0 || saving()"
+                    (click)="resetToInherited('supplyType')"
+                  >
+                    {{ locale.t('assetEditor.useInherited') }}
+                  </button>
+                }
+              </label>
+              <label>
+                {{ locale.t('assetEditor.productionGroup') }}
+                <input
+                  name="productionGroup"
+                  [disabled]="!canEdit('core')"
+                  [value]="form.productionGroup"
+                  [placeholder]="inheritedOf('productionGroup')?.value ?? ''"
+                  (input)="change('productionGroup', $any($event.target).value)"
+                />
+                @if (inheritedOf('productionGroup'); as hit) {
+                  <small class="inherited">
+                    {{ locale.t('assetEditor.inheritedFrom') }} {{ hit.from.path }}
+                  </small>
+                } @else if (ownsField('productionGroup') && canEdit('core')) {
+                  <button
+                    type="button"
+                    class="inherit"
+                    [disabled]="dirtyCount() > 0 || saving()"
+                    (click)="resetToInherited('productionGroup')"
+                  >
+                    {{ locale.t('assetEditor.useInherited') }}
+                  </button>
+                }
+              </label>
+              <label>
+                {{ locale.t('assetEditor.productionDate') }}
+                <input
+                  name="productionDate"
+                  type="date"
+                  [disabled]="!canEdit('core')"
+                  [value]="form.productionDate"
+                  [placeholder]="inheritedOf('productionDate')?.value ?? ''"
+                  (input)="change('productionDate', $any($event.target).value)"
+                />
+                @if (inheritedOf('productionDate'); as hit) {
+                  <small class="inherited">
+                    {{ locale.t('assetEditor.inheritedFrom') }} {{ hit.from.path }}
+                  </small>
+                } @else if (ownsField('productionDate') && canEdit('core')) {
+                  <button
+                    type="button"
+                    class="inherit"
+                    [disabled]="dirtyCount() > 0 || saving()"
+                    (click)="resetToInherited('productionDate')"
+                  >
+                    {{ locale.t('assetEditor.useInherited') }}
+                  </button>
+                }
               </label>
             </div>
           </section>
@@ -244,6 +381,27 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                   (input)="change('expiresAt', $any($event.target).value)"
                 />
               </label>
+              @if (policies(); as p) {
+                <div class="readonly-value">
+                  <span>{{ locale.t('assetEditor.categoryPolicies') }}</span>
+                  <strong>
+                    @if (p.reviewNeeded; as r) {
+                      {{
+                        r.value
+                          ? locale.t('assetEditor.reviewNeeded')
+                          : locale.t('assetEditor.reviewNotNeeded')
+                      }}
+                      ·
+                    }
+                    @if (p.defaultExpiry; as e) {
+                      {{ locale.t('assetEditor.defaultExpiry') }} {{ e.value }} ·
+                    }
+                    @if (p.keepDuration; as k) {
+                      {{ locale.t('assetEditor.keepOnline') }} {{ k.value }}
+                    }
+                  </strong>
+                </div>
+              }
               <div class="readonly-value">
                 <span>{{ locale.t('assetEditor.recommendedWindow') }}</span>
                 <strong>
@@ -381,6 +539,13 @@ export class AssetEditor implements OnInit {
   private readonly ws = inject(WebSocketService);
 
   protected readonly asset = signal<Asset | null>(null);
+  /** What the category chain supplies (EP-28.2) — live, re-read on any taxonomy change. */
+  protected readonly inheritance = signal<AssetInheritance | null>(null);
+  /** The category policies that reach this asset, when any do. */
+  protected readonly policies = computed(() => {
+    const p = this.inheritance()?.policies;
+    return p && (p.reviewNeeded || p.keepDuration || p.defaultExpiry) ? p : null;
+  });
   protected readonly draft = signal<Draft | null>(null);
   protected readonly section = signal<EditorSection>('basic');
   protected readonly loading = signal(true);
@@ -403,6 +568,8 @@ export class AssetEditor implements OnInit {
     const channelId = this.session.channelId();
     if (channelId) {
       void this.ws.subscribe(`atlas.${channelId}.asset.>`);
+      // A category edit changes what this asset inherits without touching the asset (EP-28.2).
+      void this.ws.subscribe(`atlas.${channelId}.taxonomy.>`);
     }
   });
 
@@ -510,10 +677,51 @@ export class AssetEditor implements OnInit {
         this.dirtyFields.set(new Set());
         this.editors.setDirty(this.tabId(), false);
         this.loading.set(false);
+        this.loadInheritance();
       },
       error: () => {
         this.loadError.set('Could not load this asset.');
         this.loading.set(false);
+      },
+    });
+  }
+
+  private loadInheritance(): void {
+    this.assetsApi.inherited(this.assetId()).subscribe({
+      next: (inheritance) => this.inheritance.set(inheritance),
+      // Without it the fields show the asset's own values, which is still the truth about them.
+      error: () => this.inheritance.set(null),
+    });
+  }
+
+  /** The value a field inherits — only when the asset does not set its own. */
+  protected inheritedOf(field: MediaDefault) {
+    return this.inheritance()?.defaults[field] ?? null;
+  }
+
+  /** Whether the STORED asset sets this media default itself. */
+  protected ownsField(field: MediaDefault): boolean {
+    return this.asset()?.[field] !== undefined;
+  }
+
+  /**
+   * Stop setting a media default, so the category's value shows through (data-model §2.2) — its
+   * own audited revision, `inherit` in the PATCH. Only with nothing unsaved: it saves.
+   */
+  protected resetToInherited(field: MediaDefault): void {
+    if (this.saving() || this.dirtyFields().size > 0 || !this.canEdit(FIELD_GROUP[field])) return;
+    this.saving.set(true);
+    this.saveError.set(null);
+    this.assetsApi.update(this.assetId(), { inherit: [field] }).subscribe({
+      next: (asset) => {
+        this.asset.set(asset);
+        this.draft.set(toDraft(asset));
+        this.saving.set(false);
+        this.loadInheritance();
+      },
+      error: () => {
+        this.saveError.set(this.locale.t('assetEditor.resetError'));
+        this.saving.set(false);
       },
     });
   }
@@ -563,6 +771,7 @@ export class AssetEditor implements OnInit {
         this.editors.setDirty(this.tabId(), false);
         this.saving.set(false);
         this.saved.set(true);
+        this.loadInheritance();
       },
       error: () => {
         this.saveError.set('Could not save these changes. Your edits are still here.');
@@ -591,7 +800,18 @@ export class AssetEditor implements OnInit {
           patch.categoryId = value;
           break;
         case 'structureId':
-          patch.structureId = value;
+        case 'genre':
+        case 'supplyType':
+        case 'productionGroup':
+          // Cleared: the asset stops setting it, and inherits again.
+          if (value.trim() === '') patch.inherit = [...(patch.inherit ?? []), field];
+          else patch[field] = value.trim();
+          break;
+        case 'productionDate':
+          if (value === '') patch.inherit = [...(patch.inherit ?? []), field];
+          else if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            return this.invalid('Production date must be a date.');
+          } else patch.productionDate = value;
           break;
         case 'episodeNo': {
           const parsed = wholeNumber(value);
@@ -645,6 +865,14 @@ export class AssetEditor implements OnInit {
       };
     };
 
+    // A category changed: what this asset inherits may have, the asset itself has not.
+    if (envelope.type === 'taxonomy.updated') {
+      if (envelope.channelId === this.session.channelId() && this.asset()?.categoryId) {
+        this.loadInheritance();
+      }
+      return;
+    }
+
     const assetId = envelope.payload?.assetId;
     if (!assetId || assetId !== this.assetId()) return;
 
@@ -665,6 +893,10 @@ function toDraft(asset: Asset): Draft {
     description: asset.description ?? '',
     categoryId: asset.categoryId ?? '',
     structureId: asset.structureId ?? '',
+    genre: asset.genre ?? '',
+    supplyType: asset.supplyType ?? '',
+    productionGroup: asset.productionGroup ?? '',
+    productionDate: asset.productionDate ?? '',
     episodeNo: asset.episodeNo?.toString() ?? '',
     durationSec: asset.durationSec?.toString() ?? '',
     allowedBroadcastCount: asset.allowedBroadcastCount?.toString() ?? '',
