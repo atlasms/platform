@@ -51,6 +51,16 @@ const KEY = /^[a-z0-9][a-z0-9-]*$/;
             <span>{{ locale.t('categories.labelAr') }}</span>
             <input name="ar" dir="rtl" [(ngModel)]="ar" autocomplete="off" />
           </label>
+          @if (vocabulary() === 'cast-role') {
+            <!-- EP-28.5: the class belongs to the role — a director is crew wherever it appears. -->
+            <label>
+              <span>{{ locale.t('vocab.roleClass') }}</span>
+              <select name="roleClass" [(ngModel)]="roleClass">
+                <option value="on-screen">{{ locale.t('vocab.onScreen') }}</option>
+                <option value="crew">{{ locale.t('vocab.crew') }}</option>
+              </select>
+            </label>
+          }
           <button type="submit" [disabled]="busy() || !keyOk() || !(en.trim() || ar.trim())">
             {{ locale.t('admin.create') }}
           </button>
@@ -85,6 +95,11 @@ const KEY = /^[a-z0-9][a-z0-9-]*$/;
             <div class="row">
               <span class="title">{{ label(t) }}</span>
               <code class="muted">{{ t.key }}</code>
+              @if (t.roleClass) {
+                <span class="state">{{
+                  locale.t(t.roleClass === 'crew' ? 'vocab.crew' : 'vocab.onScreen')
+                }}</span>
+              }
               @if (t.replacedById) {
                 <span class="state" data-state="disabled">
                   {{ locale.t('vocab.mergedInto') }} {{ labelOf(t.replacedById) }}
@@ -188,6 +203,7 @@ export class VocabulariesView {
   protected readonly canWrite = computed(() => this.permissions.can('taxonomy:admin'));
 
   protected key = '';
+  protected roleClass: 'on-screen' | 'crew' = 'on-screen';
   protected en = '';
   protected ar = '';
   protected editEn = '';
@@ -248,7 +264,11 @@ export class VocabulariesView {
   protected create(): void {
     if (this.busy() || !this.keyOk()) return;
     this.write(
-      this.api.create(this.vocabulary(), { key: this.key, labels: this.labels(this.en, this.ar) }),
+      this.api.create(this.vocabulary(), {
+        key: this.key,
+        labels: this.labels(this.en, this.ar),
+        ...(this.vocabulary() === 'cast-role' ? { roleClass: this.roleClass } : {}),
+      }),
       () => {
         this.creating.set(false);
         this.key = '';

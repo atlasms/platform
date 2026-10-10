@@ -143,6 +143,16 @@ export {
 } from './category.ts';
 export { startFacetProjector, TAXONOMY_UPDATED_PATTERN } from './facets.ts';
 export {
+  castProblems,
+  inheritedCast,
+  MAX_CAST,
+  type CastEntry,
+  type CreatePersonInput,
+  type InheritedCastEntry,
+  type Person,
+  type UpdatePersonInput,
+} from './person.ts';
+export {
   isVocabulary,
   resolveTerm,
   TERM_FIELDS,

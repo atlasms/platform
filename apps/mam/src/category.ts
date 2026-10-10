@@ -8,6 +8,7 @@
 // whole subtree in one transaction (service.ts).
 
 import { ValidationError } from '@atlas/service-kit';
+import { castProblems } from './person.ts';
 import { parseTagLabels } from './tag.ts';
 import {
   defaultsProblems,
@@ -78,6 +79,7 @@ export const CATEGORY_INHERITABLE: readonly string[] = [
   ...MEDIA_DEFAULT_FIELDS,
   ...LIST_DEFAULT_FIELDS,
   'tags',
+  'cast',
   ...POLICY_FIELDS,
 ];
 
@@ -86,6 +88,7 @@ export const DEFAULT_KEYS: readonly string[] = [
   ...MEDIA_DEFAULT_FIELDS,
   ...LIST_DEFAULT_FIELDS,
   'tags',
+  'cast',
 ];
 
 /** data-model.md §2.1: "nests arbitrarily deep — up to ~20 levels". */
@@ -182,6 +185,9 @@ function commonProblems(input: Partial<UpdateCategoryInput>, labelsRequired: boo
         problems.push(`defaults may set ${DEFAULT_KEYS.join(', ')} — not ${unknown.join(', ')}`);
       }
       problems.push(...defaultsProblems(defaults as Record<string, unknown>, 'defaults.'));
+      problems.push(
+        ...castProblems((defaults as Record<string, unknown>)['cast'], 'defaults.cast'),
+      );
       const tags = (defaults as Record<string, unknown>)['tags'];
       if (tags !== undefined) {
         if (!Array.isArray(tags) || tags.length > MAX_LIST_ITEMS) {

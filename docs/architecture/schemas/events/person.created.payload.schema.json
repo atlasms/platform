@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas.example/schemas/events/person.created.payload.schema.json",
   "title": "person.created payload",
-  "description": "Emitted by MAM when a person is added to the register (name, role, optional image only - FR-PPL-2).",
+  "description": "Emitted by MAM when a person is added to the register (EP-28.5): a name and an optional image only (FR-PPL-2). A person has no role of their own — roles are per asset, on its cast entries — so `roleInMedia` is not sent.",
   "type": "object",
   "required": ["personId", "name"],
   "additionalProperties": false,

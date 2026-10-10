@@ -21,12 +21,14 @@ import type { FileRef } from './file.ts';
 import {
   CategoryPathTaken,
   StaleCategory,
+  StalePerson,
   StaleTerm,
   StaleWrite,
   TermKeyTaken,
   type AssetStore,
   type AssetTx,
 } from './store.ts';
+import type { Person } from './person.ts';
 import type { VocabularyTerm } from './vocabulary.ts';
 import type { Tag } from './tag.ts';
 
@@ -232,6 +234,17 @@ export const pgFacetsMigration: Migration = {
          ON asset_facets (channel_id, facet, value, asset_id);`,
 };
 
+// The people register (EP-28.5): a name and an optional image reference, by design (FR-PPL-2).
+export const pgPeopleMigration: Migration = {
+  id: 'mam_people',
+  up: `CREATE TABLE IF NOT EXISTS people (
+         id         text PRIMARY KEY,
+         channel_id text NOT NULL,
+         data       jsonb NOT NULL
+       );
+       CREATE INDEX IF NOT EXISTS people_channel_idx ON people (channel_id);`,
+};
+
 /** Everything MAM's database needs, in order. Applied at startup under an advisory lock. */
 export const mamMigrations: Migration[] = [
   outboxMigration,
@@ -249,6 +262,7 @@ export const mamMigrations: Migration[] = [
   pgCategoriesMigration,
   pgTermsMigration,
   pgFacetsMigration,
+  pgPeopleMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
@@ -567,6 +581,20 @@ export function pgAssetStore(pool: PgPool): AssetStore {
               throw err;
             }
           },
+          async putPerson(person, ifVersion) {
+            const written =
+              ifVersion === undefined
+                ? await client.query(
+                    `INSERT INTO people (id, channel_id, data) VALUES ($1, $2, $3)
+                     ON CONFLICT (id) DO NOTHING`,
+                    [person.id, person.channelId, JSON.stringify(person)],
+                  )
+                : await client.query(
+                    `UPDATE people SET data = $2 WHERE id = $1 AND (data->>'version')::int = $3`,
+                    [person.id, JSON.stringify(person), ifVersion],
+                  );
+            if (written.rowCount !== 1) throw new StalePerson(person.id, ifVersion);
+          },
           async putTerm(term, ifVersion) {
             try {
               const written =
@@ -657,6 +685,21 @@ export function pgAssetStore(pool: PgPool): AssetStore {
         [channelId, vocabulary],
       );
       return rows.map((r) => r.data);
+    },
+
+    async people(channelId) {
+      const { rows } = await pool.query<{ data: Person }>(
+        `SELECT data FROM people WHERE channel_id = $1 ORDER BY data->>'name', id`,
+        [channelId],
+      );
+      return rows.map((r) => r.data);
+    },
+
+    async person(id) {
+      const { rows } = await pool.query<{ data: Person }>('SELECT data FROM people WHERE id = $1', [
+        id,
+      ]);
+      return rows[0]?.data;
     },
 
     async term(id) {

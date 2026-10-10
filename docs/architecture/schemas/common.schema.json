@@ -104,6 +104,10 @@
       "enum": ["deployment", "channel", "category", "user"],
       "description": "Levels a Tier-3 setting can be written at. Resolution is nearest-wins: code default -> deployment -> channel -> category -> user (design §2.5)."
     },
+    "RoleClass": {
+      "enum": ["on-screen", "crew"],
+      "description": "A cast role's class (EP-28.5): in front of the camera or behind it. A property of the cast-role TERM, not of each assignment."
+    },
     "AiTier": {
       "enum": ["online", "offline"],
       "description": "Which AI tier ran: online (interactive, bounded latency) or offline (batch). Not the HSM storage Tier."

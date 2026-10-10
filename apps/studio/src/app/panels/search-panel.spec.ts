@@ -10,6 +10,7 @@ import { of, Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AssetsService, type FacetedPage } from '../core/assets.service.ts';
 import { CategoriesService } from '../core/categories.service.ts';
+import { PeopleService } from '../core/people.service.ts';
 import { VocabulariesService } from '../core/vocabularies.service.ts';
 import type { Asset } from '../core/generated/mam.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
@@ -78,6 +79,7 @@ function setup() {
       { provide: LocaleService, useClass: FakeLocale },
       { provide: CategoriesService, useValue: { list: () => of([]) } },
       { provide: VocabulariesService, useValue: { list: () => of([]) } },
+      { provide: PeopleService, useValue: { list: () => of([]) } },
     ],
   });
   const fixture = TestBed.createComponent(SearchPanel);

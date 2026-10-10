@@ -5,6 +5,7 @@
 // document store and is not modelled yet.
 
 import type { AssetState } from './lifecycle.ts';
+import type { CastEntry } from './person.ts';
 
 export interface Asset {
   id: string;
@@ -41,6 +42,11 @@ export interface Asset {
    */
   subjectIds?: string[];
   classificationIds?: string[];
+  /**
+   * Cast & crew (EP-28.5): a person in a `cast-role`. Inherited PER ROLE — a role the asset names
+   * replaces the category's people for it; every other role is inherited.
+   */
+  cast?: CastEntry[];
   state: AssetState;
   episodeNo?: number;
   durationSec?: number;
@@ -80,6 +86,7 @@ export interface CreateAssetInput {
   productionDate?: string;
   subjectIds?: string[];
   classificationIds?: string[];
+  cast?: CastEntry[];
   episodeNo?: number;
   durationSec?: number;
   allowedBroadcastCount?: number;

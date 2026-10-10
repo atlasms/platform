@@ -22,12 +22,14 @@ import type { FileRef } from './file.ts';
 import {
   CategoryPathTaken,
   StaleCategory,
+  StalePerson,
   StaleTerm,
   StaleWrite,
   TermKeyTaken,
   type AssetStore,
   type AssetTx,
 } from './store.ts';
+import type { Person } from './person.ts';
 import type { VocabularyTerm } from './vocabulary.ts';
 import { prefixUpperBound } from './search.ts';
 import type { Tag } from './tag.ts';
@@ -168,6 +170,17 @@ export const sqliteFacetsMigration: Migration = {
          ON asset_facets (channel_id, facet, value, asset_id);`,
 };
 
+// The people register (EP-28.5): a name and an optional image reference, by design (FR-PPL-2).
+export const sqlitePeopleMigration: Migration = {
+  id: 'mam_people',
+  up: `CREATE TABLE IF NOT EXISTS people (
+         id         TEXT PRIMARY KEY,
+         channel_id TEXT NOT NULL,
+         data       TEXT NOT NULL
+       );
+       CREATE INDEX IF NOT EXISTS people_channel_idx ON people (channel_id);`,
+};
+
 export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
   const db = openDb(path);
   migrate(db, [
@@ -186,6 +199,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     sqliteCategoriesMigration,
     sqliteTermsMigration,
     sqliteFacetsMigration,
+    sqlitePeopleMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
   const seen = new SqliteSeenStore(db);
@@ -337,6 +351,21 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         }
         throw err;
       }
+    },
+    async putPerson(person, ifVersion) {
+      const written =
+        ifVersion === undefined
+          ? db
+              .prepare(
+                'INSERT INTO people (id, channel_id, data) VALUES (?, ?, ?) ON CONFLICT (id) DO NOTHING',
+              )
+              .run(person.id, person.channelId, JSON.stringify(person))
+          : db
+              .prepare(
+                `UPDATE people SET data = ? WHERE id = ? AND json_extract(data, '$.version') = ?`,
+              )
+              .run(JSON.stringify(person), person.id, ifVersion);
+      if (Number(written.changes) !== 1) throw new StalePerson(person.id, ifVersion);
     },
     async putTerm(term, ifVersion) {
       try {
@@ -594,6 +623,19 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         )
         .all(channelId, vocabulary) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as VocabularyTerm);
+    },
+    async people(channelId) {
+      const rows = db
+        .prepare(
+          `SELECT data FROM people WHERE channel_id = ? ORDER BY json_extract(data, '$.name'), id`,
+        )
+        .all(channelId) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as Person);
+    },
+    async person(id) {
+      const row = db.prepare('SELECT data FROM people WHERE id = ?').get(id) as
+        { data: string } | undefined;
+      return row ? (JSON.parse(row.data) as Person) : undefined;
     },
     async term(id) {
       const row = db.prepare('SELECT data FROM vocabulary_terms WHERE id = ?').get(id) as
