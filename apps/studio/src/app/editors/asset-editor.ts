@@ -40,7 +40,17 @@ type EditorSection = 'basic' | 'files';
 /** After a transcode completes: how often, and how many times, to look for its rows in MAM. */
 const RENDITION_WAIT_MS = 1_000;
 const RENDITION_WAIT_ATTEMPTS = 15;
-type EditableField = Exclude<keyof UpdateAssetInput, 'inherit'>;
+/** The term-id LISTS (EP-28.4): edited as sets of checkboxes, not as text. */
+type ListField = 'subjectIds' | 'classificationIds';
+const LIST_FIELDS: readonly ListField[] = ['subjectIds', 'classificationIds'];
+/** Every field that holds terms, and the vocabulary each draws from. */
+const TERM_VOCABULARY = {
+  ...TERM_FIELD_VOCABULARY,
+  subjectIds: 'subject',
+  classificationIds: 'classification',
+} as const;
+type TermHolder = keyof typeof TERM_VOCABULARY;
+type EditableField = Exclude<keyof UpdateAssetInput, 'inherit' | ListField>;
 /** The fields a category can supply when the asset sets none (EP-28.2, data-model §2.2). */
 type MediaDefault = 'structureId' | 'genre' | 'supplyType' | 'productionGroup' | 'productionDate';
 type FieldGroup = 'core' | 'taxonomy' | 'rights';
@@ -295,6 +305,51 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                 }
               </label>
             </div>
+          </section>
+
+          <section class="field-group">
+            <div class="group-heading">
+              <h3>{{ locale.t('assetEditor.aboutness') }}</h3>
+              <span>{{
+                canEdit('taxonomy')
+                  ? locale.t('assetEditor.editable')
+                  : locale.t('assetEditor.readOnly')
+              }}</span>
+            </div>
+            <!-- EP-28.4: an unset list inherits the category's; a set one — even empty — replaces it. -->
+            @for (field of listFields; track field) {
+              <fieldset class="terms" [disabled]="!canEdit('taxonomy')">
+                <legend>{{ locale.t('assetEditor.' + field) }}</legend>
+                @if (lists()[field] === null) {
+                  @if (inheritedList(field); as hit) {
+                    <small class="inherited">
+                      {{ locale.t('assetEditor.inheritedFrom') }} {{ hit.from.path }}
+                    </small>
+                  }
+                } @else if (canEdit('taxonomy')) {
+                  <button type="button" class="inherit" (click)="inheritList(field)">
+                    {{ locale.t('assetEditor.useInherited') }}
+                  </button>
+                }
+                @for (t of listTerms(field); track t.id) {
+                  <label>
+                    <input
+                      type="checkbox"
+                      [checked]="checkedTerm(field, t.id)"
+                      (change)="toggleTerm(field, t.id, $any($event.target).checked)"
+                    />
+                    {{ termName(field, t.id) }}
+                  </label>
+                }
+              </fieldset>
+            }
+            @if (inheritance()?.defaults?.tags; as tags) {
+              <small class="inherited">
+                {{ locale.t('assetEditor.inheritedTags') }} {{ tags.value.join(', ') }} ({{
+                  tags.from.path
+                }})
+              </small>
+            }
           </section>
 
           <section class="field-group">
@@ -613,7 +668,14 @@ export class AssetEditor implements OnInit {
   protected readonly saveError = signal<string | null>(null);
   protected readonly saved = signal(false);
   protected readonly dirtyFields = signal<ReadonlySet<EditableField>>(new Set());
-  protected readonly dirtyCount = computed(() => this.dirtyFields().size);
+  /** The term lists as edited: `null` inherits (the asset sets none), a list replaces. */
+  protected readonly lists = signal<Record<ListField, string[] | null>>({
+    subjectIds: null,
+    classificationIds: null,
+  });
+  protected readonly dirtyLists = signal<ReadonlySet<ListField>>(new Set());
+  protected readonly listFields = LIST_FIELDS;
+  protected readonly dirtyCount = computed(() => this.dirtyFields().size + this.dirtyLists().size);
   protected readonly mayEditAnything = computed(() =>
     (['core', 'taxonomy', 'rights'] as const).some((group) => this.canEdit(group)),
   );
@@ -645,7 +707,7 @@ export class AssetEditor implements OnInit {
   private readonly wsResync = this.ws.resync$
     .pipe(takeUntilDestroyed(this.destroyRef))
     .subscribe(() => {
-      if (this.dirtyFields().size === 0) this.reload({ fresh: true });
+      if (this.dirtyCount() === 0) this.reload({ fresh: true });
     });
 
   /** The Files tab's rows: null until read, then what MAM mirrors (EP-17.8). */
@@ -662,18 +724,18 @@ export class AssetEditor implements OnInit {
 
   /** The terms each term field offers (EP-28.3) — deprecated and merged too, to name old values. */
   private readonly vocabularies = inject(VocabulariesService);
-  protected readonly terms = signal<Partial<Record<TermField, VocabularyTerm[]>>>({});
+  protected readonly terms = signal<Partial<Record<TermHolder, VocabularyTerm[]>>>({});
 
-  protected liveTerms(field: TermField): VocabularyTerm[] {
+  protected liveTerms(field: TermHolder): VocabularyTerm[] {
     return (this.terms()[field] ?? []).filter((t) => !t.deprecatedAt);
   }
 
-  protected isLive(field: TermField, id: string): boolean {
+  protected isLive(field: TermHolder, id: string): boolean {
     return this.liveTerms(field).some((t) => t.id === id);
   }
 
   /** A term's label — marked when it is no longer offered; the id itself when unknown. */
-  protected termName(field: TermField, id: string): string {
+  protected termName(field: TermHolder, id: string): string {
     const term = (this.terms()[field] ?? []).find((t) => t.id === id);
     if (!term) return id;
     const name = termLabel(term, this.locale.locale());
@@ -697,9 +759,9 @@ export class AssetEditor implements OnInit {
       next: (all) => this.categories.set(all),
       error: () => undefined,
     });
-    for (const [field, vocabulary] of Object.entries(TERM_FIELD_VOCABULARY) as [
-      TermField,
-      (typeof TERM_FIELD_VOCABULARY)[TermField],
+    for (const [field, vocabulary] of Object.entries(TERM_VOCABULARY) as [
+      TermHolder,
+      (typeof TERM_VOCABULARY)[TermHolder],
     ][]) {
       this.vocabularies.list(vocabulary, true).subscribe({
         next: (list) => this.terms.update((t) => ({ ...t, [field]: list })),
@@ -770,6 +832,7 @@ export class AssetEditor implements OnInit {
       next: (asset) => {
         this.asset.set(asset);
         this.draft.set(toDraft(asset));
+        this.adoptLists(asset);
         this.dirtyFields.set(new Set());
         this.editors.setDirty(this.tabId(), false);
         this.loading.set(false);
@@ -805,13 +868,14 @@ export class AssetEditor implements OnInit {
    * own audited revision, `inherit` in the PATCH. Only with nothing unsaved: it saves.
    */
   protected resetToInherited(field: MediaDefault): void {
-    if (this.saving() || this.dirtyFields().size > 0 || !this.canEdit(FIELD_GROUP[field])) return;
+    if (this.saving() || this.dirtyCount() > 0 || !this.canEdit(FIELD_GROUP[field])) return;
     this.saving.set(true);
     this.saveError.set(null);
     this.assetsApi.update(this.assetId(), { inherit: [field] }).subscribe({
       next: (asset) => {
         this.asset.set(asset);
         this.draft.set(toDraft(asset));
+        this.adoptLists(asset);
         this.saving.set(false);
         this.loadInheritance();
       },
@@ -820,6 +884,55 @@ export class AssetEditor implements OnInit {
         this.saving.set(false);
       },
     });
+  }
+
+  protected inheritedList(field: ListField) {
+    return this.inheritance()?.defaults[field] ?? null;
+  }
+
+  /** The terms a list offers: the live ones, and any it holds that are no longer live. */
+  protected listTerms(field: ListField): VocabularyTerm[] {
+    const all = this.terms()[field] ?? [];
+    const held = new Set(this.lists()[field] ?? []);
+    return all.filter((t) => !t.deprecatedAt || held.has(t.id));
+  }
+
+  /** Checked when in the asset's own list — or, while it inherits, in the inherited one. */
+  protected checkedTerm(field: ListField, id: string): boolean {
+    return (this.lists()[field] ?? this.inheritedList(field)?.value ?? []).includes(id);
+  }
+
+  /** Ticking a box while inheriting starts the asset's OWN list from what it inherited. */
+  protected toggleTerm(field: ListField, id: string, checked: boolean): void {
+    if (!this.canEdit('taxonomy')) return;
+    const base = this.lists()[field] ?? this.inheritedList(field)?.value ?? [];
+    const next = checked ? [...new Set([...base, id])] : base.filter((x) => x !== id);
+    this.setList(field, next);
+  }
+
+  /** Back to inheriting — saved with the rest, as `inherit` in the PATCH. */
+  protected inheritList(field: ListField): void {
+    if (this.canEdit('taxonomy')) this.setList(field, null);
+  }
+
+  private setList(field: ListField, value: string[] | null): void {
+    this.lists.update((l) => ({ ...l, [field]: value }));
+    const stored = this.asset()?.[field] ?? null;
+    const dirty = new Set(this.dirtyLists());
+    if (JSON.stringify(value) === JSON.stringify(stored)) dirty.delete(field);
+    else dirty.add(field);
+    this.dirtyLists.set(dirty);
+    this.editors.setDirty(this.tabId(), this.dirtyCount() > 0);
+    this.saved.set(false);
+    this.saveError.set(null);
+  }
+
+  private adoptLists(asset: Asset): void {
+    this.lists.set({
+      subjectIds: asset.subjectIds ?? null,
+      classificationIds: asset.classificationIds ?? null,
+    });
+    this.dirtyLists.set(new Set());
   }
 
   protected canEdit(group: FieldGroup): boolean {
@@ -852,7 +965,7 @@ export class AssetEditor implements OnInit {
 
   protected save(event: Event): void {
     event.preventDefault();
-    if (this.saving() || this.dirtyFields().size === 0) return;
+    if (this.saving() || this.dirtyCount() === 0) return;
     const patch = this.buildPatch();
     if (!patch) return;
 
@@ -863,6 +976,7 @@ export class AssetEditor implements OnInit {
       next: (asset) => {
         this.asset.set(asset);
         this.draft.set(toDraft(asset));
+        this.adoptLists(asset);
         this.dirtyFields.set(new Set());
         this.editors.setDirty(this.tabId(), false);
         this.saving.set(false);
@@ -938,6 +1052,13 @@ export class AssetEditor implements OnInit {
       }
     }
 
+    for (const field of this.dirtyLists()) {
+      if (!this.canEdit('taxonomy')) continue;
+      const value = this.lists()[field];
+      if (value === null) patch.inherit = [...(patch.inherit ?? []), field];
+      else patch[field] = value;
+    }
+
     return patch;
   }
 
@@ -978,7 +1099,7 @@ export class AssetEditor implements OnInit {
     // A reload REPLACES the draft. With unsaved edits that would silently discard the user's
     // work, so skip the refresh while dirty; the next save's version conflict or a manual
     // reload reconciles instead. When clean, reload for any state-changing event.
-    if (this.dirtyFields().size > 0) return;
+    if (this.dirtyCount() > 0) return;
     this.reload({ fresh: true });
   }
 }

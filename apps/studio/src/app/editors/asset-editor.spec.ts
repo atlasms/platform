@@ -162,6 +162,8 @@ interface InternalEditor {
   change(field: keyof UpdateAssetInput, value: string): void;
   save(event: Event): void;
   resetToInherited(field: string): void;
+  toggleTerm(field: string, id: string, checked: boolean): void;
+  inheritList(field: string): void;
 }
 
 /** The live-update surface, driven through the shared WebSocketService's event stream. */
@@ -254,6 +256,29 @@ describe('AssetEditor', () => {
     // A term the editor cannot name is shown by its id rather than hidden.
     const supply = root.querySelector<HTMLSelectElement>('select[name="supplyType"]')!;
     expect(supply.options[0]?.textContent?.trim()).toBe('— assetEditor.inherits S-X');
+  });
+
+  it('EP-28.4: ticking a subject while inheriting starts the asset’s OWN list from the inherited one; back to inheriting is `inherit`', () => {
+    const { fixture, fake, component } = setup();
+    fake.gets[0]?.result.next(record());
+    fake.inheritances[0]?.result.next({
+      assetId: record().id,
+      defaults: {
+        subjectIds: { value: ['S-WAR'], from: { categoryId: 'drama', path: '/drama/' } },
+      },
+      policies: {},
+    });
+    fixture.detectChanges();
+    component.toggleTerm('subjectIds', 'S-LOVE', true);
+    expect(component.dirtyCount()).toBe(1);
+    component.save(new Event('submit'));
+    expect(fake.updates[0]?.patch).toEqual({ subjectIds: ['S-WAR', 'S-LOVE'] });
+    fake.updates[0]?.result.next(record({ subjectIds: ['S-WAR', 'S-LOVE'], version: 4 }));
+    expect(component.dirtyCount()).toBe(0);
+
+    component.inheritList('subjectIds');
+    component.save(new Event('submit'));
+    expect(fake.updates[1]?.patch).toEqual({ inherit: ['subjectIds'] });
   });
 
   describe('inheritance (EP-28.2)', () => {

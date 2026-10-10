@@ -66,6 +66,7 @@ import {
   refuseTerm,
   resolveTerm,
   TERM_FIELDS,
+  TERM_LIST_FIELDS,
   termLabel,
   updateTermProblems,
   VOCABULARIES,
@@ -83,11 +84,14 @@ import {
   expiryFrom,
   inheritedByAsset,
   inheritedByCategory,
+  ASSET_INHERITABLE,
   inheritProblems,
+  LIST_DEFAULT_FIELDS,
   MEDIA_DEFAULT_FIELDS,
   POLICY_FIELDS,
   type Inheritance,
   type MediaDefaultField,
+  type MediaDefaults,
 } from './inheritance.ts';
 import { indexTerms, parseQuery } from './search.ts';
 import { parseTagLabels, sameTags, type Tag } from './tag.ts';
@@ -448,7 +452,10 @@ export class MamService {
     if (asset.categoryId === undefined) return { defaults: {}, policies: {} };
     const tree = await this.options.store.categories(asset.channelId);
     const node = tree.find((c) => c.id === asset.categoryId);
-    return node ? inheritedByAsset(asset, chainOf(tree, node)) : { defaults: {}, policies: {} };
+    if (!node) return { defaults: {}, policies: {} };
+    // Tags are the asset's own resource: "none of its own" is "no tags" (EP-28.4).
+    const hasOwnTags = (await this.options.store.tagsOf(asset.id)).length > 0;
+    return inheritedByAsset(asset, chainOf(tree, node), hasOwnTags);
   }
 
   async counts(caller: Caller): Promise<Record<string, number>> {
@@ -556,6 +563,8 @@ export class MamService {
         supplyType: input.supplyType,
         productionGroup: input.productionGroup,
         productionDate: input.productionDate,
+        subjectIds: input.subjectIds,
+        classificationIds: input.classificationIds,
         episodeNo: input.episodeNo,
         durationSec: input.durationSec,
         allowedBroadcastCount: input.allowedBroadcastCount,
@@ -602,9 +611,11 @@ export class MamService {
   ): Promise<Asset> {
     refuse([
       ...defaultsProblems(patch as unknown as Record<string, unknown>),
-      ...inheritProblems(patch.inherit, MEDIA_DEFAULT_FIELDS),
+      ...inheritProblems(patch.inherit, ASSET_INHERITABLE),
     ]);
-    const inherit = (patch.inherit ?? []) as MediaDefaultField[];
+    const inherit = (patch.inherit ?? []) as (
+      MediaDefaultField | 'subjectIds' | 'classificationIds'
+    )[];
     const clash = inherit.filter((f) => patch[f] !== undefined);
     if (clash.length > 0) {
       throw new ValidationError(`${clash.join(', ')}: set and inherited at once — choose one`);
@@ -620,13 +631,14 @@ export class MamService {
     await this.requireTerms(
       existing.channelId,
       Object.fromEntries(
-        Object.entries(safe).filter(([f, v]) => v !== existing[f as keyof UpdateAssetInput]),
+        Object.entries(safe).filter(([f, v]) => !same(v, existing[f as keyof UpdateAssetInput])),
       ),
     );
 
     const changedFields = [
       ...(Object.keys(safe) as (keyof UpdateAssetInput)[]).filter(
-        (key) => safe[key] !== undefined && safe[key] !== existing[key],
+        // By value: a list re-sent with the same ids is no change.
+        (key) => safe[key] !== undefined && !same(safe[key], existing[key]),
       ),
       // Inheriting a field the asset set is a change; inheriting one it never set is not.
       ...inherit.filter((f) => existing[f] !== undefined),
@@ -1151,7 +1163,11 @@ export class MamService {
         ? ['core']
         : []),
       ...(input.defaults !== undefined ||
-      inherit.some((f) => (MEDIA_DEFAULT_FIELDS as readonly string[]).includes(f))
+      inherit.some((f) =>
+        ([...MEDIA_DEFAULT_FIELDS, ...LIST_DEFAULT_FIELDS, 'tags'] as readonly string[]).includes(
+          f,
+        ),
+      )
         ? ['defaults']
         : []),
       ...(input.mediaAddable !== undefined ||
@@ -1179,14 +1195,21 @@ export class MamService {
       }),
     };
     // Defaults MERGE: a field given is set, the rest kept; `inherit` takes a field off the node.
-    const defaults: Record<string, string> = { ...existing.defaults, ...input.defaults };
+    const defaults: Record<string, unknown> = {
+      ...existing.defaults,
+      ...input.defaults,
+      // Tag labels are kept as cleaned, de-duplicated labels — the form a tag is minted from.
+      ...(input.defaults?.tags !== undefined
+        ? { tags: parseTagLabels(input.defaults.tags).labels.map((l) => l.label) }
+        : {}),
+    };
     for (const field of inherit) {
       delete defaults[field];
       if ((POLICY_FIELDS as readonly string[]).includes(field)) {
         delete next[field as (typeof POLICY_FIELDS)[number]];
       }
     }
-    if (Object.keys(defaults).length > 0) next.defaults = defaults;
+    if (Object.keys(defaults).length > 0) next.defaults = defaults as MediaDefaults;
     else delete next.defaults;
     if (input.deprecated === true && existing.deprecatedAt === undefined) {
       next.deprecatedAt = this.now().toISOString();
@@ -1502,9 +1525,16 @@ export class MamService {
     where = '',
   ): Promise<void> {
     const problems: string[] = [];
+    const named: [string, Vocabulary, string][] = [];
     for (const [field, vocab] of Object.entries(TERM_FIELDS) as [TermField, Vocabulary][]) {
       const id = values[field];
-      if (typeof id !== 'string') continue;
+      if (typeof id === 'string') named.push([field, vocab, id]);
+    }
+    for (const [field, vocab] of Object.entries(TERM_LIST_FIELDS) as [string, Vocabulary][]) {
+      const ids = values[field];
+      if (Array.isArray(ids)) for (const id of ids) named.push([field, vocab, String(id)]);
+    }
+    for (const [field, vocab, id] of named) {
       const term = await this.options.store.term(id);
       if (!term || term.channelId !== channelId || term.vocabulary !== vocab) {
         problems.push(`${where}${field} must name a term of the ${vocab} vocabulary`);
@@ -2334,6 +2364,8 @@ const UPDATABLE_FIELDS = [
   'supplyType',
   'productionGroup',
   'productionDate',
+  'subjectIds',
+  'classificationIds',
   'episodeNo',
   'durationSec',
   'allowedBroadcastCount',
@@ -2364,6 +2396,11 @@ function pickUpdatable(patch: UpdateAssetInput): UpdateAssetInput {
 function traceHeaders(): Record<string, string> | undefined {
   const traceparent = currentTraceparent();
   return traceparent === undefined ? undefined : { traceparent };
+}
+
+/** Equal by value — a list re-sent with the same items is no change. */
+function same(a: unknown, b: unknown): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
 }
 
 function defined<T extends Record<string, unknown>>(

@@ -36,6 +36,9 @@ const DEFAULT_FIELDS: readonly MediaDefaultField[] = [
   'productionDate',
 ];
 type Policy = 'reviewNeeded' | 'keepDuration' | 'defaultExpiry';
+/** The list defaults (EP-28.4): term ids. An empty selection inherits from above. */
+type ListDefault = 'subjectIds' | 'classificationIds';
+const LIST_DEFAULTS: readonly ListDefault[] = ['subjectIds', 'classificationIds'];
 
 export interface CategoryDraft {
   en: string;
@@ -46,6 +49,9 @@ export interface CategoryDraft {
   mediaAddable: boolean;
   /** '' = this node does not set it, so it inherits. */
   defaults: Record<MediaDefaultField, string>;
+  lists: Record<ListDefault, string[]>;
+  /** Tag labels, comma-separated; '' inherits. */
+  tags: string;
   /** '' inherits; 'true' / 'false' set it. */
   reviewNeeded: '' | 'true' | 'false';
   keepDuration: string;
@@ -66,6 +72,11 @@ export const draftOf = (c: Category): CategoryDraft => {
       MediaDefaultField,
       string
     >,
+    lists: {
+      subjectIds: [...(c.defaults?.subjectIds ?? [])],
+      classificationIds: [...(c.defaults?.classificationIds ?? [])],
+    },
+    tags: (c.defaults?.tags ?? []).join(', '),
     reviewNeeded: c.reviewNeeded === undefined ? '' : c.reviewNeeded ? 'true' : 'false',
     keepDuration: c.keepDuration ?? '',
     defaultExpiry: c.defaultExpiry ?? '',
@@ -90,11 +101,24 @@ export function patchOf(before: Category, d: CategoryDraft): UpdateCategoryInput
   if (d.mediaAddable !== was.mediaAddable) patch.mediaAddable = d.mediaAddable;
   // A default or policy emptied is no longer set HERE: it inherits again (`inherit`).
   const inherit: NonNullable<UpdateCategoryInput['inherit']> = [];
-  const defaults: Partial<Record<MediaDefaultField, string>> = {};
+  const defaults: NonNullable<UpdateCategoryInput['defaults']> = {};
   for (const f of DEFAULT_FIELDS) {
     if (d.defaults[f] === was.defaults[f]) continue;
     if (d.defaults[f].trim() === '') inherit.push(f);
     else defaults[f] = d.defaults[f].trim();
+  }
+  for (const f of LIST_DEFAULTS) {
+    if (JSON.stringify(d.lists[f]) === JSON.stringify(was.lists[f])) continue;
+    if (d.lists[f].length === 0) inherit.push(f);
+    else defaults[f] = d.lists[f];
+  }
+  if (d.tags !== was.tags) {
+    const tags = d.tags
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t !== '');
+    if (tags.length === 0) inherit.push('tags');
+    else defaults.tags = tags;
   }
   if (Object.keys(defaults).length > 0) patch.defaults = defaults;
   if (d.reviewNeeded !== was.reviewNeeded) {
@@ -319,6 +343,33 @@ export function openCategory(editors: EditorStore, category: Category, locale: s
                 <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
               }
             </label>
+            @for (f of listDefaults; track f) {
+              <label>
+                <span>{{ locale.t('categories.default.' + f) }}</span>
+                <select
+                  multiple
+                  [name]="'default-' + f"
+                  [ngModel]="d().lists[f]"
+                  (ngModelChange)="setList(f, $event)"
+                >
+                  @for (t of listOptions(f); track t.id) {
+                    <option [value]="t.id">{{ termName(f, t.id) }}</option>
+                  }
+                </select>
+                @if (inheritedList(f); as from) {
+                  <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
+                }
+              </label>
+            }
+            <label>
+              <span>{{ locale.t('categories.default.tags') }}</span>
+              <input
+                name="default-tags"
+                [placeholder]="inheritedTags()"
+                [ngModel]="d().tags"
+                (ngModelChange)="set('tags', $event)"
+              />
+            </label>
           </fieldset>
 
           <h3>{{ locale.t('categories.policies') }}</h3>
@@ -526,9 +577,14 @@ export class CategoryEditor implements OnInit {
 
   ngOnInit(): void {
     this.reload();
-    for (const [field, vocabulary] of Object.entries(TERM_FIELD_VOCABULARY) as [
-      TermField,
-      (typeof TERM_FIELD_VOCABULARY)[TermField],
+    const vocabularies = {
+      ...TERM_FIELD_VOCABULARY,
+      subjectIds: 'subject',
+      classificationIds: 'classification',
+    } as const;
+    for (const [field, vocabulary] of Object.entries(vocabularies) as [
+      TermField | ListDefault,
+      (typeof vocabularies)[TermField | ListDefault],
     ][]) {
       this.vocabularies.list(vocabulary, true).subscribe({
         next: (list) => this.terms.update((t) => ({ ...t, [field]: list })),
@@ -549,17 +605,42 @@ export class CategoryEditor implements OnInit {
 
   /** The terms each term default offers (EP-28.3) — deprecated too, to name an old value. */
   private readonly vocabularies = inject(VocabulariesService);
-  private readonly terms = signal<Partial<Record<TermField, VocabularyTerm[]>>>({});
+  private readonly terms = signal<Partial<Record<TermField | ListDefault, VocabularyTerm[]>>>({});
+  protected readonly listDefaults = LIST_DEFAULTS;
 
-  protected liveTerms(field: TermField): VocabularyTerm[] {
+  /** The terms a list offers: live ones, and any it holds that are no longer live. */
+  protected listOptions(field: ListDefault): VocabularyTerm[] {
+    const held = new Set(this.draft()?.lists[field] ?? []);
+    return (this.terms()[field] ?? []).filter((t) => !t.deprecatedAt || held.has(t.id));
+  }
+
+  protected setList(field: ListDefault, ids: string[]): void {
+    this.draft.update((d) => (d ? { ...d, lists: { ...d.lists, [field]: ids } } : d));
+    this.editors.setDirty(this.tabId(), this.dirty());
+  }
+
+  /** Where an inherited list comes from, while this node sets none. */
+  protected inheritedList(field: ListDefault): string | null {
+    if ((this.draft()?.lists[field] ?? []).length > 0) return null;
+    const hit = this.inheritance()?.defaults[field];
+    return hit
+      ? `${hit.from.path} (${hit.value.map((id) => this.termName(field, id)).join(', ')})`
+      : null;
+  }
+
+  protected inheritedTags(): string {
+    return this.inheritance()?.defaults.tags?.value.join(', ') ?? '';
+  }
+
+  protected liveTerms(field: TermField | ListDefault): VocabularyTerm[] {
     return (this.terms()[field] ?? []).filter((t) => !t.deprecatedAt);
   }
 
-  protected isLive(field: TermField, id: string): boolean {
+  protected isLive(field: TermField | ListDefault, id: string): boolean {
     return this.liveTerms(field).some((t) => t.id === id);
   }
 
-  protected termName(field: TermField, id: string): string {
+  protected termName(field: TermField | ListDefault, id: string): string {
     const term = (this.terms()[field] ?? []).find((t) => t.id === id);
     if (!term) return id;
     const name = termLabel(term, this.locale.locale());

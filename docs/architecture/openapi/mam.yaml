@@ -581,6 +581,8 @@ components:
         supplyType: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live supply-type term (EP-28.3).' }
         productionGroup: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live production-group term (EP-28.3).' }
         productionDate: { type: string, format: date, description: A media default (EP-28.2). }
+        subjectIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' }, description: 'Subject TERM ids (EP-28.4). Absent inherits the category chain''s list; present — even empty — replaces it.' }
+        classificationIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' }, description: 'Classification TERM ids (EP-28.4). Absent inherits; present replaces.' }
         state: { type: string, enum: [created, processing, ready, approved, expired, rejected, replaced, purged] }
         episodeNo: { type: integer }
         allowedBroadcastCount: { type: integer }
@@ -609,6 +611,8 @@ components:
         supplyType: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live supply-type term (EP-28.3).' }
         productionGroup: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live production-group term (EP-28.3).' }
         productionDate: { type: string, format: date, description: A media default (EP-28.2). }
+        subjectIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' }, description: 'Subject TERM ids (EP-28.4). Absent inherits the category chain''s list; present — even empty — replaces it.' }
+        classificationIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' }, description: 'Classification TERM ids (EP-28.4). Absent inherits; present replaces.' }
         episodeNo: { type: integer }
         durationSec: { type: number }
         allowedBroadcastCount: { type: integer }
@@ -625,14 +629,16 @@ components:
         supplyType: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live supply-type term (EP-28.3).' }
         productionGroup: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live production-group term (EP-28.3).' }
         productionDate: { type: string, format: date, description: A media default (EP-28.2). }
+        subjectIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' }, description: 'Subject TERM ids (EP-28.4). Absent inherits the category chain''s list; present — even empty — replaces it.' }
+        classificationIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' }, description: 'Classification TERM ids (EP-28.4). Absent inherits; present replaces.' }
         episodeNo: { type: integer }
         durationSec: { type: number }
         allowedBroadcastCount: { type: integer }
         expiresAt: { type: string, format: date-time }
         inherit:
           type: array
-          items: { $ref: '#/components/schemas/MediaDefaultField' }
-          description: 'Media defaults the asset stops setting, so its category''s value shows through again — reset to inherited (EP-28.2). Not with a value for the same field.'
+          items: { type: string, enum: [structureId, genre, supplyType, productionGroup, productionDate, subjectIds, classificationIds] }
+          description: 'Media defaults the asset stops setting, so its category''s value shows through again — reset to inherited (EP-28.2/28.4). Not with a value for the same field.'
     Category:
       type: object
       description: 'A node of the channel''s category tree (../data-model.md §2.6): a hierarchical vocabulary term whose path is built from immutable keys.'
@@ -689,7 +695,7 @@ components:
         defaultExpiry: { type: string, description: 'A policy: an instant, or an ISO-8601 duration from approval — the expiresAt media approved here without one receives, snapshotted (FR-TAX-7). Inherited when absent.' }
         inherit:
           type: array
-          items: { type: string, enum: [structureId, genre, supplyType, productionGroup, productionDate, reviewNeeded, keepDuration, defaultExpiry] }
+          items: { type: string, enum: [structureId, genre, supplyType, productionGroup, productionDate, subjectIds, classificationIds, tags, reviewNeeded, keepDuration, defaultExpiry] }
           description: 'Defaults or policies this node stops setting, so they are inherited again. Not with a value for the same field.'
     MediaDefaultField:
       type: string
@@ -705,6 +711,15 @@ components:
         supplyType: { type: string, maxLength: 128 }
         productionGroup: { type: string, maxLength: 128 }
         productionDate: { type: string, format: date }
+        subjectIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' } }
+        classificationIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' } }
+        tags: { type: array, maxItems: 50, items: { type: string, maxLength: 64 }, description: 'Tag labels for media with no tags of their own (EP-28.4); stored cleaned and de-duplicated.' }
+    InheritedStringList:
+      type: object
+      required: [value, from]
+      properties:
+        value: { type: array, items: { type: string } }
+        from: { $ref: '#/components/schemas/InheritedFrom' }
     InheritedString:
       type: object
       required: [value, from]
@@ -737,6 +752,9 @@ components:
             supplyType: { $ref: '#/components/schemas/InheritedString' }
             productionGroup: { $ref: '#/components/schemas/InheritedString' }
             productionDate: { $ref: '#/components/schemas/InheritedString' }
+            subjectIds: { $ref: '#/components/schemas/InheritedStringList' }
+            classificationIds: { $ref: '#/components/schemas/InheritedStringList' }
+            tags: { $ref: '#/components/schemas/InheritedStringList', description: 'Only for an asset with no tags of its own.' }
         policies:
           type: object
           properties:

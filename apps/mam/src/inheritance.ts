@@ -28,7 +28,33 @@ export const MEDIA_DEFAULT_FIELDS = [
   'productionDate',
 ] as const;
 export type MediaDefaultField = (typeof MEDIA_DEFAULT_FIELDS)[number];
-export type MediaDefaults = Partial<Record<MediaDefaultField, string>>;
+
+/**
+ * The LIST defaults (EP-28.4): term-id lists an asset carries itself, and the tags a category
+ * gives the media that have none. Decided with the product owner: an asset's own list REPLACES the
+ * category's — whole, never merged — so an asset with `subjectIds: []` has said "none", and one
+ * with no `subjectIds` at all inherits.
+ */
+export const LIST_DEFAULT_FIELDS = ['subjectIds', 'classificationIds'] as const;
+export type ListDefaultField = (typeof LIST_DEFAULT_FIELDS)[number];
+/** What an asset's `inherit` may name. */
+export const ASSET_INHERITABLE: readonly string[] = [
+  ...MEDIA_DEFAULT_FIELDS,
+  ...LIST_DEFAULT_FIELDS,
+];
+
+export type MediaDefaults = Partial<Record<MediaDefaultField, string>> &
+  Partial<Record<ListDefaultField, string[]>> & {
+    /**
+     * Tag LABELS a category gives media with no tags of their own. An asset's tags are its own
+     * resource (`PUT /assets/{id}/tags`), so "none of its own" is "no tags": a tagged asset
+     * replaces the category's, an untagged one shows them as inherited.
+     */
+    tags?: string[];
+  };
+
+/** Most items a list default may hold — the asset's own tag cap (tag.ts). */
+export const MAX_LIST_ITEMS = 50;
 
 export const POLICY_FIELDS = ['reviewNeeded', 'keepDuration', 'defaultExpiry'] as const;
 export type PolicyField = (typeof POLICY_FIELDS)[number];
@@ -54,7 +80,8 @@ export interface InheritedValue<T> {
 
 /** The inherited values of one node or asset: only the fields it does not set itself. */
 export interface Inheritance {
-  defaults: Partial<Record<MediaDefaultField, InheritedValue<string>>>;
+  defaults: Partial<Record<MediaDefaultField, InheritedValue<string>>> &
+    Partial<Record<ListDefaultField | 'tags', InheritedValue<string[]>>>;
   policies: {
     reviewNeeded?: InheritedValue<boolean>;
     keepDuration?: InheritedValue<string>;
@@ -96,6 +123,11 @@ export function inheritedByCategory(chain: readonly Category[]): Inheritance {
     const hit = nearest(ancestors, (c) => c.defaults?.[field]);
     if (hit) out.defaults[field] = hit;
   }
+  for (const field of [...LIST_DEFAULT_FIELDS, 'tags'] as const) {
+    if (node.defaults?.[field] !== undefined) continue;
+    const hit = nearest(ancestors, (c) => c.defaults?.[field]);
+    if (hit) out.defaults[field] = hit;
+  }
   resolvePolicies(out, ancestors, (field) => node[field] !== undefined);
   return out;
 }
@@ -104,12 +136,26 @@ export function inheritedByCategory(chain: readonly Category[]): Inheritance {
  * What an ASSET inherits from its category's chain (root first, its category last): each media
  * default it does not set, and every policy (an asset sets none).
  */
-export function inheritedByAsset(asset: Asset, chain: readonly Category[]): Inheritance {
+export function inheritedByAsset(
+  asset: Asset,
+  chain: readonly Category[],
+  /** Whether the asset has tags of its own — its tags live beside it, not on the record. */
+  hasOwnTags = false,
+): Inheritance {
   const out: Inheritance = { defaults: {}, policies: {} };
   for (const field of MEDIA_DEFAULT_FIELDS) {
     if (asset[field] !== undefined) continue;
     const hit = nearest(chain, (c) => c.defaults?.[field]);
     if (hit) out.defaults[field] = hit;
+  }
+  for (const field of LIST_DEFAULT_FIELDS) {
+    if (asset[field] !== undefined) continue;
+    const hit = nearest(chain, (c) => c.defaults?.[field]);
+    if (hit) out.defaults[field] = hit;
+  }
+  if (!hasOwnTags) {
+    const hit = nearest(chain, (c) => c.defaults?.tags);
+    if (hit) out.defaults.tags = hit;
   }
   resolvePolicies(out, chain, () => false);
   return out;
@@ -136,9 +182,10 @@ function resolvePolicies(
 
 /** The asset with its inherited media defaults filled in — what a gate or a reader judges. */
 export function effectiveAsset(asset: Asset, inheritance: Inheritance): Asset {
-  const filled: Partial<Record<MediaDefaultField, string>> = {};
+  const filled: Record<string, unknown> = {};
   for (const [field, hit] of Object.entries(inheritance.defaults)) {
-    filled[field as MediaDefaultField] = hit.value;
+    // Tags are not a field of the record; everything else inherited is.
+    if (field !== 'tags' && hit !== undefined) filled[field] = hit.value;
   }
   return { ...filled, ...stripUndefined(asset) } as Asset;
 }
@@ -223,6 +270,20 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 /** Every reason a set of media-default values is refused (an asset's, or a category's defaults). */
 export function defaultsProblems(values: Record<string, unknown>, where = ''): string[] {
   const problems: string[] = [];
+  for (const field of LIST_DEFAULT_FIELDS) {
+    const v = values[field];
+    if (v === undefined) continue;
+    if (
+      !Array.isArray(v) ||
+      v.length > MAX_LIST_ITEMS ||
+      v.some((id) => typeof id !== 'string' || id === '') ||
+      new Set(v).size !== v.length
+    ) {
+      problems.push(
+        `${where}${field} must be a list of distinct term ids, at most ${MAX_LIST_ITEMS}`,
+      );
+    }
+  }
   for (const field of MEDIA_DEFAULT_FIELDS) {
     const v = values[field];
     if (v === undefined) continue;

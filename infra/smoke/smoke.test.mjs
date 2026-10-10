@@ -2310,6 +2310,22 @@ test('smoke: EP-28.2/28.3 — vocabularies and inheritance through the gateway: 
   assert.equal(reset.genre, undefined);
   assert.equal((await inherited()).defaults.genre.value, period.id);
 
+  // EP-28.4: list defaults — a subject list and tags on the department reach the untagged asset;
+  // the asset's own list, even empty, replaces the category's whole.
+  const war = await term('subject', 'war');
+  const lists = await send('PATCH', `/api/v1/categories/${dept.id}?version=${dept.version + 1}`, {
+    defaults: { subjectIds: [war.id], tags: ['Archive'] },
+  });
+  assert.equal(lists.status, 200, lists.text);
+  got = await inherited();
+  assert.deepEqual(
+    [got.defaults.subjectIds.value, got.defaults.tags.value],
+    [[war.id], ['Archive']],
+  );
+  const none = json(await send('PATCH', `/api/v1/assets/${asset.id}`, { subjectIds: [] }));
+  assert.deepEqual(none.subjectIds, []);
+  assert.equal((await inherited()).defaults.subjectIds, undefined, 'an empty own list replaces');
+
   // A merge (EP-28.3): one audited write; a write naming the merged term is told the survivor.
   const merged = await send('POST', `/api/v1/vocabularies/genre/${comedy.id}/merge`, {
     into: drama.id,

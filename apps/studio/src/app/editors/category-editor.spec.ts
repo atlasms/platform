@@ -50,6 +50,22 @@ describe('the category editor’s PATCH (EP-28.2)', () => {
     expect(patchOf(before, off)).toEqual({ inherit: ['reviewNeeded'] });
   });
 
+  it('EP-28.4: a list default is set as chosen, emptied to inherit; tags are typed comma-separated', () => {
+    const before = category({ defaults: { subjectIds: ['S1'], tags: ['news'] } });
+    const d = draftOf(before);
+    expect([d.lists.subjectIds, d.tags]).toEqual([['S1'], 'news']);
+    d.lists.subjectIds = [];
+    d.lists.classificationIds = ['C1', 'C2'];
+    d.tags = ' sport, , live ';
+    expect(patchOf(before, d)).toEqual({
+      defaults: { classificationIds: ['C1', 'C2'], tags: ['sport', 'live'] },
+      inherit: ['subjectIds'],
+    });
+    const cleared = draftOf(before);
+    cleared.tags = '';
+    expect(patchOf(before, cleared)).toEqual({ inherit: ['tags'] });
+  });
+
   it('an untouched draft is no patch at all', () => {
     const before = category({ defaults: { genre: 'drama' }, defaultExpiry: 'P1Y' });
     expect(patchOf(before, draftOf(before))).toEqual({});

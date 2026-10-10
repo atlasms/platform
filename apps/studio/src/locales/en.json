@@ -203,7 +203,11 @@
     "reviewNotNeeded": "no review needed",
     "defaultExpiry": "expires after approval:",
     "keepOnline": "kept online after use:",
-    "inherits": "inherits"
+    "inherits": "inherits",
+    "aboutness": "Subjects & classification",
+    "subjectIds": "Subjects",
+    "classificationIds": "Classifications",
+    "inheritedTags": "Tags from the category:"
   },
   "editor": {
     "close": "Close",
@@ -657,7 +661,10 @@
       "genre": "Genre",
       "supplyType": "Supply type",
       "productionGroup": "Production group",
-      "productionDate": "Production date"
+      "productionDate": "Production date",
+      "subjectIds": "Subjects",
+      "classificationIds": "Classifications",
+      "tags": "Tags (comma-separated)"
     },
     "policies": "Policies",
     "reviewNeeded": "Review needed",
