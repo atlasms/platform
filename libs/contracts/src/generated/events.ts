@@ -157,8 +157,10 @@ export interface AlertRaisedPayload {
 /** Emitted by MAM when an asset is approved for air. Consumed by Scheduling, Integration, Logging. */
 export interface AssetApprovedPayload {
   assetId: Ulid;
-  /** User id who approved (manual verdict). */
+  /** User id who approved (manual verdict); `mam` when `automatic`. */
   approver: string;
+  /** true when MAM approved the asset itself because its category chain says reviewNeeded: false (EP-28.7) — no person reviewed it. Absent on a manual verdict. */
+  automatic?: boolean;
   approvedAt?: string;
   /** When the media becomes unusable and requires re-review. Absent = permanent approval. Defaults from the asset's category (FR-TAX-7), overridable per asset. */
   expiresAt?: string;

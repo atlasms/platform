@@ -405,7 +405,7 @@ category's** — for subjects, classifications and tags alike; cast inherits **p
 | 28.4 | Xref defaults — subjects, classifications, tags on a category, inherited onto media; an asset's own list replaces the category's | 5 |
 | 28.5 | People register + cast & crew with **per-role** inheritance (FR-TAX-9a) | 5 |
 | 28.6 | Faceted search across category, subject, classification, tag and person — over EFFECTIVE values, so a category edit is findable at once (FR-TAX-5/6) | 8 |
-| 28.7 | Policies take effect — `reviewNeeded` gates approval (with EP-24); `keepDuration` handed to HSM tiering (EP-36) | 3 |
+| 28.7 | Policies take effect — `reviewNeeded: false` **auto-approves on ready** (decided 2026-10-10; done); `keepDuration` handed to HSM tiering (waits for EP-36) | 3 |
 
 **Decision points:** 28.6 must choose how inherited values reach the search index — resolve at
 query time (a category join) or project effective values and re-project a subtree on
