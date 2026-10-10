@@ -86,6 +86,14 @@ spec:
                   name: hsm-internal-keys
                   key: keys
                   optional: true
+            # Readers sign with these (hsm-read-keys; EP-31: Scheduling's availability check).
+            # Accepted on the read-only availability route ONLY. Optional.
+            - name: ATLAS_HSM_READ_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: hsm-read-keys
+                  key: keys
+                  optional: true
           volumeMounts:
             - name: storage
               mountPath: /storage

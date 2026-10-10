@@ -7,13 +7,17 @@ import assert from 'node:assert/strict';
 import { buildEnvelope, isUlid, subjectFor, ulid } from '@atlas/contracts';
 import { InMemoryBroker } from '@atlas/messaging';
 import { compile, type EffectivePolicy, type Rule } from '@atlas/policy';
-import { HealthRegistry, type AccessRecord } from '@atlas/service-kit';
+import { HealthRegistry, verifyInternal, type AccessRecord } from '@atlas/service-kit';
 import {
   buildSchedulingApp,
+  fakeAvailability,
+  hsmAvailability,
   INTERNAL_HEADERS,
+  renditionKey,
   SchedulingService,
   sqliteScheduleStore,
   startApprovalConsumer,
+  type AvailabilitySource,
 } from '../src/index.ts';
 
 const CH = 'ch12';
@@ -24,12 +28,22 @@ function policyFor(permissions: string[]): EffectivePolicy {
 }
 
 async function harness(
-  opts: { permissions?: string[]; health?: HealthRegistry; noPolicy?: boolean } = {},
+  opts: {
+    permissions?: string[];
+    health?: HealthRegistry;
+    noPolicy?: boolean;
+    availability?: AvailabilitySource;
+  } = {},
 ) {
   const logs: AccessRecord[] = [];
   const errors: { correlationId: string; url: string }[] = [];
+  const availabilityErrors: unknown[] = [];
   const store = sqliteScheduleStore();
-  const service = new SchedulingService({ store });
+  const service = new SchedulingService({
+    store,
+    ...(opts.availability !== undefined ? { availability: opts.availability } : {}),
+    onAvailabilityError: (err) => availabilityErrors.push(err),
+  });
   const app = await buildSchedulingApp({
     service,
     policyFor: () =>
@@ -45,7 +59,7 @@ async function harness(
     [INTERNAL_HEADERS.channel]: CH,
     'content-type': 'application/json',
   };
-  return { app, store, service, logs, errors, caller };
+  return { app, store, service, logs, errors, availabilityErrors, caller };
 }
 
 const T0 = '2026-09-12T06:00:00.000Z';
@@ -392,6 +406,108 @@ test('POST /validate: the report over the wire, counted by outcome and by cause'
     headers: caller,
   });
   assert.equal(missing.statusCode, 404);
+});
+
+test('POST /validate asks HSM where each rendition is — once per (asset, kind) — and says when it could not', async () => {
+  const offline = ulid();
+  const online = ulid();
+  const hsm = fakeAvailability({
+    [renditionKey(online, 'broadcast')]: { channelId: CH, tier: 'online', status: 'available' },
+    [renditionKey(offline, 'broadcast')]: { channelId: CH, tier: 'offline', status: 'available' },
+  });
+  const { app, caller } = await harness({ availability: hsm });
+  const id = (
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/schedules',
+      headers: caller,
+      payload: { broadcastDate: '2026-09-12', timezone: 'UTC' },
+    })
+  ).json().id as string;
+  await app.inject({
+    method: 'PUT',
+    url: `/api/v1/schedules/${id}/items`,
+    headers: caller,
+    payload: [
+      item(0, 0, 10, { mediaId: offline }),
+      item(1, 10, 10, { mediaId: online }),
+      item(2, 20, 10, { mediaId: offline }), // a repeat: asked once
+    ],
+  });
+  const report = (
+    await app.inject({ method: 'POST', url: `/api/v1/schedules/${id}/validate`, headers: caller })
+  ).json();
+  assert.deepEqual(report.unchecked, []);
+  assert.equal(hsm.asked.length, 1);
+  assert.equal(hsm.asked[0]!.length, 2);
+  const availability = report.issues.filter((i: { kind: string }) => i.kind === 'availability');
+  assert.equal(availability.length, 2, 'both airings of the offline asset');
+  assert.match(availability[0].message, /is on offline storage and must be restored before air/);
+  await app.close();
+
+  // HSM away: no verdict, named as unchecked, the cause logged.
+  const down = await harness({
+    availability: {
+      check: async () => {
+        throw new Error('connect ECONNREFUSED');
+      },
+    },
+  });
+  const sid = (
+    await down.app.inject({
+      method: 'POST',
+      url: '/api/v1/schedules',
+      headers: down.caller,
+      payload: { broadcastDate: '2026-09-12', timezone: 'UTC' },
+    })
+  ).json().id as string;
+  await down.app.inject({
+    method: 'PUT',
+    url: `/api/v1/schedules/${sid}/items`,
+    headers: down.caller,
+    payload: [item(0, 0, 10)],
+  });
+  const res = await down.app.inject({
+    method: 'POST',
+    url: `/api/v1/schedules/${sid}/validate`,
+    headers: down.caller,
+  });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.json().unchecked, ['availability']);
+  assert.equal(down.availabilityErrors.length, 1);
+  await down.app.close();
+});
+
+test('hsmAvailability signs its question with the read key, batches it, and refuses an answer it cannot read', async () => {
+  const KEY = 's'.repeat(40);
+  const bodies: string[] = [];
+  const source = hsmAvailability({
+    origin: 'http://hsm:3000',
+    key: KEY,
+    fetchImpl: async (url, init) => {
+      const body = String(init?.body);
+      bodies.push(body);
+      const verdict = verifyInternal(
+        [KEY],
+        { method: 'POST', path: new URL(String(url)).pathname, body },
+        (init?.headers as Record<string, string>)['x-atlas-internal'],
+      );
+      assert.ok(verdict.ok, 'signed over the body as sent');
+      const { files } = JSON.parse(body) as { files: { assetId: string; kind: string }[] };
+      return new Response(JSON.stringify({ files: files.map((f) => ({ ...f, found: false })) }));
+    },
+  });
+  const queries = Array.from({ length: 1001 }, () => ({ assetId: ulid(), kind: 'broadcast' }));
+  const answers = await source.check(queries);
+  assert.equal(answers.length, 1001);
+  assert.equal(bodies.length, 2, 'HSM takes 1000 per request');
+
+  const refused = hsmAvailability({
+    origin: 'http://hsm:3000',
+    key: KEY,
+    fetchImpl: async () => new Response('{"code":"UNAUTHORIZED"}', { status: 401 }),
+  });
+  await assert.rejects(refused.check(queries.slice(0, 1)), /401/);
 });
 
 test('the approval consumer takes MAM’s envelopes off the bus — one subscription over every asset event', async () => {

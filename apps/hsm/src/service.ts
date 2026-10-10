@@ -25,6 +25,8 @@ import { Conflict, Forbidden, NotFound, Unauthorized, ValidationError } from '@a
 import { StorageMissing } from './driver.ts';
 import {
   keyFor,
+  type Availability,
+  type AvailabilityQuery,
   type FileEntry,
   type FileKind,
   type PlacementInput,
@@ -214,6 +216,32 @@ export class HsmService {
     return Promise.all(
       files.map(async (file) => ({ file, replicas: await this.store.replicasOf(file.id) })),
     );
+  }
+
+  /**
+   * Where each asked-for rendition is (EP-31: Scheduling's availability check) — a service's
+   * signed read, so no caller policy: the answer names each file's channel and the asking service
+   * holds it to its own resource's. Read-only; a deleted file is not found.
+   */
+  async availability(queries: readonly AvailabilityQuery[]): Promise<Availability[]> {
+    const answers: Availability[] = [];
+    // A few hundred indexed lookups; sequential keeps one request from taking the pool.
+    for (const q of queries) {
+      const file = await this.store.liveFile(q.assetId, q.kind, q.variant);
+      answers.push(
+        file
+          ? {
+              ...q,
+              found: true,
+              fileId: file.id,
+              channelId: file.channelId,
+              tier: file.storage.tier,
+              status: file.storage.status,
+            }
+          : { ...q, found: false },
+      );
+    }
+    return answers;
   }
 
   async operationFor(caller: Caller, id: string): Promise<Operation> {

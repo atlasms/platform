@@ -11,7 +11,7 @@ import { Readable } from 'node:stream';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { isUlid, ulid } from '@atlas/contracts';
 import type { EffectivePolicy } from '@atlas/policy';
-import { fileView, parsePlacement, type FileKind } from './file.ts';
+import { fileView, parseAvailability, parsePlacement, type FileKind } from './file.ts';
 import { operationView, OPERATION_KINDS, type OperationKind } from './operation.ts';
 import type { Caller as ServiceCaller, HsmService } from './service.ts';
 import { parseTargetInput } from './targets.ts';
@@ -44,6 +44,12 @@ export interface HsmAppOptions {
   policyFor: (userId: string) => Promise<EffectivePolicy | undefined> | EffectivePolicy | undefined;
   /** Keys a producer signs internal requests with (ADR-0008/0009). None: every one is refused. */
   internalKeys?: readonly string[];
+  /**
+   * Keys a READER signs with (EP-31: Scheduling asking what is online). Accepted on the read-only
+   * availability route ONLY, alongside `internalKeys` — so a reader's leaked key places, moves and
+   * deletes nothing.
+   */
+  readKeys?: readonly string[];
   /** Why an internal request was refused — the log's business, never the caller's. */
   onInternalRefused?: (reason: string, context: { correlationId: string; url: string }) => void;
   /** An fs target's root must lie under this — the storage mounted into HSM (targets.ts). */
@@ -250,6 +256,7 @@ export async function buildHsmApp(options: HsmAppOptions): Promise<FastifyInstan
   const { service } = options;
   const now = (): Date => options.now?.() ?? new Date();
   const internalKeys = options.internalKeys ?? [];
+  const availabilityKeys = [...internalKeys, ...(options.readKeys ?? [])];
   const refused = metrics.counter({
     name: 'atlas_hsm_internal_refused_total',
     help: 'Internal (signed) requests refused — a misconfigured producer, or someone probing.',
@@ -306,11 +313,12 @@ export async function buildHsmApp(options: HsmAppOptions): Promise<FastifyInstan
     reply: FastifyReply,
     status: number,
     fn: () => Promise<unknown>,
+    keys: readonly string[] = internalKeys,
   ): Promise<unknown> => {
     try {
       const raw = (req as FastifyRequest & { rawBody?: string }).rawBody ?? '';
       const verdict = verifyInternal(
-        internalKeys,
+        keys,
         { method: req.method, path: req.url, body: raw },
         header(req),
         now(),
@@ -454,6 +462,22 @@ export async function buildHsmApp(options: HsmAppOptions): Promise<FastifyInstan
         return problem(req, reply, err);
       }
     },
+  );
+
+  /**
+   * Which renditions are where (EP-31): for each (asset, kind, variant) asked, the live file's
+   * channel, tier and status, or that there is none. Read-only, so a READ key is enough. The answer
+   * carries the file's channel and the caller compares it with its own resource's — authority from
+   * the resource, never from a channel in the request (ADR-0008).
+   */
+  app.post('/internal/v1/availability', (req, reply) =>
+    handleInternal(
+      req,
+      reply,
+      200,
+      async () => ({ files: await service.availability(parseAvailability(req.body)) }),
+      availabilityKeys,
+    ),
   );
 
   /** Copy, move or delete (EP-14.3), queued; the caller's `id` makes a retry the same request. */

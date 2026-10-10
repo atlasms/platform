@@ -161,7 +161,7 @@ export interface ValidationReport {
   /** No critical issue. */
   valid: boolean;
   issues: ValidationIssue[];
-  /** Validators that did not run, and so found nothing: today availability (HSM, EP-14). */
+  /** Validators that did not run, and so found nothing: availability, when HSM could not be asked (not configured, or away). */
   unchecked: IssueKind[];
   validatedAt: string;
 }

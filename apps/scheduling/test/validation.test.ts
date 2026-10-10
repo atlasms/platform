@@ -7,7 +7,9 @@ import {
   clock,
   endOf,
   parseRightsWindowInput,
+  renditionKey,
   validateReel,
+  type RenditionState,
   type MediaApproval,
   type ScheduleItem,
 } from '../src/index.ts';
@@ -143,4 +145,62 @@ test('a rights window names one subject, a real interval and nothing it does not
   ] as const) {
     assert.throws(() => parseRightsWindowInput(body), reason);
   }
+});
+
+test('availability: the rendition an item airs must be online, intact and this channel’s', () => {
+  const ids = Array.from({ length: 8 }, () => ulid());
+  const approvals = new Map<string, MediaApproval>(
+    ids.map((id) => [id, { assetId: id, channelId: 'ch', state: 'approved' }]),
+  );
+  const state = (
+    i: number,
+    kind: string,
+    over: Partial<RenditionState> = {},
+  ): [string, RenditionState] => [
+    renditionKey(ids[i]!, kind),
+    {
+      assetId: ids[i]!,
+      kind,
+      found: true,
+      channelId: 'ch',
+      tier: 'online',
+      status: 'available',
+      ...over,
+    },
+  ];
+  const states = new Map<string, RenditionState>([
+    state(0, 'broadcast'), // fine
+    state(1, 'broadcast', { tier: 'near-line' }),
+    state(2, 'broadcast', { status: 'quarantined' }),
+    state(3, 'broadcast', { status: 'restoring' }),
+    state(4, 'broadcast', { channelId: 'other' }), // another channel's file is not ours
+    state(5, 'proxy'), // the item asks for the proxy, and it is there
+    state(6, 'proxy'), // only a proxy: the default (broadcast) is not
+    // 7: nothing at all
+  ]);
+  const reel = ids.map((id, i) =>
+    item(i, i * 10, 10, {
+      itemType: 'media',
+      mediaId: id,
+      ...(i === 5 ? { renditionKind: 'proxy' } : {}),
+    }),
+  );
+  const issues = validateReel(reel, approvals, 'UTC', [], { channelId: 'ch', states });
+  assert.ok(issues.every((i) => i.kind === 'availability' && i.severity === 'critical'));
+  assert.deepEqual(
+    issues.map((i) => [
+      reel.findIndex((r) => r.id === i.itemId),
+      i.message.replace(/^.* rendition of \S+ /, ''),
+    ]),
+    [
+      [1, 'is on near-line storage and must be restored before air'],
+      [2, 'failed its checksum and is quarantined'],
+      [3, 'is being restored and is not online yet'],
+      [4, 'is not in storage'],
+      [6, 'is not in storage'],
+      [7, 'is not in storage'],
+    ],
+  );
+  // Not asked (HSM away or not configured): the validator does not run at all.
+  assert.deepEqual(validateReel(reel, approvals, 'UTC'), []);
 });

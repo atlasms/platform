@@ -18,7 +18,7 @@
         "properties": {
           "kind": {
             "enum": ["gap", "overlap", "anchor", "approval", "expiry", "rights", "availability"],
-            "description": "gap: dead air between two items. overlap: an item starts before the previous one ends (or a sub-schedule item runs outside its live item). anchor: an item runs into a FIXED item's start. approval: the media is not approved in this channel (never approved, rejected, expired, deleted, or unknown). expiry: the approval lapses before the item finishes airing. rights and availability wait for rights windows and HSM (EP-14)."
+            "description": "gap: dead air between two items. overlap: an item starts before the previous one ends (or a sub-schedule item runs outside its live item). anchor: an item runs into a FIXED item's start. approval: the media is not approved in this channel (never approved, rejected, expired, deleted, or unknown). expiry: the approval lapses before the item finishes airing. rights: the item lies outside every rights window that governs it. availability: the rendition the item airs is not online, intact and the channel's in HSM."
           },
           "itemId": { "$ref": "../common.schema.json#/$defs/Ulid" },
           "severity": { "$ref": "../common.schema.json#/$defs/Severity" },

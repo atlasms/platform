@@ -48,4 +48,5 @@ smoke suite's upstream gate (`infra/smoke/smoke.test.mjs`).
 | `ATLAS_HSM_BOOTSTRAP_ROOT`     | `/storage/online`                  | The platform's first online target, made once when there is none                                |
 | `ATLAS_HSM_CREDENTIALS_DIR`    | `/var/run/atlas/hsm-credentials`   | `<credentialRef>/accessKeyId` and `/secretAccessKey`, from the `hsm-storage-credentials` Secret |
 | `ATLAS_HSM_INTERNAL_KEYS`      | _(unset: every placement refused)_ | The keys producers sign with (`hsm-internal-keys`; ADR-0008/0009)                               |
+| `ATLAS_HSM_READ_KEYS`          | _(unset: readers refused)_         | Keys accepted on the availability route ONLY (`hsm-read-keys`; Scheduling, EP-31)               |
 | `ATLAS_HSM_WORKER_INTERVAL_MS` | `1000`                             | How often the operation worker looks for due work                                               |

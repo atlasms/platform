@@ -146,8 +146,10 @@ paths:
         approval and expiry from what MAM announced about each item's media (Scheduling keeps it
         from `asset.approved`/`rejected`/`expired`/`deleted`/`updated`), judged at the time the item
         AIRS, not now; rights from the channel's rights windows (the asset's own, else its
-        category's — an item governed by windows must lie wholly inside one). Rendition availability
-        is not checked yet and is named in `unchecked`. A run with no critical issue moves a draft to `validated`; any later edit
+        category's — an item governed by windows must lie wholly inside one); availability from
+        HSM, asked at validation time — the rendition an item airs (its `renditionKind`, else
+        `broadcast`) must be online, intact and the channel's. When HSM cannot be asked, availability
+        is named in `unchecked` instead of passing. A run with no critical issue moves a draft to `validated`; any later edit
         moves it back to `draft`. Every run emits `schedule.validated`.
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
@@ -383,7 +385,7 @@ components:
         state: { type: string, enum: [draft, validated, sending, sent, failed], description: The schedule's state after this run. }
         valid: { type: boolean, description: No critical issue. }
         issues: { type: array, items: { $ref: '#/components/schemas/ValidationIssue' } }
-        unchecked: { type: array, items: { $ref: '#/components/schemas/IssueKind' }, description: 'Validators that did not run, and so found nothing: today availability (HSM, EP-14).' }
+        unchecked: { type: array, items: { $ref: '#/components/schemas/IssueKind' }, description: 'Validators that did not run, and so found nothing: availability, when HSM could not be asked (not configured, or away).' }
         validatedAt: { type: string, format: date-time }
     RightsWindowInput:
       type: object
