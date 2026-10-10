@@ -713,7 +713,56 @@ export class MamService {
     action: LifecycleAction,
     options: { expiresAt?: string; retainUntil?: string; reason?: string } = {},
   ): Promise<Asset> {
-    return this.onCurrent(() => this.transitionOnce(caller, id, action, options));
+    const asset = await this.onCurrent(() => this.transitionOnce(caller, id, action, options));
+    return action === 'markReady' ? this.autoApprove(caller, asset) : asset;
+  }
+
+  /**
+   * EP-28.7, decided with the product owner: media whose category chain says `reviewNeeded: false`
+   * is APPROVED as it becomes ready — by MAM itself (actor `service`, approver `mam`,
+   * `automatic: true`), audited like any approval and with the category's default expiry
+   * snapshotted. Only an explicit `false` does it: a chain that says nothing still needs a person.
+   * A second commit after `ready`, not part of it: the asset WAS ready, and the log says both.
+   */
+  private async autoApprove(caller: Caller, ready: Asset): Promise<Asset> {
+    if (ready.state !== 'ready') return ready;
+    if ((await this.inheritanceOf(ready)).policies.reviewNeeded?.value !== false) return ready;
+    const system: Caller = { ...caller, userId: 'mam', actorKind: 'service' };
+    return this.onCurrent(async () => {
+      const existing = await this.cachedAsset(ready.id, true);
+      if (!existing || existing.state !== 'ready') return existing ?? ready;
+      if (!canTransition(await this.contextFor(existing), 'approve').allowed) return existing;
+      const updated: Asset = {
+        ...existing,
+        state: 'approved',
+        version: existing.version + 1,
+        updatedAt: this.now().toISOString(),
+      };
+      await this.snapshotExpiry(existing, updated);
+      await this.commit(system, updated, existing, 'asset.approved', {
+        assetId: updated.id,
+        approver: 'mam',
+        approvedAt: updated.updatedAt,
+        automatic: true,
+        ...defined({ expiresAt: updated.expiresAt }),
+      } satisfies EventPayloads['asset.approved']);
+      return updated;
+    });
+  }
+
+  /**
+   * FR-APP-7 / FR-TAX-7: approved with no expiry of its own and none given, the media takes its
+   * category's `defaultExpiry` — SNAPSHOTTED (data-model §2.2's one exception to live
+   * inheritance), so a later category edit never re-expires media already approved.
+   */
+  private async snapshotExpiry(existing: Asset, updated: Asset): Promise<void> {
+    if (updated.expiresAt !== undefined) return;
+    const spec = (await this.inheritanceOf(existing)).policies.defaultExpiry;
+    const expiresAt = spec ? expiryFrom(spec.value, updated.updatedAt) : undefined;
+    if (expiresAt !== undefined) {
+      updated.expiresAt = expiresAt;
+      updated.expirySource = 'category';
+    }
   }
 
   private async transitionOnce(
@@ -750,17 +799,7 @@ export class MamService {
       updatedAt: this.now().toISOString(),
       ...defined({ expiresAt: options.expiresAt, retainUntil: options.retainUntil }),
     };
-    // FR-APP-7 / FR-TAX-7: approved with no expiry of its own and none given, the media takes its
-    // category's `defaultExpiry` — SNAPSHOTTED here (data-model §2.2's one exception to live
-    // inheritance), so a later category edit never re-expires media already approved.
-    if (action === 'approve' && updated.expiresAt === undefined) {
-      const spec = (await this.inheritanceOf(existing)).policies.defaultExpiry;
-      const expiresAt = spec ? expiryFrom(spec.value, updated.updatedAt) : undefined;
-      if (expiresAt !== undefined) {
-        updated.expiresAt = expiresAt;
-        updated.expirySource = 'category';
-      }
-    }
+    if (action === 'approve') await this.snapshotExpiry(existing, updated);
 
     const eventType = eventFor(action);
     if (eventType === undefined) {

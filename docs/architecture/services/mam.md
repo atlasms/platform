@@ -271,6 +271,12 @@ takes values off the node. The mandatory gate judges the effective asset; approv
 chain's `defaultExpiry` into `expiresAt` with `expirySource: category`. Category writes are
 authorized per field group: `core`, `defaults`, `policies`.
 
+### Policies that act (EP-28.7)
+
+A category chain resolving `reviewNeeded: false` auto-approves its media on `markReady`: MAM commits
+the approval itself (actor service `mam`, `asset.approved` with `automatic: true`, the default expiry
+snapshotted), audited like any verdict. Unset or `true` still needs `asset:approve` from a person.
+
 ### List defaults (EP-28.4)
 
 An asset's `subjectIds` / `classificationIds` (term ids, validated) and a category's `defaults`

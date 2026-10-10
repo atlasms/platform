@@ -40,6 +40,8 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `asset.approved` (EP-28.7): optional `automatic` — MAM approved the asset itself, its category
+  chain saying `reviewNeeded: false`; the approver is then `mam` and the envelope's actor a service.
 - `taxonomy.updated` (EP-28.3): `kind` takes the flat vocabularies MAM now manages — `genre`,
   `supply-type`, `production-group`, `cast-role` — beside the existing ones.
 - `vocabulary-term` (EP-28.3): `version`, for the compare-and-set on update and merge; `createdBy`

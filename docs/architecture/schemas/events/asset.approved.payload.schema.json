@@ -8,7 +8,8 @@
   "additionalProperties": false,
   "properties": {
     "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
-    "approver": { "type": "string", "description": "User id who approved (manual verdict)." },
+    "approver": { "type": "string", "description": "User id who approved (manual verdict); `mam` when `automatic`." },
+    "automatic": { "type": "boolean", "description": "true when MAM approved the asset itself because its category chain says reviewNeeded: false (EP-28.7) — no person reviewed it. Absent on a manual verdict." },
     "approvedAt": { "type": "string", "format": "date-time" },
     "expiresAt": { "type": "string", "format": "date-time", "description": "When the media becomes unusable and requires re-review. Absent = permanent approval. Defaults from the asset's category (FR-TAX-7), overridable per asset." },
     "reviewPointId": { "type": "string", "description": "Optional id of the workflow review step that produced this verdict (FR-APP-5)." }

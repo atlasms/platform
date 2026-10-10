@@ -344,8 +344,12 @@ asset's own list **replaces** the category's, the same rule as every scalar here
 - **Policies** — `reviewNeeded` (bool), `keepDuration` (an ISO-8601 duration), `defaultExpiry` (an
   instant, or an ISO-8601 duration counted from approval) — are set on categories only and resolved
   the same way for the media below. `false` is a value: a season may say *no review* under a
-  department that says *review*. They are carried and resolved here; making `reviewNeeded` gate
-  approval and handing `keepDuration` to HSM tiering is EP-28.7.
+  department that says *review*. **`reviewNeeded: false` approves on ready** (EP-28.7, decided with
+  the product owner): media whose chain says `false` is approved by MAM itself as it becomes ready —
+  a second commit after `ready`, the envelope's actor a service, `asset.approved` with `approver:
+  mam` and `automatic: true`, the default expiry snapshotted as for any approval. Only an explicit
+  `false` does it; a chain that says nothing (or `true`) waits for a person. `keepDuration` is
+  carried and resolved and waits for HSM's tiering (EP-36).
 - **`defaultExpiry` is SNAPSHOTTED** at approval, as §2.2 requires: media approved without an
   expiry of its own (and none given in the approval) receives `expiresAt` from its chain's
   `defaultExpiry` — a duration is added to the approval instant on the calendar for years and

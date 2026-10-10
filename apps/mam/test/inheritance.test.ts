@@ -392,3 +392,45 @@ test('EP-28.4: list defaults — an asset with no list inherits the nearest cate
     /defaults\.tags: a tag must not be blank/,
   );
 });
+
+test('EP-28.7: reviewNeeded: false approves on ready — by MAM, audited, with the default expiry; anything else waits for a person', async () => {
+  const at = new Date('2026-10-10T09:00:00.000Z');
+  const h = harness({ now: () => at });
+  const { series, season } = await tree(h);
+  // The department says review (true); the series below it says no review (false).
+  await h.service.updateCategory(h.caller(), series.id, series.version, { reviewNeeded: false });
+  const make = async (categoryId: string) => {
+    const a = await h.service.create(h.caller(), {
+      title: 'Auto',
+      mediaType: 'video',
+      fileType: 'mxf',
+      categoryId,
+    });
+    await h.service.attachRenditions(h.caller(), a.id);
+    await h.service.transition(h.caller(), a.id, 'startProcessing');
+    return h.service.transition(h.caller(), a.id, 'markReady');
+  };
+  const auto = await make(season.id);
+  assert.equal(auto.state, 'approved');
+  assert.equal(auto.expiresAt, '2027-10-10T09:00:00.000Z', 'the department’s P1Y, snapshotted');
+  assert.equal(auto.expirySource, 'category');
+
+  const envelopes = (
+    h.store.db.prepare('SELECT body FROM outbox ORDER BY rowid').all() as { body: string }[]
+  ).map(
+    (r) => JSON.parse(r.body) as { type: string; actor: unknown; payload: Record<string, unknown> },
+  );
+  const approved = envelopes.find(
+    (e) => e.type === 'asset.approved' && e.payload['assetId'] === auto.id,
+  );
+  assert.ok(approved, 'asset.approved emitted');
+  assert.deepEqual(
+    [approved.payload['approver'], approved.payload['automatic'], approved.actor],
+    ['mam', true, { kind: 'service', id: 'mam' }],
+  );
+
+  // Where the chain says review (the department, here once the series inherits again), it stays ready.
+  const s2 = await h.service.category(h.caller(), series.id);
+  await h.service.updateCategory(h.caller(), series.id, s2.version, { inherit: ['reviewNeeded'] });
+  assert.equal((await make(season.id)).state, 'ready');
+});
