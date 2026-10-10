@@ -16,11 +16,13 @@ import {
   createTracer,
   currentTraceparent,
   HealthRegistry,
+  internalKeys,
   loadConfig,
   MetricRegistry,
 } from '@atlas/service-kit';
 import {
   buildSchedulingApp,
+  hsmAvailability,
   pgMigrations,
   pgScheduleStore,
   SchedulingService,
@@ -45,6 +47,10 @@ const config = loadConfig({
   // 684 ms, most of it this wait; at 250 ms it is a quarter. The idle drain is one indexed query.
   relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 250 },
   policyTtlMs: { env: 'ATLAS_POLICY_TTL_MS', type: 'number', default: 30_000 },
+  // HSM, asked where each rendition is at validation time (EP-31, availability.ts), signed with
+  // the first of HSM's READ keys (hsm-read-keys). No key: availability is reported `unchecked`.
+  hsmOrigin: { env: 'ATLAS_HSM_ORIGIN', type: 'string', default: 'http://hsm:3000' },
+  hsmReadKeys: { env: 'ATLAS_HSM_READ_KEYS', type: 'string', default: '' },
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
   // still propagates, so a site without a collector pays only the cost of an id.
   otlpEndpoint: { env: 'ATLAS_OTLP_ENDPOINT', type: 'string', default: '' },
@@ -119,8 +125,18 @@ const health = new HealthRegistry()
   });
 
 const store = pgScheduleStore(pool);
+const [hsmKey] = internalKeys(config.hsmReadKeys);
+if (hsmKey === undefined) {
+  log.warn('no HSM read key (ATLAS_HSM_READ_KEYS): validation reports availability as unchecked');
+}
 const service = new SchedulingService({
   store,
+  ...(hsmKey !== undefined
+    ? { availability: hsmAvailability({ origin: config.hsmOrigin, key: hsmKey }) }
+    : {}),
+  // HSM away is not a verdict — the report says unchecked; the cause is the operator's.
+  onAvailabilityError: (err, ctx) =>
+    log.warn('HSM availability unavailable', { ...ctx, error: (err as Error).message }),
   // The trace context is captured where the event is CREATED, inside the request (EP-13.3): the
   // relay publishes later on a timer with no ambient context at all.
   traceHeaders: () => {

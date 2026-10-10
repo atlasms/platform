@@ -246,6 +246,20 @@ day…* — wall-clock times in the schedule's zone (a range ending before it st
 since a broadcast day need not end at 00:00), the target day found by date or made in the same zone,
 the stored reel only (disabled with unsaved edits), and a 409 that says the target changed.
 
+**EP-31, third slice: availability** (`availability.ts`). HSM is the record of where a file's
+bytes are, so validation ASKS it rather than keeping a copy that could lag: one
+`POST /internal/v1/availability` per run (batches of 1000), naming each distinct (asset, rendition)
+the reel airs — the item's `renditionKind`, else `broadcast`. An item fails (`availability`,
+critical) when that rendition is not in storage, is another channel's file, is quarantined or
+missing, is being restored, or is on `near-line`/`offline` — restore is EP-36, so the message says
+it must be restored before air rather than requesting it. The call is a signed internal request
+(ADR-0008) with a key from `hsm-read-keys`, which HSM accepts on that read-only route alone
+(ADR-0009, widened again — chosen by the product owner over a read model kept from HSM's events, so
+the answer is never stale). The request names no channel; the answer carries each file's, and
+Scheduling holds it to the schedule's. HSM away, or no key configured, is not a verdict: the
+validator does not run and `unchecked` says `availability`, the cause in the log. `unchecked` is
+otherwise empty.
+
 Studio's schedule editor has a **Validate** button (the stored reel only — disabled with unsaved
 edits), the report above the reel, each issue flagged on its row, and the report hidden once the
 version on screen moves past it.

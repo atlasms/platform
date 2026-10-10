@@ -83,6 +83,47 @@ export function keyFor(
   return `${file.channelId}/${file.assetId}/${kind}/${blobId}`;
 }
 
+/** One rendition asked about by `POST /internal/v1/availability` (EP-31). */
+export interface AvailabilityQuery {
+  assetId: string;
+  kind: FileKind;
+  variant?: string;
+}
+
+/** What HSM answers for it: the live file's channel, tier and status — or that there is none. */
+export interface Availability extends AvailabilityQuery {
+  found: boolean;
+  fileId?: string;
+  channelId?: string;
+  tier?: Tier;
+  status?: FileStatus;
+}
+
+/** A reel's worth — a broadcast day is a few hundred items; this bounds one request's work. */
+export const MAX_AVAILABILITY_QUERIES = 1000;
+
+/** Parse an availability request: `{ files: [{ assetId, kind, variant? }] }`. */
+export function parseAvailability(body: unknown): AvailabilityQuery[] {
+  const files = (body as { files?: unknown } | null | undefined)?.files;
+  if (!Array.isArray(files) || files.length === 0 || files.length > MAX_AVAILABILITY_QUERIES) {
+    throw new ValidationError(`files must be an array of 1–${MAX_AVAILABILITY_QUERIES} queries`);
+  }
+  return files.map((f: unknown, i) => {
+    const q = (typeof f === 'object' && f !== null ? f : {}) as Record<string, unknown>;
+    const { assetId, kind, variant } = q;
+    if (typeof assetId !== 'string' || !ULID.test(assetId)) {
+      throw new ValidationError(`files[${i}].assetId must be a ULID`);
+    }
+    if (typeof kind !== 'string' || !(FILE_KINDS as readonly string[]).includes(kind)) {
+      throw new ValidationError(`files[${i}].kind must be one of ${FILE_KINDS.join(', ')}`);
+    }
+    if (variant !== undefined && (typeof variant !== 'string' || !VARIANT.test(variant))) {
+      throw new ValidationError(`files[${i}].variant must be 1–64 letters, digits, _ or -`);
+    }
+    return { assetId, kind: kind as FileKind, ...(variant !== undefined ? { variant } : {}) };
+  });
+}
+
 /** Parse a placement's query string (it is inside the signature; the headers are not). */
 export function parsePlacement(
   assetId: string,

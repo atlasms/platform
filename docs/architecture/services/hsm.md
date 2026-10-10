@@ -220,7 +220,10 @@ follows from them. In short:
   `checksum-mismatch`, critical) and dead-lettered at once. In-process worker per replica.
 - **Reads** — `GET /api/v1/assets/{id}/location` (asset:read on `files`, strict; the gateway sends
   this one path of `/assets` to HSM by a suffix route), `GET /api/v1/operations/{id}`, and the
-  signed `GET …/files/{kind}/content` a producer reads an input from.
+  signed `GET …/files/{kind}/content` a producer reads an input from, and the signed, read-only
+  `POST /internal/v1/availability` (EP-31): each asked (asset, kind, variant)'s live file — its
+  channel, tier and status — or none. It alone also accepts a READ key (`hsm-read-keys`), which
+  Scheduling signs with; a reader's key opens no other route (ADR-0009, widened again).
 - **Enforcement (14.7)** — MTS pushes every rendition to HSM and may take its input from HSM
   (`inputFile`); its work area is scratch. `k8s:check` fails if any workload but `hsm` mounts the
   storage volume or reads the storage credentials. RIM's staging stays until an accepted file has an

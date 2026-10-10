@@ -92,6 +92,14 @@ call it; authority comes from what the request names (the asset, the channel it 
 such route is idempotent. The gateway never routes `/internal/`. This is a security decision and is
 flagged for review with the rest.
 
+**Widened again for a READER (EP-31, 2026-10-09 — chosen by the product owner).** Scheduling asks HSM
+where each rendition is when a reel is validated: `POST /internal/v1/availability`, read-only. It
+signs with a key from a SEPARATE Secret, `hsm-read-keys`, which HSM accepts on that route alone —
+the producers' `hsm-internal-keys` still open every internal route, a reader's key opens no write,
+no byte read and no operation, so a leaked Scheduling key tells someone where files are and nothing
+more. The request names assets and kinds, never a channel; the answer carries each file's channel
+and Scheduling holds it to the schedule's. Flagged for review with the rest.
+
 ### 4. The ledger
 
 `files`: the [File record](../architecture/schemas/file.schema.json) as the system of record — one

@@ -147,6 +147,63 @@ paths:
         '200': { description: The bytes, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
         '401': { description: Not a correctly signed request }
         '404': { $ref: '#/components/responses/Error' }
+  /internal/v1/availability:
+    servers:
+      - url: http://hsm:3000
+    post:
+      operationId: fileAvailability
+      tags: [internal]
+      summary: "Where each asked-for rendition is: its channel, tier and status, or none (signed; read-only)"
+      description: >-
+        For Scheduling's availability check (EP-31). Accepts a READ key (`hsm-read-keys`) as well as
+        a producer's — a reader's key opens this route and no other. The answer names each live
+        file's channel; the caller holds it to its own resource's. A deleted file is not found.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+              additionalProperties: false
+              properties:
+                files:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items:
+                    type: object
+                    required: [assetId, kind]
+                    additionalProperties: false
+                    properties:
+                      assetId: { $ref: '#/components/schemas/Ulid' }
+                      kind: { $ref: '#/components/schemas/FileKind' }
+                      variant: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+      responses:
+        '200':
+          description: One answer per query, in order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [files]
+                properties:
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      required: [assetId, kind, found]
+                      properties:
+                        assetId: { $ref: '#/components/schemas/Ulid' }
+                        kind: { $ref: '#/components/schemas/FileKind' }
+                        variant: { type: string }
+                        found: { type: boolean }
+                        fileId: { $ref: '#/components/schemas/Ulid' }
+                        channelId: { type: string }
+                        tier: { $ref: '#/components/schemas/Tier' }
+                        status: { type: string, enum: [available, restoring, missing, quarantined] }
+        '401': { description: Not a correctly signed request }
+        '422': { $ref: '#/components/responses/Error' }
   /internal/v1/files/operations:
     servers:
       - url: http://hsm:3000

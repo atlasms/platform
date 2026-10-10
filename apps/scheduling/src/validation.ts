@@ -14,9 +14,12 @@
 //              not now, so tomorrow's schedule is refused today for an approval that ends at noon;
 //   - rights   (critical) the item is governed by rights windows (its asset's, else its category's —
 //              rights.ts) and lies wholly inside none of them.
-// Rendition availability is not checked yet (the availability of a file is HSM's, EP-14): the
-// report names it in `unchecked`, never silently.
+//   - availability (critical) the rendition the item airs (its `renditionKind`, else `broadcast`)
+//              is not online and intact in this channel's storage — HSM's answer, asked at
+//              validation time (availability.ts). When HSM could not be asked, this validator
+//              does not run and the report names it in `unchecked`, never silently.
 
+import { DEFAULT_RENDITION, renditionKey, type RenditionState } from './availability.ts';
 import type { MediaApproval } from './approvals.ts';
 import { covered, governingWindows, type RightsWindow } from './rights.ts';
 import { inReelOrder, type ScheduleItem } from './schedule.ts';
@@ -35,8 +38,24 @@ export interface ValidationIssue {
   seconds?: number;
 }
 
-/** What this build does not check, reported with every run. */
-export const UNCHECKED: readonly IssueKind[] = ['availability'];
+/** HSM's answers for the reel's renditions, and the channel they must be in. */
+export interface ReelAvailability {
+  channelId: string;
+  states: ReadonlyMap<string, RenditionState>;
+}
+
+/** Why a rendition will not air, in the words of the report; `undefined` when it will. */
+function unavailable(state: RenditionState | undefined, channelId: string): string | undefined {
+  // Another channel's file is not this channel's to air: the same as none at all.
+  if (state === undefined || !state.found || state.channelId !== channelId) {
+    return 'is not in storage';
+  }
+  if (state.status === 'quarantined') return 'failed its checksum and is quarantined';
+  if (state.status === 'missing') return 'is missing from storage';
+  if (state.status === 'restoring') return 'is being restored and is not online yet';
+  if (state.tier !== 'online') return `is on ${state.tier} storage and must be restored before air`;
+  return undefined;
+}
 
 /** Wall-clock `HH:MM:SS` in the schedule's zone — what the person reading the report plans in. */
 export function clock(timezone: string): (iso: string) => string {
@@ -78,6 +97,7 @@ export function validateReel(
   approvals: ReadonlyMap<string, MediaApproval>,
   timezone: string,
   rights: readonly RightsWindow[] = [],
+  availability?: ReelAvailability,
 ): ValidationIssue[] {
   const t = clock(timezone);
   const issues: ValidationIssue[] = [];
@@ -170,6 +190,21 @@ export function validateReel(
         severity: 'critical',
         message: `${label(item)} at ${t(item.start)}: outside the ${governed.by === 'asset' ? "media's" : "category's"} rights windows (${spans})`,
       });
+    }
+    if (availability !== undefined) {
+      const kind = item.renditionKind ?? DEFAULT_RENDITION;
+      const why = unavailable(
+        availability.states.get(renditionKey(item.mediaId, kind)),
+        availability.channelId,
+      );
+      if (why !== undefined) {
+        issues.push({
+          kind: 'availability',
+          itemId: item.id,
+          severity: 'critical',
+          message: `${label(item)} at ${t(item.start)}: the ${kind} rendition of ${item.mediaId} ${why}`,
+        });
+      }
     }
     const approval = approvals.get(item.mediaId);
     const state = approval?.state ?? 'unknown';

@@ -77,14 +77,21 @@ intact**: sqlite's `INSERT OR REPLACE` is DELETE + INSERT, and the items cascade
 `PATCH` to the notes wiped the reel on the test double while Postgres kept it. Both adapters upsert
 now.
 
+## v1 so far (EP-31)
+
+`POST /validate` — gaps, overlaps, fixed anchors, approval and expiry (from MAM's lifecycle events,
+kept in `approvals.ts`), rights windows (`/rights-windows`, `rights.ts`) and **rendition
+availability**: HSM is asked where each rendition an item airs is (`availability.ts`; a signed
+internal call with a READ key HSM accepts on that route alone). HSM away or no key: the report names
+`availability` in `unchecked` rather than passing it.
+
 ## Not yet (v1 — EP-31)
 
-Validation (`POST /validate`: gaps, overlaps, fixed anchors, rights, rendition availability),
-the approved-only guard at serialization, the pluggable playlist serializer (Cinegy MCRList first),
-`POST /send-to-air`, export profiles, schedulability intake
-from MAM's lifecycle events. The reference slice in `reference/scheduling-service/` proved the
-guard and the intake; it is lifted, not copied — it uses constructor parameter properties, which
-the containers' strip-only loader refuses. Copy-a-range (§3.7) is `POST /schedules/{id}/copy` (`copy.ts`).
+The approved-only guard at serialization, the pluggable playlist serializer (Cinegy MCRList first),
+`POST /send-to-air` and export profiles — correctness-critical (§5.7), built paired, not
+AI-fast-tracked. The reference slice in `reference/scheduling-service/` proved the guard; it is
+lifted, not copied — it uses constructor parameter properties, which the containers' strip-only
+loader refuses. Copy-a-range (§3.7) is `POST /schedules/{id}/copy` (`copy.ts`).
 
 ## Run
 
@@ -99,4 +106,6 @@ npm run k8s:up && npm run smoke      # creates a day, saves a reel with an overl
 | `ATLAS_PG_URL`            | `postgres://…@postgres:5432/atlas` | waited for at startup, within a 120 s budget       |
 | `ATLAS_NATS_URL`          | `nats://nats:4222`                 | the outbox relay; retried, never a readiness check |
 | `ATLAS_IAM_ORIGIN`        | `http://iam:3000`                  | critical readiness dependency; the policy client   |
-| `ATLAS_RELAY_INTERVAL_MS` | `1000`                             |                                                    |
+| `ATLAS_RELAY_INTERVAL_MS` | `250`                              |                                                    |
+| `ATLAS_HSM_ORIGIN`        | `http://hsm:3000`                  | asked where renditions are, at validation (EP-31)  |
+| `ATLAS_HSM_READ_KEYS`     | _(unset: availability unchecked)_  | `hsm-read-keys`; the first one signs               |
