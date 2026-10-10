@@ -20,6 +20,7 @@ import {
 } from '../src/index.ts';
 
 const KEY = 'k'.repeat(40);
+const READ_KEY = 'r'.repeat(40);
 const sha = (b: Buffer | string): string => createHash('sha256').update(b).digest('hex');
 
 async function harness() {
@@ -39,6 +40,7 @@ async function harness() {
         groups: [],
       }),
     internalKeys: [KEY],
+    readKeys: [READ_KEY],
     onInternalRefused: (reason) => refusals.push(reason),
     fsBase: base,
   });
@@ -234,6 +236,129 @@ test('an operation is requested signed, idempotently by its id; a bad request na
     });
     assert.equal(seen.statusCode, 200);
     assert.equal(seen.json().holder, undefined, 'the lease is the workers’ business');
+  } finally {
+    await h.close();
+  }
+});
+
+test('availability (EP-31): a reader key answers where each rendition is — and opens nothing else', async () => {
+  const h = await harness();
+  try {
+    const assetId = ulid();
+    const body = Buffer.from('broadcast bytes');
+    const url = `/internal/v1/assets/${assetId}/files/broadcast?channelId=ch12&producedBy=transcode`;
+    const placed = await h.app.inject({
+      method: 'PUT',
+      url,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'x-atlas-internal': signInternalDigest(KEY, {
+          method: 'PUT',
+          path: url,
+          bodySha256: sha(body),
+        }),
+      },
+      payload: body,
+    });
+    assert.equal(placed.statusCode, 201, placed.body);
+
+    const ask = (payload: unknown, key = READ_KEY) => {
+      const raw = JSON.stringify(payload);
+      return h.app.inject({
+        method: 'POST',
+        url: '/internal/v1/availability',
+        headers: {
+          'content-type': 'application/json',
+          'x-atlas-internal': signInternal(key, {
+            method: 'POST',
+            path: '/internal/v1/availability',
+            body: raw,
+          }),
+        },
+        payload: raw,
+      });
+    };
+    const missing = ulid();
+    const res = await ask({
+      files: [
+        { assetId, kind: 'broadcast' },
+        { assetId, kind: 'proxy' },
+        { assetId: missing, kind: 'broadcast' },
+      ],
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    const files = res.json().files;
+    assert.equal(files.length, 3);
+    assert.deepEqual(
+      { ...files[0], fileId: undefined },
+      {
+        assetId,
+        kind: 'broadcast',
+        found: true,
+        fileId: undefined,
+        channelId: 'ch12',
+        tier: 'online',
+        status: 'available',
+      },
+    );
+    assert.deepEqual(files[1], { assetId, kind: 'proxy', found: false });
+    assert.deepEqual(files[2], { assetId: missing, kind: 'broadcast', found: false });
+    // A producer's key reads it too.
+    assert.equal((await ask({ files: [{ assetId, kind: 'broadcast' }] }, KEY)).statusCode, 200);
+
+    // A malformed query names the field.
+    const bad = await ask({ files: [{ assetId: 'nope', kind: 'broadcast' }] });
+    assert.equal(bad.statusCode, 422);
+    assert.match(bad.json().message, /files\[0\]\.assetId/);
+    assert.equal((await ask({ files: [] })).statusCode, 422);
+
+    // Unsigned: refused.
+    const unsigned = await h.app.inject({
+      method: 'POST',
+      url: '/internal/v1/availability',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ files: [{ assetId, kind: 'broadcast' }] }),
+    });
+    assert.equal(unsigned.statusCode, 401);
+
+    // The reader key places nothing, reads no bytes and requests no operation.
+    const other = `/internal/v1/assets/${ulid()}/files/proxy?channelId=ch12&producedBy=transcode`;
+    const place = await h.app.inject({
+      method: 'PUT',
+      url: other,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'x-atlas-internal': signInternalDigest(READ_KEY, {
+          method: 'PUT',
+          path: other,
+          bodySha256: sha(body),
+        }),
+      },
+      payload: body,
+    });
+    assert.equal(place.statusCode, 401);
+    const content = `/internal/v1/assets/${assetId}/files/broadcast/content`;
+    const read = await h.app.inject({
+      method: 'GET',
+      url: content,
+      headers: { 'x-atlas-internal': signInternal(READ_KEY, { method: 'GET', path: content }) },
+    });
+    assert.equal(read.statusCode, 401);
+    const opBody = JSON.stringify({ kind: 'delete', fileId: files[0].fileId });
+    const op = await h.app.inject({
+      method: 'POST',
+      url: '/internal/v1/files/operations',
+      headers: {
+        'content-type': 'application/json',
+        'x-atlas-internal': signInternal(READ_KEY, {
+          method: 'POST',
+          path: '/internal/v1/files/operations',
+          body: opBody,
+        }),
+      },
+      payload: opBody,
+    });
+    assert.equal(op.statusCode, 401);
   } finally {
     await h.close();
   }

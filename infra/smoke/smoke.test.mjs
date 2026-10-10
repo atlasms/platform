@@ -1551,12 +1551,13 @@ test('smoke: EP-31 — a range copied onto another day: one audited write over t
   assert.equal(copy.delta.copiedFrom.after.scheduleId, source.schedule.id);
 });
 
-test('smoke: EP-31 — validation reads MAM’s approvals off the bus, and a clean reel is validated', async () => {
+test('smoke: EP-31 — validation reads MAM’s approvals off the bus, asks HSM what is online, and a clean reel is validated', async () => {
   // The whole of it on a live cluster: an asset made approvable the only way there is (a real
   // transcode gives it renditions), approved in MAM, the approval crossing the broker into
   // Scheduling's own record — and a reel validated against it, judged at air time, through the
-  // gateway. A media id MAM never approved is named; a clean reel moves the schedule to
-  // `validated`, audited like any write.
+  // gateway. A media id MAM never approved is named; so is a rendition HSM does not hold (asked
+  // over the signed read route, hsm-read-keys); a clean reel moves the schedule to `validated`,
+  // audited like any write.
   const token = await seedToken();
   if (!token) return;
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
@@ -1585,7 +1586,7 @@ test('smoke: EP-31 — validation reads MAM’s approvals off the bus, and a cle
   const enqueued = await get('/api/v1/jobs', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ assetId, presetIds: ['thumbnail'], inputPath: 'samples/smoke.mp4' }),
+    body: JSON.stringify({ assetId, presetIds: ['proxy'], inputPath: 'samples/smoke.mp4' }),
   });
   assert.equal(enqueued.status, 202, `enqueue failed: ${enqueued.text}`);
   await poll(
@@ -1623,8 +1624,10 @@ test('smoke: EP-31 — validation reads MAM’s approvals off the bus, and a cle
       headers,
       body: JSON.stringify(items),
     });
+  // The asset airs its proxy — the one rendition this test made, which MTS pushed to HSM.
+  const ours = { seq: 0, start: at(0), durationSec: 1800, itemType: 'media', mediaId: assetId };
   const saved = await reel([
-    { seq: 0, start: at(0), durationSec: 1800, itemType: 'media', mediaId: assetId },
+    { ...ours, renditionKind: 'proxy' },
     { seq: 1, start: at(30), durationSec: 600, itemType: 'media', mediaId: stranger },
   ]);
   assert.equal(saved.status, 200, `reel save failed: ${saved.text}`);
@@ -1643,16 +1646,26 @@ test('smoke: EP-31 — validation reads MAM’s approvals off the bus, and a cle
   );
   assert.equal(report.valid, false);
   assert.equal(report.state, 'draft');
-  assert.deepEqual(report.unchecked, ['availability']);
-  const [issue] = report.issues;
-  assert.match(issue.message, new RegExp(`media ${stranger} has no approval from MAM yet`));
-
-  // Only the approved asset, tightly: clean — and the schedule is validated, audited as such.
-  assert.equal(
-    (await reel([{ seq: 0, start: at(0), durationSec: 1800, itemType: 'media', mediaId: assetId }]))
-      .status,
-    200,
+  assert.deepEqual(report.unchecked, [], 'HSM was asked');
+  const approval = report.issues.find((i) => i.kind === 'approval');
+  assert.match(approval.message, new RegExp(`media ${stranger} has no approval from MAM yet`));
+  // The stranger has no file at all; ours is in HSM, online.
+  assert.deepEqual(
+    report.issues.filter((i) => i.kind === 'availability').map((i) => i.itemId),
+    [report.issues.find((i) => i.kind === 'approval').itemId],
   );
+
+  // Ours alone, airing the broadcast rendition (the default) it was never given: not available.
+  assert.equal((await reel([ours])).status, 200);
+  const noBroadcast = await validate();
+  assert.deepEqual(
+    noBroadcast.issues.map((i) => [i.kind, i.severity]),
+    [['availability', 'critical']],
+  );
+  assert.match(noBroadcast.issues[0].message, /broadcast rendition of \S+ is not in storage/);
+
+  // Its proxy, tightly: clean — and the schedule is validated, audited as such.
+  assert.equal((await reel([{ ...ours, renditionKind: 'proxy' }])).status, 200);
   const clean = await validate();
   assert.deepEqual([clean.valid, clean.state, clean.issues], [true, 'validated', []]);
   const history = await poll(
@@ -1677,7 +1690,7 @@ test('smoke: EP-31 — validation reads MAM’s approvals off the bus, and a cle
   try {
     const unlicensed = await validate();
     assert.deepEqual([unlicensed.valid, unlicensed.state], [false, 'draft']);
-    assert.deepEqual(unlicensed.unchecked, ['availability']);
+    assert.deepEqual(unlicensed.unchecked, []);
     assert.deepEqual(
       unlicensed.issues.map((i) => [i.kind, i.severity]),
       [['rights', 'critical']],

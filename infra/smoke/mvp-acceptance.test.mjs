@@ -385,7 +385,8 @@ test('MVP acceptance — one file: upload → validate → transcode → metadat
         'the reel never validated',
       );
       assert.deepEqual([report.state, report.issues], ['validated', []]);
-      assert.deepEqual(report.unchecked, ['availability'], 'what is not checked is said');
+      // Every validator ran — availability too: HSM holds the broadcast rendition step 5 made, online.
+      assert.deepEqual(report.unchecked, [], 'nothing went unchecked');
     });
 
     await step(
