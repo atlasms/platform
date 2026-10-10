@@ -271,6 +271,13 @@ takes values off the node. The mandatory gate judges the effective asset; approv
 chain's `defaultExpiry` into `expiresAt` with `expirySource: category`. Category writes are
 authorized per field group: `core`, `defaults`, `policies`.
 
+### List defaults (EP-28.4)
+
+An asset's `subjectIds` / `classificationIds` (term ids, validated) and a category's `defaults`
+`subjectIds` / `classificationIds` / `tags`: inherited like the scalars, an asset's own list
+replacing the category's whole ([data model §2.7a](../data-model.md#27a-as-built--list-defaults-ep-284));
+an untagged asset inherits the category's tags. Both lists are the `taxonomy` field group.
+
 ### Vocabularies (EP-28.3)
 
 `/vocabularies/{vocabulary}` (list, create) and `/vocabularies/{vocabulary}/{termId}` (get, PATCH over

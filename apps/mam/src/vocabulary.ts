@@ -37,6 +37,12 @@ export const TERM_FIELDS = {
 } as const satisfies Record<string, Vocabulary>;
 export type TermField = keyof typeof TERM_FIELDS;
 
+/** The asset LIST fields that hold terms (EP-28.4): every id must name a live term. */
+export const TERM_LIST_FIELDS = {
+  subjectIds: 'subject',
+  classificationIds: 'classification',
+} as const satisfies Record<string, Vocabulary>;
+
 export interface VocabularyTerm {
   id: string;
   vocabulary: Vocabulary;

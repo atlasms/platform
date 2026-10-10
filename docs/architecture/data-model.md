@@ -366,6 +366,20 @@ asset's own list **replaces** the category's, the same rule as every scalar here
   Search does not index inherited values yet: that is EP-28.6's decision (resolve at query time, or
   project effective values and re-project a subtree on `taxonomy.updated`).
 
+### 2.7a As built — list defaults (EP-28.4)
+
+The xref defaults of §2.1, for subjects, classifications and tags (cast is EP-28.5). An asset carries
+`subjectIds` and `classificationIds` — lists of TERM ids of the `subject` and `classification`
+vocabularies (§2.8), at most 50, distinct, each a live term when written. A category's `defaults`
+may set the same two lists and `tags`, a list of tag LABELS (cleaned and de-duplicated as a tag is
+minted). Resolution is §2.7's, nearest level wins, with the rule decided with the product owner:
+**an asset's own list REPLACES the category's, whole** — never merged. So a list ABSENT from the
+asset inherits, and a list PRESENT, even empty, is the asset's own choice; `inherit: ['subjectIds']`
+hands it back. Tags are the asset's own resource (`PUT /assets/{id}/tags`), so for them "none of
+its own" means "no tags": an untagged asset reads the category's tags as inherited, a tagged one
+does not. A category in Studio inherits a list by leaving it empty. Search over inherited values is
+EP-28.6.
+
 ### 2.8 As built — controlled vocabularies (EP-28.3)
 
 [Configuration §2.3](configuration-and-reference-data.md#23-tier-2--vocabularies-pure-data), for the

@@ -58,6 +58,10 @@ export interface Asset {
   productionGroup?: string;
   /** A media default (EP-28.2). */
   productionDate?: string;
+  /** Subject TERM ids (EP-28.4). Absent inherits the category chain's list; present — even empty — replaces it. */
+  subjectIds?: Ulid[];
+  /** Classification TERM ids (EP-28.4). Absent inherits; present replaces. */
+  classificationIds?: Ulid[];
   state:
     | 'created'
     | 'processing'
@@ -101,6 +105,10 @@ export interface CreateAssetInput {
   productionGroup?: string;
   /** A media default (EP-28.2). */
   productionDate?: string;
+  /** Subject TERM ids (EP-28.4). Absent inherits the category chain's list; present — even empty — replaces it. */
+  subjectIds?: Ulid[];
+  /** Classification TERM ids (EP-28.4). Absent inherits; present replaces. */
+  classificationIds?: Ulid[];
   episodeNo?: number;
   durationSec?: number;
   allowedBroadcastCount?: number;
@@ -121,12 +129,24 @@ export interface UpdateAssetInput {
   productionGroup?: string;
   /** A media default (EP-28.2). */
   productionDate?: string;
+  /** Subject TERM ids (EP-28.4). Absent inherits the category chain's list; present — even empty — replaces it. */
+  subjectIds?: Ulid[];
+  /** Classification TERM ids (EP-28.4). Absent inherits; present replaces. */
+  classificationIds?: Ulid[];
   episodeNo?: number;
   durationSec?: number;
   allowedBroadcastCount?: number;
   expiresAt?: string;
-  /** Media defaults the asset stops setting, so its category's value shows through again — reset to inherited (EP-28.2). Not with a value for the same field. */
-  inherit?: MediaDefaultField[];
+  /** Media defaults the asset stops setting, so its category's value shows through again — reset to inherited (EP-28.2/28.4). Not with a value for the same field. */
+  inherit?: (
+    | 'structureId'
+    | 'genre'
+    | 'supplyType'
+    | 'productionGroup'
+    | 'productionDate'
+    | 'subjectIds'
+    | 'classificationIds'
+  )[];
 }
 
 /** A node of the channel's category tree (../data-model.md §2.6): a hierarchical vocabulary term whose path is built from immutable keys. */
@@ -204,6 +224,9 @@ export interface UpdateCategoryInput {
     | 'supplyType'
     | 'productionGroup'
     | 'productionDate'
+    | 'subjectIds'
+    | 'classificationIds'
+    | 'tags'
     | 'reviewNeeded'
     | 'keepDuration'
     | 'defaultExpiry'
@@ -221,6 +244,15 @@ export interface MediaDefaults {
   supplyType?: string;
   productionGroup?: string;
   productionDate?: string;
+  subjectIds?: Ulid[];
+  classificationIds?: Ulid[];
+  /** Tag labels for media with no tags of their own (EP-28.4); stored cleaned and de-duplicated. */
+  tags?: string[];
+}
+
+export interface InheritedStringList {
+  value: string[];
+  from: InheritedFrom;
 }
 
 export interface InheritedString {
@@ -247,6 +279,9 @@ export interface Inheritance {
     supplyType?: InheritedString;
     productionGroup?: InheritedString;
     productionDate?: InheritedString;
+    subjectIds?: InheritedStringList;
+    classificationIds?: InheritedStringList;
+    tags?: InheritedStringList;
   };
   policies: {
     reviewNeeded?: InheritedBoolean;

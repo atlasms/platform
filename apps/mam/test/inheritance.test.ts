@@ -315,3 +315,80 @@ test('durations: calendar years and months clamp to the month’s end; the rest 
   );
   assert.equal(expiryFrom('tomorrow', '2026-01-01T00:00:00.000Z'), undefined);
 });
+
+test('EP-28.4: list defaults — an asset with no list inherits the nearest category’s; its own list, even empty, replaces it whole', async () => {
+  const h = harness();
+  const { drama, season } = await tree(h);
+  const term = async (vocabulary: string, key: string) =>
+    (await h.service.createTerm(h.caller(), vocabulary, { key, labels: { en: key } })).id;
+  const [war, love] = [await term('subject', 'war'), await term('subject', 'love')];
+  const fiction = await term('classification', 'fiction');
+  const dept = await h.service.updateCategory(h.caller(), drama.id, drama.version, {
+    defaults: {
+      subjectIds: [war],
+      classificationIds: [fiction],
+      tags: [' Period ', 'period', 'BBC'],
+    },
+  });
+  assert.deepEqual(dept.defaults?.tags, ['BBC', 'Period'], 'cleaned and de-duplicated, as minted');
+  // The merge keeps the scalars it was not given.
+  assert.equal(dept.defaults?.genre, T.drama);
+
+  const asset = await h.service.create(h.caller(), {
+    title: 'Episode 6',
+    mediaType: 'video',
+    fileType: 'mxf',
+    categoryId: season.id,
+  });
+  let got = await h.service.inherited(h.caller(), asset.id);
+  assert.deepEqual(
+    [
+      got.defaults.subjectIds?.value,
+      got.defaults.classificationIds?.value,
+      got.defaults.tags?.value,
+    ],
+    [[war], [fiction], ['BBC', 'Period']],
+  );
+  assert.equal(got.defaults.subjectIds?.from.path, '/drama/');
+
+  // Its own list REPLACES — and an empty one is a choice, not "inherit".
+  const own = await h.service.update(h.caller(), asset.id, {
+    subjectIds: [love],
+    classificationIds: [],
+  });
+  assert.deepEqual([own.subjectIds, own.classificationIds], [[love], []]);
+  got = await h.service.inherited(h.caller(), asset.id);
+  assert.equal(got.defaults.subjectIds, undefined);
+  assert.equal(got.defaults.classificationIds, undefined);
+  // The same list again is no change; `inherit` hands it back.
+  assert.equal(
+    (await h.service.update(h.caller(), asset.id, { subjectIds: [love] })).version,
+    own.version,
+  );
+  const back = await h.service.update(h.caller(), asset.id, { inherit: ['classificationIds'] });
+  assert.equal(back.classificationIds, undefined);
+  assert.deepEqual(
+    (await h.service.inherited(h.caller(), asset.id)).defaults.classificationIds?.value,
+    [fiction],
+  );
+
+  // Tags are the asset's own resource: tagged, it no longer inherits the category's.
+  await h.service.setTags(h.caller(), asset.id, ['finale']);
+  assert.equal((await h.service.inherited(h.caller(), asset.id)).defaults.tags, undefined);
+
+  // Every id must be a live term of the list's vocabulary; a list is distinct ids.
+  await assert.rejects(
+    h.service.update(h.caller(), asset.id, { subjectIds: [fiction] }),
+    /subjectIds must name a term of the subject vocabulary/,
+  );
+  await assert.rejects(
+    h.service.update(h.caller(), asset.id, { subjectIds: [war, war] }),
+    /subjectIds must be a list of distinct term ids/,
+  );
+  await assert.rejects(
+    h.service.updateCategory(h.caller(), season.id, season.version, {
+      defaults: { tags: ['ok', ''] },
+    }),
+    /defaults\.tags: a tag must not be blank/,
+  );
+});

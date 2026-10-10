@@ -203,7 +203,11 @@
     "reviewNotNeeded": "لا تحتاج إلى مراجعة",
     "defaultExpiry": "تنتهي بعد الاعتماد:",
     "keepOnline": "تبقى متاحة بعد الاستخدام:",
-    "inherits": "يرث"
+    "inherits": "يرث",
+    "aboutness": "الموضوعات والتصنيف",
+    "subjectIds": "الموضوعات",
+    "classificationIds": "التصنيفات",
+    "inheritedTags": "وسوم من الفئة:"
   },
   "editor": {
     "close": "إغلاق",
@@ -657,7 +661,10 @@
       "genre": "النوع",
       "supplyType": "نوع التوريد",
       "productionGroup": "جهة الإنتاج",
-      "productionDate": "تاريخ الإنتاج"
+      "productionDate": "تاريخ الإنتاج",
+      "subjectIds": "الموضوعات",
+      "classificationIds": "التصنيفات",
+      "tags": "الوسوم (مفصولة بفواصل)"
     },
     "policies": "السياسات",
     "reviewNeeded": "تحتاج إلى مراجعة",

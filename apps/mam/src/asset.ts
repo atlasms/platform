@@ -35,6 +35,12 @@ export interface Asset {
   productionGroup?: string;
   /** `YYYY-MM-DD`. */
   productionDate?: string;
+  /**
+   * Subject and classification TERM ids (EP-28.4). Absent: the category chain's list is inherited;
+   * present — even empty — the asset's own list replaces it whole.
+   */
+  subjectIds?: string[];
+  classificationIds?: string[];
   state: AssetState;
   episodeNo?: number;
   durationSec?: number;
@@ -72,6 +78,8 @@ export interface CreateAssetInput {
   supplyType?: string;
   productionGroup?: string;
   productionDate?: string;
+  subjectIds?: string[];
+  classificationIds?: string[];
   episodeNo?: number;
   durationSec?: number;
   allowedBroadcastCount?: number;

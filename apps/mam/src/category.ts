@@ -8,9 +8,12 @@
 // whole subtree in one transaction (service.ts).
 
 import { ValidationError } from '@atlas/service-kit';
+import { parseTagLabels } from './tag.ts';
 import {
   defaultsProblems,
   inheritProblems,
+  LIST_DEFAULT_FIELDS,
+  MAX_LIST_ITEMS,
   MEDIA_DEFAULT_FIELDS,
   POLICY_FIELDS,
   policyProblems,
@@ -71,7 +74,19 @@ export interface UpdateCategoryInput extends CategoryPolicies {
 }
 
 /** What `inherit` may name on a category. */
-export const CATEGORY_INHERITABLE: readonly string[] = [...MEDIA_DEFAULT_FIELDS, ...POLICY_FIELDS];
+export const CATEGORY_INHERITABLE: readonly string[] = [
+  ...MEDIA_DEFAULT_FIELDS,
+  ...LIST_DEFAULT_FIELDS,
+  'tags',
+  ...POLICY_FIELDS,
+];
+
+/** What a category's `defaults` may set: the scalars, the term lists, and tag labels (EP-28.4). */
+export const DEFAULT_KEYS: readonly string[] = [
+  ...MEDIA_DEFAULT_FIELDS,
+  ...LIST_DEFAULT_FIELDS,
+  'tags',
+];
 
 /** data-model.md §2.1: "nests arbitrarily deep — up to ~20 levels". */
 export const MAX_CATEGORY_DEPTH = 20;
@@ -162,15 +177,19 @@ function commonProblems(input: Partial<UpdateCategoryInput>, labelsRequired: boo
     if (typeof defaults !== 'object' || defaults === null || Array.isArray(defaults)) {
       problems.push('defaults must be an object of media defaults');
     } else {
-      const unknown = Object.keys(defaults).filter(
-        (k) => !(MEDIA_DEFAULT_FIELDS as readonly string[]).includes(k),
-      );
+      const unknown = Object.keys(defaults).filter((k) => !DEFAULT_KEYS.includes(k));
       if (unknown.length > 0) {
-        problems.push(
-          `defaults may set ${MEDIA_DEFAULT_FIELDS.join(', ')} — not ${unknown.join(', ')}`,
-        );
+        problems.push(`defaults may set ${DEFAULT_KEYS.join(', ')} — not ${unknown.join(', ')}`);
       }
       problems.push(...defaultsProblems(defaults as Record<string, unknown>, 'defaults.'));
+      const tags = (defaults as Record<string, unknown>)['tags'];
+      if (tags !== undefined) {
+        if (!Array.isArray(tags) || tags.length > MAX_LIST_ITEMS) {
+          problems.push(`defaults.tags must be a list of at most ${MAX_LIST_ITEMS} labels`);
+        } else {
+          problems.push(...parseTagLabels(tags).errors.map((e) => `defaults.tags: ${e}`));
+        }
+      }
     }
   }
   problems.push(...policyProblems(input as Record<string, unknown>));

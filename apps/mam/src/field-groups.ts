@@ -58,6 +58,10 @@ export const CORE_FIELD_GROUPS: Readonly<Record<keyof UpdateAssetInput, AssetFie
   supplyType: 'core',
   productionGroup: 'core',
   productionDate: 'core',
+  // EP-28.4: what the asset is ABOUT is classification — the taxonomy group, as data-model §1.2
+  // and authorization-model §4 file subjects and classifications.
+  subjectIds: 'taxonomy',
+  classificationIds: 'taxonomy',
   // "allowed count, recommended window, expiry" — §3.1, verbatim. Expiry decides when media stops
   // being usable on air, which is why it is not an ordinary metadata field.
   allowedBroadcastCount: 'rights',
