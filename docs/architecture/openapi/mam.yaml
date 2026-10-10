@@ -157,18 +157,6 @@ paths:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
       responses:
         '200': { description: Verdict history }
-  /assets/{id}/people:
-    post:
-      operationId: linkPerson
-      tags: [people]
-      summary: Associate a person + role with an asset (scope asset:write)
-      parameters:
-        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
-      requestBody:
-        required: true
-        content: { application/json: { schema: { type: object, required: [personId], properties: { personId: { $ref: '#/components/schemas/Ulid' }, roleForAsset: { type: string } } } } }
-      responses:
-        '204': { description: Linked }
   /search:
     get:
       operationId: simpleSearch
@@ -223,6 +211,7 @@ paths:
                     subject: { type: array, items: { type: string } }
                     classification: { type: array, items: { type: string } }
                     tag: { type: array, items: { type: string } }
+                    person: { type: array, items: { $ref: '#/components/schemas/Ulid' }, description: 'People of the effective cast — own entries and inherited roles (EP-28.5, FR-PPL-4).' }
       responses:
         '200':
           description: The page, and the facet counts over it
@@ -394,14 +383,44 @@ paths:
     get: { operationId: listSubjects, tags: [taxonomy], summary: List subjects (controlled vocabulary), responses: { '200': { description: Subjects } } }
     post: { operationId: createSubject, tags: [taxonomy], summary: Create a subject, responses: { '201': { description: Created } } }
   /people:
-    get: { operationId: listPeople, tags: [people], summary: List the people register, responses: { '200': { description: People } } }
+    get:
+      operationId: listPeople
+      tags: [people]
+      summary: The channel's people register by name, live unless includeDeprecated (scope people:read; EP-28.5)
+      parameters:
+        - { name: includeDeprecated, in: query, schema: { type: boolean } }
+      responses:
+        '200': { description: People, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Person' } } } } }
     post:
       operationId: createPerson
       tags: [people]
-      summary: Create a person (name, role, optional image only - FR-PPL-2)
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }
+      summary: Add a person — a name and an optional image reference, nothing else (FR-PPL-2; scope people:admin; audited, person.created)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreatePersonInput' } } } }
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }
+        '422': { $ref: '#/components/responses/Error' }
+  /people/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getPerson
+      tags: [people]
+      summary: One person, deprecated included — a cast entry naming them still resolves (scope people:read)
+      responses:
+        '200': { description: The person, content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: updatePerson
+      tags: [people]
+      summary: Rename, change the image reference, deprecate or restore, over the version read (compare-and-set; scope people:admin; audited)
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdatePersonInput' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /assets/{id}/edit-projects:
     post:
       operationId: createEditProject
@@ -617,6 +636,7 @@ components:
         productionDate: { type: string, format: date, description: A media default (EP-28.2). }
         subjectIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' }, description: 'Subject TERM ids (EP-28.4). Absent inherits the category chain''s list; present — even empty — replaces it.' }
         classificationIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' }, description: 'Classification TERM ids (EP-28.4). Absent inherits; present replaces.' }
+        cast: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/CastEntry' }, description: 'Cast & crew (EP-28.5), inherited PER ROLE: a role named here replaces the category''s people for it; every other role is inherited.' }
         state: { type: string, enum: [created, processing, ready, approved, expired, rejected, replaced, purged] }
         episodeNo: { type: integer }
         allowedBroadcastCount: { type: integer }
@@ -647,6 +667,7 @@ components:
         productionDate: { type: string, format: date, description: A media default (EP-28.2). }
         subjectIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' }, description: 'Subject TERM ids (EP-28.4). Absent inherits the category chain''s list; present — even empty — replaces it.' }
         classificationIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' }, description: 'Classification TERM ids (EP-28.4). Absent inherits; present replaces.' }
+        cast: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/CastEntry' }, description: 'Cast & crew (EP-28.5), inherited PER ROLE: a role named here replaces the category''s people for it; every other role is inherited.' }
         episodeNo: { type: integer }
         durationSec: { type: number }
         allowedBroadcastCount: { type: integer }
@@ -665,13 +686,14 @@ components:
         productionDate: { type: string, format: date, description: A media default (EP-28.2). }
         subjectIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' }, description: 'Subject TERM ids (EP-28.4). Absent inherits the category chain''s list; present — even empty — replaces it.' }
         classificationIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' }, description: 'Classification TERM ids (EP-28.4). Absent inherits; present replaces.' }
+        cast: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/CastEntry' }, description: 'Cast & crew (EP-28.5), inherited PER ROLE: a role named here replaces the category''s people for it; every other role is inherited.' }
         episodeNo: { type: integer }
         durationSec: { type: number }
         allowedBroadcastCount: { type: integer }
         expiresAt: { type: string, format: date-time }
         inherit:
           type: array
-          items: { type: string, enum: [structureId, genre, supplyType, productionGroup, productionDate, subjectIds, classificationIds] }
+          items: { type: string, enum: [structureId, genre, supplyType, productionGroup, productionDate, subjectIds, classificationIds, cast] }
           description: 'Media defaults the asset stops setting, so its category''s value shows through again — reset to inherited (EP-28.2/28.4). Not with a value for the same field.'
     Category:
       type: object
@@ -729,7 +751,7 @@ components:
         defaultExpiry: { type: string, description: 'A policy: an instant, or an ISO-8601 duration from approval — the expiresAt media approved here without one receives, snapshotted (FR-TAX-7). Inherited when absent.' }
         inherit:
           type: array
-          items: { type: string, enum: [structureId, genre, supplyType, productionGroup, productionDate, subjectIds, classificationIds, tags, reviewNeeded, keepDuration, defaultExpiry] }
+          items: { type: string, enum: [structureId, genre, supplyType, productionGroup, productionDate, subjectIds, classificationIds, tags, cast, reviewNeeded, keepDuration, defaultExpiry] }
           description: 'Defaults or policies this node stops setting, so they are inherited again. Not with a value for the same field.'
     MediaDefaultField:
       type: string
@@ -748,6 +770,7 @@ components:
         subjectIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' } }
         classificationIds: { type: array, maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Ulid' } }
         tags: { type: array, maxItems: 50, items: { type: string, maxLength: 64 }, description: 'Tag labels for media with no tags of their own (EP-28.4); stored cleaned and de-duplicated.' }
+        cast: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/CastEntry' }, description: 'Cast defaults, inherited per role (EP-28.5).' }
     InheritedStringList:
       type: object
       required: [value, from]
@@ -789,6 +812,7 @@ components:
             subjectIds: { $ref: '#/components/schemas/InheritedStringList' }
             classificationIds: { $ref: '#/components/schemas/InheritedStringList' }
             tags: { $ref: '#/components/schemas/InheritedStringList', description: 'Only for an asset with no tags of its own.' }
+            cast: { type: array, items: { $ref: '#/components/schemas/InheritedCastEntry' }, description: 'Per role: the entries of every role the reader does not name, nearest category first.' }
         policies:
           type: object
           properties:
@@ -817,12 +841,47 @@ components:
         version: { type: integer, minimum: 1, description: The category's version as read. }
     Person:
       type: object
-      required: [name]
+      description: 'A person in the people register (EP-28.5): minimal PII by design (D5, FR-PPL-2) — a name and an optional image reference. What they did on a piece of media is the asset''s cast entry.'
+      required: [id, channelId, name, version, createdBy, createdAt, updatedAt]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
-        name: { type: string }
-        roleInMedia: { type: string }
-        hasImage: { type: boolean }
+        channelId: { type: string }
+        name: { type: string, maxLength: 200 }
+        imageRef: { type: string, maxLength: 512, description: 'A reference to an image (an asset id or a URL) — never the bytes.' }
+        deprecatedAt: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreatePersonInput:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 200 }
+        imageRef: { type: string, maxLength: 512 }
+    UpdatePersonInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 200 }
+        imageRef: { type: string, maxLength: 512 }
+        deprecated: { type: boolean, description: 'true deprecates, false restores.' }
+    CastEntry:
+      type: object
+      required: [personId, roleId]
+      additionalProperties: false
+      description: A person in a role — the role a cast-role term, whose roleClass says on-screen or crew (EP-28.5).
+      properties:
+        personId: { $ref: '#/components/schemas/Ulid' }
+        roleId: { $ref: '#/components/schemas/Ulid' }
+    InheritedCastEntry:
+      allOf:
+        - $ref: '#/components/schemas/CastEntry'
+        - type: object
+          required: [from]
+          properties:
+            from: { $ref: '#/components/schemas/InheritedFrom' }
     EditProject:
       type: object
       description: A media-editor timeline over one source asset (basic-NLE, D3). Full model in ../services/media-editor.md.
@@ -851,6 +910,10 @@ components:
       type: string
       enum: [structure, genre, supply-type, production-group, classification, subject, cast-role]
       description: 'The flat vocabularies MAM manages (EP-28.3). The SET is code-known; the terms are data. Categories and tags have their own resources.'
+    RoleClass:
+      type: string
+      enum: [on-screen, crew]
+      description: 'cast-role terms only (EP-28.5): whether the role is in front of the camera or behind it. Required on a cast-role term, refused on any other. Tier 0 — ../schemas/common.schema.json#/$defs/RoleClass.'
     VocabularyTerm:
       type: object
       description: 'A term of a controlled vocabulary — see ../schemas/vocabulary-term.schema.json and ../configuration-and-reference-data.md §2.3: stable id, mutable label, deprecate-not-delete, merge via replacedById.'
@@ -865,6 +928,7 @@ components:
         sortOrder: { type: integer }
         colour: { type: string, pattern: '^#[0-9a-fA-F]{6}$' }
         external: { type: object, additionalProperties: { type: string }, description: 'Third-party identifiers (EPG codes, ...).' }
+        roleClass: { $ref: '#/components/schemas/RoleClass' }
         deprecatedAt: { type: string, format: date-time, description: Out of the pickers; every reference still resolves. }
         replacedById: { $ref: '#/components/schemas/Ulid' }
         version: { type: integer, minimum: 1 }
@@ -881,6 +945,7 @@ components:
         sortOrder: { type: integer }
         colour: { type: string, pattern: '^#[0-9a-fA-F]{6}$' }
         external: { type: object, additionalProperties: { type: string } }
+        roleClass: { $ref: '#/components/schemas/RoleClass' }
     UpdateTermInput:
       type: object
       description: Omitted fields are unchanged. Not the key; not the replacement — that is a merge.
@@ -890,6 +955,7 @@ components:
         sortOrder: { type: integer }
         colour: { type: string, pattern: '^#[0-9a-fA-F]{6}$' }
         external: { type: object, additionalProperties: { type: string } }
+        roleClass: { $ref: '#/components/schemas/RoleClass' }
         deprecated: { type: boolean, description: 'true deprecates, false restores (not a merged term).' }
     ReferenceSnapshot:
       type: object

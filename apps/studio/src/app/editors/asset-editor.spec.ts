@@ -10,6 +10,7 @@ import type {
   VocabularyName,
   VocabularyTerm,
 } from '../core/generated/mam.types.ts';
+import { PeopleService } from '../core/people.service.ts';
 import { VocabulariesService } from '../core/vocabularies.service.ts';
 import type { Job } from '../core/generated/mts.types.ts';
 import { TranscodeJobsService } from '../core/transcode-jobs.service.ts';
@@ -163,6 +164,8 @@ interface InternalEditor {
   save(event: Event): void;
   resetToInherited(field: string): void;
   toggleTerm(field: string, id: string, checked: boolean): void;
+  addCast(roleId: string, personId: string): void;
+  setCast(value: unknown): void;
   inheritList(field: string): void;
 }
 
@@ -203,6 +206,7 @@ function setup(fieldGroups: string[] = ['core', 'taxonomy', 'rights']) {
       { provide: AssetsService, useValue: fake },
       { provide: TranscodeJobsService, useValue: jobs },
       { provide: VocabulariesService, useValue: new FakeVocabularies() },
+      { provide: PeopleService, useValue: { list: () => of([]) } },
       { provide: LocaleService, useClass: FakeLocale },
     ],
   });
@@ -279,6 +283,31 @@ describe('AssetEditor', () => {
     component.inheritList('subjectIds');
     component.save(new Event('submit'));
     expect(fake.updates[1]?.patch).toEqual({ inherit: ['subjectIds'] });
+  });
+
+  it('EP-28.5: naming someone for a role starts the asset’s OWN cast; null gives every role back to the category', () => {
+    const { fixture, fake, component } = setup(['core', 'taxonomy', 'rights', 'cast']);
+    fake.gets[0]?.result.next(record());
+    fake.inheritances[0]?.result.next({
+      assetId: record().id,
+      defaults: {
+        cast: [
+          { personId: 'P-PROD', roleId: 'R-PROD', from: { categoryId: 'show', path: '/show/' } },
+        ],
+      },
+      policies: {},
+    });
+    fixture.detectChanges();
+    component.addCast('R-DIR', 'P-DIR');
+    component.addCast('R-DIR', 'P-DIR'); // the same entry twice is one
+    component.save(new Event('submit'));
+    expect(fake.updates[0]?.patch).toEqual({ cast: [{ personId: 'P-DIR', roleId: 'R-DIR' }] });
+    fake.updates[0]?.result.next(
+      record({ cast: [{ personId: 'P-DIR', roleId: 'R-DIR' }], version: 4 }),
+    );
+    component.setCast(null);
+    component.save(new Event('submit'));
+    expect(fake.updates[1]?.patch).toEqual({ inherit: ['cast'] });
   });
 
   describe('inheritance (EP-28.2)', () => {

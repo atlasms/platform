@@ -31,6 +31,9 @@ release is a statement of what changed, not a deploy step.
 
 ### Changed
 
+- `person.created` (EP-28.5): the description says what is sent — a name and whether there is an
+  image; a person has no role of their own (roles are per asset, on its cast), so `roleInMedia` is
+  not sent. The field stays optional; the payload is unchanged.
 - `schedule.validated` (EP-31): the `availability` issue kind is now produced — the rendition an
   item airs is not online, intact and the channel's in HSM; the description says what `rights` and
   `availability` mean instead of what they waited for.
@@ -42,6 +45,8 @@ release is a statement of what changed, not a deploy step.
 
 - `asset.approved` (EP-28.7): optional `automatic` — MAM approved the asset itself, its category
   chain saying `reviewNeeded: false`; the approver is then `mam` and the envelope's actor a service.
+- `RoleClass` (EP-28.5): a shared Tier-0 `$def` — `on-screen` | `crew` — exported with the other
+  shared types; `vocabulary-term` carries it as `roleClass`, for `cast-role` terms only.
 - `taxonomy.updated` (EP-28.3): `kind` takes the flat vocabularies MAM now manages — `genre`,
   `supply-type`, `production-group`, `cast-role` — beside the existing ones.
 - `vocabulary-term` (EP-28.3): `version`, for the compare-and-set on update and merge; `createdBy`

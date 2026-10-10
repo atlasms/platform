@@ -126,7 +126,12 @@ test('an asset inherits what it does not set — live: a category edit is at onc
   });
   let got = await h.service.inherited(h.caller(), asset.id);
   assert.deepEqual(
-    Object.fromEntries(Object.entries(got.defaults).map(([f, v]) => [f, [v.value, v.from.path]])),
+    Object.fromEntries(
+      Object.entries(got.defaults).map(([f, v]) => {
+        const hit = v as { value: unknown; from: { path: string } };
+        return [f, [hit.value, hit.from.path]];
+      }),
+    ),
     {
       genre: [T.drama, '/drama/'],
       supplyType: [T.acquired, '/drama/the-series/'],

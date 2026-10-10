@@ -177,11 +177,11 @@ Ship these as defaults; operators clone and adjust ([FR-IAM-1](../requirements/0
 
 | Role | Grants (sketch) |
 |------|-----------------|
-| **Viewer** | `asset:read`, `schedule:read`, `taxonomy:read` |
+| **Viewer** | `asset:read`, `schedule:read`, `taxonomy:read`, `people:read` |
 | **Journalist / Editor** | Viewer + `asset:write` (`core`,`taxonomy`,`cast`,`shotlist`), `workflow:act` |
 | **Approver** | Editor + `asset:approve` (scoped to a category subtree) |
 | **Scheduler** | Viewer + `schedule:write`; `schedule:send` usually a **separate** role (privileged, audited) |
-| **Librarian** | `asset:write` (`files`,`rights`), `asset:restore`, `taxonomy:admin` |
+| **Librarian** | `asset:write` (`files`,`rights`), `asset:restore`, `taxonomy:admin`, `people:admin` |
 | **Ops** | `ops:read`, `logs:read`, `storage:admin` |
 | **Administrator** | `user:admin`, `metadata:admin`, `workflow:admin`, `feed:admin`, `compliance:admin`, `config:admin` |
 

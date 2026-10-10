@@ -11,6 +11,7 @@
   "common.schema.json#/$defs/AiTier": "Online and offline enrichment are different execution paths with different latency budgets.",
   "common.schema.json#/$defs/AiTask": "Each task is its own model pipeline in the AI service.",
   "common.schema.json#/$defs/PublishKind": "Each kind is its own outbound connector implementation; the TARGETS are a Tier-1 registry.",
+  "common.schema.json#/$defs/RoleClass": "Studio groups cast into on-screen and crew, and search facets by class; a role's class is fixed by the code that reads it.",
 
   "envelope.schema.json#/properties/actor/properties/kind": "Discriminates a service actor from a user actor for audit and authorization.",
   "file.schema.json#/properties/storage/properties/status": "Gates whether a file may be exported to air.",

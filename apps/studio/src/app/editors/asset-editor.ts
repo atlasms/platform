@@ -16,9 +16,12 @@ import type {
   AssetInheritance,
   Category,
   FileRef,
+  CastEntry,
+  Person,
   UpdateAssetInput,
   VocabularyTerm,
 } from '../core/generated/mam.types.ts';
+import { PeopleService } from '../core/people.service.ts';
 import { CategoriesService } from '../core/categories.service.ts';
 import {
   TERM_FIELD_VOCABULARY,
@@ -48,12 +51,13 @@ const TERM_VOCABULARY = {
   ...TERM_FIELD_VOCABULARY,
   subjectIds: 'subject',
   classificationIds: 'classification',
+  cast: 'cast-role',
 } as const;
 type TermHolder = keyof typeof TERM_VOCABULARY;
-type EditableField = Exclude<keyof UpdateAssetInput, 'inherit' | ListField>;
+type EditableField = Exclude<keyof UpdateAssetInput, 'inherit' | ListField | 'cast'>;
 /** The fields a category can supply when the asset sets none (EP-28.2, data-model §2.2). */
 type MediaDefault = 'structureId' | 'genre' | 'supplyType' | 'productionGroup' | 'productionDate';
-type FieldGroup = 'core' | 'taxonomy' | 'rights';
+type FieldGroup = 'core' | 'taxonomy' | 'rights' | 'cast';
 type Draft = Record<EditableField, string>;
 
 const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
@@ -349,6 +353,57 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                   tags.from.path
                 }})
               </small>
+            }
+          </section>
+
+          <section class="field-group">
+            <div class="group-heading">
+              <h3>{{ locale.t('assetEditor.cast') }}</h3>
+              <span>{{
+                canEdit('cast')
+                  ? locale.t('assetEditor.editable')
+                  : locale.t('assetEditor.readOnly')
+              }}</span>
+            </div>
+            <!-- EP-28.5: inherited PER ROLE — a role named here replaces the category's people for it. -->
+            <ul class="cast">
+              @for (e of cast() ?? []; track $index) {
+                <li>
+                  <span>{{ termName('cast', e.roleId) }} · {{ personName(e.personId) }}</span>
+                  @if (canEdit('cast')) {
+                    <button type="button" class="inherit" (click)="removeCast($index)">✕</button>
+                  }
+                </li>
+              }
+              @for (e of inheritedCastEntries(); track $index) {
+                <li class="inherited">
+                  {{ termName('cast', e.roleId) }} · {{ personName(e.personId) }} ({{
+                    e.from.path
+                  }})
+                </li>
+              }
+            </ul>
+            @if (canEdit('cast')) {
+              <div class="cast-add">
+                <select name="castRole" #role>
+                  @for (t of liveTerms('cast'); track t.id) {
+                    <option [value]="t.id">{{ termName('cast', t.id) }}</option>
+                  }
+                </select>
+                <select name="castPerson" #person>
+                  @for (p of livePeople(); track p.id) {
+                    <option [value]="p.id">{{ p.name }}</option>
+                  }
+                </select>
+                <button type="button" class="inherit" (click)="addCast(role.value, person.value)">
+                  {{ locale.t('assetEditor.addCast') }}
+                </button>
+                @if (cast() !== null) {
+                  <button type="button" class="inherit" (click)="setCast(null)">
+                    {{ locale.t('assetEditor.useInherited') }}
+                  </button>
+                }
+              </div>
             }
           </section>
 
@@ -675,9 +730,15 @@ export class AssetEditor implements OnInit {
   });
   protected readonly dirtyLists = signal<ReadonlySet<ListField>>(new Set());
   protected readonly listFields = LIST_FIELDS;
-  protected readonly dirtyCount = computed(() => this.dirtyFields().size + this.dirtyLists().size);
+  /** The asset's own cast as edited: `null` inherits every role (EP-28.5). */
+  protected readonly cast = signal<CastEntry[] | null>(null);
+  protected readonly castDirty = signal(false);
+  protected readonly people = signal<Person[]>([]);
+  protected readonly dirtyCount = computed(
+    () => this.dirtyFields().size + this.dirtyLists().size + (this.castDirty() ? 1 : 0),
+  );
   protected readonly mayEditAnything = computed(() =>
-    (['core', 'taxonomy', 'rights'] as const).some((group) => this.canEdit(group)),
+    (['core', 'taxonomy', 'rights', 'cast'] as const).some((group) => this.canEdit(group)),
   );
 
   private readonly destroyRef = inject(DestroyRef);
@@ -724,6 +785,41 @@ export class AssetEditor implements OnInit {
 
   /** The terms each term field offers (EP-28.3) — deprecated and merged too, to name old values. */
   private readonly vocabularies = inject(VocabulariesService);
+  private readonly peopleApi = inject(PeopleService);
+
+  protected livePeople(): Person[] {
+    return this.people().filter((p) => !p.deprecatedAt);
+  }
+
+  protected personName(id: string): string {
+    return this.people().find((p) => p.id === id)?.name ?? id;
+  }
+
+  /** Inherited entries of the roles the edited cast does not name — what the reader also gets. */
+  protected inheritedCastEntries() {
+    const own = new Set((this.cast() ?? []).map((e) => e.roleId));
+    return (this.inheritance()?.defaults.cast ?? []).filter((e) => !own.has(e.roleId));
+  }
+
+  protected addCast(roleId: string, personId: string): void {
+    if (!roleId || !personId || !this.canEdit('cast')) return;
+    const current = this.cast() ?? [];
+    if (current.some((e) => e.roleId === roleId && e.personId === personId)) return;
+    this.setCast([...current, { personId, roleId }]);
+  }
+
+  protected removeCast(index: number): void {
+    const current = this.cast() ?? [];
+    this.setCast(current.filter((_, i) => i !== index));
+  }
+
+  /** `null` gives every role back to the category — `inherit: ['cast']` on save. */
+  protected setCast(value: CastEntry[] | null): void {
+    this.cast.set(value);
+    this.castDirty.set(JSON.stringify(value) !== JSON.stringify(this.asset()?.cast ?? null));
+    this.editors.setDirty(this.tabId(), this.dirtyCount() > 0);
+    this.saved.set(false);
+  }
   protected readonly terms = signal<Partial<Record<TermHolder, VocabularyTerm[]>>>({});
 
   protected liveTerms(field: TermHolder): VocabularyTerm[] {
@@ -757,6 +853,10 @@ export class AssetEditor implements OnInit {
   ngOnInit(): void {
     this.categoriesApi.list().subscribe({
       next: (all) => this.categories.set(all),
+      error: () => undefined,
+    });
+    this.peopleApi.list(true).subscribe({
+      next: (all) => this.people.set(all),
       error: () => undefined,
     });
     for (const [field, vocabulary] of Object.entries(TERM_VOCABULARY) as [
@@ -928,6 +1028,8 @@ export class AssetEditor implements OnInit {
   }
 
   private adoptLists(asset: Asset): void {
+    this.cast.set(asset.cast ?? null);
+    this.castDirty.set(false);
     this.lists.set({
       subjectIds: asset.subjectIds ?? null,
       classificationIds: asset.classificationIds ?? null,
@@ -1052,6 +1154,11 @@ export class AssetEditor implements OnInit {
       }
     }
 
+    if (this.castDirty() && this.canEdit('cast')) {
+      const cast = this.cast();
+      if (cast === null) patch.inherit = [...(patch.inherit ?? []), 'cast'];
+      else patch.cast = cast;
+    }
     for (const field of this.dirtyLists()) {
       if (!this.canEdit('taxonomy')) continue;
       const value = this.lists()[field];

@@ -37,6 +37,8 @@ export const ADMIN_PERMISSIONS: readonly string[] = [
   'config:admin',
   // #260: the Categories view.
   'taxonomy:admin',
+  // EP-28.5: the People view.
+  'people:admin',
 ];
 
 export const PANELS: readonly PanelDefinition[] = [

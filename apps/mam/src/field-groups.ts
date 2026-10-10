@@ -62,6 +62,8 @@ export const CORE_FIELD_GROUPS: Readonly<Record<keyof UpdateAssetInput, AssetFie
   // and authorization-model §4 file subjects and classifications.
   subjectIds: 'taxonomy',
   classificationIds: 'taxonomy',
+  // EP-28.5: authorization-model §4 names the group.
+  cast: 'cast',
   // "allowed count, recommended window, expiry" — §3.1, verbatim. Expiry decides when media stops
   // being usable on air, which is why it is not an ordinary metadata field.
   allowedBroadcastCount: 'rights',

@@ -14,6 +14,7 @@ import type { Category } from './category.ts';
 import {
   CategoryPathTaken,
   StaleCategory,
+  StalePerson,
   StaleTerm,
   StaleWrite,
   TermKeyTaken,
@@ -278,6 +279,36 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
         (await store.facetsOf([a.id])).map((f) => [f.facet, f.value]),
         [['genre', 'news']],
       );
+    });
+  });
+
+  test(`${name}: PEOPLE (EP-28.5) — the register by name, channel-scoped, writes compare-and-set`, async () => {
+    const person = (id: string, name: string, channelId = 'ch12') => ({
+      id,
+      channelId,
+      name,
+      version: 1,
+      createdBy: 'u1',
+      createdAt: '2026-10-10T00:00:00.000Z',
+      updatedAt: '2026-10-10T00:00:00.000Z',
+    });
+    await withFixture(async ({ store }) => {
+      await store.transaction(async (tx) => {
+        await tx.putPerson(person('B', 'Bea'));
+        await tx.putPerson(person('A', 'Ana'));
+        await tx.putPerson(person('X', 'Xia', 'ch99'));
+      });
+      assert.deepEqual(
+        (await store.people('ch12')).map((p) => p.name),
+        ['Ana', 'Bea'],
+      );
+      await assert.rejects(
+        store.transaction((tx) => tx.putPerson({ ...person('A', 'Ana'), version: 2 }, 7)),
+        StalePerson,
+      );
+      await store.transaction((tx) => tx.putPerson({ ...person('A', 'Ana Silva'), version: 2 }, 1));
+      assert.equal((await store.person('A'))?.name, 'Ana Silva');
+      assert.equal(await store.person('nope'), undefined);
     });
   });
 

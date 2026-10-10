@@ -88,6 +88,10 @@ export type UserState = (typeof UserStateValues)[number];
 export const SettingScopeValues = ['deployment', 'channel', 'category', 'user'] as const;
 export type SettingScope = (typeof SettingScopeValues)[number];
 
+/** A cast role's class (EP-28.5): in front of the camera or behind it. A property of the cast-role TERM, not of each assignment. */
+export const RoleClassValues = ['on-screen', 'crew'] as const;
+export type RoleClass = (typeof RoleClassValues)[number];
+
 /** Which AI tier ran: online (interactive, bounded latency) or offline (batch). Not the HSM storage Tier. */
 export const AiTierValues = ['online', 'offline'] as const;
 export type AiTier = (typeof AiTierValues)[number];
@@ -458,7 +462,7 @@ export interface PermissionsChangedPayload {
   permVersion: number;
 }
 
-/** Emitted by MAM when a person is added to the register (name, role, optional image only - FR-PPL-2). */
+/** Emitted by MAM when a person is added to the register (EP-28.5): a name and an optional image only (FR-PPL-2). A person has no role of their own — roles are per asset, on its cast entries — so `roleInMedia` is not sent. */
 export interface PersonCreatedPayload {
   personId: Ulid;
   name: string;
