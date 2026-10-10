@@ -189,21 +189,55 @@ paths:
     post:
       operationId: advancedSearch
       tags: [search]
-      summary: Advanced faceted search (category + subject + tag + person, FR-TAX-5)
+      summary: Faceted search over the projected EFFECTIVE values — inherited ones included (scope asset:read, per asset; EP-28.6, FR-TAX-5/6)
+      description: >-
+        AND across facets, OR within one; `q` narrows by the free-text index. A facet is matched
+        against each asset's PROJECTED effective values, written with the asset and re-projected
+        for a category's subtree when the category changes (taxonomy.updated) — so a value set on a
+        category finds every asset below it that sets none of its own, once the re-projection
+        lands. `category` matches a category and everything below it; `tag` matches the folded
+        label. Every hit is authorized per asset, and the counts are over the returned page only,
+        so they never disclose what the caller may not read.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 q: { type: string }
-                categories: { type: array, items: { type: string } }
-                subjects: { type: array, items: { type: string } }
-                tags: { type: array, items: { type: string } }
-                personIds: { type: array, items: { $ref: '#/components/schemas/Ulid' } }
+                limit: { type: integer, minimum: 1, maximum: 100 }
+                facets:
+                  type: object
+                  additionalProperties: false
+                  description: 'Facet → the values any of which matches. Term facets take term ids; category takes category ids.'
+                  properties:
+                    category: { type: array, items: { type: string } }
+                    mediaType: { type: array, items: { type: string } }
+                    state: { type: array, items: { type: string } }
+                    structure: { type: array, items: { type: string } }
+                    genre: { type: array, items: { type: string } }
+                    supply-type: { type: array, items: { type: string } }
+                    production-group: { type: array, items: { type: string } }
+                    subject: { type: array, items: { type: string } }
+                    classification: { type: array, items: { type: string } }
+                    tag: { type: array, items: { type: string } }
       responses:
-        '200': { description: Results, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Asset' } } } } }
+        '200':
+          description: The page, and the facet counts over it
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, facets]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Asset' } }
+                  facets:
+                    type: object
+                    description: 'Facet → value → how many assets on this page carry it.'
+                    additionalProperties: { type: object, additionalProperties: { type: integer } }
+        '422': { $ref: '#/components/responses/Error' }
   /search/reindex:
     post:
       operationId: reindexSearch

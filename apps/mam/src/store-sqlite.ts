@@ -152,6 +152,22 @@ export const sqliteTermsMigration: Migration = {
        );`,
 };
 
+// Faceted search (EP-28.6): each asset's EFFECTIVE values — inherited ones included — projected
+// one row per (facet, value), replaced whole with the asset and re-projected for a category's
+// subtree when the category changes.
+export const sqliteFacetsMigration: Migration = {
+  id: 'mam_facets',
+  up: `CREATE TABLE IF NOT EXISTS asset_facets (
+         asset_id   TEXT NOT NULL,
+         channel_id TEXT NOT NULL,
+         facet      TEXT NOT NULL,
+         value      TEXT NOT NULL,
+         PRIMARY KEY (asset_id, facet, value)
+       );
+       CREATE INDEX IF NOT EXISTS asset_facets_value_idx
+         ON asset_facets (channel_id, facet, value, asset_id);`,
+};
+
 export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
   const db = openDb(path);
   migrate(db, [
@@ -169,6 +185,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     sqliteFilesMigration,
     sqliteCategoriesMigration,
     sqliteTermsMigration,
+    sqliteFacetsMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
   const seen = new SqliteSeenStore(db);
@@ -258,6 +275,14 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
       // somebody just created. For a cache validator those are not comparable risks.
       bump();
       return resolved;
+    },
+    async indexFacets(assetId, channelId, facets) {
+      db.prepare('DELETE FROM asset_facets WHERE asset_id = ?').run(assetId);
+      const add = db.prepare(
+        `INSERT INTO asset_facets (asset_id, channel_id, facet, value) VALUES (?, ?, ?, ?)
+         ON CONFLICT DO NOTHING`,
+      );
+      for (const f of facets) add.run(assetId, channelId, f.facet, f.value);
     },
     async indexTerms(assetId, channelId, terms) {
       db.prepare('DELETE FROM asset_search WHERE asset_id = ?').run(assetId);
@@ -514,6 +539,41 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         .prepare('SELECT data FROM asset_files WHERE asset_id = ? ORDER BY kind, variant')
         .all(assetId) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as FileRef);
+    },
+    async facetSearch(channelId, filters, limit, within) {
+      const params: (string | number)[] = [channelId];
+      const where: string[] = ['a.channel_id = ?'];
+      for (const f of filters) {
+        if (f.values.length === 0) continue;
+        where.push(
+          `EXISTS (SELECT 1 FROM asset_facets x WHERE x.asset_id = a.id AND x.facet = ?
+                    AND x.value IN (${f.values.map(() => '?').join(', ')}))`,
+        );
+        params.push(f.facet, ...f.values);
+      }
+      if (within !== undefined) {
+        if (within.length === 0) return [];
+        where.push(`a.id IN (${within.map(() => '?').join(', ')})`);
+        params.push(...within);
+      }
+      params.push(limit);
+      const rows = db
+        .prepare(
+          `SELECT a.id FROM assets a WHERE ${where.join(' AND ')} ORDER BY a.id DESC LIMIT ?`,
+        )
+        .all(...params) as { id: string }[];
+      return rows.map((r) => r.id);
+    },
+    async facetsOf(assetIds) {
+      const unique = [...new Set(assetIds)];
+      if (unique.length === 0) return [];
+      const rows = db
+        .prepare(
+          `SELECT asset_id, facet, value FROM asset_facets
+            WHERE asset_id IN (${unique.map(() => '?').join(', ')})`,
+        )
+        .all(...unique) as { asset_id: string; facet: string; value: string }[];
+      return rows.map((r) => ({ assetId: r.asset_id, facet: r.facet, value: r.value }));
     },
     async categories(channelId) {
       const rows = db

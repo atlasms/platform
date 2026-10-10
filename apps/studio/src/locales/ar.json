@@ -66,7 +66,18 @@
     "placeholder": "البحث عن أصول…",
     "loading": "جاري البحث…",
     "noResults": "لا توجد أصول تطابق استعلامك",
-    "emptyHint": "اكتب للبحث في الفهرس"
+    "emptyHint": "اكتب للبحث في الفهرس",
+    "facet": {
+      "category": "الفئة",
+      "genre": "النوع",
+      "subject": "الموضوع",
+      "classification": "التصنيف",
+      "structure": "البنية",
+      "supply-type": "نوع التوريد",
+      "production-group": "جهة الإنتاج",
+      "tag": "الوسم",
+      "state": "الحالة"
+    }
   },
   "ingest": {
     "title": "الاستيراد",

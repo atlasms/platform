@@ -19,6 +19,7 @@ export {
   type UpdateAssetInput,
 } from './asset.ts';
 export {
+  FACETS,
   MamService,
   systemCaller,
   type CacheOutcome,
@@ -140,6 +141,7 @@ export {
   type CreateCategoryInput,
   type UpdateCategoryInput,
 } from './category.ts';
+export { startFacetProjector, TAXONOMY_UPDATED_PATTERN } from './facets.ts';
 export {
   isVocabulary,
   resolveTerm,

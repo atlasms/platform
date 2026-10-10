@@ -404,7 +404,7 @@ category's** — for subjects, classifications and tags alike; cast inherits **p
 | 28.3 | ✅ Controlled vocabularies — structures, genres, supply types, production groups, classifications, subjects, cast roles: operator-managed, deprecate-not-delete, merge, in the reference snapshot; the media-default fields hold **term ids** (decided 2026-10-09) (FR-TAX-3/4/8) | 5 |
 | 28.4 | Xref defaults — subjects, classifications, tags on a category, inherited onto media; an asset's own list replaces the category's | 5 |
 | 28.5 | People register + cast & crew with **per-role** inheritance (FR-TAX-9a) | 5 |
-| 28.6 | Faceted search across category, subject, classification, tag and person — over EFFECTIVE values, so a category edit is findable at once (FR-TAX-5/6) | 8 |
+| 28.6 | ✅ (but the person facet, after 28.5) Faceted search across category, subject, classification, tag and person — over EFFECTIVE values, so a category edit is findable at once (FR-TAX-5/6) | 8 |
 | 28.7 | Policies take effect — `reviewNeeded: false` **auto-approves on ready** (decided 2026-10-10; done); `keepDuration` handed to HSM tiering (waits for EP-36) | 3 |
 
 **Decision points:** 28.6 must choose how inherited values reach the search index — resolve at

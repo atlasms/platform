@@ -6,9 +6,11 @@
 // the search under the id already in flight and so raced against itself.
 
 import { TestBed } from '@angular/core/testing';
-import { Subject } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { AssetsService, type Page } from '../core/assets.service.ts';
+import { AssetsService, type FacetedPage } from '../core/assets.service.ts';
+import { CategoriesService } from '../core/categories.service.ts';
+import { VocabulariesService } from '../core/vocabularies.service.ts';
 import type { Asset } from '../core/generated/mam.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
@@ -31,11 +33,14 @@ const asset = (id: string, title = id): Asset => ({
 /** One subject per call — a shared one would deliver every response to every subscriber. */
 class FakeAssets {
   searchCalls: string[] = [];
-  searches: Subject<Page<Asset>>[] = [];
+  bodies: { q?: string; facets?: Record<string, string[]> }[] = [];
+  searches: Subject<Partial<FacetedPage>>[] = [];
 
-  search(q: string) {
-    this.searchCalls.push(q);
-    const subject = new Subject<Page<Asset>>();
+  /** EP-28.6: the panel searches through the faceted endpoint; `q` is what was typed. */
+  advancedSearch(body: { q?: string; facets?: Record<string, string[]> }) {
+    this.searchCalls.push(body.q ?? '');
+    this.bodies.push(body);
+    const subject = new Subject<Partial<FacetedPage>>();
     this.searches.push(subject);
     return subject;
   }
@@ -57,6 +62,11 @@ interface InternalSearchPanel {
   onQuery(value: string): void;
   onEnter(): void;
   open(asset: Asset): void;
+  toggle(facet: string, value: string): void;
+  facetGroups: () => {
+    facet: string;
+    values: { value: string; count: number; selected: boolean }[];
+  }[];
 }
 
 function setup() {
@@ -66,6 +76,8 @@ function setup() {
       EditorStore,
       { provide: AssetsService, useValue: fake },
       { provide: LocaleService, useClass: FakeLocale },
+      { provide: CategoriesService, useValue: { list: () => of([]) } },
+      { provide: VocabulariesService, useValue: { list: () => of([]) } },
     ],
   });
   const fixture = TestBed.createComponent(SearchPanel);
@@ -126,6 +138,26 @@ describe('SearchPanel', () => {
     expect(component.assets()).toEqual([]);
     expect(component.loading()).toBe(false);
     expect(fake.searchCalls).toEqual(['foo']); // whitespace is not a query
+  });
+
+  it('EP-28.6: a facet chip filters — AND across facets, OR within; with filters, no query is needed', () => {
+    const { component, fake } = setup();
+    component.onQuery('foo');
+    fake.searches[0]?.next({
+      items: [asset('a1')],
+      facets: { genre: { 'G-DRAMA': 1 }, subject: { 'S-WAR': 1 } },
+    });
+    expect(component.facetGroups().map((g) => g.facet)).toEqual(['genre', 'subject']);
+
+    component.toggle('genre', 'G-DRAMA');
+    expect(fake.bodies[1]).toEqual({ q: 'foo', facets: { genre: ['G-DRAMA'] }, limit: 100 });
+    component.onQuery('');
+    expect(fake.bodies[2]).toEqual({ facets: { genre: ['G-DRAMA'] }, limit: 100 });
+    // The chosen value stays a chip even when the page no longer counts it.
+    fake.searches[2]?.next({ items: [], facets: {} });
+    expect(component.facetGroups()[0]?.values).toEqual([
+      { value: 'G-DRAMA', count: 0, selected: true },
+    ]);
   });
 
   it('a result opens a real editor tab', () => {

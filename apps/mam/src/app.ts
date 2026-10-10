@@ -459,6 +459,21 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
   // Simple search (EP-17.4). A GET with the query in the URL, because a search result is a
   // shareable, bookmarkable, cacheable thing — the faceted POST /search the catalogue describes
   // arrives with the structured filters that actually need a body.
+  // EP-28.6: faceted search over the projected effective values (AND across facets, OR within).
+  app.post('/api/v1/search', async (req, reply) =>
+    handle(req, reply, async () => {
+      const body = (req.body ?? {}) as { q?: unknown; facets?: unknown; limit?: unknown };
+      if (body.facets !== undefined && (typeof body.facets !== 'object' || body.facets === null)) {
+        throw new ValidationError('facets must map a facet to a list of values');
+      }
+      return options.service.advancedSearch(await callerOf(req), {
+        ...(typeof body.q === 'string' ? { q: body.q } : {}),
+        ...(body.facets !== undefined ? { facets: body.facets as Record<string, unknown> } : {}),
+        ...(typeof body.limit === 'number' ? { limit: body.limit } : {}),
+      });
+    }),
+  );
+
   app.get('/api/v1/search', async (req, reply) =>
     handle(req, reply, async () => {
       const { q, limit } = req.query as { q?: string; limit?: string };

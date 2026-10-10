@@ -132,6 +132,21 @@ export interface AssetStore {
    * it in SQL would put the policy evaluator in the database.
    */
   search(channelId: string, query: ParsedQuery, limit: number): Promise<SearchHit[]>;
+  /**
+   * Faceted search (EP-28.6): the channel's asset ids carrying, for EVERY filter, at least one of its
+   * values — AND across facets, OR within one — newest first, at most `limit`. `within` narrows to
+   * those ids (a text search's hits). The facets are the PROJECTED effective values (inherited
+   * included), written with the asset and re-projected when a category changes.
+   */
+  facetSearch(
+    channelId: string,
+    filters: readonly FacetFilter[],
+    limit: number,
+    within?: readonly string[],
+  ): Promise<string[]>;
+  /** The projected facets of these assets — what a results page counts. */
+  facetsOf(assetIds: readonly string[]): Promise<FacetValue[]>;
+
   /** The asset's files as last mirrored from HSM/MTS (EP-17.8), by kind then variant. */
   filesOf(assetId: string): Promise<FileRef[]>;
 
@@ -185,6 +200,19 @@ export class CategoryPathTaken extends Conflict {
   constructor(path: string) {
     super(`a category already exists at ${path} — a key is unique among its siblings`);
   }
+}
+
+/** One projected facet value of an asset (EP-28.6). */
+export interface FacetValue {
+  assetId: string;
+  facet: string;
+  value: string;
+}
+
+/** A search filter: the asset must carry one of `values` under `facet`. */
+export interface FacetFilter {
+  facet: string;
+  values: readonly string[];
 }
 
 /** A vocabulary term write whose base is no longer the stored row (EP-28.3). */
@@ -261,6 +289,12 @@ export interface AssetTx {
    * strictly stronger than the projection it stands in for.
    */
   indexTerms(assetId: string, channelId: string, terms: readonly string[]): Promise<void>;
+  /** Replace an asset's projected facets (EP-28.6) — whole, like its terms. */
+  indexFacets(
+    assetId: string,
+    channelId: string,
+    facets: readonly { facet: string; value: string }[],
+  ): Promise<void>;
   /** Enqueue a domain event on the outbox — in THIS transaction, with the row it announces. */
   enqueue(record: OutboxRecord): Promise<void>;
   /**

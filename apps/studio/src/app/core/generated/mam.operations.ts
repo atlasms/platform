@@ -31,7 +31,7 @@ export const MamOperations = {
   linkPerson: { method: 'POST', path: '/api/v1/assets/{id}/people', params: ['id'] },
   /** Simple free-text search (scope asset:read) */
   simpleSearch: { method: 'GET', path: '/api/v1/search', params: [] },
-  /** Advanced faceted search (category + subject + tag + person, FR-TAX-5) */
+  /** Faceted search over the projected EFFECTIVE values — inherited ones included (scope asset:read, per asset; EP-28.6, FR-TAX-5/6) */
   advancedSearch: { method: 'POST', path: '/api/v1/search', params: [] },
   /** Rebuild the channel's search index from the assets (scope taxonomy:admin) */
   reindexSearch: { method: 'POST', path: '/api/v1/search/reindex', params: [] },
