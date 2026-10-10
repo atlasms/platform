@@ -271,6 +271,15 @@ takes values off the node. The mandatory gate judges the effective asset; approv
 chain's `defaultExpiry` into `expiresAt` with `expirySource: category`. Category writes are
 authorized per field group: `core`, `defaults`, `policies`.
 
+### Vocabularies (EP-28.3)
+
+`/vocabularies/{vocabulary}` (list, create) and `/vocabularies/{vocabulary}/{termId}` (get, PATCH over
+`?version=`), `/…/{termId}/merge` — the flat controlled vocabularies of [data model
+§2.8](../data-model.md#28-as-built--controlled-vocabularies-ep-283). An asset's `structureId`, `genre`,
+`supplyType`, `productionGroup` (and a category's defaults of them) are TERM ids, validated when
+written. `taxonomy:admin` in the channel to write; every write audited (`vocabulary-term`) with a
+`taxonomy.updated`.
+
 ### EP-15.5 — an accepted ingest becomes an asset
 
 MAM consumes `ingest.accepted` (`createFromIngest`, `ingest.ts`): the asset is created under the id

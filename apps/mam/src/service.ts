@@ -59,7 +59,22 @@ import {
   type CreateCategoryInput,
   type UpdateCategoryInput,
 } from './category.ts';
-import { StaleCategory } from './store.ts';
+import { StaleCategory, StaleTerm } from './store.ts';
+import {
+  createTermProblems,
+  isVocabulary,
+  refuseTerm,
+  resolveTerm,
+  TERM_FIELDS,
+  termLabel,
+  updateTermProblems,
+  VOCABULARIES,
+  type CreateTermInput,
+  type TermField,
+  type UpdateTermInput,
+  type Vocabulary,
+  type VocabularyTerm,
+} from './vocabulary.ts';
 import { groupsForCoreFields, groupsForExtended } from './field-groups.ts';
 import {
   chainOf,
@@ -287,7 +302,15 @@ export interface MamReferenceSnapshot {
       path: string;
       mediaAddable: boolean;
     }>;
-  };
+  } & Record<Vocabulary, VocabularyTermRef[]>;
+}
+
+/** A live term as the reference snapshot carries it (EP-28.3). */
+export interface VocabularyTermRef {
+  id: string;
+  key: string;
+  label: string;
+  labels: Record<string, string>;
 }
 
 export class MamService {
@@ -510,6 +533,7 @@ export class MamService {
     if (!input.mediaType?.trim()) throw new ValidationError('mediaType is required');
     if (!input.fileType?.trim()) throw new ValidationError('fileType is required');
     refuse(defaultsProblems(input as unknown as Record<string, unknown>));
+    await this.requireTerms(caller.channelId, input as unknown as Record<string, unknown>);
 
     const at = this.now().toISOString();
     const asset: Asset = {
@@ -591,6 +615,14 @@ export class MamService {
     // at runtime and this patch arrives as JSON — spreading it would let `{"state":"approved"}`
     // route straight around review. Same for id, channelId, version and the audit fields.
     const safe = pickUpdatable(patch);
+    // A term field CHANGED must name a live term; one re-sent unchanged is left as it is, so a
+    // value written before the vocabulary existed does not block an unrelated edit.
+    await this.requireTerms(
+      existing.channelId,
+      Object.fromEntries(
+        Object.entries(safe).filter(([f, v]) => v !== existing[f as keyof UpdateAssetInput]),
+      ),
+    );
 
     const changedFields = [
       ...(Object.keys(safe) as (keyof UpdateAssetInput)[]).filter(
@@ -1053,6 +1085,7 @@ export class MamService {
       valid.parentId === undefined
         ? undefined
         : await this.categoryInChannel(caller.channelId, valid.parentId);
+    await this.requireTerms(caller.channelId, valid.defaults ?? {}, 'defaults.');
     const path = childPath(parent?.path, valid.key);
     const depth = (parent?.depth ?? 0) + 1;
     this.authorizeCategory(caller, path, [
@@ -1130,6 +1163,7 @@ export class MamService {
     ];
     this.authorizeCategory(caller, existing.path, groups);
     if (existing.version !== version) throw new StaleCategory(id, version);
+    await this.requireTerms(caller.channelId, input.defaults ?? {}, 'defaults.');
 
     const next: Category = {
       ...existing,
@@ -1313,6 +1347,240 @@ export class MamService {
     return this.eventRecord(caller, category.channelId, 'audit.recorded', payload);
   }
 
+  // --- controlled vocabularies (EP-28.3) --------------------------------------
+  //
+  // configuration-and-reference-data.md §2.3: stable id, mutable label; deprecate, never delete;
+  // merge as one audited operation; a key for imports. Governed by `taxonomy:admin` in the channel —
+  // with no category path, so a grant narrowed to a subtree cannot edit a channel-wide vocabulary.
+
+  /** A vocabulary's terms, live unless the deprecated (and merged) are asked for. */
+  async terms(
+    caller: Caller,
+    vocabulary: string,
+    options: { includeDeprecated?: boolean } = {},
+  ): Promise<VocabularyTerm[]> {
+    this.authorize(caller, 'taxonomy:read');
+    const all = await this.options.store.terms(caller.channelId, this.vocabulary(vocabulary));
+    return options.includeDeprecated ? all : all.filter((t) => t.deprecatedAt === undefined);
+  }
+
+  async term(caller: Caller, vocabulary: string, id: string): Promise<VocabularyTerm> {
+    this.authorize(caller, 'taxonomy:read');
+    return this.termIn(caller.channelId, this.vocabulary(vocabulary), id);
+  }
+
+  async createTerm(
+    caller: Caller,
+    vocabulary: string,
+    input: Partial<CreateTermInput>,
+  ): Promise<VocabularyTerm> {
+    const vocab = this.vocabulary(vocabulary);
+    this.authorizeVocabulary(caller);
+    refuseTerm(createTermProblems(input));
+    const valid = input as CreateTermInput;
+    const at = this.now().toISOString();
+    const term: VocabularyTerm = {
+      id: ulid(),
+      vocabulary: vocab,
+      channelId: caller.channelId,
+      key: valid.key,
+      labels: trimmedLabels(valid.labels),
+      sortOrder: valid.sortOrder ?? 0,
+      version: 1,
+      createdBy: caller.userId,
+      createdAt: at,
+      updatedAt: at,
+      ...defined({
+        description: valid.description,
+        colour: valid.colour,
+        external: valid.external,
+      }),
+    };
+    await this.options.store.transaction(async (tx) => {
+      await tx.putTerm(term);
+      await tx.enqueue(this.termEvent(caller, term, 'created'));
+      await tx.enqueue(this.termAudit(caller, term, undefined, 'vocabulary-term.created'));
+    });
+    return term;
+  }
+
+  async updateTerm(
+    caller: Caller,
+    vocabulary: string,
+    id: string,
+    version: number,
+    input: Partial<UpdateTermInput> & Record<string, unknown>,
+  ): Promise<VocabularyTerm> {
+    const vocab = this.vocabulary(vocabulary);
+    this.authorizeVocabulary(caller);
+    refuseTerm(updateTermProblems(input));
+    const existing = await this.termIn(caller.channelId, vocab, id);
+    if (existing.version !== version) throw new StaleTerm(id, version);
+    if (input.deprecated === false && existing.replacedById !== undefined) {
+      throw new ValidationError(
+        `${existing.key} was merged into another term — it cannot be restored`,
+      );
+    }
+    const next: VocabularyTerm = {
+      ...existing,
+      ...defined({
+        labels: input.labels === undefined ? undefined : trimmedLabels(input.labels),
+        description: input.description,
+        sortOrder: input.sortOrder,
+        colour: input.colour,
+        external: input.external,
+      }),
+    };
+    if (input.deprecated === true && existing.deprecatedAt === undefined) {
+      next.deprecatedAt = this.now().toISOString();
+    }
+    if (input.deprecated === false) delete next.deprecatedAt;
+    if (JSON.stringify(next) === JSON.stringify(existing)) return existing;
+    next.version = existing.version + 1;
+    next.updatedAt = this.now().toISOString();
+    const action =
+      input.deprecated === true && existing.deprecatedAt === undefined ? 'deprecated' : 'updated';
+    await this.options.store.transaction(async (tx) => {
+      await tx.putTerm(next, existing.version);
+      await tx.enqueue(this.termEvent(caller, next, action));
+      await tx.enqueue(this.termAudit(caller, next, existing, `vocabulary-term.${action}`));
+    });
+    return next;
+  }
+
+  /**
+   * Merge a term INTO another of the same vocabulary (§2.3 rule 3): the term is deprecated with
+   * `replacedById` pointing at the survivor — ONE audited write, no asset rewritten. Readers follow
+   * the redirect; a write naming the merged term is refused with the survivor's name.
+   */
+  async mergeTerm(
+    caller: Caller,
+    vocabulary: string,
+    id: string,
+    input: { into?: unknown; version?: unknown },
+  ): Promise<VocabularyTerm> {
+    const vocab = this.vocabulary(vocabulary);
+    this.authorizeVocabulary(caller);
+    if (typeof input.version !== 'number' || !Number.isInteger(input.version)) {
+      throw new ValidationError('version is required — the version of the term as read');
+    }
+    if (typeof input.into !== 'string') throw new ValidationError('into names the surviving term');
+    const existing = await this.termIn(caller.channelId, vocab, id);
+    if (existing.version !== input.version) throw new StaleTerm(id, input.version);
+    if (existing.replacedById !== undefined) {
+      throw new ValidationError(`${existing.key} is already merged`);
+    }
+    const into = await this.termIn(caller.channelId, vocab, input.into);
+    if (into.id === existing.id) throw new ValidationError('a term cannot be merged into itself');
+    if (into.deprecatedAt !== undefined) {
+      throw new ValidationError(`${into.key} is deprecated — merge into a live term`);
+    }
+    const at = this.now().toISOString();
+    const next: VocabularyTerm = {
+      ...existing,
+      replacedById: into.id,
+      deprecatedAt: existing.deprecatedAt ?? at,
+      version: existing.version + 1,
+      updatedAt: at,
+    };
+    await this.options.store.transaction(async (tx) => {
+      await tx.putTerm(next, existing.version);
+      await tx.enqueue(this.termEvent(caller, next, 'merged'));
+      await tx.enqueue(this.termAudit(caller, next, existing, 'vocabulary-term.merged'));
+    });
+    return next;
+  }
+
+  /**
+   * Every term a write names must be a live term of the field's vocabulary in this channel
+   * (EP-28.3, decided with the product owner: the fields hold term ids). A merged term is refused
+   * with the survivor named, a deprecated one as such, anything else as unknown — a 422 either way.
+   */
+  private async requireTerms(
+    channelId: string,
+    values: Partial<Record<string, unknown>>,
+    where = '',
+  ): Promise<void> {
+    const problems: string[] = [];
+    for (const [field, vocab] of Object.entries(TERM_FIELDS) as [TermField, Vocabulary][]) {
+      const id = values[field];
+      if (typeof id !== 'string') continue;
+      const term = await this.options.store.term(id);
+      if (!term || term.channelId !== channelId || term.vocabulary !== vocab) {
+        problems.push(`${where}${field} must name a term of the ${vocab} vocabulary`);
+      } else if (term.replacedById !== undefined) {
+        const all = await this.options.store.terms(channelId, vocab);
+        const survivor = resolveTerm(term, new Map(all.map((t) => [t.id, t])));
+        problems.push(
+          `${where}${field}: ${term.key} was merged into ${survivor.key} (${survivor.id}) — use that`,
+        );
+      } else if (term.deprecatedAt !== undefined) {
+        problems.push(`${where}${field}: ${term.key} is deprecated — choose a live term`);
+      }
+    }
+    if (problems.length > 0) throw new ValidationError(problems.join('; '));
+  }
+
+  private vocabulary(name: string): Vocabulary {
+    if (!isVocabulary(name)) {
+      throw new NotFound(`no vocabulary ${name} — one of ${VOCABULARIES.join(', ')}`);
+    }
+    return name;
+  }
+
+  private authorizeVocabulary(caller: Caller): void {
+    const decision = canEnforce(caller.policy, 'taxonomy:admin', { channelId: caller.channelId });
+    if (!decision.allowed) throw new Forbidden(decision.reason ?? 'missing taxonomy:admin');
+  }
+
+  private async termIn(
+    channelId: string,
+    vocabulary: Vocabulary,
+    id: string,
+  ): Promise<VocabularyTerm> {
+    const term = await this.options.store.term(id);
+    // Another channel's — or another vocabulary's — term is NOT FOUND here.
+    if (!term || term.channelId !== channelId || term.vocabulary !== vocabulary) {
+      throw new NotFound(`no ${vocabulary} term ${id}`);
+    }
+    return term;
+  }
+
+  private termEvent(
+    caller: Caller,
+    term: VocabularyTerm,
+    action: 'created' | 'updated' | 'deprecated' | 'merged',
+  ): ReturnType<MamService['eventRecord']> {
+    return this.eventRecord(caller, term.channelId, 'taxonomy.updated', {
+      kind: term.vocabulary,
+      action,
+      id: term.id,
+      label: termLabel(term),
+      ...defined({ replacedById: term.replacedById }),
+    } satisfies EventPayloads['taxonomy.updated']);
+  }
+
+  /** One term revision: entity `vocabulary-term`, revision its own version. */
+  private termAudit(
+    caller: Caller,
+    term: VocabularyTerm,
+    before: VocabularyTerm | undefined,
+    action: string,
+  ): ReturnType<MamService['eventRecord']> {
+    const payload: EventPayloads['audit.recorded'] = {
+      entityType: 'vocabulary-term',
+      entityId: term.id,
+      revision: term.version,
+      action,
+      origin: { service: 'mam' },
+      delta: delta(
+        before as unknown as Record<string, unknown> | undefined,
+        term as unknown as Record<string, unknown>,
+      ),
+    };
+    return this.eventRecord(caller, term.channelId, 'audit.recorded', payload);
+  }
+
   // --- extensible metadata (EP-17.2) -----------------------------------------
 
   /**
@@ -1471,11 +1739,24 @@ export class MamService {
    */
   async referenceSnapshot(caller: Caller): Promise<MamReferenceSnapshot> {
     this.authorize(caller, 'taxonomy:read');
-    const [configVersion, tags, categories] = await Promise.all([
+    const [configVersion, tags, categories, ...terms] = await Promise.all([
       this.options.store.configVersion(),
       this.options.store.listTags(caller.channelId),
       this.options.store.categories(caller.channelId),
+      ...VOCABULARIES.map((v) => this.options.store.terms(caller.channelId, v)),
     ]);
+    // The LIVE terms of each vocabulary: what a picker offers and a write is validated against.
+    const vocabularyTerms = Object.fromEntries(
+      VOCABULARIES.map((v, i) => [
+        v,
+        terms[i]!.filter((t) => t.deprecatedAt === undefined).map((t) => ({
+          id: t.id,
+          key: t.key,
+          label: termLabel(t),
+          labels: t.labels,
+        })),
+      ]),
+    ) as Record<Vocabulary, VocabularyTermRef[]>;
     return {
       configVersion,
       vocabularies: {
@@ -1490,6 +1771,7 @@ export class MamService {
           mediaAddable: c.mediaAddable,
           ...defined({ parentId: c.parentId }),
         })),
+        ...vocabularyTerms,
       },
     };
   }

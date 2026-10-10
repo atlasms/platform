@@ -21,10 +21,13 @@ import type { FileRef } from './file.ts';
 import {
   CategoryPathTaken,
   StaleCategory,
+  StaleTerm,
   StaleWrite,
+  TermKeyTaken,
   type AssetStore,
   type AssetTx,
 } from './store.ts';
+import type { VocabularyTerm } from './vocabulary.ts';
 import type { Tag } from './tag.ts';
 
 interface TagRow {
@@ -201,6 +204,20 @@ export const pgCategoriesMigration: Migration = {
          ON assets (channel_id, (data->>'categoryId'));`,
 };
 
+// Controlled vocabularies (EP-28.3): one table for every flat vocabulary, a key unique per
+// (channel, vocabulary).
+export const pgTermsMigration: Migration = {
+  id: 'mam_vocabulary_terms',
+  up: `CREATE TABLE IF NOT EXISTS vocabulary_terms (
+         id         text PRIMARY KEY,
+         channel_id text NOT NULL,
+         vocabulary text NOT NULL,
+         key        text NOT NULL,
+         data       jsonb NOT NULL,
+         CONSTRAINT vocabulary_terms_key UNIQUE (channel_id, vocabulary, key)
+       );`,
+};
+
 /** Everything MAM's database needs, in order. Applied at startup under an advisory lock. */
 export const mamMigrations: Migration[] = [
   outboxMigration,
@@ -216,6 +233,7 @@ export const mamMigrations: Migration[] = [
   seenMigration,
   pgFilesMigration,
   pgCategoriesMigration,
+  pgTermsMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
@@ -520,6 +538,30 @@ export function pgAssetStore(pool: PgPool): AssetStore {
               throw err;
             }
           },
+          async putTerm(term, ifVersion) {
+            try {
+              const written =
+                ifVersion === undefined
+                  ? await client.query(
+                      `INSERT INTO vocabulary_terms (id, channel_id, vocabulary, key, data)
+                       VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+                      [term.id, term.channelId, term.vocabulary, term.key, JSON.stringify(term)],
+                    )
+                  : await client.query(
+                      `UPDATE vocabulary_terms SET data = $2
+                       WHERE id = $1 AND (data->>'version')::int = $3`,
+                      [term.id, JSON.stringify(term), ifVersion],
+                    );
+              if (written.rowCount !== 1) throw new StaleTerm(term.id, ifVersion);
+              await bumpConfig(); // the terms are in the reference snapshot
+            } catch (err) {
+              const e = err as { code?: string; constraint?: string };
+              if (e.code === '23505' && e.constraint === 'vocabulary_terms_key') {
+                throw new TermKeyTaken(term.vocabulary, term.key);
+              }
+              throw err;
+            }
+          },
           async putFile(file) {
             await client.query(
               `INSERT INTO asset_files (id, channel_id, asset_id, kind, variant, data) VALUES ($1, $2, $3, $4, $5, $6)
@@ -545,6 +587,23 @@ export function pgAssetStore(pool: PgPool): AssetStore {
         [channelId],
       );
       return rows.map((r) => r.data);
+    },
+
+    async terms(channelId, vocabulary) {
+      const { rows } = await pool.query<{ data: VocabularyTerm }>(
+        `SELECT data FROM vocabulary_terms WHERE channel_id = $1 AND vocabulary = $2
+         ORDER BY (data->>'sortOrder')::int, key`,
+        [channelId, vocabulary],
+      );
+      return rows.map((r) => r.data);
+    },
+
+    async term(id) {
+      const { rows } = await pool.query<{ data: VocabularyTerm }>(
+        'SELECT data FROM vocabulary_terms WHERE id = $1',
+        [id],
+      );
+      return rows[0]?.data;
     },
 
     async category(id) {

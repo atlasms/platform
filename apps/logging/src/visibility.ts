@@ -84,6 +84,8 @@ export function entityRule(entityType: string): ReadRule {
   // A category (#260) is a term of the taxonomy, which `taxonomy:read` governs (authorization-model
   // §3). Under the default it was `category:read`, which no catalogue defines and no role holds.
   if (entityType === 'category') return { permission: 'taxonomy:read' };
+  // A vocabulary term (EP-28.3) likewise: `vocabulary-term:read` exists nowhere.
+  if (entityType === 'vocabulary-term') return { permission: 'taxonomy:read' };
   return { permission: `${entityType}:read` };
 }
 

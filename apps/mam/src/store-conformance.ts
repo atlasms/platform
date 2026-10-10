@@ -11,7 +11,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Asset } from './asset.ts';
 import type { Category } from './category.ts';
-import { CategoryPathTaken, StaleCategory, StaleWrite, type AssetStore } from './store.ts';
+import {
+  CategoryPathTaken,
+  StaleCategory,
+  StaleTerm,
+  StaleWrite,
+  TermKeyTaken,
+  type AssetStore,
+} from './store.ts';
+import type { VocabularyTerm } from './vocabulary.ts';
 
 export interface StoreHarness {
   /** A clean, empty store. */
@@ -170,6 +178,55 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
         ['F', '/sports/football/'],
         ['N', '/news/'],
       ]);
+    });
+  });
+
+  test(`${name}: VOCABULARIES (EP-28.3) — terms by sortOrder then key, a key unique per vocabulary and channel, writes compare-and-set`, async () => {
+    const term = (id: string, key: string, over: Partial<VocabularyTerm> = {}): VocabularyTerm => ({
+      id,
+      vocabulary: 'genre',
+      channelId: 'ch12',
+      key,
+      labels: { en: key },
+      sortOrder: 0,
+      version: 1,
+      createdBy: 'u1',
+      createdAt: '2026-10-09T00:00:00.000Z',
+      updatedAt: '2026-10-09T00:00:00.000Z',
+      ...over,
+    });
+    await withFixture(async ({ store }) => {
+      const before = await store.configVersion();
+      await store.transaction(async (tx) => {
+        await tx.putTerm(term('D', 'drama'));
+        await tx.putTerm(term('C', 'comedy'));
+        await tx.putTerm(term('A', 'action', { sortOrder: 5 }));
+        // The same key in another vocabulary, or another channel, is another term.
+        await tx.putTerm(term('S', 'drama', { vocabulary: 'structure' }));
+        await tx.putTerm(term('X', 'drama', { channelId: 'ch99' }));
+      });
+      assert.ok((await store.configVersion()) > before, 'terms are in the reference snapshot');
+      assert.deepEqual(
+        (await store.terms('ch12', 'genre')).map((t) => t.key),
+        ['comedy', 'drama', 'action'],
+      );
+      assert.equal((await store.term('S'))?.vocabulary, 'structure');
+      await assert.rejects(
+        store.transaction((tx) => tx.putTerm(term('D2', 'drama'))),
+        TermKeyTaken,
+      );
+      await assert.rejects(
+        store.transaction((tx) => tx.putTerm({ ...term('D', 'drama'), version: 2 }, 7)),
+        StaleTerm,
+      );
+      await store.transaction((tx) =>
+        tx.putTerm({ ...term('D', 'drama'), labels: { en: 'Drama' }, version: 2 }, 1),
+      );
+      assert.deepEqual(
+        [(await store.term('D'))?.labels, (await store.term('D'))?.version],
+        [{ en: 'Drama' }, 2],
+      );
+      assert.equal(await store.term('nope'), undefined);
     });
   });
 

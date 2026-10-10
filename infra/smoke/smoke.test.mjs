@@ -2223,7 +2223,7 @@ test('smoke: #260 — the category tree through the gateway: keys build paths, a
   });
 });
 
-test('smoke: EP-28.2 — inheritance through the gateway: an asset reads its category chain’s values live, overrides and resets them', async () => {
+test('smoke: EP-28.2/28.3 — vocabularies and inheritance through the gateway: terms are named by id, an asset reads its chain’s values live, overrides and resets them', async () => {
   const token = await seedToken();
   if (!token) return;
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
@@ -2231,12 +2231,37 @@ test('smoke: EP-28.2 — inheritance through the gateway: an asset reads its cat
   const send = (method, path, body) =>
     get(path, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
 
+  // EP-28.3: the media-default fields hold TERM ids. Keys carry the run: a key is unique per
+  // vocabulary and channel, and this cluster may have seen earlier runs.
+  const term = async (vocabulary, key) => {
+    const res = await send('POST', `/api/v1/vocabularies/${vocabulary}`, {
+      key: `${run}-${key}`,
+      labels: { en: key },
+    });
+    assert.equal(res.status, 201, res.text);
+    return json(res);
+  };
+  const drama = await term('genre', 'drama');
+  const period = await term('genre', 'period-drama');
+  const comedy = await term('genre', 'comedy');
+  const commissioned = await term('supply-type', 'commissioned');
+  const live = json(await send('GET', '/api/v1/vocabularies/genre'));
+  assert.ok(live.some((t) => t.id === drama.id));
+  // Free text is refused: a term id is the only thing the field holds.
+  const freeText = await send('POST', '/api/v1/assets', {
+    title: 'Free text',
+    mediaType: 'video',
+    fileType: 'mxf',
+    genre: 'drama',
+  });
+  assert.equal(freeText.status, 422, freeText.text);
+
   // A department setting a genre and a review policy; a season below it adding a supply type.
   const made = await send('POST', '/api/v1/categories', {
     key: run,
     labels: { en: 'Smoke drama' },
     mediaAddable: false,
-    defaults: { genre: 'drama' },
+    defaults: { genre: drama.id },
     reviewNeeded: true,
   });
   assert.equal(made.status, 201, made.text);
@@ -2246,7 +2271,7 @@ test('smoke: EP-28.2 — inheritance through the gateway: an asset reads its cat
       parentId: dept.id,
       key: 'season-1',
       labels: { en: 'Season 1' },
-      defaults: { supplyType: 'commissioned' },
+      defaults: { supplyType: commissioned.id },
     }),
   );
   const created = await send('POST', '/api/v1/assets', {
@@ -2261,29 +2286,54 @@ test('smoke: EP-28.2 — inheritance through the gateway: an asset reads its cat
 
   let got = await inherited();
   assert.deepEqual(got.defaults.genre, {
-    value: 'drama',
+    value: drama.id,
     from: { categoryId: dept.id, path: `/${run}/` },
   });
-  assert.equal(got.defaults.supplyType.value, 'commissioned');
+  assert.equal(got.defaults.supplyType.value, commissioned.id);
   assert.equal(got.policies.reviewNeeded.value, true);
   const seasonInherits = json(await send('GET', `/api/v1/categories/${season.id}/inherited`));
   assert.equal(seasonInherits.defaults.genre.from.path, `/${run}/`);
 
   // Live: the department's edit is the asset's value at once, the asset untouched.
   const edited = await send('PATCH', `/api/v1/categories/${dept.id}?version=${dept.version}`, {
-    defaults: { genre: 'period drama' },
+    defaults: { genre: period.id },
   });
   assert.equal(edited.status, 200, edited.text);
   got = await inherited();
-  assert.equal(got.defaults.genre.value, 'period drama');
+  assert.equal(got.defaults.genre.value, period.id);
 
   // The asset's own value overrides; `inherit` hands it back to the category.
-  const own = json(await send('PATCH', `/api/v1/assets/${asset.id}`, { genre: 'comedy' }));
-  assert.equal(own.genre, 'comedy');
+  const own = json(await send('PATCH', `/api/v1/assets/${asset.id}`, { genre: comedy.id }));
+  assert.equal(own.genre, comedy.id);
   assert.equal((await inherited()).defaults.genre, undefined);
   const reset = json(await send('PATCH', `/api/v1/assets/${asset.id}`, { inherit: ['genre'] }));
   assert.equal(reset.genre, undefined);
-  assert.equal((await inherited()).defaults.genre.value, 'period drama');
+  assert.equal((await inherited()).defaults.genre.value, period.id);
+
+  // A merge (EP-28.3): one audited write; a write naming the merged term is told the survivor.
+  const merged = await send('POST', `/api/v1/vocabularies/genre/${comedy.id}/merge`, {
+    into: drama.id,
+    version: comedy.version,
+  });
+  assert.equal(merged.status, 200, merged.text);
+  assert.equal(json(merged).replacedById, drama.id);
+  const stale = await send('PATCH', `/api/v1/assets/${asset.id}`, { genre: comedy.id });
+  assert.equal(stale.status, 422, stale.text);
+  assert.match(json(stale).message ?? json(stale).detail, new RegExp(drama.id));
+  const deadline = Date.now() + 20_000;
+  let revisions = [];
+  for (;;) {
+    revisions =
+      json(await send('GET', `/api/v1/history/vocabulary-term/${comedy.id}`)).revisions ?? [];
+    if (revisions.some((r) => r.action === 'vocabulary-term.merged') || Date.now() > deadline)
+      break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.deepEqual(
+    revisions.map((r) => r.action),
+    ['vocabulary-term.created', 'vocabulary-term.merged'],
+    'the term’s history, read under taxonomy:read',
+  );
 });
 
 test('smoke: the state-counts aggregate answers, and is not read as an asset id', async () => {

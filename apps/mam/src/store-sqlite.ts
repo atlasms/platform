@@ -22,10 +22,13 @@ import type { FileRef } from './file.ts';
 import {
   CategoryPathTaken,
   StaleCategory,
+  StaleTerm,
   StaleWrite,
+  TermKeyTaken,
   type AssetStore,
   type AssetTx,
 } from './store.ts';
+import type { VocabularyTerm } from './vocabulary.ts';
 import { prefixUpperBound } from './search.ts';
 import type { Tag } from './tag.ts';
 
@@ -135,6 +138,20 @@ export const sqliteCategoriesMigration: Migration = {
          ON assets (channel_id, json_extract(data, '$.categoryId'));`,
 };
 
+// Controlled vocabularies (EP-28.3): one table for every flat vocabulary — the set is Tier 0, the
+// terms are rows. A key is unique per (channel, vocabulary).
+export const sqliteTermsMigration: Migration = {
+  id: 'mam_vocabulary_terms',
+  up: `CREATE TABLE IF NOT EXISTS vocabulary_terms (
+         id         TEXT PRIMARY KEY,
+         channel_id TEXT NOT NULL,
+         vocabulary TEXT NOT NULL,
+         key        TEXT NOT NULL,
+         data       TEXT NOT NULL,
+         UNIQUE (channel_id, vocabulary, key)
+       );`,
+};
+
 export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
   const db = openDb(path);
   migrate(db, [
@@ -151,6 +168,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     seenMigration,
     sqliteFilesMigration,
     sqliteCategoriesMigration,
+    sqliteTermsMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
   const seen = new SqliteSeenStore(db);
@@ -291,6 +309,31 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
           /UNIQUE constraint failed: categories\.channel_id, categories\.path/.test(String(err))
         ) {
           throw new CategoryPathTaken(category.path);
+        }
+        throw err;
+      }
+    },
+    async putTerm(term, ifVersion) {
+      try {
+        const written =
+          ifVersion === undefined
+            ? db
+                .prepare(
+                  `INSERT INTO vocabulary_terms (id, channel_id, vocabulary, key, data) VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT (id) DO NOTHING`,
+                )
+                .run(term.id, term.channelId, term.vocabulary, term.key, JSON.stringify(term))
+            : db
+                .prepare(
+                  `UPDATE vocabulary_terms SET data = ?
+                   WHERE id = ? AND json_extract(data, '$.version') = ?`,
+                )
+                .run(JSON.stringify(term), term.id, ifVersion);
+        if (Number(written.changes) !== 1) throw new StaleTerm(term.id, ifVersion);
+        bump(); // the terms are in the reference snapshot
+      } catch (err) {
+        if (/UNIQUE constraint failed: vocabulary_terms\./.test(String(err))) {
+          throw new TermKeyTaken(term.vocabulary, term.key);
         }
         throw err;
       }
@@ -482,6 +525,20 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
       const row = db.prepare('SELECT data FROM categories WHERE id = ?').get(id) as
         { data: string } | undefined;
       return row ? (JSON.parse(row.data) as Category) : undefined;
+    },
+    async terms(channelId, vocabulary) {
+      const rows = db
+        .prepare(
+          `SELECT data FROM vocabulary_terms WHERE channel_id = ? AND vocabulary = ?
+           ORDER BY json_extract(data, '$.sortOrder'), key`,
+        )
+        .all(channelId, vocabulary) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as VocabularyTerm);
+    },
+    async term(id) {
+      const row = db.prepare('SELECT data FROM vocabulary_terms WHERE id = ?').get(id) as
+        { data: string } | undefined;
+      return row ? (JSON.parse(row.data) as VocabularyTerm) : undefined;
     },
     async categoryPaths(ids) {
       const unique = [...new Set(ids)];

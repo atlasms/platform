@@ -17,8 +17,15 @@ import type {
   Category,
   FileRef,
   UpdateAssetInput,
+  VocabularyTerm,
 } from '../core/generated/mam.types.ts';
 import { CategoriesService } from '../core/categories.service.ts';
+import {
+  TERM_FIELD_VOCABULARY,
+  termLabel,
+  VocabulariesService,
+  type TermField,
+} from '../core/vocabularies.service.ts';
 import { pickerOptions } from '../core/category-tree.ts';
 import type { Job } from '../core/generated/mts.types.ts';
 import { PermissionService } from '../core/permission.service.ts';
@@ -215,13 +222,26 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
               </label>
               <label>
                 {{ locale.t('assetEditor.structureId') }}
-                <input
+                <!-- EP-28.3: a term of the structureId vocabulary. Empty inherits the category's. -->
+                <select
                   name="structureId"
                   [disabled]="!canEdit('taxonomy')"
-                  [value]="form.structureId"
-                  [placeholder]="inheritedOf('structureId')?.value ?? ''"
-                  (input)="change('structureId', $any($event.target).value)"
-                />
+                  (change)="change('structureId', $any($event.target).value)"
+                >
+                  <option value="" [selected]="form.structureId === ''">
+                    {{ inheritOption('structureId') }}
+                  </option>
+                  @if (form.structureId && !isLive('structureId', form.structureId)) {
+                    <option [value]="form.structureId" selected>
+                      {{ termName('structureId', form.structureId) }}
+                    </option>
+                  }
+                  @for (t of liveTerms('structureId'); track t.id) {
+                    <option [value]="t.id" [selected]="t.id === form.structureId">
+                      {{ termName('structureId', t.id) }}
+                    </option>
+                  }
+                </select>
                 @if (inheritedOf('structureId'); as hit) {
                   <small class="inherited">
                     {{ locale.t('assetEditor.inheritedFrom') }} {{ hit.from.path }}
@@ -239,13 +259,26 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
               </label>
               <label>
                 {{ locale.t('assetEditor.genre') }}
-                <input
+                <!-- EP-28.3: a term of the genre vocabulary. Empty inherits the category's. -->
+                <select
                   name="genre"
                   [disabled]="!canEdit('taxonomy')"
-                  [value]="form.genre"
-                  [placeholder]="inheritedOf('genre')?.value ?? ''"
-                  (input)="change('genre', $any($event.target).value)"
-                />
+                  (change)="change('genre', $any($event.target).value)"
+                >
+                  <option value="" [selected]="form.genre === ''">
+                    {{ inheritOption('genre') }}
+                  </option>
+                  @if (form.genre && !isLive('genre', form.genre)) {
+                    <option [value]="form.genre" selected>
+                      {{ termName('genre', form.genre) }}
+                    </option>
+                  }
+                  @for (t of liveTerms('genre'); track t.id) {
+                    <option [value]="t.id" [selected]="t.id === form.genre">
+                      {{ termName('genre', t.id) }}
+                    </option>
+                  }
+                </select>
                 @if (inheritedOf('genre'); as hit) {
                   <small class="inherited">
                     {{ locale.t('assetEditor.inheritedFrom') }} {{ hit.from.path }}
@@ -276,13 +309,26 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
             <div class="grid">
               <label>
                 {{ locale.t('assetEditor.supplyType') }}
-                <input
+                <!-- EP-28.3: a term of the supplyType vocabulary. Empty inherits the category's. -->
+                <select
                   name="supplyType"
                   [disabled]="!canEdit('core')"
-                  [value]="form.supplyType"
-                  [placeholder]="inheritedOf('supplyType')?.value ?? ''"
-                  (input)="change('supplyType', $any($event.target).value)"
-                />
+                  (change)="change('supplyType', $any($event.target).value)"
+                >
+                  <option value="" [selected]="form.supplyType === ''">
+                    {{ inheritOption('supplyType') }}
+                  </option>
+                  @if (form.supplyType && !isLive('supplyType', form.supplyType)) {
+                    <option [value]="form.supplyType" selected>
+                      {{ termName('supplyType', form.supplyType) }}
+                    </option>
+                  }
+                  @for (t of liveTerms('supplyType'); track t.id) {
+                    <option [value]="t.id" [selected]="t.id === form.supplyType">
+                      {{ termName('supplyType', t.id) }}
+                    </option>
+                  }
+                </select>
                 @if (inheritedOf('supplyType'); as hit) {
                   <small class="inherited">
                     {{ locale.t('assetEditor.inheritedFrom') }} {{ hit.from.path }}
@@ -300,13 +346,26 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
               </label>
               <label>
                 {{ locale.t('assetEditor.productionGroup') }}
-                <input
+                <!-- EP-28.3: a term of the productionGroup vocabulary. Empty inherits the category's. -->
+                <select
                   name="productionGroup"
                   [disabled]="!canEdit('core')"
-                  [value]="form.productionGroup"
-                  [placeholder]="inheritedOf('productionGroup')?.value ?? ''"
-                  (input)="change('productionGroup', $any($event.target).value)"
-                />
+                  (change)="change('productionGroup', $any($event.target).value)"
+                >
+                  <option value="" [selected]="form.productionGroup === ''">
+                    {{ inheritOption('productionGroup') }}
+                  </option>
+                  @if (form.productionGroup && !isLive('productionGroup', form.productionGroup)) {
+                    <option [value]="form.productionGroup" selected>
+                      {{ termName('productionGroup', form.productionGroup) }}
+                    </option>
+                  }
+                  @for (t of liveTerms('productionGroup'); track t.id) {
+                    <option [value]="t.id" [selected]="t.id === form.productionGroup">
+                      {{ termName('productionGroup', t.id) }}
+                    </option>
+                  }
+                </select>
                 @if (inheritedOf('productionGroup'); as hit) {
                   <small class="inherited">
                     {{ locale.t('assetEditor.inheritedFrom') }} {{ hit.from.path }}
@@ -601,6 +660,34 @@ export class AssetEditor implements OnInit {
     this.loadFiles(asset.id);
   });
 
+  /** The terms each term field offers (EP-28.3) — deprecated and merged too, to name old values. */
+  private readonly vocabularies = inject(VocabulariesService);
+  protected readonly terms = signal<Partial<Record<TermField, VocabularyTerm[]>>>({});
+
+  protected liveTerms(field: TermField): VocabularyTerm[] {
+    return (this.terms()[field] ?? []).filter((t) => !t.deprecatedAt);
+  }
+
+  protected isLive(field: TermField, id: string): boolean {
+    return this.liveTerms(field).some((t) => t.id === id);
+  }
+
+  /** A term's label — marked when it is no longer offered; the id itself when unknown. */
+  protected termName(field: TermField, id: string): string {
+    const term = (this.terms()[field] ?? []).find((t) => t.id === id);
+    if (!term) return id;
+    const name = termLabel(term, this.locale.locale());
+    return term.deprecatedAt ? `${name} (${this.locale.t('categories.deprecated')})` : name;
+  }
+
+  /** The empty choice: what the field inherits, when it inherits anything. */
+  protected inheritOption(field: TermField): string {
+    const hit = this.inheritedOf(field);
+    return hit
+      ? `— ${this.locale.t('assetEditor.inherits')} ${this.termName(field, hit.value)}`
+      : `— ${this.locale.t('assetEditor.notSet')}`;
+  }
+
   protected categoryKnown(id: string): boolean {
     return this.categories().some((c) => c.id === id);
   }
@@ -610,6 +697,15 @@ export class AssetEditor implements OnInit {
       next: (all) => this.categories.set(all),
       error: () => undefined,
     });
+    for (const [field, vocabulary] of Object.entries(TERM_FIELD_VOCABULARY) as [
+      TermField,
+      (typeof TERM_FIELD_VOCABULARY)[TermField],
+    ][]) {
+      this.vocabularies.list(vocabulary, true).subscribe({
+        next: (list) => this.terms.update((t) => ({ ...t, [field]: list })),
+        error: () => undefined,
+      });
+    }
     this.reload();
   }
 

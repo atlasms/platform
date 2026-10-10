@@ -418,42 +418,71 @@ paths:
         '304': { description: Not modified }
   /vocabularies/{vocabulary}:
     parameters:
-      - { name: vocabulary, in: path, required: true, schema: { type: string }, description: 'classification | subject | structure | tag | cast-role | ...' }
+      - { name: vocabulary, in: path, required: true, schema: { $ref: '#/components/schemas/VocabularyName' } }
     get:
       operationId: listVocabularyTerms
       tags: [reference]
-      summary: List terms of a vocabulary (scope taxonomy:read)
+      summary: A vocabulary's live terms by sortOrder then key — the deprecated and merged too with includeDeprecated (scope taxonomy:read; EP-28.3)
+      parameters:
+        - { name: includeDeprecated, in: query, schema: { type: boolean } }
       responses:
         '200': { description: Terms, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/VocabularyTerm' } } } } }
+        '404': { $ref: '#/components/responses/Error' }
     post:
       operationId: createVocabularyTerm
       tags: [reference]
-      summary: Add a term (scope taxonomy:admin)
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/VocabularyTerm' } } } }
+      summary: Add a term (scope taxonomy:admin in the channel — not a category-scoped grant; audited)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateTermInput' } } } }
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/VocabularyTerm' } } } }
+        '409': { description: 'The vocabulary already has a term with this key in the channel' }
+        '422': { $ref: '#/components/responses/Error' }
   /vocabularies/{vocabulary}/{termId}:
     parameters:
-      - { name: vocabulary, in: path, required: true, schema: { type: string } }
+      - { name: vocabulary, in: path, required: true, schema: { $ref: '#/components/schemas/VocabularyName' } }
       - { name: termId, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getVocabularyTerm
+      tags: [reference]
+      summary: One term, deprecated or merged included — every reference still resolves (scope taxonomy:read)
+      responses:
+        '200': { description: The term, content: { application/json: { schema: { $ref: '#/components/schemas/VocabularyTerm' } } } }
+        '404': { $ref: '#/components/responses/Error' }
     patch:
       operationId: updateVocabularyTerm
       tags: [reference]
-      summary: Rename / reorder / deprecate a term (scope taxonomy:admin). Never hard-deletes an in-use term.
-      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/VocabularyTerm' } } } }
+      summary: Rename / reorder / annotate / deprecate or restore a term over the version read (compare-and-set; scope taxonomy:admin; audited). The key never changes; a merged term cannot be restored. Never deletes.
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateTermInput' } } } }
       responses:
-        '200': { description: Updated }
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/VocabularyTerm' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /vocabularies/{vocabulary}/{termId}/merge:
     post:
       operationId: mergeVocabularyTerm
       tags: [reference]
-      summary: Merge this term into another; old references redirect via replacedById (scope taxonomy:admin, one audited event)
+      summary: Merge this term into another live term of the same vocabulary — it is deprecated with replacedById; ONE audited write, no asset rewritten (scope taxonomy:admin)
       parameters:
-        - { name: vocabulary, in: path, required: true, schema: { type: string } }
+        - { name: vocabulary, in: path, required: true, schema: { $ref: '#/components/schemas/VocabularyName' } }
         - { name: termId, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [into], properties: { into: { $ref: '#/components/schemas/Ulid' } } } } } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [into, version]
+              properties:
+                into: { $ref: '#/components/schemas/Ulid' }
+                version: { type: integer, minimum: 1, description: The version of the merged term as read. }
       responses:
-        '200': { description: Merged }
+        '200': { description: 'The merged term, now deprecated and redirecting', content: { application/json: { schema: { $ref: '#/components/schemas/VocabularyTerm' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /settings:
     get:
       operationId: listSettings
@@ -547,10 +576,10 @@ components:
         durationSec: { type: number }
         fileType: { type: string }
         categoryId: { type: string }
-        structureId: { type: string, description: 'A media default (EP-28.2): inherited from the category chain when absent.' }
-        genre: { type: string, maxLength: 128, description: 'A media default (EP-28.2): set here it overrides the category''s; absent, the category chain supplies it (GET /assets/{id}/inherited).' }
-        supplyType: { type: string, maxLength: 128, description: A media default (EP-28.2). }
-        productionGroup: { type: string, maxLength: 128, description: A media default (EP-28.2). }
+        structureId: { type: string, description: 'A media default (EP-28.2): the id of a live structure term (EP-28.3); inherited from the category chain when absent.' }
+        genre: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live genre term (EP-28.3). Set here it overrides the category''s; absent, the category chain supplies it (GET /assets/{id}/inherited).' }
+        supplyType: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live supply-type term (EP-28.3).' }
+        productionGroup: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live production-group term (EP-28.3).' }
         productionDate: { type: string, format: date, description: A media default (EP-28.2). }
         state: { type: string, enum: [created, processing, ready, approved, expired, rejected, replaced, purged] }
         episodeNo: { type: integer }
@@ -576,9 +605,9 @@ components:
         description: { type: string }
         categoryId: { type: string }
         structureId: { type: string }
-        genre: { type: string, maxLength: 128, description: 'A media default (EP-28.2): set here it overrides the category''s; absent, the category chain supplies it (GET /assets/{id}/inherited).' }
-        supplyType: { type: string, maxLength: 128, description: A media default (EP-28.2). }
-        productionGroup: { type: string, maxLength: 128, description: A media default (EP-28.2). }
+        genre: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live genre term (EP-28.3). Set here it overrides the category''s; absent, the category chain supplies it (GET /assets/{id}/inherited).' }
+        supplyType: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live supply-type term (EP-28.3).' }
+        productionGroup: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live production-group term (EP-28.3).' }
         productionDate: { type: string, format: date, description: A media default (EP-28.2). }
         episodeNo: { type: integer }
         durationSec: { type: number }
@@ -592,9 +621,9 @@ components:
         description: { type: string }
         categoryId: { type: string }
         structureId: { type: string }
-        genre: { type: string, maxLength: 128, description: 'A media default (EP-28.2): set here it overrides the category''s; absent, the category chain supplies it (GET /assets/{id}/inherited).' }
-        supplyType: { type: string, maxLength: 128, description: A media default (EP-28.2). }
-        productionGroup: { type: string, maxLength: 128, description: A media default (EP-28.2). }
+        genre: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live genre term (EP-28.3). Set here it overrides the category''s; absent, the category chain supplies it (GET /assets/{id}/inherited).' }
+        supplyType: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live supply-type term (EP-28.3).' }
+        productionGroup: { type: string, maxLength: 128, description: 'A media default (EP-28.2): the id of a live production-group term (EP-28.3).' }
         productionDate: { type: string, format: date, description: A media default (EP-28.2). }
         episodeNo: { type: integer }
         durationSec: { type: number }
@@ -766,19 +795,50 @@ components:
                   transitionIn: { type: string }
                   filters: { type: array, items: { type: string } }
         updatedAt: { type: string, format: date-time }
+    VocabularyName:
+      type: string
+      enum: [structure, genre, supply-type, production-group, classification, subject, cast-role]
+      description: 'The flat vocabularies MAM manages (EP-28.3). The SET is code-known; the terms are data. Categories and tags have their own resources.'
     VocabularyTerm:
       type: object
-      description: See ../schemas/vocabulary-term.schema.json.
-      required: [vocabulary, key, labels]
+      description: 'A term of a controlled vocabulary — see ../schemas/vocabulary-term.schema.json and ../configuration-and-reference-data.md §2.3: stable id, mutable label, deprecate-not-delete, merge via replacedById.'
+      required: [id, vocabulary, channelId, key, labels, sortOrder, version, createdBy, createdAt, updatedAt]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
-        vocabulary: { type: string }
-        key: { type: string }
-        labels: { type: object, additionalProperties: { type: string } }
-        parentId: { $ref: '#/components/schemas/Ulid' }
+        vocabulary: { $ref: '#/components/schemas/VocabularyName' }
+        channelId: { type: string }
+        key: { type: string, pattern: '^[a-z0-9][a-z0-9-]*$', maxLength: 64, description: 'Fixed at creation; unique per vocabulary and channel — what imports and feeds map by.' }
+        labels: { type: object, minProperties: 1, additionalProperties: { type: string, minLength: 1 } }
+        description: { type: string }
         sortOrder: { type: integer }
-        deprecatedAt: { type: string, format: date-time, nullable: true }
+        colour: { type: string, pattern: '^#[0-9a-fA-F]{6}$' }
+        external: { type: object, additionalProperties: { type: string }, description: 'Third-party identifiers (EPG codes, ...).' }
+        deprecatedAt: { type: string, format: date-time, description: Out of the pickers; every reference still resolves. }
         replacedById: { $ref: '#/components/schemas/Ulid' }
+        version: { type: integer, minimum: 1 }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateTermInput:
+      type: object
+      required: [key, labels]
+      properties:
+        key: { type: string, pattern: '^[a-z0-9][a-z0-9-]*$', maxLength: 64 }
+        labels: { type: object, minProperties: 1, additionalProperties: { type: string, minLength: 1 } }
+        description: { type: string }
+        sortOrder: { type: integer }
+        colour: { type: string, pattern: '^#[0-9a-fA-F]{6}$' }
+        external: { type: object, additionalProperties: { type: string } }
+    UpdateTermInput:
+      type: object
+      description: Omitted fields are unchanged. Not the key; not the replacement — that is a merge.
+      properties:
+        labels: { type: object, minProperties: 1, additionalProperties: { type: string, minLength: 1 } }
+        description: { type: string }
+        sortOrder: { type: integer }
+        colour: { type: string, pattern: '^#[0-9a-fA-F]{6}$' }
+        external: { type: object, additionalProperties: { type: string } }
+        deprecated: { type: boolean, description: 'true deprecates, false restores (not a merged term).' }
     ReferenceSnapshot:
       type: object
       description: Versioned bundle of this service's reference data. See ../configuration-and-reference-data.md §5.
