@@ -59,7 +59,7 @@ import {
   type CreateCategoryInput,
   type UpdateCategoryInput,
 } from './category.ts';
-import { StaleCategory, StaleTerm } from './store.ts';
+import { StaleCategory, StaleTerm, type FacetFilter } from './store.ts';
 import {
   createTermProblems,
   isVocabulary,
@@ -2012,11 +2012,15 @@ export class MamService {
       // a second pooled connection while holding the first, which is how a rebuild deadlocks a
       // service under load rather than merely slowing it down.
       const prepared = await Promise.all(
-        slice.map(async (asset) => ({ asset, sources: await this.sourcesFor(asset) })),
+        slice.map(async (asset) => {
+          const sources = await this.sourcesFor(asset);
+          return { asset, sources, facets: await this.facetsFor(asset, sources.tagLabels) };
+        }),
       );
       await this.options.store.transaction(async (tx) => {
-        for (const { asset, sources } of prepared) {
+        for (const { asset, sources, facets } of prepared) {
           await tx.indexTerms(asset.id, asset.channelId, termsFor(asset, sources));
+          await tx.indexFacets(asset.id, asset.channelId, facets);
         }
       });
 
@@ -2025,6 +2029,148 @@ export class MamService {
       if (slice.length < batch) break;
     }
     return { indexed };
+  }
+
+  /**
+   * Faceted search (EP-28.6; FR-TAX-5/6): AND across facets, OR within one, over the PROJECTED
+   * effective values — so an asset found by its category's subject is found the moment the
+   * category's re-projection lands. `q` narrows by the free-text index. Every hit is authorized
+   * per asset like `search`; the counts are over what the caller may read on this page, so they
+   * never disclose what it may not.
+   */
+  async advancedSearch(
+    caller: Caller,
+    input: { q?: string; facets?: Record<string, unknown>; limit?: number },
+  ): Promise<{ items: Asset[]; facets: Record<string, Record<string, number>> }> {
+    // Lenient early-out, for the reason `search` gives: the real check is per asset, below.
+    if (!can(caller.policy, 'asset:read', { channelId: caller.channelId }).allowed) {
+      throw new Forbidden('no rule grants "asset:read"');
+    }
+    const filters: FacetFilter[] = [];
+    const problems: string[] = [];
+    for (const [facet, values] of Object.entries(input.facets ?? {})) {
+      if (!(FACETS as readonly string[]).includes(facet)) {
+        problems.push(`no facet ${facet} — one of ${FACETS.join(', ')}`);
+      } else if (!Array.isArray(values) || values.some((v) => typeof v !== 'string')) {
+        problems.push(`${facet} must be a list of values`);
+      } else if (values.length > 0) {
+        // A tag is matched by its folded form, as it is projected.
+        filters.push({
+          facet,
+          values:
+            facet === 'tag' ? values.map((v) => String(v).toLowerCase()) : (values as string[]),
+        });
+      }
+    }
+    if (problems.length > 0) throw new ValidationError(problems.join('; '));
+
+    const limit = Math.min(Math.max(input.limit ?? DEFAULT_SEARCH_LIMIT, 1), MAX_SEARCH_LIMIT);
+    let within: string[] | undefined;
+    if (input.q?.trim()) {
+      const parsed = parseQuery(input.q);
+      within = (
+        await this.options.store.search(
+          caller.channelId,
+          parsed,
+          MAX_SEARCH_LIMIT * SEARCH_OVERFETCH,
+        )
+      ).map((h) => h.assetId);
+    }
+    const ids = await this.options.store.facetSearch(
+      caller.channelId,
+      filters,
+      limit * SEARCH_OVERFETCH,
+      within,
+    );
+    const items: Asset[] = [];
+    for (const id of ids) {
+      if (items.length >= limit) break;
+      const asset = await this.cachedAsset(id, false);
+      if (!asset || asset.channelId !== caller.channelId) continue;
+      if (!this.mayRead(caller, asset, await this.pathsOf([asset]))) continue;
+      items.push(asset);
+    }
+    const facets: Record<string, Record<string, number>> = {};
+    for (const row of await this.options.store.facetsOf(items.map((a) => a.id))) {
+      const counts = (facets[row.facet] ??= {});
+      counts[row.value] = (counts[row.value] ?? 0) + 1;
+    }
+    return { items, facets };
+  }
+
+  /**
+   * An asset's effective facets (EP-28.6): what it IS for search, inherited values included —
+   * the category and every category above it (so a node matches its subtree), the media
+   * defaults and term lists as resolved, its tags or else its category's, its media type and
+   * state. `tagLabels` is the asset's own tag set when the caller knows it (a write changing it).
+   */
+  private async facetsFor(
+    asset: Asset,
+    tagLabels?: readonly string[],
+  ): Promise<{ facet: string; value: string }[]> {
+    const ownTags = tagLabels ?? (await this.options.store.tagsOf(asset.id)).map((t) => t.label);
+    const tree =
+      asset.categoryId === undefined ? [] : await this.options.store.categories(asset.channelId);
+    const node = tree.find((c) => c.id === asset.categoryId);
+    const chain = node ? chainOf(tree, node) : [];
+    const inheritance = node
+      ? inheritedByAsset(asset, chain, ownTags.length > 0)
+      : { defaults: {}, policies: {} };
+    const effective = effectiveAsset(asset, inheritance);
+    const out: { facet: string; value: string }[] = [];
+    const add = (facet: string, value: unknown): void => {
+      if (typeof value === 'string' && value !== '') out.push({ facet, value });
+    };
+    for (const c of chain) add('category', c.id);
+    add('mediaType', effective.mediaType);
+    add('state', effective.state);
+    add('structure', effective.structureId);
+    add('genre', effective.genre);
+    add('supply-type', effective.supplyType);
+    add('production-group', effective.productionGroup);
+    for (const id of effective.subjectIds ?? []) add('subject', id);
+    for (const id of effective.classificationIds ?? []) add('classification', id);
+    const tags = ownTags.length > 0 ? ownTags : (inheritance.defaults.tags?.value ?? []);
+    for (const label of tags) add('tag', label.toLowerCase());
+    return out;
+  }
+
+  /**
+   * Re-project every asset in a category's subtree (EP-28.6, decided with the product owner:
+   * projection, re-projected on `taxonomy.updated`). A category's default reaches its assets'
+   * facets here — batched, each batch its own transaction; idempotent, since a projection is a
+   * function of what is stored now, so a redelivery or a race re-writes the same rows.
+   */
+  async reprojectCategory(
+    channelId: string,
+    categoryId: string,
+    options: { batch?: number } = {},
+  ): Promise<{ reprojected: number }> {
+    const ids = await this.categoryFilter(channelId, categoryId, true);
+    if (ids.length === 0) return { reprojected: 0 };
+    const batch = Math.max(options.batch ?? 100, 1);
+    let reprojected = 0;
+    let after: string | undefined;
+    for (;;) {
+      const page = await this.options.store.listByChannel(channelId, {
+        categoryIds: ids,
+        limit: batch,
+        ...defined({ after }),
+      });
+      if (page.length === 0) break;
+      const prepared = await Promise.all(
+        page.map(async (asset) => ({ asset, facets: await this.facetsFor(asset) })),
+      );
+      await this.options.store.transaction(async (tx) => {
+        for (const { asset, facets } of prepared) {
+          await tx.indexFacets(asset.id, asset.channelId, facets);
+        }
+      });
+      reprojected += page.length;
+      after = page[page.length - 1]?.id;
+      if (page.length < batch) break;
+    }
+    return { reprojected };
   }
 
   /** An asset's current searchable sources, for the paths that are not changing them. */
@@ -2242,6 +2388,10 @@ export class MamService {
     // has to be findable the moment it commits. Paths that change no searchable text pass nothing,
     // and skip the write rather than rewriting identical rows.
     const terms = search ? termsFor(asset, search) : undefined;
+    // EP-28.6: the asset's EFFECTIVE facets — inherited values included — read before the
+    // transaction like the terms, from the state about to be written (a tag change passes its
+    // new labels in `search`).
+    const facets = await this.facetsFor(asset, search?.tagLabels);
 
     // Nothing is read back inside this block on purpose. On sqlite an uncommitted write is visible
     // to the same connection; on Postgres it is not visible outside the transaction's own client —
@@ -2252,6 +2402,7 @@ export class MamService {
       await tx.put(asset, before?.version);
       await also?.(tx);
       if (terms) await tx.indexTerms(asset.id, asset.channelId, terms);
+      await tx.indexFacets(asset.id, asset.channelId, facets);
       // Domain event first, audit second: the relay publishes in outbox order, and a consumer that
       // reacts to the change should see the change before the record of it.
       if (domain) await tx.enqueue(domain);
@@ -2436,6 +2587,20 @@ function traceHeaders(): Record<string, string> | undefined {
   const traceparent = currentTraceparent();
   return traceparent === undefined ? undefined : { traceparent };
 }
+
+/** The facets advanced search filters and counts by (EP-28.6). */
+export const FACETS = [
+  'category',
+  'mediaType',
+  'state',
+  'structure',
+  'genre',
+  'supply-type',
+  'production-group',
+  'subject',
+  'classification',
+  'tag',
+] as const;
 
 /** Equal by value — a list re-sent with the same items is no change. */
 function same(a: unknown, b: unknown): boolean {

@@ -2326,6 +2326,21 @@ test('smoke: EP-28.2/28.3 — vocabularies and inheritance through the gateway: 
   assert.deepEqual(none.subjectIds, []);
   assert.equal((await inherited()).defaults.subjectIds, undefined, 'an empty own list replaces');
 
+  // EP-28.6: faceted search over the PROJECTED effective values. The department's genre reaches
+  // the asset's facets through MAM's own consumer of taxonomy.updated — so poll for it.
+  const facetDeadline = Date.now() + 20_000;
+  let found = [];
+  for (;;) {
+    const res = await send('POST', '/api/v1/search', {
+      facets: { genre: [period.id], category: [dept.id] },
+    });
+    assert.equal(res.status, 200, res.text);
+    found = json(res).items.map((a) => a.id);
+    if (found.includes(asset.id) || Date.now() > facetDeadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.ok(found.includes(asset.id), 'found by the genre its category gives it');
+
   // A merge (EP-28.3): one audited write; a write naming the merged term is told the survivor.
   const merged = await send('POST', `/api/v1/vocabularies/genre/${comedy.id}/merge`, {
     into: drama.id,

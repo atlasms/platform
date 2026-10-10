@@ -218,6 +218,20 @@ export const pgTermsMigration: Migration = {
        );`,
 };
 
+// Faceted search (EP-28.6): each asset's effective values, one row per (facet, value).
+export const pgFacetsMigration: Migration = {
+  id: 'mam_facets',
+  up: `CREATE TABLE IF NOT EXISTS asset_facets (
+         asset_id   text NOT NULL,
+         channel_id text NOT NULL,
+         facet      text NOT NULL,
+         value      text NOT NULL,
+         PRIMARY KEY (asset_id, facet, value)
+       );
+       CREATE INDEX IF NOT EXISTS asset_facets_value_idx
+         ON asset_facets (channel_id, facet, value, asset_id);`,
+};
+
 /** Everything MAM's database needs, in order. Applied at startup under an advisory lock. */
 export const mamMigrations: Migration[] = [
   outboxMigration,
@@ -234,6 +248,7 @@ export const mamMigrations: Migration[] = [
   pgFilesMigration,
   pgCategoriesMigration,
   pgTermsMigration,
+  pgFacetsMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
@@ -483,6 +498,20 @@ export function pgAssetStore(pool: PgPool): AssetStore {
             await bumpConfig();
             return resolved;
           },
+          async indexFacets(assetId, channelId, facets) {
+            await client.query('DELETE FROM asset_facets WHERE asset_id = $1', [assetId]);
+            if (facets.length === 0) return;
+            const params: unknown[] = [];
+            const rows = facets.map(
+              (f) =>
+                `($${params.push(assetId)}, $${params.push(channelId)}, $${params.push(f.facet)}, $${params.push(f.value)})`,
+            );
+            await client.query(
+              `INSERT INTO asset_facets (asset_id, channel_id, facet, value) VALUES ${rows.join(', ')}
+               ON CONFLICT DO NOTHING`,
+              params,
+            );
+          },
           async indexTerms(assetId, channelId, terms) {
             await client.query('DELETE FROM asset_search WHERE asset_id = $1', [assetId]);
             if (terms.length === 0) return;
@@ -579,6 +608,38 @@ export function pgAssetStore(pool: PgPool): AssetStore {
         };
         return fn(tx);
       });
+    },
+
+    async facetSearch(channelId, filters, limit, within) {
+      const params: unknown[] = [channelId];
+      const p = (v: unknown): string => `$${params.push(v)}`;
+      const where: string[] = ['a.channel_id = $1'];
+      for (const f of filters) {
+        if (f.values.length === 0) continue;
+        where.push(
+          `EXISTS (SELECT 1 FROM asset_facets x WHERE x.asset_id = a.id AND x.facet = ${p(f.facet)}
+                    AND x.value = ANY(${p([...f.values])}::text[]))`,
+        );
+      }
+      if (within !== undefined) {
+        if (within.length === 0) return [];
+        where.push(`a.id = ANY(${p([...within])}::text[])`);
+      }
+      const { rows } = await pool.query<{ id: string }>(
+        `SELECT a.id FROM assets a WHERE ${where.join(' AND ')} ORDER BY a.id DESC LIMIT ${p(limit)}`,
+        params,
+      );
+      return rows.map((r) => r.id);
+    },
+
+    async facetsOf(assetIds) {
+      const unique = [...new Set(assetIds)];
+      if (unique.length === 0) return [];
+      const { rows } = await pool.query<{ asset_id: string; facet: string; value: string }>(
+        'SELECT asset_id, facet, value FROM asset_facets WHERE asset_id = ANY($1::text[])',
+        [unique],
+      );
+      return rows.map((r) => ({ assetId: r.asset_id, facet: r.facet, value: r.value }));
     },
 
     async categories(channelId) {

@@ -271,6 +271,14 @@ takes values off the node. The mandatory gate judges the effective asset; approv
 chain's `defaultExpiry` into `expiresAt` with `expirySource: category`. Category writes are
 authorized per field group: `core`, `defaults`, `policies`.
 
+### Faceted search (EP-28.6)
+
+`POST /search` filters by facets over each asset's projected EFFECTIVE values (`asset_facets`,
+written with the asset; a category's subtree re-projected by MAM's own durable consumer of
+`taxonomy.updated`) — [data model §2.9](../data-model.md#29-as-built--faceted-search-over-effective-values-ep-286).
+AND across facets, OR within; per-asset authorization; counts over the page. Studio's Search panel
+shows the page's facets as chips that filter.
+
 ### Policies that act (EP-28.7)
 
 A category chain resolving `reviewNeeded: false` auto-approves its media on `markReady`: MAM commits

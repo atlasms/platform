@@ -66,7 +66,18 @@
     "placeholder": "Search assets…",
     "loading": "Searching…",
     "noResults": "No assets match your query",
-    "emptyHint": "Type to search the catalogue"
+    "emptyHint": "Type to search the catalogue",
+    "facet": {
+      "category": "Category",
+      "genre": "Genre",
+      "subject": "Subject",
+      "classification": "Classification",
+      "structure": "Structure",
+      "supply-type": "Supply type",
+      "production-group": "Production group",
+      "tag": "Tag",
+      "state": "State"
+    }
   },
   "ingest": {
     "title": "Ingest",

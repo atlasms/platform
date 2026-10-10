@@ -384,6 +384,24 @@ its own" means "no tags": an untagged asset reads the category's tags as inherit
 does not. A category in Studio inherits a list by leaving it empty. Search over inherited values is
 EP-28.6.
 
+### 2.9 As built — faceted search over effective values (EP-28.6)
+
+FR-TAX-5/6, with the product owner's decision: **project, don't resolve at query time.** Each
+asset's EFFECTIVE values — §2.7's inheritance applied — are written to `asset_facets`, one row
+per (facet, value), replaced whole in the transaction of every asset write (read before it, like
+the search terms). The facets: `category` (the asset's category AND every category above it, so a
+node matches its subtree), `mediaType`, `state`, `structure`, `genre`, `supply-type`,
+`production-group`, `subject`, `classification`, `tag` (folded; the asset's own tags, or else its
+category's). A category write changes facets no asset write touches, so MAM consumes its own
+`taxonomy.updated` (durable, retried) and re-projects that category's subtree in batches —
+idempotent by construction, a projection being a function of what is stored when it runs; a
+category edit is therefore findable as soon as that consumer has run, not in the same commit.
+`POST /search` (the contract's advanced search): AND across facets, OR within one, `q` narrowing
+by the free-text index; every hit authorized per asset, and the counts are over the returned page
+only, so they disclose nothing the caller may not read. `POST /search/reindex` rebuilds the facets
+with the terms — run it once after upgrading, since assets written before this have none. Not yet:
+the `person` facet (it follows EP-28.5's cast).
+
 ### 2.8 As built — controlled vocabularies (EP-28.3)
 
 [Configuration §2.3](configuration-and-reference-data.md#23-tier-2--vocabularies-pure-data), for the

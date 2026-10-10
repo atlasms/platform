@@ -42,6 +42,12 @@ export interface ListOptions {
   subtree?: boolean;
 }
 
+/** What `POST /search` answers (mam.yaml): the page and, per facet, value → count on it. */
+export interface FacetedPage {
+  items: Asset[];
+  facets: Record<string, Record<string, number>>;
+}
+
 @Injectable({ providedIn: 'root' })
 export class AssetsService {
   private readonly api = inject(ApiClient);
@@ -89,6 +95,14 @@ export class AssetsService {
    * The query goes as a PARAMETER, not interpolated into the path — `q` is user text and may
    * contain `/`, `?` or `#`, each of which would silently truncate or reroute a hand-built URL.
    */
+  /**
+   * Faceted search (EP-28.6): AND across facets, OR within one, over the projected effective
+   * values; `q` optional. The page, and the facet counts over it.
+   */
+  advancedSearch(body: { q?: string; facets?: Record<string, string[]>; limit?: number }) {
+    return this.api.call(ops.advancedSearch, { body }).as<FacetedPage>();
+  }
+
   search(q: string, limit?: number) {
     // MAM's search contract is a bounded bare array (there is no search cursor yet). Normalize it
     // to the panel's page shape here so browse and search have one UI-facing interface without

@@ -25,6 +25,7 @@ import {
   startCacheInvalidation,
   startFileMirror,
   startIngestConsumer,
+  startFacetProjector,
 } from './index.ts';
 import { PolicyClient } from '@atlas/policy/client';
 
@@ -203,6 +204,19 @@ async function startRelay(): Promise<void> {
   });
   log.info('file mirror started', {
     subjects: ['transcode.completed', 'file.placed', 'file.moved'],
+  });
+  // EP-28.6: a category change re-projects its subtree's facets — a default reaches search.
+  startFacetProjector({
+    broker,
+    service,
+    onApplied: (categoryId, reprojected) =>
+      log.info('facets re-projected', { categoryId, reprojected }),
+    onError: (err, msg) =>
+      log.warn('facet projector refused a message', {
+        subject: msg.subject,
+        messageId: msg.id,
+        error: (err as Error).message,
+      }),
   });
   // EP-15.5: an accepted ingest becomes an asset, under the id RIM minted.
   startIngestConsumer({

@@ -230,6 +230,57 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  test(`${name}: FACETS (EP-28.6) — AND across facets, OR within one, newest first, narrowed by ids`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      const b = asset();
+      const c = asset();
+      const other = asset({ channelId: 'ch99' });
+      await store.transaction(async (tx) => {
+        for (const x of [a, b, c, other]) await tx.put(x);
+        await tx.indexFacets(a.id, 'ch12', [
+          { facet: 'genre', value: 'drama' },
+          { facet: 'subject', value: 'war' },
+        ]);
+        await tx.indexFacets(b.id, 'ch12', [
+          { facet: 'genre', value: 'drama' },
+          { facet: 'subject', value: 'love' },
+        ]);
+        await tx.indexFacets(c.id, 'ch12', [{ facet: 'genre', value: 'news' }]);
+        await tx.indexFacets(other.id, 'ch99', [{ facet: 'genre', value: 'drama' }]);
+      });
+      const newestFirst = [a.id, b.id, c.id].sort().reverse();
+      assert.deepEqual(
+        await store.facetSearch('ch12', [{ facet: 'genre', values: ['drama', 'news'] }], 10),
+        newestFirst,
+      );
+      assert.deepEqual(
+        await store.facetSearch(
+          'ch12',
+          [
+            { facet: 'genre', values: ['drama'] },
+            { facet: 'subject', values: ['love'] },
+          ],
+          10,
+        ),
+        [b.id],
+      );
+      assert.deepEqual(
+        await store.facetSearch('ch12', [{ facet: 'genre', values: ['drama'] }], 10, [a.id]),
+        [a.id],
+      );
+      assert.deepEqual(await store.facetSearch('ch12', [], 10, []), []);
+      // Replaced whole: re-projecting drops what the asset no longer carries.
+      await store.transaction((tx) =>
+        tx.indexFacets(a.id, 'ch12', [{ facet: 'genre', value: 'news' }]),
+      );
+      assert.deepEqual(
+        (await store.facetsOf([a.id])).map((f) => [f.facet, f.value]),
+        [['genre', 'news']],
+      );
+    });
+  });
+
   test(`${name}: CATEGORIES (#260) — a listing filtered by category ids; an empty set matches nothing`, async () => {
     await withFixture(async ({ store }) => {
       const inNews = asset({ categoryId: 'N' });
