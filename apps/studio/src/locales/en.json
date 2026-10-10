@@ -189,7 +189,20 @@
       "dead-letter": "Gave up"
     },
     "chooseCategory": "Choose a category…",
-    "unknownCategory": "(not in the tree)"
+    "unknownCategory": "(not in the tree)",
+    "genre": "Genre",
+    "production": "Production",
+    "supplyType": "Supply type",
+    "productionGroup": "Production group",
+    "productionDate": "Production date",
+    "inheritedFrom": "Inherited from",
+    "useInherited": "Use the category’s value",
+    "resetError": "Could not reset this field to the category’s value.",
+    "categoryPolicies": "Category policies",
+    "reviewNeeded": "review needed",
+    "reviewNotNeeded": "no review needed",
+    "defaultExpiry": "expires after approval:",
+    "keepOnline": "kept online after use:"
   },
   "editor": {
     "close": "Close",
@@ -634,6 +647,24 @@
     "moveGrants": "Grants scoped to a category follow its position: whoever is scoped to the old place stops covering this branch, and whoever is scoped to the new place starts to.",
     "deprecate": "Deprecate",
     "restore": "Restore",
-    "deprecateWhy": "Hides this branch from pickers and stops new media going in; existing media keep it."
+    "deprecateWhy": "Hides this branch from pickers and stops new media going in; existing media keep it.",
+    "defaults": "Media defaults",
+    "defaultsWhy": "Media below this category take these values unless they set their own; an empty field inherits from above.",
+    "default": {
+      "structureId": "Structure",
+      "genre": "Genre",
+      "supplyType": "Supply type",
+      "productionGroup": "Production group",
+      "productionDate": "Production date"
+    },
+    "policies": "Policies",
+    "reviewNeeded": "Review needed",
+    "inherit": "Inherit",
+    "yes": "Yes",
+    "no": "No",
+    "keepDuration": "Keep online after use (ISO duration)",
+    "defaultExpiry": "Default expiry",
+    "defaultExpiryWhy": "An instant, or a duration from approval (P1Y). Fixed into the media when it is approved.",
+    "inheritedFrom": "Inherited from"
   }
 }

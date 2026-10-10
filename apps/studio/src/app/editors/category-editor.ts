@@ -10,22 +10,44 @@ import {
 import { FormsModule } from '@angular/forms';
 import { CategoriesService } from '../core/categories.service.ts';
 import { categoryLabel, moveTargets } from '../core/category-tree.ts';
-import type { Category, UpdateCategoryInput } from '../core/generated/mam.types.ts';
+import type {
+  Category,
+  CategoryInheritance,
+  MediaDefaultField,
+  UpdateCategoryInput,
+} from '../core/generated/mam.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 
-interface CategoryDraft {
+/** The media defaults a category may set (EP-28.2) — the order the editor shows them in. */
+const DEFAULT_FIELDS: readonly MediaDefaultField[] = [
+  'structureId',
+  'genre',
+  'supplyType',
+  'productionGroup',
+  'productionDate',
+];
+type Policy = 'reviewNeeded' | 'keepDuration' | 'defaultExpiry';
+
+export interface CategoryDraft {
   en: string;
   ar: string;
   kind: string;
   sortOrder: number;
   description: string;
   mediaAddable: boolean;
+  /** '' = this node does not set it, so it inherits. */
+  defaults: Record<MediaDefaultField, string>;
+  /** '' inherits; 'true' / 'false' set it. */
+  reviewNeeded: '' | 'true' | 'false';
+  keepDuration: string;
+  defaultExpiry: string;
 }
 
-const draftOf = (c: Category): CategoryDraft => {
+export const draftOf = (c: Category): CategoryDraft => {
   const labels = c.labels as Record<string, string>;
+  const own = (c.defaults ?? {}) as Partial<Record<MediaDefaultField, string>>;
   return {
     en: labels['en'] ?? '',
     ar: labels['ar'] ?? '',
@@ -33,11 +55,18 @@ const draftOf = (c: Category): CategoryDraft => {
     sortOrder: c.sortOrder,
     description: c.description ?? '',
     mediaAddable: c.mediaAddable,
+    defaults: Object.fromEntries(DEFAULT_FIELDS.map((f) => [f, own[f] ?? ''])) as Record<
+      MediaDefaultField,
+      string
+    >,
+    reviewNeeded: c.reviewNeeded === undefined ? '' : c.reviewNeeded ? 'true' : 'false',
+    keepDuration: c.keepDuration ?? '',
+    defaultExpiry: c.defaultExpiry ?? '',
   };
 };
 
 /** The PATCH body: only what changed, labels whole (MAM replaces the map). */
-function patchOf(before: Category, d: CategoryDraft): UpdateCategoryInput {
+export function patchOf(before: Category, d: CategoryDraft): UpdateCategoryInput {
   const was = draftOf(before);
   const patch: UpdateCategoryInput = {};
   if (d.en !== was.en || d.ar !== was.ar) {
@@ -52,6 +81,25 @@ function patchOf(before: Category, d: CategoryDraft): UpdateCategoryInput {
   if (d.sortOrder !== was.sortOrder) patch.sortOrder = d.sortOrder;
   if (d.description !== was.description) patch.description = d.description;
   if (d.mediaAddable !== was.mediaAddable) patch.mediaAddable = d.mediaAddable;
+  // A default or policy emptied is no longer set HERE: it inherits again (`inherit`).
+  const inherit: NonNullable<UpdateCategoryInput['inherit']> = [];
+  const defaults: Partial<Record<MediaDefaultField, string>> = {};
+  for (const f of DEFAULT_FIELDS) {
+    if (d.defaults[f] === was.defaults[f]) continue;
+    if (d.defaults[f].trim() === '') inherit.push(f);
+    else defaults[f] = d.defaults[f].trim();
+  }
+  if (Object.keys(defaults).length > 0) patch.defaults = defaults;
+  if (d.reviewNeeded !== was.reviewNeeded) {
+    if (d.reviewNeeded === '') inherit.push('reviewNeeded');
+    else patch.reviewNeeded = d.reviewNeeded === 'true';
+  }
+  for (const f of ['keepDuration', 'defaultExpiry'] as const) {
+    if (d[f] === was[f]) continue;
+    if (d[f].trim() === '') inherit.push(f);
+    else patch[f] = d[f].trim();
+  }
+  if (inherit.length > 0) patch.inherit = inherit;
   return patch;
 }
 
@@ -156,6 +204,115 @@ export function openCategory(editors: EditorStore, category: Category, locale: s
               <span>{{ locale.t('categories.mediaAddable') }}</span>
             </label>
           </div>
+
+          <h3>{{ locale.t('categories.defaults') }}</h3>
+          <p class="muted">{{ locale.t('categories.defaultsWhy') }}</p>
+          <fieldset class="fields" [disabled]="!mayGroup('defaults')">
+            <label>
+              <span>{{ locale.t('categories.default.structureId') }}</span>
+              <input
+                name="default-structureId"
+                [placeholder]="inherited('structureId')"
+                [ngModel]="d().defaults.structureId"
+                (ngModelChange)="setDefault('structureId', $event)"
+              />
+              @if (origin('structureId'); as from) {
+                <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
+              }
+            </label>
+            <label>
+              <span>{{ locale.t('categories.default.genre') }}</span>
+              <input
+                name="default-genre"
+                [placeholder]="inherited('genre')"
+                [ngModel]="d().defaults.genre"
+                (ngModelChange)="setDefault('genre', $event)"
+              />
+              @if (origin('genre'); as from) {
+                <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
+              }
+            </label>
+            <label>
+              <span>{{ locale.t('categories.default.supplyType') }}</span>
+              <input
+                name="default-supplyType"
+                [placeholder]="inherited('supplyType')"
+                [ngModel]="d().defaults.supplyType"
+                (ngModelChange)="setDefault('supplyType', $event)"
+              />
+              @if (origin('supplyType'); as from) {
+                <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
+              }
+            </label>
+            <label>
+              <span>{{ locale.t('categories.default.productionGroup') }}</span>
+              <input
+                name="default-productionGroup"
+                [placeholder]="inherited('productionGroup')"
+                [ngModel]="d().defaults.productionGroup"
+                (ngModelChange)="setDefault('productionGroup', $event)"
+              />
+              @if (origin('productionGroup'); as from) {
+                <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
+              }
+            </label>
+            <label>
+              <span>{{ locale.t('categories.default.productionDate') }}</span>
+              <input
+                name="default-productionDate"
+                type="date"
+                [placeholder]="inherited('productionDate')"
+                [ngModel]="d().defaults.productionDate"
+                (ngModelChange)="setDefault('productionDate', $event)"
+              />
+              @if (origin('productionDate'); as from) {
+                <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
+              }
+            </label>
+          </fieldset>
+
+          <h3>{{ locale.t('categories.policies') }}</h3>
+          <fieldset class="fields" [disabled]="!mayGroup('policies')">
+            <label>
+              <span>{{ locale.t('categories.reviewNeeded') }}</span>
+              <select
+                name="reviewNeeded"
+                [ngModel]="d().reviewNeeded"
+                (ngModelChange)="set('reviewNeeded', $event)"
+              >
+                <option value="">
+                  {{ locale.t('categories.inherit') }}{{ inheritedReview() }}
+                </option>
+                <option value="true">{{ locale.t('categories.yes') }}</option>
+                <option value="false">{{ locale.t('categories.no') }}</option>
+              </select>
+            </label>
+            <label>
+              <span>{{ locale.t('categories.keepDuration') }}</span>
+              <input
+                name="keepDuration"
+                [placeholder]="inherited('keepDuration') || 'P30D'"
+                [ngModel]="d().keepDuration"
+                (ngModelChange)="set('keepDuration', $event)"
+              />
+              @if (origin('keepDuration'); as from) {
+                <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
+              }
+            </label>
+            <label>
+              <span>{{ locale.t('categories.defaultExpiry') }}</span>
+              <input
+                name="defaultExpiry"
+                [placeholder]="inherited('defaultExpiry') || 'P1Y'"
+                [ngModel]="d().defaultExpiry"
+                (ngModelChange)="set('defaultExpiry', $event)"
+              />
+              @if (origin('defaultExpiry'); as from) {
+                <small class="muted">{{ locale.t('categories.inheritedFrom') }} {{ from }}</small>
+              }
+              <small class="muted">{{ locale.t('categories.defaultExpiryWhy') }}</small>
+            </label>
+          </fieldset>
           @if (!readOnly()) {
             <div class="row actions">
               <button type="submit" [disabled]="busy() || !dirty()">
@@ -267,6 +424,8 @@ export class CategoryEditor implements OnInit {
   protected readonly locale = inject(LocaleService);
 
   protected readonly category = signal<Category | null>(null);
+  /** What this node inherits from its ancestors (EP-28.2) — the placeholders and their origin. */
+  private readonly inheritance = signal<CategoryInheritance | null>(null);
   private readonly all = signal<Category[]>([]);
   private readonly draft = signal<CategoryDraft | null>(null);
   protected readonly target = signal('');
@@ -284,6 +443,19 @@ export class CategoryEditor implements OnInit {
   protected readonly readOnly = computed(() => {
     const c = this.category();
     return !c || !this.permissions.can('taxonomy:admin', { categoryPath: c.path });
+  });
+  /** Defaults and policies are their own field groups (UX only — MAM enforces them). */
+  protected mayGroup(group: 'defaults' | 'policies'): boolean {
+    const c = this.category();
+    return (
+      !!c && this.permissions.can('taxonomy:admin', { categoryPath: c.path, fieldGroup: group })
+    );
+  }
+  protected readonly inheritedReview = computed(() => {
+    const r = this.inheritance()?.policies.reviewNeeded;
+    return r
+      ? ` — ${this.locale.t(r.value ? 'categories.yes' : 'categories.no')} (${r.from.path})`
+      : '';
   });
   protected readonly dirty = computed(() => {
     const c = this.category();
@@ -314,6 +486,38 @@ export class CategoryEditor implements OnInit {
       error: () => this.loadError.set(this.locale.t('admin.loadError')),
     });
     this.api.list(true).subscribe({ next: (all) => this.all.set(all), error: () => undefined });
+  }
+
+  /** The value this node would inherit for a field, or ''. */
+  protected inherited(field: MediaDefaultField | Policy): string {
+    const i = this.inheritance();
+    const hit =
+      field === 'reviewNeeded' || field === 'keepDuration' || field === 'defaultExpiry'
+        ? i?.policies[field]
+        : i?.defaults[field];
+    return hit === undefined ? '' : String(hit.value);
+  }
+
+  /** Where an inherited value is set — shown only while this node does not set its own. */
+  protected origin(field: MediaDefaultField | Policy): string | null {
+    const d = this.draft();
+    if (!d) return null;
+    const own =
+      field === 'reviewNeeded' || field === 'keepDuration' || field === 'defaultExpiry'
+        ? d[field]
+        : d.defaults[field];
+    if (own !== '') return null;
+    const i = this.inheritance();
+    const hit =
+      field === 'reviewNeeded' || field === 'keepDuration' || field === 'defaultExpiry'
+        ? i?.policies[field]
+        : i?.defaults[field];
+    return hit?.from.path ?? null;
+  }
+
+  protected setDefault(field: MediaDefaultField, value: string): void {
+    this.draft.update((d) => (d ? { ...d, defaults: { ...d.defaults, [field]: value } } : d));
+    this.editors.setDirty(this.tabId(), this.dirty());
   }
 
   protected set<K extends keyof CategoryDraft>(key: K, value: CategoryDraft[K]): void {
@@ -372,5 +576,10 @@ export class CategoryEditor implements OnInit {
     this.category.set(c);
     this.draft.set(draftOf(c));
     this.editors.setDirty(this.tabId(), false);
+    // What it inherits depends on where it is, so it is read again after every write (a move).
+    this.api.inherited(c.id).subscribe({
+      next: (i) => this.inheritance.set(i),
+      error: () => this.inheritance.set(null),
+    });
   }
 }

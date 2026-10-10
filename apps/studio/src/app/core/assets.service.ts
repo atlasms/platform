@@ -1,7 +1,13 @@
 import { Injectable, inject } from '@angular/core';
 import { map } from 'rxjs';
 import { ApiClient } from './api-client.ts';
-import type { Asset, FileRef, Tag, UpdateAssetInput } from './generated/mam.types.ts';
+import type {
+  Asset,
+  AssetInheritance,
+  FileRef,
+  Tag,
+  UpdateAssetInput,
+} from './generated/mam.types.ts';
 import { MamOperations as ops } from './generated/mam.operations.ts';
 
 /**
@@ -68,6 +74,11 @@ export class AssetsService {
   }
 
   /** The asset's files as MAM mirrors them from HSM/MTS (EP-17.8) — the Files tab's rows. */
+  /** What the asset inherits from its category chain, live, each value with its origin (EP-28.2). */
+  inherited(id: string) {
+    return this.api.call(ops.getAssetInherited, { params: { id } }).as<AssetInheritance>();
+  }
+
   files(id: string) {
     return this.api.call(ops.listAssetFiles, { params: { id } }).as<FileRef[]>();
   }

@@ -2223,6 +2223,69 @@ test('smoke: #260 — the category tree through the gateway: keys build paths, a
   });
 });
 
+test('smoke: EP-28.2 — inheritance through the gateway: an asset reads its category chain’s values live, overrides and resets them', async () => {
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const run = `i${Date.now().toString(36)}`;
+  const send = (method, path, body) =>
+    get(path, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
+
+  // A department setting a genre and a review policy; a season below it adding a supply type.
+  const made = await send('POST', '/api/v1/categories', {
+    key: run,
+    labels: { en: 'Smoke drama' },
+    mediaAddable: false,
+    defaults: { genre: 'drama' },
+    reviewNeeded: true,
+  });
+  assert.equal(made.status, 201, made.text);
+  const dept = json(made);
+  const season = json(
+    await send('POST', '/api/v1/categories', {
+      parentId: dept.id,
+      key: 'season-1',
+      labels: { en: 'Season 1' },
+      defaults: { supplyType: 'commissioned' },
+    }),
+  );
+  const created = await send('POST', '/api/v1/assets', {
+    title: 'Inherits',
+    mediaType: 'video',
+    fileType: 'mxf',
+    categoryId: season.id,
+  });
+  assert.equal(created.status, 201, created.text);
+  const asset = json(created);
+  const inherited = async () => json(await send('GET', `/api/v1/assets/${asset.id}/inherited`));
+
+  let got = await inherited();
+  assert.deepEqual(got.defaults.genre, {
+    value: 'drama',
+    from: { categoryId: dept.id, path: `/${run}/` },
+  });
+  assert.equal(got.defaults.supplyType.value, 'commissioned');
+  assert.equal(got.policies.reviewNeeded.value, true);
+  const seasonInherits = json(await send('GET', `/api/v1/categories/${season.id}/inherited`));
+  assert.equal(seasonInherits.defaults.genre.from.path, `/${run}/`);
+
+  // Live: the department's edit is the asset's value at once, the asset untouched.
+  const edited = await send('PATCH', `/api/v1/categories/${dept.id}?version=${dept.version}`, {
+    defaults: { genre: 'period drama' },
+  });
+  assert.equal(edited.status, 200, edited.text);
+  got = await inherited();
+  assert.equal(got.defaults.genre.value, 'period drama');
+
+  // The asset's own value overrides; `inherit` hands it back to the category.
+  const own = json(await send('PATCH', `/api/v1/assets/${asset.id}`, { genre: 'comedy' }));
+  assert.equal(own.genre, 'comedy');
+  assert.equal((await inherited()).defaults.genre, undefined);
+  const reset = json(await send('PATCH', `/api/v1/assets/${asset.id}`, { inherit: ['genre'] }));
+  assert.equal(reset.genre, undefined);
+  assert.equal((await inherited()).defaults.genre.value, 'period drama');
+});
+
 test('smoke: the state-counts aggregate answers, and is not read as an asset id', async () => {
   // Two things no unit test covers. The gateway routes `/api/v1/assets` by PREFIX, so this reaches
   // MAM only if that still holds for a deeper path; and `/assets/counts` must resolve to the static

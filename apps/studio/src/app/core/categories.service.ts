@@ -1,6 +1,11 @@
 import { Injectable, inject } from '@angular/core';
 import { ApiClient } from './api-client.ts';
-import type { Category, CreateCategoryInput, UpdateCategoryInput } from './generated/mam.types.ts';
+import type {
+  Category,
+  CategoryInheritance,
+  CreateCategoryInput,
+  UpdateCategoryInput,
+} from './generated/mam.types.ts';
 import { MamOperations as ops } from './generated/mam.operations.ts';
 
 /**
@@ -22,6 +27,11 @@ export class CategoriesService {
 
   get(id: string) {
     return this.api.call(ops.getCategory, { params: { id } }).as<Category>();
+  }
+
+  /** What the category inherits from its ancestors, each value with its origin (EP-28.2). */
+  inherited(id: string) {
+    return this.api.call(ops.getCategoryInherited, { params: { id } }).as<CategoryInheritance>();
   }
 
   create(input: CreateCategoryInput) {

@@ -62,8 +62,8 @@ Writes can be narrowed to **field groups** rather than whole records:
 
 | Resource | Field groups |
 |----------|--------------|
-| `asset` | `core` (title/description/…), `taxonomy` (category/structure/classification/subjects/tags), `cast`, `rights` (allowed count, recommended window, expiry), `shotlist`, `files`, `web` |
-| `category` | `core`, `defaults`, `policies` (keep-duration, review-needed, media-addable), `epg`, `web` |
+| `asset` | `core` (title/description/supply type/production group and date/…), `taxonomy` (category/structure/genre/classification/subjects/tags), `cast`, `rights` (allowed count, recommended window, expiry), `shotlist`, `files`, `web` |
+| `category` | `core` (labels/kind/order/description), `defaults` (the media defaults inherited below it — EP-28.2), `policies` (keep-duration, review-needed, default expiry, media-addable, deprecation), `epg`, `web` |
 | `schedule` | `core`, `items`, `rights` |
 
 A rule with **no** `fieldGroups` grants **all** groups for that permission.

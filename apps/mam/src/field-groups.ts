@@ -51,6 +51,13 @@ export const CORE_FIELD_GROUPS: Readonly<Record<keyof UpdateAssetInput, AssetFie
   // retitling it, and a role may legitimately allow one and not the other.
   categoryId: 'taxonomy',
   structureId: 'taxonomy',
+  // EP-28.2's media defaults. Genre sits with structure — data-model §1.1 calls structure the
+  // "format/genre" — so reclassifying stays the Librarian's act. Supply type and the production
+  // fields are editorial facts about how the piece was made, the Editor's ordinary core metadata.
+  genre: 'taxonomy',
+  supplyType: 'core',
+  productionGroup: 'core',
+  productionDate: 'core',
   // "allowed count, recommended window, expiry" — §3.1, verbatim. Expiry decides when media stops
   // being usable on air, which is why it is not an ordinary metadata field.
   allowedBroadcastCount: 'rights',

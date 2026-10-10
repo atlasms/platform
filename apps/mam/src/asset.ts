@@ -25,7 +25,16 @@ export interface Asset {
    */
   fileType: string;
   categoryId?: string;
+  /**
+   * The media defaults (EP-28.2): set here, they override the category's; absent, the category
+   * chain supplies them when they are read (inheritance.ts). Stored only when the asset sets them.
+   */
   structureId?: string;
+  genre?: string;
+  supplyType?: string;
+  productionGroup?: string;
+  /** `YYYY-MM-DD`. */
+  productionDate?: string;
   state: AssetState;
   episodeNo?: number;
   durationSec?: number;
@@ -34,6 +43,11 @@ export interface Asset {
   recommendedBroadcastEnd?: string;
   /** Enforced usable-until. Absent ⇒ permanent. */
   expiresAt?: string;
+  /**
+   * Where `expiresAt` came from: `category` when it is the category's `defaultExpiry` snapshotted at
+   * approval (EP-28.2, FR-TAX-7); absent when the asset's own — `asset.expired` reports it.
+   */
+  expirySource?: 'asset' | 'category';
   /** Purge time for rejected media. */
   retainUntil?: string;
   /** A new media FILE means a new asset id; this chains the versions. */
@@ -54,6 +68,10 @@ export interface CreateAssetInput {
   description?: string;
   categoryId?: string;
   structureId?: string;
+  genre?: string;
+  supplyType?: string;
+  productionGroup?: string;
+  productionDate?: string;
   episodeNo?: number;
   durationSec?: number;
   allowedBroadcastCount?: number;

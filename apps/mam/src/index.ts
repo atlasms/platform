@@ -139,3 +139,19 @@ export {
   type CreateCategoryInput,
   type UpdateCategoryInput,
 } from './category.ts';
+export {
+  addDuration,
+  chainOf,
+  effectiveAsset,
+  expiryFrom,
+  inheritedByAsset,
+  inheritedByCategory,
+  MEDIA_DEFAULT_FIELDS,
+  parseDuration,
+  POLICY_FIELDS,
+  type CategoryPolicies,
+  type Inheritance,
+  type InheritedValue,
+  type MediaDefaultField,
+  type MediaDefaults,
+} from './inheritance.ts';

@@ -2,7 +2,12 @@ import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssetsService } from '../core/assets.service.ts';
-import type { Asset, FileRef, UpdateAssetInput } from '../core/generated/mam.types.ts';
+import type {
+  Asset,
+  AssetInheritance,
+  FileRef,
+  UpdateAssetInput,
+} from '../core/generated/mam.types.ts';
 import type { Job } from '../core/generated/mts.types.ts';
 import { TranscodeJobsService } from '../core/transcode-jobs.service.ts';
 import { SessionStore } from '../core/session.store.ts';
@@ -48,6 +53,13 @@ class FakeAssets {
   update(id: string, patch: UpdateAssetInput) {
     const result = new Subject<Asset>();
     this.updates.push({ id, patch, result });
+    return result;
+  }
+
+  readonly inheritances: Array<{ id: string; result: Subject<AssetInheritance> }> = [];
+  inherited(id: string) {
+    const result = new Subject<AssetInheritance>();
+    this.inheritances.push({ id, result });
     return result;
   }
 }
@@ -110,6 +122,7 @@ interface InternalEditor {
   canEdit(group: 'core' | 'taxonomy' | 'rights'): boolean;
   change(field: keyof UpdateAssetInput, value: string): void;
   save(event: Event): void;
+  resetToInherited(field: string): void;
 }
 
 /** The live-update surface, driven through the shared WebSocketService's event stream. */
@@ -178,6 +191,71 @@ function setup(fieldGroups: string[] = ['core', 'taxonomy', 'rights']) {
 
 describe('AssetEditor', () => {
   beforeEach(() => TestBed.resetTestingModule());
+
+  describe('inheritance (EP-28.2)', () => {
+    const DRAMA = { categoryId: 'drama', path: '/drama/' };
+    const inherits = (defaults: AssetInheritance['defaults']): AssetInheritance => ({
+      assetId: record().id,
+      defaults,
+      policies: { reviewNeeded: { value: true, from: DRAMA } },
+    });
+
+    it('a field the asset does not set shows the category’s value and where it comes from', () => {
+      const { fixture, fake } = setup();
+      fake.gets[0]?.result.next(record());
+      fixture.detectChanges();
+      expect(fake.inheritances[0]?.id).toBe(record().id);
+      fake.inheritances[0]?.result.next(inherits({ genre: { value: 'drama', from: DRAMA } }));
+      fixture.detectChanges();
+      const root = fixture.nativeElement as HTMLElement;
+      const genre = root.querySelector<HTMLInputElement>('input[name="genre"]');
+      expect(genre?.value).toBe('');
+      expect(genre?.placeholder).toBe('drama');
+      expect(genre?.closest('label')?.textContent).toContain('/drama/');
+      expect(root.textContent).toContain('assetEditor.reviewNeeded');
+    });
+
+    it('clearing a value the asset set asks to INHERIT it; the reset button does it on its own', () => {
+      const { fixture, fake, component } = setup();
+      fake.gets[0]?.result.next(record({ genre: 'comedy' }));
+      fake.inheritances[0]?.result.next(inherits({}));
+      fixture.detectChanges();
+
+      component.change('genre', '');
+      component.save(new Event('submit'));
+      expect(fake.updates[0]?.patch).toEqual({ inherit: ['genre'] });
+      fake.updates[0]?.result.next(record({ version: 4 }));
+      expect(fake.inheritances).toHaveLength(2); // re-read after the save
+
+      TestBed.resetTestingModule();
+      const t = setup();
+      t.fake.gets[0]?.result.next(record({ supplyType: 'acquired' }));
+      t.fake.inheritances[0]?.result.next(inherits({}));
+      t.fixture.detectChanges();
+      const reset = [
+        ...(t.fixture.nativeElement as HTMLElement).querySelectorAll<HTMLButtonElement>(
+          'button.inherit',
+        ),
+      ];
+      expect(reset).toHaveLength(1);
+      reset[0]?.click();
+      expect(t.fake.updates[0]?.patch).toEqual({ inherit: ['supplyType'] });
+    });
+
+    it('a taxonomy change re-reads what the asset inherits — the asset itself is not refetched', () => {
+      const { fixture, fake } = setup();
+      fake.gets[0]?.result.next(record());
+      fake.inheritances[0]?.result.next(inherits({}));
+      fixture.detectChanges();
+      const ws = TestBed.inject(WebSocketService);
+      ws.events$.next({
+        subject: 'atlas.ch12.taxonomy.updated',
+        payload: { type: 'taxonomy.updated', channelId: 'ch12', payload: { kind: 'category' } },
+      });
+      expect(fake.inheritances).toHaveLength(2);
+      expect(fake.gets).toHaveLength(1);
+    });
+  });
 
   it('loads the complete core record for its tab', () => {
     const { component, fake } = setup();

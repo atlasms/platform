@@ -106,3 +106,21 @@ body {
     sans-serif;
   font-size: 14px;
 }
+
+/* EP-28.2: a value a category supplies, and the way back to it — on any editor that inherits. */
+.inherited,
+.inherit {
+  font-size: 0.75rem;
+}
+
+.inherited {
+  color: var(--color-fg-muted);
+}
+
+button.inherit {
+  justify-self: start;
+  padding: 0;
+  color: var(--color-accent);
+  background: none;
+  border: none;
+}

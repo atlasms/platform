@@ -329,6 +329,43 @@ profile follow in EP-28. Decided with the product owner:
   scoped to `/news/` matched no real asset.) An asset whose category no longer exists has no path,
   and a category-scoped grant does not reach it — fail closed.
 
+### 2.7 As built — live inheritance (EP-28.2)
+
+§2.2, for the scalar fields; the lists (subjects, classifications, tags, cast) are EP-28.4/28.5.
+Decided with the product owner: inheritance is **live per field**, and when the lists arrive an
+asset's own list **replaces** the category's, the same rule as every scalar here.
+
+- **Media defaults** — `structureId`, `genre`, `supplyType`, `productionGroup`, `productionDate`.
+  A category SETS any of them in `defaults`; an asset sets them as its own fields. For each, the
+  NEAREST level that sets a value wins: the asset, then its category, then up the chain to the
+  root. Nothing is copied down — the value is resolved when it is read — so editing a category's
+  default is at once the value of every descendant and every asset that has not set its own, with
+  no write to any of them. Absent everywhere, the field is simply unset.
+- **Policies** — `reviewNeeded` (bool), `keepDuration` (an ISO-8601 duration), `defaultExpiry` (an
+  instant, or an ISO-8601 duration counted from approval) — are set on categories only and resolved
+  the same way for the media below. `false` is a value: a season may say *no review* under a
+  department that says *review*. They are carried and resolved here; making `reviewNeeded` gate
+  approval and handing `keepDuration` to HSM tiering is EP-28.7.
+- **`defaultExpiry` is SNAPSHOTTED** at approval, as §2.2 requires: media approved without an
+  expiry of its own (and none given in the approval) receives `expiresAt` from its chain's
+  `defaultExpiry` — a duration is added to the approval instant on the calendar for years and
+  months, clamped to the month's end (31 Jan + P1M is 28/29 Feb) — and `expirySource: category`,
+  which `asset.expired` then reports. A later edit to the default changes no approved asset.
+- **Reading it**: `GET /assets/{id}/inherited` and `GET /categories/{id}/inherited` answer, for each
+  field the asset or node does NOT set itself, the value and the category it comes from (id and
+  path). The asset record carries only what the asset sets.
+- **Overriding and resetting**: an asset's own value is the override; `PATCH /assets/{id}` with
+  `inherit: [field]` removes it so the category's shows through again — a revision like any other.
+  A category's `defaults` MERGE on update (a field given is set, the rest kept) and its `inherit`
+  takes a default or a policy off the node. Setting and inheriting one field in one request is a 422.
+- **Who may**: on a category, `defaults` and `policies` are their own field groups beside `core`
+  (authorization-model.md §4); taking a value away needs the same group as setting it. On an asset,
+  `genre` is `taxonomy` (structure is "format/genre", §1.1) and the production fields are `core`.
+- **What judges effective values**: the mandatory-metadata gate — a field a category supplies is
+  present, so requiring `genre` of a drama season does not make every episode type it again.
+  Search does not index inherited values yet: that is EP-28.6's decision (resolve at query time, or
+  project effective values and re-project a subtree on `taxonomy.updated`).
+
 ## 3. The Schedule aggregate
 
 A channel's schedule is a **reel**: an ordered sequence of items across a **broadcast day**, each with
