@@ -1,10 +1,15 @@
 openapi: 3.1.0
 info:
   title: Atlas BMS API
-  version: 0.1.0
+  version: 0.2.0
   description: >-
-    Stub contract for the Business Process Management System (workflow engine) — workflow
-    definitions, running instances, and human tasks. See ../services/bms.md.
+    The Business Process Management System — workflow definitions (authored, validated, published
+    as immutable versions) and, from EP-22.3, their running instances on Temporal (ADR-0010). See
+    ../services/bms.md and ../bms-workflow-dsl-and-designer.md. A definition's graph is the domain
+    contract ../schemas/workflow-definition.schema.json; it is validated against that schema, the
+    graph rules (§6) and the restricted FEEL subset (§3) before it can be published. Human tasks are
+    NOT here — a workflow's task is created through Notifications, completed there, and its completion
+    signals the waiting instance (EP-25.8; notifications.yaml `/tasks`).
 servers:
   - url: https://{host}/api/v1
     variables:
@@ -14,80 +19,137 @@ security:
 tags:
   - name: workflows
   - name: instances
-  - name: tasks
 paths:
   /workflows:
     get:
       operationId: listWorkflows
       tags: [workflows]
-      summary: List workflow definitions (scope workflow:admin)
+      summary: The channel's workflows, by id (workflow:read or workflow:admin)
+      parameters:
+        - { name: after, in: query, required: false, schema: { $ref: '#/components/schemas/Ulid' }, description: The last id of the previous page. }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
-        '200': { description: Definitions, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkflowDefinition' } } } } }
+        '200': { description: A page of workflows, content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowPage' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
     post:
       operationId: createWorkflow
       tags: [workflows]
-      summary: Create a workflow definition
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowDefinition' } } } }
+      summary: Create a workflow — its draft is version 1 (workflow:admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DraftInput' } } } }
       responses:
-        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowDefinition' } } } }
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Workflow' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /workflows/palette:
     get:
       operationId: getPalette
       tags: [workflows]
-      summary: Step kinds + their config schemas (drives the designer palette, FR-BMS-8)
+      summary: Step kinds + their config schemas (drives the designer palette, FR-BMS-8; EP-23.1)
       responses:
         '200': { description: Palette, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/PaletteEntry' } } } } }
+  /workflows/import:
+    post:
+      operationId: importWorkflow
+      tags: [workflows]
+      summary: Import a BPMN 2.0 file to a draft definition, validated (FR-BMS-10; EP-23.8)
+      requestBody: { required: true, content: { application/xml: { schema: { type: string } } } }
+      responses:
+        '201': { description: 'Draft definition', content: { application/json: { schema: { $ref: '#/components/schemas/Workflow' } } } }
+        '422': { description: 'Unsupported BPMN elements', content: { application/json: { schema: { $ref: '#/components/schemas/ImportError' } } } }
+  /workflows/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: getWorkflow
+      tags: [workflows]
+      summary: A workflow — its header, its open draft (if any) and its published versions
+      responses:
+        '200': { description: The workflow, content: { application/json: { schema: { $ref: '#/components/schemas/Workflow' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /workflows/{id}/draft:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      - { name: revision, in: query, required: true, schema: { type: integer, minimum: 1 }, description: "The workflow revision the edit was made on; another write in between is a 409." }
+    put:
+      operationId: saveDraft
+      tags: [workflows]
+      summary: >-
+        Save the draft — the whole graph, as the designer holds it (workflow:admin). An invalid graph
+        is SAVED (a draft is work in progress); only publish refuses it. With no open draft, this
+        opens one at the next version.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DraftInput' } } } }
+      responses:
+        '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/Workflow' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /workflows/{id}/validate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
     post:
       operationId: validateWorkflow
       tags: [workflows]
-      summary: Validate a draft graph without publishing (live designer feedback, FR-BMS-9)
-      parameters:
-        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
-      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowDefinition' } } } }
+      summary: >-
+        Validate a graph without saving it (live designer feedback, FR-BMS-9) — the body's, or with no
+        body the stored draft's. The same rules publish applies.
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/DraftInput' } } } }
       responses:
         '200': { description: 'Validation result', content: { application/json: { schema: { $ref: '#/components/schemas/ValidationResult' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: There is no draft to validate and no body was sent., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /workflows/{id}/publish:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      - { name: revision, in: query, required: true, schema: { type: integer, minimum: 1 }, description: "The revision whose draft is being published; another write in between is a 409." }
     post:
       operationId: publishWorkflow
       tags: [workflows]
-      summary: Validate + publish a new immutable definition version (FR-BMS-9)
-      parameters:
-        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      summary: Validate the draft and publish it as an immutable version (FR-BMS-9; workflow:admin)
       responses:
         '200': { description: Published, content: { application/json: { schema: { $ref: '#/components/schemas/PublishResult' } } } }
-        '422': { description: 'Validation failed - never publishes an invalid graph', content: { application/json: { schema: { $ref: '#/components/schemas/ValidationResult' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { description: "The draft is invalid — never published. The problem document's `details.issues` is the ValidationResult's issues.", content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /workflows/{id}/versions/{version}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    get:
+      operationId: getWorkflowVersion
+      tags: [workflows]
+      summary: One version's definition — a published one is immutable; the draft's is its latest save
+      responses:
+        '200': { description: The definition, content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowDefinition' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /workflows/{id}/export:
     get:
       operationId: exportWorkflow
       tags: [workflows]
-      summary: Export the definition as BPMN 2.0 XML with DI layout (FR-BMS-10)
+      summary: Export the definition as BPMN 2.0 XML with DI layout (FR-BMS-10; EP-23.8)
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
         - { name: format, in: query, required: false, schema: { type: string, enum: [bpmn], default: bpmn } }
       responses:
         '200': { description: 'BPMN 2.0 document', content: { application/xml: { schema: { type: string } } } }
-  /workflows/import:
-    post:
-      operationId: importWorkflow
-      tags: [workflows]
-      summary: Import a BPMN 2.0 file to a draft definition, validated (FR-BMS-10)
-      requestBody: { required: true, content: { application/xml: { schema: { type: string } } } }
-      responses:
-        '201': { description: 'Draft definition', content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowDefinition' } } } }
-        '422': { description: 'Unsupported BPMN elements', content: { application/json: { schema: { $ref: '#/components/schemas/ImportError' } } } }
   /instances:
     get:
       operationId: listInstances
       tags: [instances]
-      summary: List running flow instances (scope workflow:read)
+      summary: Running flow instances (workflow:read; EP-22.8)
       responses:
         '200': { description: Instances, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkflowInstance' } } } } }
   /instances/{id}:
     get:
       operationId: getInstance
       tags: [instances]
-      summary: Running flow state + current position (FR-BMS-6)
+      summary: Running flow state + current position (FR-BMS-6; EP-22.8)
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
       responses:
@@ -96,50 +158,77 @@ paths:
     post:
       operationId: signalInstance
       tags: [instances]
-      summary: Send an external signal to a waiting instance
+      summary: Send an external signal to a waiting instance (EP-22.3)
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
       requestBody: { content: { application/json: { schema: { type: object, properties: { name: { type: string }, data: { type: object } } } } } }
       responses:
         '202': { description: Signalled }
-  /tasks/{id}/complete:
-    post:
-      operationId: completeTask
-      tags: [tasks]
-      summary: Complete a human-in-the-loop step (assignee only)
-      parameters:
-        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
-      requestBody: { content: { application/json: { schema: { type: object, properties: { outcome: { type: string } } } } } }
-      responses:
-        '200': { description: Completed }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   schemas:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
     WorkflowDefinition:
+      description: >-
+        The domain contract docs/architecture/schemas/workflow-definition.schema.json — steps,
+        transitions, vars. Referenced, not copied, so the two cannot drift.
+      $ref: '../schemas/workflow-definition.schema.json'
+    DraftInput:
       type: object
-      required: [name]
-      description: 'Directed graph edited by the Studio designer and executed by the engine (spec §3.2). BPMN-2.0-convertible (spec §3.3).'
+      required: [name, steps, transitions]
+      description: >-
+        A definition as the designer sends it. `id`, `channelId`, `version`, `status` and `metadata`
+        are the server's and are ignored if sent; the rest is stored as given.
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        scope: { type: object, properties: { categoryId: { type: string }, mediaType: { type: string }, usage: { type: string } } }
+        vars: { type: array, maxItems: 100, items: { type: object } }
+        steps: { type: array, maxItems: 500, items: { type: object } }
+        transitions: { type: array, maxItems: 1000, items: { type: object } }
+    VersionSummary:
+      type: object
+      required: [version, publishedAt, publishedBy]
+      properties:
+        version: { type: integer, minimum: 1 }
+        publishedAt: { type: string, format: date-time }
+        publishedBy: { type: string }
+    Workflow:
+      type: object
+      required: [id, channelId, name, revision, latestVersion, versions, createdBy, createdAt, updatedAt]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
-        name: { type: string }
-        scope: { type: string, description: 'category/type/usage' }
-        version: { type: integer }
-        published: { type: boolean }
-        steps: { type: array, items: { $ref: '#/components/schemas/Step' } }
-        transitions: { type: array, items: { type: object, properties: { from: { type: string }, to: { type: string }, when: { type: string, description: 'condition → BPMN conditionExpression' } } } }
-    Step:
+        channelId: { type: string }
+        name: { type: string, description: "The draft's name while one is open, else the latest published version's." }
+        description: { type: string }
+        scope: { type: object, properties: { categoryId: { type: string }, mediaType: { type: string }, usage: { type: string } } }
+        revision: { type: integer, minimum: 1, description: "Every write bumps it; `?revision=` on a write is compare-and-set." }
+        latestVersion: { type: integer, minimum: 0, description: The newest PUBLISHED version; 0 before the first publish. }
+        draftVersion: { type: integer, minimum: 1, description: The open draft's version — always latestVersion + 1. Absent when there is none. }
+        draft: { $ref: '#/components/schemas/WorkflowDefinition' }
+        versions: { type: array, description: "Published versions, newest first.", items: { $ref: '#/components/schemas/VersionSummary' } }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    WorkflowSummary:
       type: object
-      required: [id, kind]
+      required: [id, channelId, name, revision, latestVersion]
       properties:
-        id: { type: string }
-        kind: { type: string, enum: [command, wait-event, human-task, timer, branch, parallel, sub-flow], description: 'maps to a BPMN element (spec §3.3)' }
-        config: { type: object, additionalProperties: true }
-        position: { type: object, description: 'canvas x/y → BPMN DI; presentation-only, ignored by the engine', properties: { x: { type: number }, y: { type: number } } }
-        retry: { type: object, additionalProperties: true }
-        timeout: { type: string }
-        compensation: { type: string, description: 'step id to run on failure' }
+        id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        name: { type: string }
+        description: { type: string }
+        revision: { type: integer }
+        latestVersion: { type: integer }
+        draftVersion: { type: integer }
+        updatedAt: { type: string, format: date-time }
+    WorkflowPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/WorkflowSummary' } }
+        nextCursor: { $ref: '#/components/schemas/Ulid' }
     WorkflowInstance:
       type: object
       required: [id, state]
@@ -164,11 +253,11 @@ components:
         hint: { type: string }
     ValidationIssue:
       type: object
-      required: [severity, message]
+      required: [severity, code, message]
       description: 'One diagnostic. Anchored to a step or a transition (never both).'
       properties:
         severity: { type: string, enum: [error, warning] }
-        code: { type: string, description: 'stable machine code, e.g. UNREACHABLE_STEP, FEEL_PARSE, BRANCH_NO_DEFAULT, UNBOUND_VAR' }
+        code: { type: string, description: 'stable machine code, e.g. UNREACHABLE_STEP, FEEL_PARSE, FEEL_SUBSET, BRANCH_NO_DEFAULT, UNBOUND_VAR, SUBFLOW_UNPUBLISHED' }
         message: { type: string }
         stepId: { type: string }
         transitionId: { type: string }
@@ -181,11 +270,13 @@ components:
         issues: { type: array, items: { $ref: '#/components/schemas/ValidationIssue' } }
     PublishResult:
       type: object
-      required: [workflowId, version, publishedAt]
+      required: [workflowId, version, publishedAt, revision]
       properties:
         workflowId: { $ref: '#/components/schemas/Ulid' }
         version: { type: integer }
         publishedAt: { type: string, format: date-time }
+        revision: { type: integer, description: The workflow's revision after publishing. }
+        warnings: { type: array, description: Warnings the published graph still carries., items: { $ref: '#/components/schemas/ValidationIssue' } }
     ImportError:
       type: object
       required: [code, message]
@@ -202,10 +293,24 @@ components:
               elementType: { type: string, description: 'e.g. bpmn:inclusiveGateway, bpmn:subProcess (event)' }
               reason: { type: string }
     Error:
+      description: >-
+        RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept:
+        `code` is the machine key (a closed enum), `message` the text. `type` is
+        https://atlas.example/problems/<code>, `title` constant per code, `detail` equals `message`,
+        `instance` is urn:atlas:correlation:<correlationId>.
       type: object
-      required: [code, message]
-      properties: { code: { type: string }, message: { type: string }, correlationId: { type: string } }
+      required: [type, title, status, detail, code, message]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        detail: { type: string }
+        instance: { type: string, format: uri }
+        code: { type: string, enum: [VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, UNAVAILABLE, INTERNAL] }
+        message: { type: string }
+        details: {}
+        correlationId: { type: string }
   responses:
     Error:
       description: Error response
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } }

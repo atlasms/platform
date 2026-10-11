@@ -1,0 +1,117 @@
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  feelProblem,
+  validateDefinition,
+  type BranchConfig,
+  type WorkflowDefinition,
+} from '../src/workflow/index.ts';
+
+// The presets in docs/ are the single source — the same files the reference implementation and
+// the BPMN golden fixture were proven against.
+const presets = new URL('../../../docs/architecture/workflows/presets/', import.meta.url);
+const load = (name: string): WorkflowDefinition =>
+  JSON.parse(readFileSync(new URL(name, presets), 'utf8')) as WorkflowDefinition;
+const PRESETS = [
+  'canonical-ingest-to-air.workflow.json',
+  'simple-approval.workflow.json',
+  'post-approval-distribution.workflow.json',
+];
+
+for (const name of PRESETS) {
+  test(`the preset ${name} validates clean, inside the FEEL subset`, () => {
+    const res = validateDefinition(load(name));
+    assert.deepEqual(
+      res.issues.filter((i) => i.severity === 'error'),
+      [],
+    );
+    assert.equal(res.valid, true);
+  });
+}
+
+test('a definition that is not the schema is refused before the graph is judged', () => {
+  const res = validateDefinition({ name: 'x' });
+  assert.equal(res.valid, false);
+  assert.ok(res.issues.every((i) => i.code === 'SCHEMA'));
+});
+
+test('the graph: a broken edge, an unreachable step, a branch with no default', () => {
+  const broken = load('canonical-ingest-to-air.workflow.json');
+  broken.transitions[0]!.to = 'does_not_exist';
+  assert.ok(validateDefinition(broken).issues.some((i) => i.code === 'BAD_TO'));
+
+  const island = load('simple-approval.workflow.json');
+  island.steps.push({ id: 's_island', kind: 'end' });
+  const unreachable = validateDefinition(island).issues.find((i) => i.code === 'UNREACHABLE_STEP');
+  assert.equal(unreachable?.stepId, 's_island');
+
+  const gateless = load('canonical-ingest-to-air.workflow.json');
+  const gate = gateless.steps.find((s) => s.id === 's_gate')!;
+  gate.config = {} as BranchConfig;
+  const reject = gateless.transitions.find((t) => t.id === 't_reject')!;
+  delete reject.isDefault;
+  reject.when = '= vars.verdict = "rejected"';
+  assert.ok(validateDefinition(gateless).issues.some((i) => i.code === 'BRANCH_NO_DEFAULT'));
+});
+
+test('an expression that does not parse is FEEL_PARSE, anchored to its edge', () => {
+  const def = load('canonical-ingest-to-air.workflow.json');
+  def.transitions.find((t) => t.id === 't_ok')!.when = '= vars.verdict = (';
+  const issue = validateDefinition(def).issues.find((i) => i.code === 'FEEL_PARSE');
+  assert.equal(issue?.transitionId, 't_ok');
+});
+
+test('an expression outside the subset is FEEL_SUBSET — refused at publish, construct named', () => {
+  const def = load('canonical-ingest-to-air.workflow.json');
+  def.transitions.find((t) => t.id === 't_ok')!.when = '= some v in vars.list satisfies v > 1';
+  const res = validateDefinition(def);
+  assert.equal(res.valid, false);
+  const issue = res.issues.find((i) => i.code === 'FEEL_SUBSET');
+  assert.equal(issue?.transitionId, 't_ok');
+  assert.match(issue!.message, /`some` \/ `every`/);
+});
+
+test('an undeclared var is a warning, not an error', () => {
+  const def = load('simple-approval.workflow.json');
+  def.transitions.find((t) => t.id === 't_yes')!.when = '= vars.notDeclared = 1';
+  const res = validateDefinition(def);
+  assert.ok(res.issues.some((i) => i.code === 'UNBOUND_VAR' && i.severity === 'warning'));
+});
+
+test('the subset: everything §3 allows passes', () => {
+  for (const ok of [
+    '= vars.x > 3 and steps.probe.output.durationMs <= 10',
+    '= incoming.outcome = "approved" or not(vars.skip)',
+    '= if vars.n > 1 then "many" else null',
+    '= vars.n between 1 and 5',
+    '= vars.kind in ["proxy", "thumbnail"]',
+    '= count(incoming.renditions) + string length(vars.title) * 2 - 1',
+    '= starts with(vars.title, "News") and ends with(vars.title, "!")',
+    '= contains(lower case(vars.title), upper case("x"))',
+    '= date("2026-10-12") + duration("P1D") > now()',
+    '= (vars.a = true) != false',
+    '= instance.id',
+  ])
+    assert.equal(feelProblem(ok), null, ok);
+});
+
+test('the subset: what §3 leaves out is refused, by name', () => {
+  const refused: [string, RegExp][] = [
+    ['= function(a) a + 1', /function definition/],
+    ['= for x in vars.xs return x', /`for` loop/],
+    ['= every x in vars.xs satisfies x > 1', /`some` \/ `every`/],
+    ['= vars.xs[item > 1]', /list filter/],
+    ['= {a: 1}', /context literal/],
+    ['= sum(vars.xs)', /the function `sum`/],
+    ['= somethingElse.x', /`somethingElse` is not one of vars, incoming, steps, instance/],
+  ];
+  for (const [expr, why] of refused) {
+    const problem = feelProblem(expr);
+    assert.equal(problem?.code, 'FEEL_SUBSET', expr);
+    assert.match(problem!.message, why, expr);
+  }
+  assert.equal(feelProblem('= ')?.code, 'FEEL_PARSE');
+  // `instance` is a context root, so `instance of` no longer parses at all — refused either way.
+  assert.notEqual(feelProblem('= vars.x instance of number'), null);
+});
