@@ -392,15 +392,31 @@ per (facet, value), replaced whole in the transaction of every asset write (read
 the search terms). The facets: `category` (the asset's category AND every category above it, so a
 node matches its subtree), `mediaType`, `state`, `structure`, `genre`, `supply-type`,
 `production-group`, `subject`, `classification`, `tag` (folded; the asset's own tags, or else its
-category's). A category write changes facets no asset write touches, so MAM consumes its own
+category's), and `person` (everyone in the effective cast — its own entries and every role it
+inherits; FR-PPL-4). A category write changes facets no asset write touches, so MAM consumes its own
 `taxonomy.updated` (durable, retried) and re-projects that category's subtree in batches —
 idempotent by construction, a projection being a function of what is stored when it runs; a
 category edit is therefore findable as soon as that consumer has run, not in the same commit.
 `POST /search` (the contract's advanced search): AND across facets, OR within one, `q` narrowing
 by the free-text index; every hit authorized per asset, and the counts are over the returned page
 only, so they disclose nothing the caller may not read. `POST /search/reindex` rebuilds the facets
-with the terms — run it once after upgrading, since assets written before this have none. Not yet:
-the `person` facet (it follows EP-28.5's cast).
+with the terms — run it once after upgrading, since assets written before this have none.
+### 2.7b As built — people and cast (EP-28.5)
+
+§1.4, with one decision of the product owner's: **a role's class is the ROLE's** — a `cast-role`
+term carries `roleClass` (`on-screen` | `crew`, a Tier-0 `$def`), required there and refused on any
+other vocabulary; an assignment names only a person and a role. A **person** is a name and an
+optional image reference — nothing else (D5, FR-PPL-2; a request carrying anything more is a 422) —
+in a channel's register (`/people`, `people:read` / `people:admin`, compare-and-set, deprecate never
+delete, audited as `person`, `person.created` on the bus). An asset's **`cast`** is a list of
+`{ personId, roleId }` (the `cast` field group; at most 100; a person may hold several roles),
+each naming a live person of the channel and a live `cast-role` term. A category's `defaults.cast`
+gives roles their people, and inheritance is **per role** (FR-TAX-9a): a role the asset names
+replaces the category's people for that role, every other role is inherited from the nearest
+category that names it; `inherit: ['cast']` gives every role back. The old `POST
+/assets/{id}/people` stub is gone — cast is written with the asset. Starter roles: Viewer and
+Editor read the register (`people:read`), the Librarian keeps it (`people:admin`). Not yet: search
+by person (EP-28.6), AI face-match suggestions (FR-PPL-5), image upload.
 
 ### 2.8 As built — controlled vocabularies (EP-28.3)
 

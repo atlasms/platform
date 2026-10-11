@@ -62,6 +62,8 @@ export interface Asset {
   subjectIds?: Ulid[];
   /** Classification TERM ids (EP-28.4). Absent inherits; present replaces. */
   classificationIds?: Ulid[];
+  /** Cast & crew (EP-28.5), inherited PER ROLE: a role named here replaces the category's people for it; every other role is inherited. */
+  cast?: CastEntry[];
   state:
     | 'created'
     | 'processing'
@@ -109,6 +111,8 @@ export interface CreateAssetInput {
   subjectIds?: Ulid[];
   /** Classification TERM ids (EP-28.4). Absent inherits; present replaces. */
   classificationIds?: Ulid[];
+  /** Cast & crew (EP-28.5), inherited PER ROLE: a role named here replaces the category's people for it; every other role is inherited. */
+  cast?: CastEntry[];
   episodeNo?: number;
   durationSec?: number;
   allowedBroadcastCount?: number;
@@ -133,6 +137,8 @@ export interface UpdateAssetInput {
   subjectIds?: Ulid[];
   /** Classification TERM ids (EP-28.4). Absent inherits; present replaces. */
   classificationIds?: Ulid[];
+  /** Cast & crew (EP-28.5), inherited PER ROLE: a role named here replaces the category's people for it; every other role is inherited. */
+  cast?: CastEntry[];
   episodeNo?: number;
   durationSec?: number;
   allowedBroadcastCount?: number;
@@ -146,6 +152,7 @@ export interface UpdateAssetInput {
     | 'productionDate'
     | 'subjectIds'
     | 'classificationIds'
+    | 'cast'
   )[];
 }
 
@@ -227,6 +234,7 @@ export interface UpdateCategoryInput {
     | 'subjectIds'
     | 'classificationIds'
     | 'tags'
+    | 'cast'
     | 'reviewNeeded'
     | 'keepDuration'
     | 'defaultExpiry'
@@ -248,6 +256,8 @@ export interface MediaDefaults {
   classificationIds?: Ulid[];
   /** Tag labels for media with no tags of their own (EP-28.4); stored cleaned and de-duplicated. */
   tags?: string[];
+  /** Cast defaults, inherited per role (EP-28.5). */
+  cast?: CastEntry[];
 }
 
 export interface InheritedStringList {
@@ -282,6 +292,7 @@ export interface Inheritance {
     subjectIds?: InheritedStringList;
     classificationIds?: InheritedStringList;
     tags?: InheritedStringList;
+    cast?: InheritedCastEntry[];
   };
   policies: {
     reviewNeeded?: InheritedBoolean;
@@ -301,12 +312,39 @@ export interface MoveCategoryInput {
   version: number;
 }
 
+/** A person in the people register (EP-28.5): minimal PII by design (D5, FR-PPL-2) — a name and an optional image reference. What they did on a piece of media is the asset's cast entry. */
 export interface Person {
-  id?: Ulid;
+  id: Ulid;
+  channelId: string;
   name: string;
-  roleInMedia?: string;
-  hasImage?: boolean;
+  /** A reference to an image (an asset id or a URL) — never the bytes. */
+  imageRef?: string;
+  deprecatedAt?: string;
+  version: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
 }
+
+export interface CreatePersonInput {
+  name: string;
+  imageRef?: string;
+}
+
+export interface UpdatePersonInput {
+  name?: string;
+  imageRef?: string;
+  /** true deprecates, false restores. */
+  deprecated?: boolean;
+}
+
+/** A person in a role — the role a cast-role term, whose roleClass says on-screen or crew (EP-28.5). */
+export interface CastEntry {
+  personId: Ulid;
+  roleId: Ulid;
+}
+
+export type InheritedCastEntry = CastEntry & { from: InheritedFrom };
 
 /** A media-editor timeline over one source asset (basic-NLE, D3). Full model in ../services/media-editor.md. */
 export interface EditProject {
@@ -336,6 +374,9 @@ export type VocabularyName =
   | 'subject'
   | 'cast-role';
 
+/** cast-role terms only (EP-28.5): whether the role is in front of the camera or behind it. Required on a cast-role term, refused on any other. Tier 0 — ../schemas/common.schema.json#/$defs/RoleClass. */
+export type RoleClass = 'on-screen' | 'crew';
+
 /** A term of a controlled vocabulary — see ../schemas/vocabulary-term.schema.json and ../configuration-and-reference-data.md §2.3: stable id, mutable label, deprecate-not-delete, merge via replacedById. */
 export interface VocabularyTerm {
   id: Ulid;
@@ -349,6 +390,7 @@ export interface VocabularyTerm {
   colour?: string;
   /** Third-party identifiers (EPG codes, ...). */
   external?: Record<string, string>;
+  roleClass?: RoleClass;
   /** Out of the pickers; every reference still resolves. */
   deprecatedAt?: string;
   replacedById?: Ulid;
@@ -365,6 +407,7 @@ export interface CreateTermInput {
   sortOrder?: number;
   colour?: string;
   external?: Record<string, string>;
+  roleClass?: RoleClass;
 }
 
 /** Omitted fields are unchanged. Not the key; not the replacement — that is a merge. */
@@ -374,6 +417,7 @@ export interface UpdateTermInput {
   sortOrder?: number;
   colour?: string;
   external?: Record<string, string>;
+  roleClass?: RoleClass;
   /** true deprecates, false restores (not a merged term). */
   deprecated?: boolean;
 }

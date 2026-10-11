@@ -17,13 +17,15 @@ export const STARTER_ROLES: Role[] = [
   {
     id: 'viewer',
     name: 'Viewer',
-    rules: [r('viewer-read', ['asset:read', 'schedule:read', 'taxonomy:read'])],
+    // EP-28.5: reading the people register is part of reading the catalogue — a cast entry is a
+    // person's name.
+    rules: [r('viewer-read', ['asset:read', 'schedule:read', 'taxonomy:read', 'people:read'])],
   },
   {
     id: 'editor',
     name: 'Journalist / Editor',
     rules: [
-      r('editor-read', ['asset:read', 'schedule:read', 'taxonomy:read']),
+      r('editor-read', ['asset:read', 'schedule:read', 'taxonomy:read', 'people:read']),
       {
         ...r('editor-write', ['asset:write']),
         fieldGroups: ['core', 'taxonomy', 'cast', 'shotlist'],
@@ -54,7 +56,8 @@ export const STARTER_ROLES: Role[] = [
     name: 'Librarian',
     rules: [
       { ...r('lib-write', ['asset:write']), fieldGroups: ['files', 'rights'] },
-      r('lib-restore', ['asset:restore', 'taxonomy:admin']),
+      // EP-28.5: the people register is kept by whoever keeps the taxonomy.
+      r('lib-restore', ['asset:restore', 'taxonomy:admin', 'people:read', 'people:admin']),
     ],
   },
   {

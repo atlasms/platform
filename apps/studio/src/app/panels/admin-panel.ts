@@ -4,12 +4,14 @@ import { PermissionService } from '../core/permission.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { CategoriesView } from './admin/categories-view.ts';
 import { GroupsView } from './admin/groups-view.ts';
+import { PeopleView } from './admin/people-view.ts';
 import { ProfilesView } from './admin/profiles-view.ts';
 import { RolesView } from './admin/roles-view.ts';
 import { UsersView } from './admin/users-view.ts';
 import { VocabulariesView } from './admin/vocabularies-view.ts';
 
-type AdminView = 'users' | 'groups' | 'roles' | 'profiles' | 'categories' | 'vocabularies';
+type AdminView =
+  'users' | 'groups' | 'roles' | 'profiles' | 'categories' | 'vocabularies' | 'people';
 
 /** What reveals each view. The panel itself is revealed by any of these (panels.ts). */
 const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
@@ -21,6 +23,8 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
   { id: 'categories', permissions: ['taxonomy:admin'] },
   // EP-28.3: the flat controlled vocabularies — taxonomy administration too.
   { id: 'vocabularies', permissions: ['taxonomy:admin'] },
+  // EP-28.5: the people register.
+  { id: 'people', permissions: ['people:admin'] },
 ];
 
 /**
@@ -37,7 +41,15 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
 @Component({
   selector: 'atlas-admin-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UsersView, GroupsView, RolesView, ProfilesView, CategoriesView, VocabulariesView],
+  imports: [
+    UsersView,
+    GroupsView,
+    RolesView,
+    ProfilesView,
+    CategoriesView,
+    VocabulariesView,
+    PeopleView,
+  ],
   template: `
     <h2 class="panel-title">{{ locale.t('workbench.panels.admin') }}</h2>
     <nav class="views" role="tablist" [attr.aria-label]="locale.t('workbench.panels.admin')">
@@ -71,6 +83,9 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
       }
       @case ('vocabularies') {
         <atlas-vocabularies-view />
+      }
+      @case ('people') {
+        <atlas-people-view />
       }
     }
   `,

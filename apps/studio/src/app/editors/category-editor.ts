@@ -13,10 +13,13 @@ import { categoryLabel, moveTargets } from '../core/category-tree.ts';
 import type {
   Category,
   CategoryInheritance,
+  CastEntry,
   MediaDefaultField,
+  Person,
   UpdateCategoryInput,
   VocabularyTerm,
 } from '../core/generated/mam.types.ts';
+import { PeopleService } from '../core/people.service.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
@@ -50,6 +53,8 @@ export interface CategoryDraft {
   /** '' = this node does not set it, so it inherits. */
   defaults: Record<MediaDefaultField, string>;
   lists: Record<ListDefault, string[]>;
+  /** Cast defaults (EP-28.5): empty inherits every role from above. */
+  cast: CastEntry[];
   /** Tag labels, comma-separated; '' inherits. */
   tags: string;
   /** '' inherits; 'true' / 'false' set it. */
@@ -77,6 +82,7 @@ export const draftOf = (c: Category): CategoryDraft => {
       classificationIds: [...(c.defaults?.classificationIds ?? [])],
     },
     tags: (c.defaults?.tags ?? []).join(', '),
+    cast: [...(c.defaults?.cast ?? [])],
     reviewNeeded: c.reviewNeeded === undefined ? '' : c.reviewNeeded ? 'true' : 'false',
     keepDuration: c.keepDuration ?? '',
     defaultExpiry: c.defaultExpiry ?? '',
@@ -111,6 +117,10 @@ export function patchOf(before: Category, d: CategoryDraft): UpdateCategoryInput
     if (JSON.stringify(d.lists[f]) === JSON.stringify(was.lists[f])) continue;
     if (d.lists[f].length === 0) inherit.push(f);
     else defaults[f] = d.lists[f];
+  }
+  if (JSON.stringify(d.cast) !== JSON.stringify(was.cast)) {
+    if (d.cast.length === 0) inherit.push('cast');
+    else defaults.cast = d.cast;
   }
   if (d.tags !== was.tags) {
     const tags = d.tags
@@ -361,6 +371,39 @@ export function openCategory(editors: EditorStore, category: Category, locale: s
                 }
               </label>
             }
+            <div class="cast">
+              <span>{{ locale.t('categories.default.cast') }}</span>
+              @for (e of d().cast; track $index) {
+                <span>
+                  {{ termName('cast', e.roleId) }} · {{ personName(e.personId) }}
+                  <button type="button" class="link" (click)="removeCast($index)">✕</button>
+                </span>
+              }
+              @for (e of inheritedCastEntries(); track $index) {
+                <small class="muted">
+                  {{ termName('cast', e.roleId) }} · {{ personName(e.personId) }} ({{
+                    e.from.path
+                  }})
+                </small>
+              }
+              <span>
+                <select name="castRole" #role>
+                  @for (t of liveTerms('cast'); track t.id) {
+                    <option [value]="t.id">{{ termName('cast', t.id) }}</option>
+                  }
+                </select>
+                <select name="castPerson" #person>
+                  @for (p of people(); track p.id) {
+                    @if (!p.deprecatedAt) {
+                      <option [value]="p.id">{{ p.name }}</option>
+                    }
+                  }
+                </select>
+                <button type="button" class="link" (click)="addCast(role.value, person.value)">
+                  {{ locale.t('assetEditor.addCast') }}
+                </button>
+              </span>
+            </div>
             <label>
               <span>{{ locale.t('categories.default.tags') }}</span>
               <input
@@ -581,10 +624,15 @@ export class CategoryEditor implements OnInit {
       ...TERM_FIELD_VOCABULARY,
       subjectIds: 'subject',
       classificationIds: 'classification',
+      cast: 'cast-role',
     } as const;
+    this.peopleApi.list(true).subscribe({
+      next: (all) => this.people.set(all),
+      error: () => undefined,
+    });
     for (const [field, vocabulary] of Object.entries(vocabularies) as [
-      TermField | ListDefault,
-      (typeof vocabularies)[TermField | ListDefault],
+      TermField | ListDefault | 'cast',
+      (typeof vocabularies)[TermField | ListDefault | 'cast'],
     ][]) {
       this.vocabularies.list(vocabulary, true).subscribe({
         next: (list) => this.terms.update((t) => ({ ...t, [field]: list })),
@@ -605,7 +653,37 @@ export class CategoryEditor implements OnInit {
 
   /** The terms each term default offers (EP-28.3) — deprecated too, to name an old value. */
   private readonly vocabularies = inject(VocabulariesService);
-  private readonly terms = signal<Partial<Record<TermField | ListDefault, VocabularyTerm[]>>>({});
+  private readonly terms = signal<
+    Partial<Record<TermField | ListDefault | 'cast', VocabularyTerm[]>>
+  >({});
+  private readonly peopleApi = inject(PeopleService);
+  protected readonly people = signal<Person[]>([]);
+
+  protected personName(id: string): string {
+    return this.people().find((p) => p.id === id)?.name ?? id;
+  }
+
+  /** Inherited cast of the roles this node does not name (EP-28.5, per role). */
+  protected inheritedCastEntries() {
+    const own = new Set((this.draft()?.cast ?? []).map((e) => e.roleId));
+    return (this.inheritance()?.defaults.cast ?? []).filter((e) => !own.has(e.roleId));
+  }
+
+  protected addCast(roleId: string, personId: string): void {
+    const d = this.draft();
+    if (!d || !roleId || !personId) return;
+    if (d.cast.some((e) => e.roleId === roleId && e.personId === personId)) return;
+    this.set('cast', [...d.cast, { personId, roleId }]);
+  }
+
+  protected removeCast(index: number): void {
+    const d = this.draft();
+    if (d)
+      this.set(
+        'cast',
+        d.cast.filter((_, i) => i !== index),
+      );
+  }
   protected readonly listDefaults = LIST_DEFAULTS;
 
   /** The terms a list offers: live ones, and any it holds that are no longer live. */
@@ -632,15 +710,15 @@ export class CategoryEditor implements OnInit {
     return this.inheritance()?.defaults.tags?.value.join(', ') ?? '';
   }
 
-  protected liveTerms(field: TermField | ListDefault): VocabularyTerm[] {
+  protected liveTerms(field: TermField | ListDefault | 'cast'): VocabularyTerm[] {
     return (this.terms()[field] ?? []).filter((t) => !t.deprecatedAt);
   }
 
-  protected isLive(field: TermField | ListDefault, id: string): boolean {
+  protected isLive(field: TermField | ListDefault | 'cast', id: string): boolean {
     return this.liveTerms(field).some((t) => t.id === id);
   }
 
-  protected termName(field: TermField | ListDefault, id: string): string {
+  protected termName(field: TermField | ListDefault | 'cast', id: string): string {
     const term = (this.terms()[field] ?? []).find((t) => t.id === id);
     if (!term) return id;
     const name = termLabel(term, this.locale.locale());

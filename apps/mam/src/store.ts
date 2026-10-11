@@ -11,6 +11,7 @@ import type { OutboxRecord } from '@atlas/messaging';
 import { Conflict } from '@atlas/service-kit';
 import type { Asset } from './asset.ts';
 import type { Category } from './category.ts';
+import type { Person } from './person.ts';
 import type { VocabularyTerm } from './vocabulary.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
@@ -163,6 +164,10 @@ export interface AssetStore {
   terms(channelId: string, vocabulary: string): Promise<VocabularyTerm[]>;
   term(id: string): Promise<VocabularyTerm | undefined>;
 
+  /** The channel's people register, deprecated included, by name (EP-28.5). */
+  people(channelId: string): Promise<Person[]>;
+  person(id: string): Promise<Person | undefined>;
+
   /** One unit of work. Everything written inside commits together, or none of it does. */
   transaction<T>(fn: (tx: AssetTx) => Promise<T>): Promise<T>;
 
@@ -226,6 +231,17 @@ export class StaleTerm extends Conflict {
   }
 }
 
+/** A person write whose base is no longer the stored row (EP-28.5). */
+export class StalePerson extends Conflict {
+  constructor(id: string, ifVersion: number | undefined) {
+    super(
+      ifVersion === undefined
+        ? `person ${id} already exists`
+        : `person ${id} changed since version ${ifVersion} was read — reload it`,
+    );
+  }
+}
+
 /** The vocabulary already has a term with this key in the channel. */
 export class TermKeyTaken extends Conflict {
   constructor(vocabulary: string, key: string) {
@@ -258,6 +274,8 @@ export interface AssetTx {
    * in the vocabulary and channel is a {@link TermKeyTaken}. Bumps the reference snapshot.
    */
   putTerm(term: VocabularyTerm, ifVersion?: number): Promise<void>;
+  /** Write a person — compare-and-set like the rest ({@link StalePerson}). */
+  putPerson(person: Person, ifVersion?: number): Promise<void>;
   /**
    * Replace an asset's extensible document.
    *

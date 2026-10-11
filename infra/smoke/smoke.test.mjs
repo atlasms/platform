@@ -2340,6 +2340,42 @@ test('smoke: EP-28.2/28.3 — vocabularies and inheritance through the gateway: 
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   assert.ok(found.includes(asset.id), 'found by the genre its category gives it');
+  // EP-28.5: cast inherits PER ROLE — the department's producer reaches the asset, whose own
+  // director replaces only the director.
+  const role = async (key, roleClass) => {
+    const res = await send('POST', '/api/v1/vocabularies/cast-role', {
+      key: `${run}-${key}`,
+      labels: { en: key },
+      roleClass,
+    });
+    assert.equal(res.status, 201, res.text);
+    return json(res);
+  };
+  const producer = await role('producer', 'crew');
+  const director = await role('director', 'crew');
+  const person = async (name) => {
+    const res = await send('POST', '/api/v1/people', { name });
+    assert.equal(res.status, 201, res.text);
+    return json(res);
+  };
+  const [prod, dir] = [await person(`Prod ${run}`), await person(`Dir ${run}`)];
+  const cast = await send('PATCH', `/api/v1/categories/${dept.id}?version=${dept.version + 2}`, {
+    defaults: { cast: [{ personId: prod.id, roleId: producer.id }] },
+  });
+  assert.equal(cast.status, 200, cast.text);
+  const ownCast = await send('PATCH', `/api/v1/assets/${asset.id}`, {
+    cast: [{ personId: dir.id, roleId: director.id }],
+  });
+  assert.equal(ownCast.status, 200, ownCast.text);
+  assert.deepEqual(
+    (await inherited()).defaults.cast.map((e) => [e.personId, e.roleId, e.from.path]),
+    [[prod.id, producer.id, `/${run}/`]],
+  );
+  const noClass = await send('POST', '/api/v1/vocabularies/cast-role', {
+    key: `${run}-guest`,
+    labels: { en: 'guest' },
+  });
+  assert.equal(noClass.status, 422, 'a cast role must say on-screen or crew');
 
   // A merge (EP-28.3): one audited write; a write naming the merged term is told the survivor.
   const merged = await send('POST', `/api/v1/vocabularies/genre/${comedy.id}/merge`, {

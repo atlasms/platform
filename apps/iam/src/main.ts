@@ -173,6 +173,9 @@ if (seedUser && seedPassword) {
           // #260: the category tree, so the suites can file assets under a real category and the
           // smoke suite can build, move and read back a tree.
           'taxonomy:admin',
+          // EP-28.5: the people register, so the smoke suite can cast a person.
+          'people:read',
+          'people:admin',
           'logs:read',
           // EP-18: the program table, so the smoke suite can write a reel and read it back.
           'schedule:read',

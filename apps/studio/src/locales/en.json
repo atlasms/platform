@@ -76,7 +76,8 @@
       "supply-type": "Supply type",
       "production-group": "Production group",
       "tag": "Tag",
-      "state": "State"
+      "state": "State",
+      "person": "Person"
     }
   },
   "ingest": {
@@ -218,7 +219,9 @@
     "aboutness": "Subjects & classification",
     "subjectIds": "Subjects",
     "classificationIds": "Classifications",
-    "inheritedTags": "Tags from the category:"
+    "inheritedTags": "Tags from the category:",
+    "cast": "Cast & crew",
+    "addCast": "Add"
   },
   "editor": {
     "close": "Close",
@@ -490,7 +493,8 @@
     "channels": "Channels",
     "bitrateKbps": "Bit rate (kb/s)",
     "categories": "Categories",
-    "vocabularies": "Vocabularies"
+    "vocabularies": "Vocabularies",
+    "people": "People"
   },
   "watchers": {
     "new": "New watcher",
@@ -675,7 +679,8 @@
       "productionDate": "Production date",
       "subjectIds": "Subjects",
       "classificationIds": "Classifications",
-      "tags": "Tags (comma-separated)"
+      "tags": "Tags (comma-separated)",
+      "cast": "Cast & crew"
     },
     "policies": "Policies",
     "reviewNeeded": "Review needed",
@@ -706,6 +711,15 @@
     "merge": "Merge",
     "mergeWhy": "Merging deprecates this term and points it at the one chosen; nothing that uses it is rewritten.",
     "mergedInto": "Merged into",
-    "conflict": "This term changed while you were editing it. It has been reloaded."
+    "conflict": "This term changed while you were editing it. It has been reloaded.",
+    "roleClass": "Class",
+    "onScreen": "On-screen",
+    "crew": "Crew"
+  },
+  "people": {
+    "name": "Name",
+    "imageRef": "Image reference (optional)",
+    "minimal": "A person is a name and an optional image — nothing else is kept.",
+    "none": "No people yet."
   }
 }

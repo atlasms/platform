@@ -27,8 +27,6 @@ export const MamOperations = {
   rejectAsset: { method: 'POST', path: '/api/v1/assets/{id}/reject', params: ['id'] },
   /** Retained review-verdict history for an asset (scope asset:read) */
   listVerdicts: { method: 'GET', path: '/api/v1/assets/{id}/verdicts', params: ['id'] },
-  /** Associate a person + role with an asset (scope asset:write) */
-  linkPerson: { method: 'POST', path: '/api/v1/assets/{id}/people', params: ['id'] },
   /** Simple free-text search (scope asset:read) */
   simpleSearch: { method: 'GET', path: '/api/v1/search', params: [] },
   /** Faceted search over the projected EFFECTIVE values — inherited ones included (scope asset:read, per asset; EP-28.6, FR-TAX-5/6) */
@@ -75,10 +73,14 @@ export const MamOperations = {
   listSubjects: { method: 'GET', path: '/api/v1/subjects', params: [] },
   /** Create a subject */
   createSubject: { method: 'POST', path: '/api/v1/subjects', params: [] },
-  /** List the people register */
+  /** The channel's people register by name, live unless includeDeprecated (scope people:read; EP-28.5) */
   listPeople: { method: 'GET', path: '/api/v1/people', params: [] },
-  /** Create a person (name, role, optional image only - FR-PPL-2) */
+  /** Add a person — a name and an optional image reference, nothing else (FR-PPL-2; scope people:admin; audited, person.created) */
   createPerson: { method: 'POST', path: '/api/v1/people', params: [] },
+  /** One person, deprecated included — a cast entry naming them still resolves (scope people:read) */
+  getPerson: { method: 'GET', path: '/api/v1/people/{id}', params: ['id'] },
+  /** Rename, change the image reference, deprecate or restore, over the version read (compare-and-set; scope people:admin; audited) */
+  updatePerson: { method: 'PATCH', path: '/api/v1/people/{id}', params: ['id'] },
   /** Start a media-editor project over an asset's renditions (scope asset:write). See ../services/media-editor.md. */
   createEditProject: { method: 'POST', path: '/api/v1/assets/{id}/edit-projects', params: ['id'] },
   /** Get an edit project (timeline) (scope asset:read) */

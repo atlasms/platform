@@ -66,6 +66,10 @@
       "readOnly": true,
       "description": "Denormalized reference count, maintained asynchronously. Drives the 'safe to delete?' affordance; never authoritative for enforcement."
     },
+    "roleClass": {
+      "$ref": "common.schema.json#/$defs/RoleClass",
+      "description": "cast-role terms only (EP-28.5): required there, refused on any other vocabulary."
+    },
     "version": {
       "type": "integer",
       "minimum": 1,

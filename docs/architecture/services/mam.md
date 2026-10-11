@@ -292,6 +292,14 @@ An asset's `subjectIds` / `classificationIds` (term ids, validated) and a catego
 replacing the category's whole ([data model §2.7a](../data-model.md#27a-as-built--list-defaults-ep-284));
 an untagged asset inherits the category's tags. Both lists are the `taxonomy` field group.
 
+### People and cast (EP-28.5)
+
+`/people` (list, create) and `/people/{id}` (get, PATCH over `?version=`): a name and an optional
+image reference (FR-PPL-2), `people:read` / `people:admin`, deprecate-not-delete, audited
+(`person`), `person.created`. An asset's `cast` — `{ personId, roleId }` entries, the role a
+`cast-role` term whose `roleClass` is on-screen or crew — is the `cast` field group, inherited per
+role from a category's `defaults.cast` ([data model §2.7b](../data-model.md#27b-as-built--people-and-cast-ep-285)).
+
 ### Vocabularies (EP-28.3)
 
 `/vocabularies/{vocabulary}` (list, create) and `/vocabularies/{vocabulary}/{termId}` (get, PATCH over

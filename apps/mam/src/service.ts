@@ -59,7 +59,16 @@ import {
   type CreateCategoryInput,
   type UpdateCategoryInput,
 } from './category.ts';
-import { StaleCategory, StaleTerm, type FacetFilter } from './store.ts';
+import { StaleCategory, StalePerson, StaleTerm, type FacetFilter } from './store.ts';
+import {
+  castProblems,
+  personProblems,
+  refusePerson,
+  type CastEntry,
+  type CreatePersonInput,
+  type Person,
+  type UpdatePersonInput,
+} from './person.ts';
 import {
   createTermProblems,
   isVocabulary,
@@ -539,8 +548,12 @@ export class MamService {
     if (!input.title?.trim()) throw new ValidationError('title is required');
     if (!input.mediaType?.trim()) throw new ValidationError('mediaType is required');
     if (!input.fileType?.trim()) throw new ValidationError('fileType is required');
-    refuse(defaultsProblems(input as unknown as Record<string, unknown>));
+    refuse([
+      ...defaultsProblems(input as unknown as Record<string, unknown>),
+      ...castProblems(input.cast),
+    ]);
     await this.requireTerms(caller.channelId, input as unknown as Record<string, unknown>);
+    await this.requireCast(caller.channelId, input.cast);
 
     const at = this.now().toISOString();
     const asset: Asset = {
@@ -565,6 +578,7 @@ export class MamService {
         productionDate: input.productionDate,
         subjectIds: input.subjectIds,
         classificationIds: input.classificationIds,
+        cast: input.cast,
         episodeNo: input.episodeNo,
         durationSec: input.durationSec,
         allowedBroadcastCount: input.allowedBroadcastCount,
@@ -612,9 +626,10 @@ export class MamService {
     refuse([
       ...defaultsProblems(patch as unknown as Record<string, unknown>),
       ...inheritProblems(patch.inherit, ASSET_INHERITABLE),
+      ...castProblems(patch.cast),
     ]);
     const inherit = (patch.inherit ?? []) as (
-      MediaDefaultField | 'subjectIds' | 'classificationIds'
+      MediaDefaultField | 'subjectIds' | 'classificationIds' | 'cast'
     )[];
     const clash = inherit.filter((f) => patch[f] !== undefined);
     if (clash.length > 0) {
@@ -634,6 +649,7 @@ export class MamService {
         Object.entries(safe).filter(([f, v]) => !same(v, existing[f as keyof UpdateAssetInput])),
       ),
     );
+    if (!same(safe.cast, existing.cast)) await this.requireCast(existing.channelId, safe.cast);
 
     const changedFields = [
       ...(Object.keys(safe) as (keyof UpdateAssetInput)[]).filter(
@@ -1137,6 +1153,7 @@ export class MamService {
         ? undefined
         : await this.categoryInChannel(caller.channelId, valid.parentId);
     await this.requireTerms(caller.channelId, valid.defaults ?? {}, 'defaults.');
+    await this.requireCast(caller.channelId, valid.defaults?.cast, 'defaults.cast');
     const path = childPath(parent?.path, valid.key);
     const depth = (parent?.depth ?? 0) + 1;
     this.authorizeCategory(caller, path, [
@@ -1219,6 +1236,7 @@ export class MamService {
     this.authorizeCategory(caller, existing.path, groups);
     if (existing.version !== version) throw new StaleCategory(id, version);
     await this.requireTerms(caller.channelId, input.defaults ?? {}, 'defaults.');
+    await this.requireCast(caller.channelId, input.defaults?.cast, 'defaults.cast');
 
     const next: Category = {
       ...existing,
@@ -1440,6 +1458,7 @@ export class MamService {
     this.authorizeVocabulary(caller);
     refuseTerm(createTermProblems(input));
     const valid = input as CreateTermInput;
+    refuseTerm(this.roleClassProblems(vocab, valid.roleClass, true));
     const at = this.now().toISOString();
     const term: VocabularyTerm = {
       id: ulid(),
@@ -1456,6 +1475,7 @@ export class MamService {
         description: valid.description,
         colour: valid.colour,
         external: valid.external,
+        roleClass: valid.roleClass,
       }),
     };
     await this.options.store.transaction(async (tx) => {
@@ -1476,6 +1496,7 @@ export class MamService {
     const vocab = this.vocabulary(vocabulary);
     this.authorizeVocabulary(caller);
     refuseTerm(updateTermProblems(input));
+    refuseTerm(this.roleClassProblems(vocab, input.roleClass, false));
     const existing = await this.termIn(caller.channelId, vocab, id);
     if (existing.version !== version) throw new StaleTerm(id, version);
     if (input.deprecated === false && existing.replacedById !== undefined) {
@@ -1491,6 +1512,7 @@ export class MamService {
         sortOrder: input.sortOrder,
         colour: input.colour,
         external: input.external,
+        roleClass: input.roleClass,
       }),
     };
     if (input.deprecated === true && existing.deprecatedAt === undefined) {
@@ -1551,6 +1573,152 @@ export class MamService {
       await tx.enqueue(this.termAudit(caller, next, existing, 'vocabulary-term.merged'));
     });
     return next;
+  }
+
+  /** A cast role is on-screen or crew (EP-28.5) — and only a cast role has a class. */
+  private roleClassProblems(vocab: Vocabulary, roleClass: unknown, creating: boolean): string[] {
+    if (vocab !== 'cast-role') {
+      return roleClass === undefined ? [] : ['only a cast-role term has a roleClass'];
+    }
+    return creating && roleClass === undefined
+      ? ['roleClass is required for a cast role — on-screen or crew']
+      : [];
+  }
+
+  // --- the people register (EP-28.5) ------------------------------------------
+  //
+  // data-model §1.4, FR-PPL-1/2: a name and an optional image reference — minimal PII (D5). Read
+  // under `people:read`, written under `people:admin`, in the channel; deprecate, never delete, so
+  // a cast entry naming a person who has left still resolves.
+
+  async people(caller: Caller, options: { includeDeprecated?: boolean } = {}): Promise<Person[]> {
+    this.authorize(caller, 'people:read');
+    const all = await this.options.store.people(caller.channelId);
+    return options.includeDeprecated ? all : all.filter((p) => p.deprecatedAt === undefined);
+  }
+
+  async person(caller: Caller, id: string): Promise<Person> {
+    this.authorize(caller, 'people:read');
+    return this.personIn(caller.channelId, id);
+  }
+
+  async createPerson(caller: Caller, input: Partial<CreatePersonInput>): Promise<Person> {
+    this.authorizePeople(caller);
+    refusePerson(personProblems(input as Record<string, unknown>, true));
+    const at = this.now().toISOString();
+    const person: Person = {
+      id: ulid(),
+      channelId: caller.channelId,
+      name: input.name!.trim(),
+      version: 1,
+      createdBy: caller.userId,
+      createdAt: at,
+      updatedAt: at,
+      ...defined({ imageRef: input.imageRef }),
+    };
+    await this.options.store.transaction(async (tx) => {
+      await tx.putPerson(person);
+      await tx.enqueue(
+        this.eventRecord(caller, person.channelId, 'person.created', {
+          personId: person.id,
+          name: person.name,
+          hasImage: person.imageRef !== undefined,
+        } satisfies EventPayloads['person.created']),
+      );
+      await tx.enqueue(this.personAudit(caller, person, undefined, 'person.created'));
+    });
+    return person;
+  }
+
+  async updatePerson(
+    caller: Caller,
+    id: string,
+    version: number,
+    input: Partial<UpdatePersonInput>,
+  ): Promise<Person> {
+    this.authorizePeople(caller);
+    refusePerson(personProblems(input as Record<string, unknown>, false));
+    const existing = await this.personIn(caller.channelId, id);
+    if (existing.version !== version) throw new StalePerson(id, version);
+    const next: Person = {
+      ...existing,
+      ...defined({ name: input.name?.trim(), imageRef: input.imageRef }),
+    };
+    if (input.deprecated === true && existing.deprecatedAt === undefined) {
+      next.deprecatedAt = this.now().toISOString();
+    }
+    if (input.deprecated === false) delete next.deprecatedAt;
+    if (JSON.stringify(next) === JSON.stringify(existing)) return existing;
+    next.version = existing.version + 1;
+    next.updatedAt = this.now().toISOString();
+    const action =
+      input.deprecated === true && existing.deprecatedAt === undefined
+        ? 'person.deprecated'
+        : 'person.updated';
+    await this.options.store.transaction(async (tx) => {
+      await tx.putPerson(next, existing.version);
+      await tx.enqueue(this.personAudit(caller, next, existing, action));
+    });
+    return next;
+  }
+
+  /**
+   * Every cast entry names a live person of this channel and a live `cast-role` term of it — a
+   * 422 naming each that does not (EP-28.5).
+   */
+  private async requireCast(
+    channelId: string,
+    cast: readonly CastEntry[] | undefined,
+    where = 'cast',
+  ): Promise<void> {
+    if (!cast || cast.length === 0) return;
+    const problems: string[] = [];
+    for (const [i, entry] of cast.entries()) {
+      const person = await this.options.store.person(entry.personId);
+      if (!person || person.channelId !== channelId) {
+        problems.push(`${where}[${i}].personId names no person of this channel`);
+      } else if (person.deprecatedAt !== undefined) {
+        problems.push(`${where}[${i}]: ${person.name} is deprecated in the people register`);
+      }
+      const role = await this.options.store.term(entry.roleId);
+      if (!role || role.channelId !== channelId || role.vocabulary !== 'cast-role') {
+        problems.push(`${where}[${i}].roleId must name a term of the cast-role vocabulary`);
+      } else if (role.deprecatedAt !== undefined) {
+        problems.push(`${where}[${i}]: the role ${role.key} is deprecated`);
+      }
+    }
+    if (problems.length > 0) throw new ValidationError(problems.join('; '));
+  }
+
+  private authorizePeople(caller: Caller): void {
+    const decision = canEnforce(caller.policy, 'people:admin', { channelId: caller.channelId });
+    if (!decision.allowed) throw new Forbidden(decision.reason ?? 'missing people:admin');
+  }
+
+  private async personIn(channelId: string, id: string): Promise<Person> {
+    const person = await this.options.store.person(id);
+    if (!person || person.channelId !== channelId) throw new NotFound(`no person ${id}`);
+    return person;
+  }
+
+  private personAudit(
+    caller: Caller,
+    person: Person,
+    before: Person | undefined,
+    action: string,
+  ): ReturnType<MamService['eventRecord']> {
+    const payload: EventPayloads['audit.recorded'] = {
+      entityType: 'person',
+      entityId: person.id,
+      revision: person.version,
+      action,
+      origin: { service: 'mam' },
+      delta: delta(
+        before as unknown as Record<string, unknown> | undefined,
+        person as unknown as Record<string, unknown>,
+      ),
+    };
+    return this.eventRecord(caller, person.channelId, 'audit.recorded', payload);
   }
 
   /**
@@ -2132,6 +2300,8 @@ export class MamService {
     for (const id of effective.classificationIds ?? []) add('classification', id);
     const tags = ownTags.length > 0 ? ownTags : (inheritance.defaults.tags?.value ?? []);
     for (const label of tags) add('tag', label.toLowerCase());
+    // FR-PPL-4: find assets by person — the effective cast, own entries and inherited roles alike.
+    for (const id of new Set((effective.cast ?? []).map((e) => e.personId))) add('person', id);
     return out;
   }
 
@@ -2556,6 +2726,7 @@ const UPDATABLE_FIELDS = [
   'productionDate',
   'subjectIds',
   'classificationIds',
+  'cast',
   'episodeNo',
   'durationSec',
   'allowedBroadcastCount',
@@ -2600,6 +2771,8 @@ export const FACETS = [
   'subject',
   'classification',
   'tag',
+  // EP-28.5: who is on it, by role — the asset's own cast and every role it inherits.
+  'person',
 ] as const;
 
 /** Equal by value — a list re-sent with the same items is no change. */

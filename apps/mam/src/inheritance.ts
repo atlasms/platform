@@ -19,6 +19,7 @@
 
 import type { Asset } from './asset.ts';
 import type { Category } from './category.ts';
+import { inheritedCast, type CastEntry, type InheritedCastEntry } from './person.ts';
 
 export const MEDIA_DEFAULT_FIELDS = [
   'structureId',
@@ -41,6 +42,7 @@ export type ListDefaultField = (typeof LIST_DEFAULT_FIELDS)[number];
 export const ASSET_INHERITABLE: readonly string[] = [
   ...MEDIA_DEFAULT_FIELDS,
   ...LIST_DEFAULT_FIELDS,
+  'cast',
 ];
 
 export type MediaDefaults = Partial<Record<MediaDefaultField, string>> &
@@ -51,6 +53,8 @@ export type MediaDefaults = Partial<Record<MediaDefaultField, string>> &
      * replaces the category's, an untagged one shows them as inherited.
      */
     tags?: string[];
+    /** Cast & crew defaults (EP-28.5) — inherited PER ROLE, not as a list. */
+    cast?: CastEntry[];
   };
 
 /** Most items a list default may hold — the asset's own tag cap (tag.ts). */
@@ -81,7 +85,10 @@ export interface InheritedValue<T> {
 /** The inherited values of one node or asset: only the fields it does not set itself. */
 export interface Inheritance {
   defaults: Partial<Record<MediaDefaultField, InheritedValue<string>>> &
-    Partial<Record<ListDefaultField | 'tags', InheritedValue<string[]>>>;
+    Partial<Record<ListDefaultField | 'tags', InheritedValue<string[]>>> & {
+      /** Per role: the entries of every role the reader does not name, each with its origin. */
+      cast?: InheritedCastEntry[];
+    };
   policies: {
     reviewNeeded?: InheritedValue<boolean>;
     keepDuration?: InheritedValue<string>;
@@ -128,6 +135,8 @@ export function inheritedByCategory(chain: readonly Category[]): Inheritance {
     const hit = nearest(ancestors, (c) => c.defaults?.[field]);
     if (hit) out.defaults[field] = hit;
   }
+  const cast = inheritedCast(ancestors, new Set((node.defaults?.cast ?? []).map((e) => e.roleId)));
+  if (cast.length > 0) out.defaults.cast = cast;
   resolvePolicies(out, ancestors, (field) => node[field] !== undefined);
   return out;
 }
@@ -157,6 +166,8 @@ export function inheritedByAsset(
     const hit = nearest(chain, (c) => c.defaults?.tags);
     if (hit) out.defaults.tags = hit;
   }
+  const cast = inheritedCast(chain, new Set((asset.cast ?? []).map((e) => e.roleId)));
+  if (cast.length > 0) out.defaults.cast = cast;
   resolvePolicies(out, chain, () => false);
   return out;
 }
@@ -184,10 +195,18 @@ function resolvePolicies(
 export function effectiveAsset(asset: Asset, inheritance: Inheritance): Asset {
   const filled: Record<string, unknown> = {};
   for (const [field, hit] of Object.entries(inheritance.defaults)) {
-    // Tags are not a field of the record; everything else inherited is.
-    if (field !== 'tags' && hit !== undefined) filled[field] = hit.value;
+    // Tags are not a field of the record, and cast merges per role below; the rest fill in.
+    if (field !== 'tags' && field !== 'cast' && hit !== undefined && 'value' in hit) {
+      filled[field] = hit.value;
+    }
   }
-  return { ...filled, ...stripUndefined(asset) } as Asset;
+  if (inheritance.defaults.cast) {
+    filled['cast'] = [
+      ...(asset.cast ?? []),
+      ...inheritance.defaults.cast.map(({ personId, roleId }) => ({ personId, roleId })),
+    ];
+  }
+  return { ...stripUndefined(asset), ...filled } as Asset;
 }
 
 function stripUndefined<T extends object>(o: T): T {

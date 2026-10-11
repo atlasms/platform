@@ -307,6 +307,11 @@ test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENT
     requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'vocabulary-term' } }),
     { permission: 'taxonomy:read' },
   );
+  // …and a person, under the people register's read (EP-28.5).
+  assert.deepEqual(
+    requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'person' } }),
+    { permission: 'people:read' },
+  );
   // HSM (ADR-0009): a storage target is storage administration; an operation on a file reads as it.
   assert.deepEqual(
     requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'storage-target' } }),

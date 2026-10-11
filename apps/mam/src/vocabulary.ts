@@ -57,13 +57,19 @@ export interface VocabularyTerm {
   deprecatedAt?: string;
   /** Set by a merge: readers follow it, so an old reference still resolves. */
   replacedById?: string;
+  /** `cast-role` terms only (EP-28.5): the class belongs to the ROLE — a director is crew. */
+  roleClass?: RoleClass;
   version: number;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
 }
 
+export const ROLE_CLASSES = ['on-screen', 'crew'] as const;
+export type RoleClass = (typeof ROLE_CLASSES)[number];
+
 export interface CreateTermInput {
+  roleClass?: RoleClass;
   key: string;
   labels: Record<string, string>;
   description?: string;
@@ -73,6 +79,7 @@ export interface CreateTermInput {
 }
 
 export interface UpdateTermInput {
+  roleClass?: RoleClass;
   labels?: Record<string, string>;
   description?: string;
   sortOrder?: number;
@@ -129,6 +136,12 @@ function commonProblems(input: Partial<UpdateTermInput>): string[] {
   }
   if (input.description !== undefined && typeof input.description !== 'string') {
     problems.push('description must be text');
+  }
+  if (
+    input.roleClass !== undefined &&
+    !(ROLE_CLASSES as readonly string[]).includes(input.roleClass as string)
+  ) {
+    problems.push(`roleClass must be one of ${ROLE_CLASSES.join(', ')}`);
   }
   if (
     input.colour !== undefined &&

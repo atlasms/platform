@@ -274,6 +274,44 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
       options.service.category(await callerOf(req), (req.params as { id: string }).id),
     ),
   );
+  // EP-28.5: the people register — a name and an optional image reference (FR-PPL-2).
+  app.get('/api/v1/people', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.people(await callerOf(req), {
+        includeDeprecated:
+          (req.query as { includeDeprecated?: string }).includeDeprecated === 'true',
+      }),
+    ),
+  );
+  app.post('/api/v1/people', async (req, reply) =>
+    handle(req, reply, async () => {
+      const person = await options.service.createPerson(
+        await callerOf(req),
+        (req.body ?? {}) as never,
+      );
+      return reply.code(201).send(person);
+    }),
+  );
+  app.get('/api/v1/people/:id', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.person(await callerOf(req), (req.params as { id: string }).id),
+    ),
+  );
+  app.patch('/api/v1/people/:id', async (req, reply) =>
+    handle(req, reply, async () => {
+      const version = Number((req.query as { version?: string }).version);
+      if (!Number.isInteger(version) || version < 1) {
+        throw new ValidationError('version is required — the version of the person as read');
+      }
+      return options.service.updatePerson(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+        version,
+        (req.body ?? {}) as never,
+      );
+    }),
+  );
+
   // EP-28.3: controlled vocabularies — stable id, mutable label, deprecate-not-delete, merge.
   type V = { vocabulary: string; id: string };
   app.get('/api/v1/vocabularies/:vocabulary', async (req, reply) =>

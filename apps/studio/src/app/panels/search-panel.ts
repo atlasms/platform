@@ -12,6 +12,7 @@ import { AssetsService } from '../core/assets.service.ts';
 import { CategoriesService } from '../core/categories.service.ts';
 import { categoryLabel } from '../core/category-tree.ts';
 import type { Asset, VocabularyName } from '../core/generated/mam.types.ts';
+import { PeopleService } from '../core/people.service.ts';
 import { termLabel, VocabulariesService } from '../core/vocabularies.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { LocaleService } from '../core/locale.service.ts';
@@ -26,6 +27,7 @@ const SHOWN_FACETS = [
   'supply-type',
   'production-group',
   'tag',
+  'person',
   'state',
 ] as const;
 const FACET_VOCABULARIES: readonly VocabularyName[] = [
@@ -228,6 +230,7 @@ export class SearchPanel {
   private readonly assetsApi = inject(AssetsService);
   private readonly categoriesApi = inject(CategoriesService);
   private readonly vocabularies = inject(VocabulariesService);
+  private readonly peopleApi = inject(PeopleService);
   private readonly editors = inject(EditorStore);
   protected readonly locale = inject(LocaleService);
   private readonly queryInput = viewChild<ElementRef<HTMLInputElement>>('queryField');
@@ -244,6 +247,14 @@ export class SearchPanel {
         this.names.update((n) => ({
           ...n,
           ...Object.fromEntries(all.map((c) => [c.id, categoryLabel(c, this.locale.locale())])),
+        })),
+      error: () => undefined,
+    });
+    this.peopleApi.list(true).subscribe({
+      next: (people) =>
+        this.names.update((n) => ({
+          ...n,
+          ...Object.fromEntries(people.map((p) => [p.id, p.name])),
         })),
       error: () => undefined,
     });
