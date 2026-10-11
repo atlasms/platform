@@ -3,7 +3,7 @@
 // well-formed policy rule scoped to the user's channel.
 
 import { TestBed } from '@angular/core/testing';
-import { Subject } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type {
   Assignment,
@@ -12,6 +12,7 @@ import type {
   UpdateUser,
   User,
 } from '../core/generated/iam.types.ts';
+import { CategoriesService } from '../core/categories.service.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { ULID_RE } from '../core/ulid.ts';
@@ -88,6 +89,7 @@ interface Internal {
   setPassword(): void;
   grantRole(): void;
   grantRule(): void;
+  categoryPaths: { set(v: string[]): void; (): string[] };
   revoke(a: Assignment): void;
 }
 
@@ -98,6 +100,7 @@ function setup(sessionUserId = 'u-admin') {
     providers: [
       EditorStore,
       { provide: UsersService, useValue: fake },
+      { provide: CategoriesService, useValue: { list: () => of([]) } },
       { provide: LocaleService, useValue: { t: (k: string) => k } },
     ],
   });
@@ -215,10 +218,25 @@ describe('UserEditor', () => {
     expect(t.component.error()).toBe('a rule for channel ch12 needs user:admin there');
     expect(t.component.busy()).toBe(false);
 
+    // Narrowed to category subtrees: the paths ride in the scope, and the picker resets after.
+    t.component.permissions = 'asset:write';
+    t.component.categoryPaths.set(['/news/', '/sport/']);
+    t.component.grantRule();
+    expect(t.fake.grants[2]?.input.rule?.scope).toEqual({
+      channelIds: ['ch12'],
+      categoryPaths: ['/news/', '/sport/'],
+    });
+    t.fake.grants[2]?.result.next({
+      id: 'a-news',
+      userId: UID,
+      rule: t.fake.grants[2].input.rule!,
+    });
+    expect(t.component.categoryPaths()).toEqual([]);
+
     t.component.revoke({ id: 'a-role', userId: UID, roleId: 'editor' });
     expect(t.fake.revokes[0]).toMatchObject({ id: UID, assignmentId: 'a-role' });
     t.fake.revokes[0]?.result.next();
-    expect(t.component.assignments().map((a) => a.id)).toEqual(['a-rule', 'a-viewer']);
+    expect(t.component.assignments().map((a) => a.id)).toEqual(['a-rule', 'a-viewer', 'a-news']);
   });
 });
 

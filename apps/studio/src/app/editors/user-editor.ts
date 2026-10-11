@@ -8,7 +8,8 @@ import {
   type OnInit,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import type { Assignment, Role, User } from '../core/generated/iam.types.ts';
+import type { Assignment, Role, Rule, User } from '../core/generated/iam.types.ts';
+import { CategoryScope, describeScope } from '../core/category-scope.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { ulid } from '../core/ulid.ts';
@@ -32,7 +33,7 @@ import { EditorStore } from '../workbench/editor.store.ts';
 @Component({
   selector: 'atlas-user-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, CategoryScope],
   template: `
     @if (loadError()) {
       <p class="error" role="alert">{{ loadError() }}</p>
@@ -163,6 +164,7 @@ import { EditorStore } from '../workbench/editor.store.ts';
               autocomplete="off"
             />
           </label>
+          <atlas-category-scope [(paths)]="categoryPaths" />
           <button type="submit" [disabled]="busy() || parsedPermissions().length === 0">
             {{ locale.t('admin.grant') }}
           </button>
@@ -252,6 +254,23 @@ export class UserEditor implements OnInit {
     this.grant({ roleId: this.roleId }, () => (this.roleId = ''));
   }
 
+  /** Category subtrees the next rule is narrowed to (authorization-model §4); none = channel-wide. */
+  protected readonly categoryPaths = signal<string[]>([]);
+
+  /** The next rule's scope: the channel, and the chosen category subtrees if any. */
+  private scopeOf(
+    channelId: string | null | undefined,
+  ): { scope: NonNullable<Rule['scope']> } | Record<string, never> {
+    const paths = this.categoryPaths();
+    if (!channelId && paths.length === 0) return {};
+    return {
+      scope: {
+        ...(channelId ? { channelIds: [channelId] } : {}),
+        ...(paths.length > 0 ? { categoryPaths: paths } : {}),
+      },
+    };
+  }
+
   /** A rule scoped to the user's own channel — the one an admin here may grant (iam admin.ts). */
   protected grantRule(): void {
     const permissions = this.parsedPermissions();
@@ -263,10 +282,13 @@ export class UserEditor implements OnInit {
           id: ulid(),
           effect: 'allow',
           permissions,
-          ...(channelId ? { scope: { channelIds: [channelId] } } : {}),
+          ...this.scopeOf(channelId),
         },
       },
-      () => (this.permissions = ''),
+      () => {
+        this.permissions = '';
+        this.categoryPaths.set([]);
+      },
     );
   }
 
@@ -291,7 +313,7 @@ export class UserEditor implements OnInit {
   protected describeRule(a: Assignment): string {
     const rule = a.rule;
     if (!rule) return '';
-    const scope = rule.scope?.channelIds?.length ? ` @ ${rule.scope.channelIds.join(', ')}` : '';
+    const scope = describeScope(rule.scope);
     const effect = rule.effect === 'deny' ? 'deny ' : '';
     return `${effect}${rule.permissions.join(', ')}${scope}`;
   }
