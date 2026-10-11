@@ -155,6 +155,22 @@ prefixed `=` by convention. Chosen because a FEEL string **is** a legal BPMN
   pure function of context. Compile every expression at **validate** time; a parse error is a
   publish-blocking error bound to the owning step/edge.
 
+**The subset (decided 2026-10-12, EP-23.6).** Expressions are a restricted subset of FEEL — still
+legal FEEL, so BPMN round-trips unchanged, but small enough for the editor to offer and the
+validator to explain:
+
+| Allowed | |
+|---|---|
+| Literals | number, string, boolean, `null`; `date()`, `time()`, `date and time()`, `duration()` |
+| Paths | into `vars`, `incoming`, `steps`, `instance` (`steps.probe.output.durationMs`) |
+| Operators | `=` `!=` `<` `<=` `>` `>=`, `between … and …`, `in [ … ]`, `and` `or` `not()`, `+` `-` `*` `/` |
+| Conditional | `if … then … else …` |
+| Functions | `count()`, `contains()`, `starts with()`, `ends with()`, `string length()`, `upper case()`, `lower case()`, `now()` (Temporal time) |
+
+Everything else — function definitions, `for` / `some` / `every`, list filters (`xs[ … ]`), context
+construction — is refused when a definition is published, with the construct named. Widening the
+list is a decision recorded here, not a library upgrade.
+
 ## 4. Variables & data flow
 
 - `vars[]` declares typed, named instance state with optional `initial`.

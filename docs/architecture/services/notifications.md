@@ -144,7 +144,9 @@ messages/notifications.
 
 - **Node.js + NestJS/Fastify**; broker consumers for event→notification; async worker for
   email/push (`nodemailer`/provider SDK). Cache group memberships (from IAM) for fast recipient
-  fan-out. Reuse the [WebSocket](websocket.md) private-channel model for live delivery.
+  fan-out. Reuse the [WebSocket](websocket.md) private-channel model for live delivery — decided
+  2026-10-12 (EP-25.7): a private message names its `recipientUserId` and reaches only that user's
+  connections ([websocket §5](websocket.md#5-messaging)).
 
 ## 14. Open questions / future
 

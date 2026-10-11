@@ -264,7 +264,7 @@ framework picks and the two places a native/compiled **escape hatch** is worth i
 | CPU/IO hot paths (HSM hashing & byte movement, very-high-fanout WS) | Node worker-threads; **native addon** (N-API / Rust via napi-rs) or a small Go/Rust worker *only where profiling proves it* | Go, Rust service |
 | Transcode compute | **FFmpeg** subprocess (language-agnostic; Node supervises) | +NVENC/QSV/VAAPI |
 | ML inference (offline AI tier) | Sidecar model server (Python / ONNX Runtime), called over local HTTP/gRPC | — |
-| Durable workflow runtime (BMS) | Temporal (**TypeScript SDK**) or broker-backed saga | — |
+| Durable workflow runtime (BMS) | Temporal (**TypeScript SDK**), self-hosted | [ADR-0010](../adr/0010-bms-durable-runtime.md) |
 | SPA | Angular (given) | — |
 | Broker | NATS JetStream | RabbitMQ, Kafka |
 | Relational | PostgreSQL | SQL Server |

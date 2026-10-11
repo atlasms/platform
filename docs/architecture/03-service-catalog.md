@@ -178,7 +178,7 @@ target service's own command, e.g. `transcode.job.create`), `workflow.completed`
 
 **Owned data.** Workflow definitions, running instance state (relational + durable
 timers). **Scaling.** Stateful engine; scale by partitioning instances; use a durable
-workflow runtime (e.g. Temporal-style or a broker-backed saga). **Deps.** All orchestrated
+workflow runtime (Temporal — [ADR-0010](../adr/0010-bms-durable-runtime.md)). **Deps.** All orchestrated
 services. **Criticality.** Critical path for automated flows (manual path can bypass).
 
 ---
@@ -429,7 +429,7 @@ Node's event loop is strongest. So the recommendation is a **single primary stac
 | **HSM** | Node + **NestJS** API; **worker-threads** for hashing/copy | ⚠️ The one genuinely CPU/IO-heavy service. Node streams + worker-threads handle most of it; **escape hatch: a native addon (Rust via napi-rs) or a small Go/Rust file-mover** *if* profiling shows Node can't saturate the storage/hash path. |
 | **MTS** | Node + NestJS **orchestrator** over **FFmpeg** subprocesses | The heavy lifting is FFmpeg + GPU (NVENC/QSV), a separate process — so language barely matters. Node's `child_process` + progress parsing is a clean fit; scale the workers, not the runtime. |
 | **Scheduling** | Node + **NestJS** | Program-table CRUD, validation, and the **pluggable MCRList serializer** (XML via `xmlbuilder2`/`fast-xml-parser`) — TS makes the [format contract](../integrations/14-playout-mcrlist-format.md) explicit. |
-| **BMS** | Node + NestJS + **Temporal (TypeScript SDK)** | Durable orchestration with retries/timers/human steps stays **in-language** via Temporal's TS SDK; alternative is a broker-backed saga in Node. |
+| **BMS** | Node + NestJS + **Temporal (TypeScript SDK)** | Durable orchestration with retries/timers/human steps stays **in-language** via Temporal's TS SDK; decided in [ADR-0010](../adr/0010-bms-durable-runtime.md) (the broker-backed saga was the alternative). |
 | **Newsroom** | Node + **NestJS** | Collaborative editing via the WebSocket service; MOS integration is protocol glue — all comfortably Node. |
 | **Notifications & Messaging** | Node + NestJS/**Fastify** | Broker-backed, permission-aware fan-out + delivery — squarely Node's wheelhouse. |
 | **Integration / Feeds** | Node + **NestJS** (worker-per-feed) | JSON/XML transforms, connectors, retries, scheduling; the JS ecosystem is rich in parsers and HTTP clients. |

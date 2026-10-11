@@ -27,3 +27,4 @@ disagree with data.
 | [0008](0008-internal-signed-calls.md) | A service's own components call each other with HMAC-signed internal requests | Accepted |
 | [0007](0007-recorders.md) | Recorders: padded, overlapping hour files captured by two alternating workers from IP feeds, handed to ingest by upload | Accepted |
 | [0009](0009-hsm-storage-and-placement.md) | HSM: filesystem + S3 drivers behind one port; producers push bytes to HSM, signed over the file's checksum | Accepted (paired review owed) |
+| [0010](0010-bms-durable-runtime.md) | BMS runs workflows on Temporal, self-hosted on the platform's Postgres, behind the `Effects` boundary | Accepted |

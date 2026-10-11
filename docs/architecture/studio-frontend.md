@@ -137,6 +137,16 @@ rather than a silently truncated number. Both widgets refresh on `asset.*` event
 WebSocket server (EP-13.2) exists; the client subscription is already queued. Rearrangement and
 per-user layouts are not built.
 
+## 3a. Several channels (decided 2026-10-12, EP-30.3)
+
+One person, one session, any number of channels. A token is not bound to a channel: a person's
+grants already name their `channelIds`, and every service enforces each request against the
+resource's own channel, as it does today. Studio keeps a **current channel** (in the status bar) —
+the user's home channel by default, switchable among the channels where they hold any grant — which
+scopes lists, browse trees, live subscriptions and where new things are created. Switching is a
+client choice, never an authorization boundary; cross-channel views are possible later on the same
+session.
+
 ## 4. Welcome & What's New
 
 On login **after a version rollout**, Studio shows a **Welcome / What's New** editor tab
