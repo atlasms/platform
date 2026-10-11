@@ -385,7 +385,7 @@
     "grantRole": "Grant a role",
     "grantRule": "Grant permissions (noun:verb, comma-separated)",
     "grant": "Grant",
-    "ruleScope": "A rule granted here is scoped to the user's channel.",
+    "ruleScope": "A rule granted here is scoped to the user's channel — and, when categories are chosen, to those subtrees only.",
     "writeError": "The change was not saved.",
     "state": {
       "active": "Active",
@@ -494,7 +494,10 @@
     "bitrateKbps": "Bit rate (kb/s)",
     "categories": "Categories",
     "vocabularies": "Vocabularies",
-    "people": "People"
+    "people": "People",
+    "categoryScope": "Only in categories",
+    "categoryScopeNone": "Nothing chosen: the whole channel.",
+    "categoryScopeSome": "Each chosen category and everything below it — nothing else."
   },
   "watchers": {
     "new": "New watcher",

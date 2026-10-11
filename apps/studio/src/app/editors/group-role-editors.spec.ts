@@ -3,7 +3,7 @@
 // is shown and not offered for editing; deleting closes the tab, and a held role says why not.
 
 import { TestBed } from '@angular/core/testing';
-import { Subject } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type {
   Assignment,
@@ -17,6 +17,7 @@ import type {
   UserPage,
 } from '../core/generated/iam.types.ts';
 import { GroupsService } from '../core/groups.service.ts';
+import { CategoriesService } from '../core/categories.service.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { RolesService } from '../core/roles.service.ts';
 import { SessionStore } from '../core/session.store.ts';
@@ -130,6 +131,7 @@ function configure() {
       { provide: RolesService, useValue: new FakeRoles() },
       { provide: UsersService, useValue: new FakeUsers() },
       { provide: LocaleService, useValue: { t: (k: string) => k } },
+      { provide: CategoriesService, useValue: { list: () => of([]) } },
     ],
   });
   TestBed.inject(SessionStore).signIn({

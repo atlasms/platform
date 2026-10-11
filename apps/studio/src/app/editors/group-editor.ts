@@ -11,6 +11,7 @@ import { FormsModule } from '@angular/forms';
 import type { Observable } from 'rxjs';
 import type { GroupWithMembers, Role, Rule, User } from '../core/generated/iam.types.ts';
 import { GroupsService } from '../core/groups.service.ts';
+import { CategoryScope, describeScope } from '../core/category-scope.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { RolesService } from '../core/roles.service.ts';
 import { ulid } from '../core/ulid.ts';
@@ -31,7 +32,7 @@ import { parsePermissions } from './user-editor.ts';
 @Component({
   selector: 'atlas-group-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, CategoryScope],
   template: `
     @if (loadError()) {
       <p class="error" role="alert">{{ loadError() }}</p>
@@ -161,6 +162,7 @@ import { parsePermissions } from './user-editor.ts';
               autocomplete="off"
             />
           </label>
+          <atlas-category-scope [(paths)]="categoryPaths" />
           <button type="submit" [disabled]="busy() || parsedPermissions().length === 0">
             {{ locale.t('admin.grant') }}
           </button>
@@ -280,6 +282,23 @@ export class GroupEditor implements OnInit {
     this.patch({ roleIds: this.roleIds().filter((r) => r !== roleId) });
   }
 
+  /** Category subtrees the next rule is narrowed to (authorization-model §4); none = channel-wide. */
+  protected readonly categoryPaths = signal<string[]>([]);
+
+  /** The next rule's scope: the channel, and the chosen category subtrees if any. */
+  private scopeOf(
+    channelId: string | null | undefined,
+  ): { scope: NonNullable<Rule['scope']> } | Record<string, never> {
+    const paths = this.categoryPaths();
+    if (!channelId && paths.length === 0) return {};
+    return {
+      scope: {
+        ...(channelId ? { channelIds: [channelId] } : {}),
+        ...(paths.length > 0 ? { categoryPaths: paths } : {}),
+      },
+    };
+  }
+
   /** A rule scoped to the group's channel — the one an admin here may grant. */
   protected addRule(): void {
     const permissions = this.parsedPermissions();
@@ -289,9 +308,12 @@ export class GroupEditor implements OnInit {
       id: ulid(),
       effect: 'allow',
       permissions,
-      ...(channelId ? { scope: { channelIds: [channelId] } } : {}),
+      ...this.scopeOf(channelId),
     };
-    this.patch({ rules: [...this.rules(), rule] }, () => (this.permissions = ''));
+    this.patch({ rules: [...this.rules(), rule] }, () => {
+      this.permissions = '';
+      this.categoryPaths.set([]);
+    });
   }
 
   protected removeRule(ruleId: string): void {
@@ -315,7 +337,7 @@ export class GroupEditor implements OnInit {
   }
 
   protected describeRule(rule: Rule): string {
-    const scope = rule.scope?.channelIds?.length ? ` @ ${rule.scope.channelIds.join(', ')}` : '';
+    const scope = describeScope(rule.scope);
     const effect = rule.effect === 'deny' ? 'deny ' : '';
     return `${effect}${rule.permissions.join(', ')}${scope}`;
   }
