@@ -31,6 +31,8 @@ as *suggestions*).
    definitions + a **schema editor** (v2); mandatory-metadata policy per type.
 3. **Search projection** — OpenSearch read model rebuilt by event replay; write via the **outbox** to
    avoid dual-write drift; simple search (v1) → **faceted** search (v2: category ∧ subject ∧ tag ∧ person).
+   *Superseded 2026-10-12 (EP-27.2):* search stays in Postgres (`asset_facets`); OpenSearch only if
+   a performance check at a target catalogue size fails — [mam.md §13](../../architecture/services/mam.md).
 4. **Cache** — Redis for hot reads; invalidate on update.
 5. **Versioning + clone-on-replace** — `POST /assets/{id}/versions`; clone metadata to a **new id**;
    emit `asset.replaced(oldId,newId)` for Scheduling to swap references.

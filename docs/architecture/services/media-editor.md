@@ -128,6 +128,13 @@ MAM (EditProject persistence, version attach), MTS (render), HSM (place output),
 (scrub-time preview + progress). Studio needs **proxy** renditions to scrub against — the editor
 works off proxies and renders against the **source/broadcast** rendition.
 
+**Playback (decided 2026-10-12, EP-26.1).** The editor plays an **editing proxy**: H.264 in MP4
+with a short GOP (a keyframe every few frames, so a seek lands on or next to the frame asked for),
+written by MTS as its own preset beside the browse proxy. Studio plays it in a plain `<video>` and
+identifies the frame on screen with `requestVideoFrameCallback`; WebCodecs is not used in v1. The
+EP-26.1 spike confirms frame accuracy in Chromium and Firefox and sets the GOP length; if it cannot,
+WebCodecs decoding is the next option and a new decision.
+
 ## 8. Scaling & performance
 
 No new scaling surface — renders are MTS jobs and scale with the MTS worker pool. Client-side

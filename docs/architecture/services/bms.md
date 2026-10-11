@@ -203,7 +203,7 @@ touches execution. **Live instance overlay:** the same graph, colored by `StepHi
 
 ## 7. Dependencies
 
-- **Durable workflow runtime** (Temporal via its TypeScript SDK, or a broker-backed saga) for
+- **Durable workflow runtime** (Temporal via its TypeScript SDK — [ADR-0010](../../adr/0010-bms-durable-runtime.md)) for
   timers/retries/state.
 - **Every orchestrated service** (via events/commands), **Notifications** (tasks),
   **relational store**, **broker**.
@@ -246,8 +246,8 @@ retry/timeout/compensation policies; SLA timers; task-assignment rules.
 ## 13. Implementation notes
 
 - **Node.js + NestJS** for authoring/visibility APIs; **Temporal (TypeScript SDK)** for durable
-  execution keeps orchestration **in-language** — or a broker-backed saga if Temporal isn't
-  adopted. Definitions are data (JSON/DSL), interpreted by the engine, so new flows need no
+  execution keeps orchestration **in-language** ([ADR-0010](../../adr/0010-bms-durable-runtime.md); the
+  broker-backed saga stays a fallback behind `Effects`). Definitions are data (JSON/DSL), interpreted by the engine, so new flows need no
   deploy.
 - Keep step handlers idempotent and side-effect-guarded.
 - **Designer canvas (Studio, Angular): [Foblex Flow](https://flow.foblex.com/)** (`@foblex/flow`,

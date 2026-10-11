@@ -6,7 +6,7 @@
 > [Workflow DSL, Designer, Engine & BPMN Converter](../../architecture/bms-workflow-dsl-and-designer.md)
 > (definition model, FEEL, validator, Temporal interpreter, BPMN converter, canvas) · Contract:
 > [`workflow-definition.schema.json`](../../architecture/schemas/workflow-definition.schema.json) ·
-> Stack: **Node + NestJS + Temporal (TS SDK)** (or a broker-backed saga) · Ships: **Phase 2 (v1)** →
+> Stack: **Node + NestJS + Temporal (TS SDK)** ([ADR-0010](../../adr/0010-bms-durable-runtime.md)) · Ships: **Phase 2 (v1)** →
 > **Phase 3 (authoring)**. Critical path for automated flows (the manual path can bypass it).
 >
 > **Head start:** [`reference/bms-workflow/`](../../../reference/bms-workflow/README.md) already
@@ -28,8 +28,8 @@ work. Manual operation must remain possible without BMS.
 
 ## 2. Build sequence
 
-1. **Durable runtime (v1)** — adopt **Temporal (TS SDK)** for durable timers/retries/human waits (or a
-   broker-backed saga if Temporal is ruled out); one workflow = one orchestration instance.
+1. **Durable runtime (v1)** — adopt **Temporal (TS SDK)** for durable timers/retries/human waits ([ADR-0010](../../adr/0010-bms-durable-runtime.md),
+   decided 2026-10-12); one workflow = one orchestration instance.
 2. **Command/event adapters** — issue each target service's own command for a command step (e.g.
    `transcode.job.create`), record it as `workflow.step.requested`, and **await** the service's
    completion event; map timeouts/retries.

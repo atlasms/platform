@@ -105,6 +105,15 @@ scale out when the backlog grows, scale in when it drains
 job with a **visibility timeout + heartbeat**; a dead worker's job returns to the queue for
 another to pick up (at-least-once → idempotent output naming prevents duplicates).
 
+**Decided 2026-10-12 (EP-29.2): KEDA, optional.** When the chart's MTS autoscaling is enabled and
+KEDA is installed in the cluster (the offline bundle can carry it), the chart renders a KEDA
+`ScaledObject` for MTS over the job table's depth, between a minimum and a maximum replica count;
+without KEDA, MTS runs the fixed `replicas.mts` it has today. MTS itself holds **no** Kubernetes
+permissions — a service that can patch Deployments is a wider grant than any service has. Scale-in
+relies on what EP-16.6 built: a terminated worker drains, its job requeued with the attempt
+returned. Which KEDA trigger reads the depth (a Postgres query, or the Prometheus metric when the
+observability overlay is on) is EP-29.3's.
+
 ### 6.3 Editor render
 The Studio editor's operations (trim/merge/titles/overlay/audio/image —
 [FR-EDT](../../requirements/05-functional-requirements.md#editor)) compile to an FFmpeg/filter

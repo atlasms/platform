@@ -93,6 +93,15 @@ field group, as MAM's `GET /assets/{id}/files` and the audit log's history of bo
 `transcode:read` nor `file:read` exists in any catalogue or role; under the default rule their
 messages reached nobody (`DOMAIN_READ` in `eligibility.ts`; #384).
 
+**Private per-user streams (decided 2026-10-12, EP-25.7).** A message meant for one person — a
+notification, a direct message, a task assigned to them — names its recipient
+(`recipientUserId` in the envelope's payload) and is delivered **only** to connections
+authenticated as that user. It is an identity match, not a permission: no grant, however wide,
+lets another user's socket receive it, and an admin reads someone else's inbox (if ever) through
+the API, audited, never over the socket. It is its own rule in `eligibility.ts`, checked before the
+domain rule, and — being a new eligibility rule — its PR is held for the product owner's security
+review rather than self-merged.
+
 ## 6. Key flows
 
 ### 6.1 Subscribe + deliver

@@ -89,6 +89,14 @@ A scheduled/triggered inbound feed fetches JSON/XML, applies the **mapping templ
 it into Atlas fields, and emits `feed.item.received` (e.g. a Newsroom wire, or metadata to
 attach). Malformed items are logged and skipped, not fatal to the run.
 
+**The mapping (decided 2026-10-12, EP-32.2)** is a **table**, not a language. Each row is a source
+path (JSONPath for JSON, XPath for XML), a target field, and optionally one transform from a fixed
+allowlist — trim, case, number, date parse with a stated format, split/join, a default value, and
+a lookup that resolves a label to a controlled-vocabulary term. It is edited as a form, validated on
+save against the target type's field schema, and previewed on a sample item before it is published.
+No expressions and no code — the transcode profiles' rule (structured, never raw). JSONata was
+considered and not adopted.
+
 ## 7. Dependencies
 
 - **Scheduling** (EPG source), **MAM** (asset/metadata targets), **Newsroom** (wires),
@@ -132,8 +140,8 @@ disable external connectors per deployment.
 ## 13. Implementation notes
 
 - **Node.js + NestJS** with worker-per-feed; `fast-xml-parser`/`xmlbuilder2` for XML, native
-  JSON; `undici` for HTTP; JSONPath/JMESPath-style mapping for templates. Sandboxed/limited
-  transform expressions (no arbitrary code execution from templates).
+  JSON; `undici` for HTTP; mappings are path → field tables with allowlisted transforms (§6.2) —
+  no expressions, no code execution from templates.
 
 ## 14. Open questions / future
 

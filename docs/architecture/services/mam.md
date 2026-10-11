@@ -279,6 +279,12 @@ written with the asset; a category's subtree re-projected by MAM's own durable c
 AND across facets, OR within; per-asset authorization; counts over the page. Studio's Search panel
 shows the page's facets as chips that filter.
 
+**The search store (decided 2026-10-12, EP-27.2).** MAM's search stays in **Postgres** — the asset
+table plus the projected `asset_facets`. The OpenSearch projection mam-plan §2 step 3 sketched is
+NOT built unless a performance check at a target catalogue size fails NFR-PERF (EP-27.7); if it
+does, the projection follows the audit log's shape (ADR-0005: Postgres the record, the index derived
+and rebuildable), and the threshold that triggered it is recorded here.
+
 ### Policies that act (EP-28.7)
 
 A category chain resolving `reviewNeeded: false` auto-approves its media on `markReady`: MAM commits
