@@ -373,7 +373,10 @@ on-demand, deliberately not a write gate.
 
 # Phase 2 — Workflow, approval & collaboration → Beta (S12–S19)
 
-> Story headlines only; refined into full stories during Phase 1's final iterations.
+> Refined into stories 2026-10-11 (EP-28 on 2026-10-09). The headline table is kept as the summary;
+> the tables below are the backlog, and each story is a sub-issue of its epic. A ✅ story shipped
+> ahead of its phase, with the PR that did it. `⚑ spike` / `⚑ decision` = a written artifact that the
+> stories after it wait on.
 
 | Epic | Story headlines |
 |------|-----------------|
@@ -389,6 +392,112 @@ on-demand, deliberately not a write gate.
 | **EP-31 Scheduling v1** ◆ | On-demand validation (gaps/overlaps/rights/availability) · approved-and-not-expired gate · **MCRList serializer** (pluggable) · send-to-air export · **control-room path rewrite** ◆ · export verification |
 | **EP-32 Integration inbound** | Inbound feed authoring · JSON/XML mapping templates · scheduling + retries · `feed.item.received` · delivery log |
 | **EP-33 Config admin** | Generated settings UI from descriptors · vocabulary admin (deprecate/merge) · registry admin · seed export/import CLI · CI drift report |
+
+### EP-22 — BMS v1 (refined 2026-10-11)
+
+Source: [bms-plan](services/bms-plan.md) §2; [bms.md](../architecture/services/bms.md).
+
+| ID | Story | Est |
+|----|-------|:---:|
+| 22.1 | Spike + ADR: durable runtime — Temporal (TS SDK) vs a broker-backed saga (time-boxed 5 d; written artifact) ⚑ spike | 5 |
+| 22.2 | Scaffold `bms` (`nx g service`) + the `WorkflowDefinition` store; DSL schema in `@atlas/contracts`, validated on publish | 5 |
+| 22.3 | Durable runtime per the ADR behind an `Effects` boundary with a pure interpreter — one instance per workflow; timers, retries and waits survive restarts | 8 |
+| 22.4 | Command/event adapters — a command step issues the target service's own command, records `workflow.step.requested`, awaits its completion event | 5 |
+| 22.5 | Human-task step — `workflow.task.created` (user/role), waits on the correlated completion | 5 |
+| 22.6 | Manual-review step — `reviewPointId`, resolves on `asset.approved`/`rejected`, placeable at several points (review plan WS-G) | 3 |
+| 22.7 | Canonical ingest-to-air preset — ingest → transcode → catalogue → review → schedule, driven end to end (send-to-air stays EP-31's) | 5 |
+| 22.8 | Instance state API — `GET /instances/{id}` with step history | 3 |
+| 22.9 | Timeout / retry / compensation semantics; a step that keeps failing dead-letters | 5 |
+| 22.10 | Re-review re-entry — `asset.expired` opens a fresh manual-review task | 2 |
+
+**Decide first:** 22.1 — each is a written artifact (ADR or spike report), and the stories after it build on its answer.
+
+### EP-23 — Workflow designer (refined 2026-10-11)
+
+Source: [bms-plan](services/bms-plan.md) §2 steps 6–8 and "Designer & format — decisions".
+
+| ID | Story | Est |
+|----|-------|:---:|
+| 23.1 | Palette endpoint (`GET /workflows/palette`: step kinds + config schemas) and `POST /workflows/{id}/validate` (reachability, unbound refs, edge types) | 3 |
+| 23.2 | Lossless DSL ⇄ BPMN 2.0 converter in `contracts` (`bpmn-moddle` + `atlas:` extension elements + DI layout), round-trip tested | 8 |
+| 23.3 | Decision: confirm Foblex Flow (MIT package; full source is a paid licence) for an air-gapped, public-repo product — or ngx-vflow ⚑ decision | 2 |
+| 23.4 | Studio canvas — nodes and edges edited thin over the definition | 8 |
+| 23.5 | Palette + property panels generated from the step kinds' config schemas | 5 |
+| 23.6 | FEEL expression editor for conditions — which FEEL subset the engine evaluates is a decision ⚑ decision | 5 |
+| 23.7 | Publish/version flow — draft → published, a published version immutable | 3 |
+| 23.8 | Import/export BPMN from Studio | 2 |
+| 23.9 | Live-instance overlay — the canvas coloured by a running instance's step history (FR-BMS-6) | 3 |
+
+**Decide first:** 23.3, 23.6 — each is a written artifact (ADR or spike report), and the stories after it build on its answer.
+
+### EP-24 — Review & approval (refined 2026-10-11)
+
+Source: [review-lifecycle plan](15-review-lifecycle-implementation-plan.md) WS-A…K.
+
+| ID | Story | Est |
+|----|-------|:---:|
+| 24.1 | ✅ Manual approve/reject verdicts on the MAM lifecycle, `asset:approve`, audited (EP-17) | 3 |
+| 24.2 | ✅ Category-inherited expiry, snapshotted at approval (FR-TAX-7, FR-APP-7) (#414) | 3 |
+| 24.3 | ✅ Auto-approve where the category chain says `reviewNeeded: false` (#418) | 2 |
+| 24.4 | Retained verdict history — `GET /assets/{id}/verdicts` (WS-C) | 3 |
+| 24.5 | Expiry scheduler — an approved asset past `expiresAt` becomes `expired` with `asset.expired`, needing re-review (WS-D) | 5 |
+| 24.6 | Rejected-retention purge — past `retainUntil`, the asset is purged and its files released through HSM (touches HSM deletion) ◆ | 5 |
+| 24.7 | Review points at several workflow positions (with EP-22.6) | 3 |
+| 24.8 | Air-gating at export — only approved, unexpired media reach air (with EP-31.5) ◆ | 3 |
+| 24.9 | Studio review queue + verdict UI — approve/reject with reason and expiry, history shown (WS-H) | 5 |
+
+**Not AI-fast-tracked (◆):** 24.6, 24.8 — 2 reviewers + pairing.
+
+### EP-25 — Notifications (refined 2026-10-11)
+
+Source: [notifications-plan](services/notifications-plan.md) §2; lift from [`reference/notifications-service/`](../../reference/notifications-service/).
+
+| ID | Story | Est |
+|----|-------|:---:|
+| 25.1 | Scaffold `notifications`, lifting the reference slice | 3 |
+| 25.2 | Task entity + state machine — create/assign/forward/close; materialised from `workflow.task.created` | 5 |
+| 25.3 | Inbox + unread counts — `GET /inbox` | 3 |
+| 25.4 | User and group messaging, permission-aware (a user messages only permitted peers/groups) | 5 |
+| 25.5 | Notification-type registry + templates (Tier 1) and the event → notification pipeline (`asset.approved`, `asset.expired`, `transcode.failed`, `alert.raised`, mentions) | 5 |
+| 25.6 | Per-user preferences — per type, opt in/out | 3 |
+| 25.7 | Live delivery on a per-user topic through the WebSocket service — a new eligibility rule: security review ⚑ decision | 3 |
+| 25.8 | Task → BMS feedback — completing a task resolves the waiting workflow step | 3 |
+| 25.9 | Studio inbox panel — tasks, messages, notifications, live | 5 |
+
+**Decide first:** 25.7 — each is a written artifact (ADR or spike report), and the stories after it build on its answer.
+
+### EP-26 — Media Editor v1 (refined 2026-10-11)
+
+Source: [media-editor.md](../architecture/services/media-editor.md) (D3: basic NLE, a capability in MAM + MTS).
+
+| ID | Story | Est |
+|----|-------|:---:|
+| 26.1 | Spike: in-browser proxy playback and frame-accurate scrubbing (codecs, seek) — written artifact ⚑ spike | 3 |
+| 26.2 | `EditProject` persistence (MAM document store) + API | 5 |
+| 26.3 | Timeline UI — trim and arrange | 8 |
+| 26.4 | Proxy scrubbing on the VTT filmstrip (with EP-29.3) | 3 |
+| 26.5 | Transitions and filters from an allowlist (never raw FFmpeg — the profile-registry rule) | 5 |
+| 26.6 | `editor.render.requested` → MTS render job | 5 |
+| 26.7 | Render to a new version (with EP-27.5's version chain) | 3 |
+| 26.8 | Render progress + failure handling in the editor | 2 |
+
+**Decide first:** 26.1 — each is a written artifact (ADR or spike report), and the stories after it build on its answer.
+
+### EP-27 — MAM v2 (refined 2026-10-11)
+
+Source: [mam-plan](services/mam-plan.md) §2.
+
+| ID | Story | Est |
+|----|-------|:---:|
+| 27.1 | ✅ Advanced faceted search over effective values (#419, #417) | 8 |
+| 27.2 | Decision: keep MAM's search in Postgres or project it to OpenSearch (mam-plan §2.3) — measured against NFR-PERF at a target catalogue size ⚑ decision | 2 |
+| 27.3 | Shot-list — time-coded segments on an asset, audited | 5 |
+| 27.4 | Metadata schema editor — field schemas in Studio's Admin panel | 5 |
+| 27.5 | Auto-vs-manual field provenance — AI/derived values kept distinct, never overwriting what a person entered | 3 |
+| 27.6 | Version chain + replace-with-clone — `POST /assets/{id}/versions`, `asset.replaced(oldId, newId)`, Scheduling swaps references | 5 |
+
+**Decide first:** 27.2 — each is a written artifact (ADR or spike report), and the stories after it build on its answer.
+
 
 ### EP-28 — Classification & discovery (refined 2026-10-09)
 
@@ -411,6 +520,84 @@ category's** — for subjects, classifications and tags alike; cast inherits **p
 query time (a category join) or project effective values and re-project a subtree on
 `taxonomy.updated`; 28.7's `reviewNeeded: false` means *auto-approve* or *approval optional*, a
 product call with EP-24.
+
+### EP-29 — MTS v2 (refined 2026-10-11)
+
+Source: [mts-plan](services/mts-plan.md) §2 steps 4–5.
+
+| ID | Story | Est |
+|----|-------|:---:|
+| 29.1 | ✅ Per-channel / per-type profiles (#354 (EP-16.6)) | 3 |
+| 29.2 | Decision: KEDA on customer clusters (air-gapped, operator-installed?) or a built-in scaler on the job table's depth ⚑ decision | 2 |
+| 29.3 | Autoscale workers on queue depth, draining on empty | 5 |
+| 29.4 | VTT filmstrip rendition (sprite + WebVTT) | 3 |
+| 29.5 | Hover-preview rendition | 3 |
+
+**Decide first:** 29.2 — each is a written artifact (ADR or spike report), and the stories after it build on its answer.
+
+### EP-30 — Multi-channel & theming (refined 2026-10-11)
+
+Source: [studio-frontend.md](../architecture/studio-frontend.md) §5, [authorization-model.md](../architecture/authorization-model.md).
+
+| ID | Story | Est |
+|----|-------|:---:|
+| 30.1 | ✅ i18n (en/ar) + RTL (EP-11.6) | 3 |
+| 30.2 | Channel isolation, end to end — a cross-tenant suite over every service's reads, writes, topics and history | 5 |
+| 30.3 | Decision: how one person works in several channels — one token per channel, or a channel switch with grants across them ⚑ decision | 2 |
+| 30.4 | Channel switching in Studio (per 30.3) | 5 |
+| 30.5 | Per-tenant theme — tokens from the channel's settings | 3 |
+| 30.6 | Per-user theme preference | 2 |
+| 30.7 | Workspace persistence server-side, per user (today: the browser's storage) | 3 |
+
+**Decide first:** 30.3 — each is a written artifact (ADR or spike report), and the stories after it build on its answer.
+
+### EP-31 — Scheduling v1 (refined 2026-10-11)
+
+Source: [scheduling.md](../architecture/services/scheduling.md) §13a; [scheduling-plan](services/scheduling-plan.md).
+
+| ID | Story | Est |
+|----|-------|:---:|
+| 31.1 | ✅ On-demand validation — gaps, overlaps, anchors, approval, expiry at air time (#368) | 5 |
+| 31.2 | ✅ Rights windows (#369, #370) | 3 |
+| 31.3 | ✅ Rendition availability, asked of HSM (#406) | 3 |
+| 31.4 | ✅ Copy a range onto another day (FR-SCH-13) (#407) | 3 |
+| 31.5 | Approved-and-not-expired guard at serialization ◆ | 3 |
+| 31.6 | MCRList serializer, pluggable, against real Cinegy samples ◆ | 8 |
+| 31.7 | Send-to-air export through HSM ◆ | 5 |
+| 31.8 | Control-room path rewrite ◆ | 3 |
+| 31.9 | Export verification ◆ | 3 |
+| 31.10 | Export profiles registry (`/export-profiles`: format, destination, rewrite rule) | 3 |
+
+**Not AI-fast-tracked (◆):** 31.5, 31.6, 31.7, 31.8, 31.9 — 2 reviewers + pairing.
+
+### EP-32 — Integration inbound (refined 2026-10-11)
+
+Source: [integration-feeds-plan](services/integration-feeds-plan.md) §2.
+
+| ID | Story | Est |
+|----|-------|:---:|
+| 32.1 | Scaffold `integration` + the feed-definition registry | 3 |
+| 32.2 | Decision: the mapping language — a declarative one (e.g. JSONata) vs a field-mapping table; never arbitrary code ⚑ decision | 2 |
+| 32.3 | JSON/XML mapping templates per 32.2 | 5 |
+| 32.4 | Per-feed scheduling + retries (a leased worker, like recorders) | 5 |
+| 32.5 | `feed.item.received` — dedupe, validation, assets created through MAM | 5 |
+| 32.6 | Delivery log | 3 |
+| 32.7 | Studio: inbound feed authoring | 5 |
+
+**Decide first:** 32.2 — each is a written artifact (ADR or spike report), and the stories after it build on its answer.
+
+### EP-33 — Config admin (refined 2026-10-11)
+
+Source: [configuration-and-reference-data.md](../architecture/configuration-and-reference-data.md) §10.
+
+| ID | Story | Est |
+|----|-------|:---:|
+| 33.1 | ✅ Vocabulary admin (deprecate / merge) (#415) | 3 |
+| 33.2 | Settings rows + `config.changed` in the service template, wiring `@atlas/reference` (built, unwired since EP-06.6) | 5 |
+| 33.3 | Generated settings UI from descriptors, origin level + reset to inherited (FR-CFG-5) | 5 |
+| 33.4 | Registry admin — a generic Tier-1 registry view | 5 |
+| 33.5 | Seed bundle export/import CLI | 3 |
+| 33.6 | CI drift report — seed vs a live environment | 2 |
 
 ---
 
