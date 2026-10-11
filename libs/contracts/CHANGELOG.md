@@ -43,6 +43,12 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `@atlas/contracts/workflow` (EP-22.2) — a subpath export, so FEEL's parser loads only where
+  workflows are read: the workflow DSL's types (`WorkflowDefinition`, `Step`, the step configs),
+  `validateDefinition` (the `workflow-definition` schema, the graph rules of the DSL doc §6, and
+  every expression held to the **restricted FEEL subset** decided for EP-23.6 — `FEEL_SUBSET` names
+  the refused construct), `feelProblem`, `referencedVars`, `FEEL_ROOTS`, `FEEL_FUNCTIONS`. Lifted
+  from `reference/bms-workflow`; new dependency `feelin`.
 - `asset.approved` (EP-28.7): optional `automatic` — MAM approved the asset itself, its category
   chain saying `reviewNeeded: false`; the approver is then `mam` and the envelope's actor a service.
 - `RoleClass` (EP-28.5): a shared Tier-0 `$def` — `on-screen` | `crew` — exported with the other

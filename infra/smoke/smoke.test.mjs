@@ -14,6 +14,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 const BASE = process.env.ATLAS_BASE_URL ?? 'http://localhost:30080';
 const TIMEOUT = Number(process.env.ATLAS_SMOKE_TIMEOUT_MS ?? 10_000);
@@ -200,6 +201,8 @@ test('smoke: every PROXIED upstream answers through the gateway before anything 
     ['mts', '/api/v1/jobs?limit=1'],
     // HSM (EP-14): the location of an asset nobody has — an empty list, through the suffix route.
     ['hsm', '/api/v1/assets/01H00000000000000000000000/location'],
+    // BMS (EP-22.2): the channel's workflow definitions.
+    ['bms', '/api/v1/workflows?limit=1'],
   ];
   const budgetMs = Number(process.env.ATLAS_SMOKE_UPSTREAM_BUDGET_MS ?? 30_000);
 
@@ -1466,6 +1469,94 @@ test('smoke: EP-18 — a program table is written thinly, read back in reel orde
     'the sink saw both writes',
   );
   assert.ok(history.revisions[1].delta.items, 'the reel change rode in the delta');
+});
+
+test('smoke: EP-22.2 — a workflow is authored, refused while invalid, published, and audited', async () => {
+  // BMS on a live cluster: the canonical ingest-to-air preset from docs/ is created as a draft,
+  // saved broken (a FEEL loop — outside the subset) and REFUSED at publish with the construct
+  // named, saved whole again and published as version 1, read back immutable — and every write is
+  // in the audit history the sink projected.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const preset = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../docs/architecture/workflows/presets/canonical-ingest-to-air.workflow.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  );
+  const input = {
+    name: `smoke ${Date.now()}`,
+    vars: preset.vars,
+    steps: preset.steps,
+    transitions: preset.transitions,
+  };
+
+  const created = await get('/api/v1/workflows', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(input),
+  });
+  assert.equal(created.status, 201, `create failed: ${created.text}`);
+  const w = json(created);
+  assert.equal(w.draftVersion, 1);
+
+  const broken = {
+    ...input,
+    transitions: input.transitions.map((t) =>
+      t.when ? { ...t, when: '= for x in vars.xs return x' } : t,
+    ),
+  };
+  const savedBroken = await get(`/api/v1/workflows/${w.id}/draft?revision=1`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(broken),
+  });
+  assert.equal(savedBroken.status, 200, `a draft is work in progress: ${savedBroken.text}`);
+  const refused = await get(`/api/v1/workflows/${w.id}/publish?revision=2`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(refused.status, 422, refused.text);
+  assert.ok(json(refused).details.issues.some((i) => i.code === 'FEEL_SUBSET'));
+
+  const fixed = await get(`/api/v1/workflows/${w.id}/draft?revision=2`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(input),
+  });
+  assert.equal(fixed.status, 200, fixed.text);
+  const published = await get(`/api/v1/workflows/${w.id}/publish?revision=3`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(published.status, 200, `publish failed: ${published.text}`);
+  assert.equal(json(published).version, 1);
+  const v1 = await get(`/api/v1/workflows/${w.id}/versions/1`, { headers });
+  assert.equal(json(v1).status, 'published');
+
+  const deadline = Date.now() + 20_000;
+  let history;
+  for (;;) {
+    const res = await get(`/api/v1/history/workflow/${w.id}`, { headers });
+    assert.equal(res.status, 200, `history read failed: ${res.text}`);
+    history = json(res);
+    if (history.revisions.length >= 4 || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.deepEqual(
+    history.revisions.map((r) => [r.revision, r.action]),
+    [
+      [1, 'workflow.created'],
+      [2, 'workflow.draft-saved'],
+      [3, 'workflow.draft-saved'],
+      [4, 'workflow.published'],
+    ],
+    'the refused publish wrote nothing; every write is in the log',
+  );
 });
 
 test('smoke: EP-31 — a range copied onto another day: one audited write over the target version', async () => {

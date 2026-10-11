@@ -56,6 +56,8 @@ spec:
               value: http://mts:3000
             - name: ATLAS_HSM_ORIGIN
               value: http://hsm:3000
+            - name: ATLAS_BMS_ORIGIN
+              value: http://bms:3000
             - name: ATLAS_ISSUER
               value: atlas-iam
             - name: ATLAS_AUDIENCE

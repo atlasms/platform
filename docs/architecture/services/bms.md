@@ -261,6 +261,33 @@ retry/timeout/compensation policies; SLA timers; task-assignment rules.
   XML/DI serialization. Design the DSL step kinds as a **BPMN subset from day one** so the mapping
   stays deterministic.
 
+## 13a. As built — EP-22.2, workflow definitions
+
+`apps/bms`, generated (`nx g service bms --db --broker`), serving the authoring half of
+[`bms.yaml`](../openapi/bms.yaml) through the gateway (`/api/v1/workflows`, and `/api/v1/instances`
+routed ahead of EP-22.3):
+
+- **A header and its versions** (DSL doc §7): `workflows` (compare-and-set on `revision`) and
+  `workflow_versions` — both carrying `channel_id`. Version n is the one open draft
+  (`latestVersion + 1`, a partial unique index holds "at most one") or published, and a published
+  row is never written again: the upsert's `WHERE status = 'draft'` matches nothing, in both
+  adapters, held by one conformance suite on sqlite and Postgres.
+- **A draft saves whatever it holds** — work in progress; `POST …/validate` gives the designer the
+  publish rules on demand (the body's graph, or the stored draft's), and **publish is the gate**: the
+  `workflow-definition` schema, the graph rules (§6), every expression inside the restricted FEEL
+  subset (`@atlas/contracts/workflow`), and — what only the store knows — a sub-flow must name a
+  published workflow of the same channel. Refused, it is a 422 whose `details.issues` are the
+  issues; the draft stays a draft. Warnings ride along on the publish result.
+- **Every write** (create, save, publish) commits `audit.recorded` with the field-level delta in
+  its transaction; the history is readable under `workflow:read` (+ `logs:read`), the default rule.
+- **Authorization:** reading takes `workflow:read` or `workflow:admin` (who authors a flow reads
+  it); every write takes `workflow:admin`; another channel's workflow is not found.
+- **Not here — human tasks.** `bms.yaml` no longer declares `/tasks/{id}/complete`: a workflow's
+  task is Notifications' (`/tasks`, notifications.md §6.2) and its completion signals the waiting
+  instance (EP-25.8), so the prefix has one owner.
+- Smoke authors the canonical preset through the gateway, is refused publish while a transition
+  holds a FEEL loop, publishes it fixed, and reads the four audit revisions back.
+
 ## 14. Open questions / future
 
 - **Decided:** Studio gets a **visual drag-and-drop designer** ([Foblex Flow](https://flow.foblex.com/))

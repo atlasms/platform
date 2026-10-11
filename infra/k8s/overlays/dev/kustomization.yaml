@@ -40,6 +40,8 @@ images:
     newTag: dev
   - name: atlas/hsm
     newTag: dev
+  - name: atlas/bms
+    newTag: dev
 
 # The base declares no credentials at all — it names a Secret and stops there, so nothing in the
 # environment-independent layer can leak one. This generator is the dev value, and it is committed

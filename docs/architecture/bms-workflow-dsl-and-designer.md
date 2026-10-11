@@ -169,7 +169,9 @@ validator to explain:
 
 Everything else — function definitions, `for` / `some` / `every`, list filters (`xs[ … ]`), context
 construction — is refused when a definition is published, with the construct named. Widening the
-list is a decision recorded here, not a library upgrade.
+list is a decision recorded here, not a library upgrade. The roots are declared to the parser as context names: FEEL
+reads a bare `instance` as the start of `instance of`, so without that the `instance` root would not
+parse — and with it, `instance of` (outside the subset anyway) does not.
 
 ## 4. Variables & data flow
 

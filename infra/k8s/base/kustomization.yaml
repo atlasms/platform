@@ -21,6 +21,7 @@ resources:
   - mam.yaml
   - websocket.yaml
   - api-gateway.yaml
+  - bms.yaml
   - hsm.yaml
   - mts.yaml
   - rim.yaml

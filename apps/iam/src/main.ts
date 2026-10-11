@@ -194,6 +194,10 @@ if (seedUser && seedPassword) {
           // EP-16.6: the channel's transcode profile registry. Channel-scoped, so the smoke suite
           // can write a channel profile and is refused a platform-wide one.
           'config:admin',
+          // EP-22.2: workflow definitions, so the smoke suite can author, publish and read one
+          // back (`workflow:read` also reads its audit history).
+          'workflow:read',
+          'workflow:admin',
         ],
         scope: { channelIds: [channelId] },
       },

@@ -75,6 +75,7 @@ export interface ProductionOrigins {
   rim: string;
   mts: string;
   hsm: string;
+  bms: string;
   /** The upload prefix's body cap (a chunked upload's part; EP-15.1). */
   uploadBodyLimit: number;
 }
@@ -148,6 +149,9 @@ export function productionRoutes(o: ProductionOrigins): RoutingTable {
     // and must be unreachable from outside. Each refuses them unsigned anyway.
     // MTS (EP-16): enqueue a transcode and poll it; the profile registry; the worker pool.
     ...to('mts', ['/api/v1/jobs', '/api/v1/profiles', '/api/v1/workers']),
+    // BMS (EP-22): workflow definitions, and their running instances (EP-22.3). A workflow's human
+    // tasks are Notifications' `/tasks`, not here (bms.yaml).
+    ...to('bms', ['/api/v1/workflows', '/api/v1/instances']),
   ];
 }
 

@@ -44,6 +44,9 @@ images:
   - name: atlas/scheduling
     newName: registry.example/atlas/scheduling
     newTag: 0.1.0
+  - name: atlas/bms
+    newName: registry.example/atlas/bms
+    newTag: 0.1.0
   - name: atlas/rim
     newName: registry.example/atlas/rim
     newTag: 0.1.0

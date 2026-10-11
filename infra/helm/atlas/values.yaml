@@ -22,6 +22,9 @@ images:
   api-gateway:
     repository: atlas/api-gateway
     tag: ""
+  bms:
+    repository: atlas/bms
+    tag: ""
   hsm:
     repository: atlas/hsm
     tag: ""
@@ -69,6 +72,7 @@ images:
 # A deployment listed here with more than one replica also gets a PodDisruptionBudget.
 replicas:
   apiGateway: 2
+  bms: 1
   hsm: 1
   logging: 1
   mam: 2
@@ -84,6 +88,12 @@ resources:
       memory: 128Mi
     limits:
       memory: 512Mi
+  bms:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 384Mi
   hsm:
     requests:
       cpu: 50m
