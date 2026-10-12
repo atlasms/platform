@@ -10,3 +10,7 @@ export {
   type Workflow,
   type WorkflowVersion,
 } from './workflow.ts';
+export { BmsRuntime } from './runtime.ts';
+export { inProcessRunner, type InProcessRunner } from './runner-inprocess.ts';
+export type { InstanceRunner } from './runner.ts';
+export type { Instance, HistoryEntry } from './instance.ts';

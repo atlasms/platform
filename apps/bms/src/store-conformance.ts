@@ -12,6 +12,8 @@ import { ulid, type Envelope, type EventPayloads } from '@atlas/contracts';
 import type { WorkflowDefinition } from '@atlas/contracts/workflow';
 import { InMemoryBroker, OutboxRelay, type OutboxStore } from '@atlas/messaging';
 import { compile } from '@atlas/policy';
+import type { Instance } from './instance.ts';
+import { BmsRuntime } from './runtime.ts';
 import { BmsService, type Caller } from './service.ts';
 import type { WorkflowStore } from './store.ts';
 import type { DraftInput } from './workflow.ts';
@@ -192,6 +194,121 @@ export function workflowStoreConformance(name: string, harness: WorkflowStoreHar
         [...first.items, ...second.items].map((x) => x.id).sort(),
         [a.id, b.id].sort(),
       );
+    });
+  });
+
+  const instance = (over: Partial<Instance> = {}): Instance => ({
+    id: ulid(),
+    channelId: CH,
+    workflowId: ulid(),
+    version: 1,
+    state: 'running',
+    currentSteps: [],
+    startedAt: '2026-10-12T10:00:00.000Z',
+    startedBy: 'user-1',
+    ...over,
+  });
+
+  test(`[${name}] an instance mirror: one row per id, its history one row per sequence number`, async () => {
+    await withFixture(async ({ store }) => {
+      const runtime = new BmsRuntime({ store });
+      const i = instance();
+      assert.equal(await store.transaction((tx) => tx.insertInstance(i)), true);
+      assert.equal(
+        await store.transaction((tx) => tx.insertInstance(i)),
+        false,
+        'a retried start is the same instance',
+      );
+
+      await runtime.recordHistory({ instanceId: i.id, seq: 1, stepId: 's_wait', event: 'entered' });
+      await runtime.recordHistory({
+        instanceId: i.id,
+        seq: 2,
+        stepId: 's_wait',
+        event: 'awaiting',
+      });
+      // A retried activity: the same sequence number lands on the same row, and moves nothing.
+      await runtime.recordHistory({
+        instanceId: i.id,
+        seq: 2,
+        stepId: 's_wait',
+        event: 'awaiting',
+      });
+      const waiting = await store.instance(i.id);
+      assert.equal(waiting?.state, 'waiting');
+      assert.deepEqual(waiting?.currentSteps, ['s_wait']);
+      assert.deepEqual(
+        (await store.history(i.id)).map((h) => [h.seq, h.event]),
+        [
+          [1, 'entered'],
+          [2, 'awaiting'],
+        ],
+      );
+      await runtime.recordHistory({
+        instanceId: i.id,
+        seq: 3,
+        stepId: 's_wait',
+        event: 'completed',
+      });
+      assert.equal((await store.instance(i.id))?.state, 'running');
+    });
+  });
+
+  test(`[${name}] an activity retried after it committed writes nothing again`, async () => {
+    await withFixture(async ({ store, drain }) => {
+      const runtime = new BmsRuntime({ store });
+      const i = instance();
+      await store.transaction((tx) => tx.insertInstance(i));
+      const req = {
+        stepId: 's_cmd',
+        event: 'transcode.job.create',
+        payload: { assetId: 'A1' },
+        correlationId: `${i.id}::s_cmd:1`,
+        idempotencyKey: `${i.id}:s_cmd:1`,
+      };
+      await runtime.requestStep({ key: `${i.id}:1`, instanceId: i.id, req });
+      await runtime.requestStep({ key: `${i.id}:1`, instanceId: i.id, req });
+      const spec = {
+        instanceId: i.id,
+        stepId: 's_task',
+        taskType: 'review',
+        assignee: { role: 'editor' },
+      };
+      const t1 = await runtime.createTask({ key: `${i.id}:2`, spec });
+      const t2 = await runtime.createTask({ key: `${i.id}:2`, spec });
+      assert.equal(t1, t2, 'a retried task is the same task');
+      const result = { state: 'completed' as const, vars: { ok: true } };
+      await runtime.finish({ instanceId: i.id, result });
+      await runtime.finish({ instanceId: i.id, result });
+
+      const types = (await drain()).map((e) => e.type);
+      assert.deepEqual(types.filter((t) => t === 'workflow.step.requested').length, 1);
+      assert.deepEqual(types.filter((t) => t === 'workflow.task.created').length, 1);
+      assert.deepEqual(types.filter((t) => t === 'workflow.completed').length, 1);
+      assert.equal((await store.instance(i.id))?.state, 'completed');
+    });
+  });
+
+  test(`[${name}] instances list newest first, by channel, and by workflow`, async () => {
+    await withFixture(async ({ store }) => {
+      const wf = ulid();
+      const a = instance({ workflowId: wf });
+      const b = instance({ workflowId: wf });
+      const c = instance();
+      const elsewhere = instance({ channelId: 'ch99' });
+      for (const i of [a, b, c, elsewhere]) await store.transaction((tx) => tx.insertInstance(i));
+      const all = await store.instances(CH, { limit: 10 });
+      assert.deepEqual(
+        all.map((x) => x.id),
+        [c.id, b.id, a.id].sort().reverse(),
+      );
+      assert.deepEqual(
+        (await store.instances(CH, { workflowId: wf, limit: 10 })).map((x) => x.id).sort(),
+        [a.id, b.id].sort(),
+      );
+      const first = await store.instances(CH, { limit: 1 });
+      const next = await store.instances(CH, { after: first[0]!.id, limit: 10 });
+      assert.equal(first.length + next.length, 3);
     });
   });
 }

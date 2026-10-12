@@ -91,6 +91,9 @@ jobs:
       ATLAS_PG_URL: postgres://atlas:atlas@localhost:5432/atlas
       ATLAS_NATS_URL: nats://localhost:4222
       ATLAS_OPENSEARCH_URL: http://localhost:9200
+      # BMS's worker against a real Temporal (EP-22.3, ADR-0010) — apps/bms/test/temporal.test.ts
+      # FAILS rather than skips when CI is set and this is missing.
+      ATLAS_TEMPORAL_ADDRESS: localhost:7233
       # HSM's S3 driver (ADR-0009) runs the storage driver suite against a real S3-compatible
       # server; it FAILS rather than skips in CI without this, like the rest.
       ATLAS_S3_URL: http://localhost:8333
@@ -108,6 +111,23 @@ jobs:
       # NATS needs `--jetstream`, and a `services:` block cannot set a container's command — only
       # its image, env, ports and `docker create` options. So the broker ADR-0001 actually chose
       # starts here instead. The asymmetry with Postgres is the limitation, not a preference.
+      # Temporal's dev server (in-memory, one process) — enough to run BMS's real worker against
+      # (apps/bms/test/temporal.test.ts). The deployed shape, the server on Postgres with its
+      # schema initContainer, is the Smoke workflow's. Like NATS, it needs a command, so it
+      # starts here rather than under `services:`. Same image tag as the manifests.
+      - name: Start Temporal (dev server)
+        run: |
+          docker run -d --name atlas-ci-temporal -p 7233:7233             temporalio/admin-tools:1.32.1 temporal server start-dev --ip 0.0.0.0
+          for _ in $(seq 1 60); do
+            if docker exec atlas-ci-temporal temporal operator cluster health --address localhost:7233 2>/dev/null | grep -q SERVING; then
+              echo "Temporal ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Temporal did not become ready in 60s"
+          docker logs atlas-ci-temporal
+          exit 1
+
       - name: Start JetStream
         run: |
           docker run -d --name atlas-ci-nats \

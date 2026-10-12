@@ -142,28 +142,57 @@ paths:
     get:
       operationId: listInstances
       tags: [instances]
-      summary: Running flow instances (workflow:read; EP-22.8)
+      summary: The channel's workflow instances, newest first (workflow:read, :act or :admin)
+      parameters:
+        - { name: workflowId, in: query, required: false, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: after, in: query, required: false, schema: { $ref: '#/components/schemas/Ulid' }, description: The last id of the previous page. }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
-        '200': { description: Instances, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkflowInstance' } } } } }
+        '200': { description: A page of instances, content: { application/json: { schema: { $ref: '#/components/schemas/InstancePage' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: startInstance
+      tags: [instances]
+      summary: >-
+        Start an instance of a PUBLISHED workflow version (workflow:act). It is pinned to that
+        version for its whole life. Runs on Temporal (ADR-0010); 503 when the runtime is away.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/StartInstance' } } } }
+      responses:
+        '201': { description: Started, content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowInstance' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: The workflow has no published version (or not the one named)., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { $ref: '#/components/responses/Error' }
+        '503': { description: The workflow runtime (Temporal) could not be reached; nothing was started., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /instances/{id}:
     get:
       operationId: getInstance
       tags: [instances]
-      summary: Running flow state + current position (FR-BMS-6; EP-22.8)
+      summary: An instance's state, where it is waiting, and its step history (FR-BMS-6)
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
       responses:
         '200': { description: Instance, content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowInstance' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /instances/{id}/signal:
     post:
       operationId: signalInstance
       tags: [instances]
-      summary: Send an external signal to a waiting instance (EP-22.3)
+      summary: >-
+        Deliver a step's completion or event to a waiting instance (workflow:act) — the generic
+        path until EP-22.4's event router delivers completions from the bus. A signal for a step not
+        yet waiting is kept until it waits.
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
-      requestBody: { content: { application/json: { schema: { type: object, properties: { name: { type: string }, data: { type: object } } } } } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Signal' } } } }
       responses:
-        '202': { description: Signalled }
+        '202': { description: Delivered to the runtime }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: The instance has ended., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { $ref: '#/components/responses/Error' }
+        '503': { description: The workflow runtime (Temporal) could not be reached., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
@@ -229,14 +258,54 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/WorkflowSummary' } }
         nextCursor: { $ref: '#/components/schemas/Ulid' }
+    StartInstance:
+      type: object
+      required: [workflowId]
+      properties:
+        workflowId: { $ref: '#/components/schemas/Ulid' }
+        version: { type: integer, minimum: 1, description: "A published version; omitted: the latest published." }
+        vars: { type: object, description: "Initial values of the definition's declared vars, over their `initial`s." }
+        assetId: { $ref: '#/components/schemas/Ulid' }
+    Signal:
+      type: object
+      required: [stepId]
+      properties:
+        stepId: { type: string, minLength: 1, description: The waiting step this completes — its id in the definition. }
+        payload: { type: object, description: "What the step receives as `incoming`; its output mappings read it." }
+    HistoryEntry:
+      type: object
+      required: [seq, stepId, event, at]
+      properties:
+        seq: { type: integer, minimum: 1 }
+        stepId: { type: string }
+        event: { type: string, enum: [entered, awaiting, completed, failed, compensated, escalated] }
+        at: { type: string, format: date-time }
+        result: {}
     WorkflowInstance:
       type: object
-      required: [id, state]
+      required: [id, channelId, workflowId, version, state, currentSteps, startedAt, startedBy]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        workflowId: { $ref: '#/components/schemas/Ulid' }
+        version: { type: integer, description: The published version it is pinned to. }
         assetId: { $ref: '#/components/schemas/Ulid' }
-        state: { type: string, enum: [running, waiting, compensating, completed, failed] }
-        currentStep: { type: string }
+        parentId: { $ref: '#/components/schemas/Ulid' }
+        state: { type: string, enum: [running, waiting, completed, failed], description: "As the mirror last recorded it; Temporal holds the instance (ADR-0010)." }
+        currentSteps: { type: array, items: { type: string }, description: The steps it is waiting in. }
+        startedAt: { type: string, format: date-time }
+        startedBy: { type: string }
+        endedAt: { type: string, format: date-time }
+        endStepId: { type: string }
+        error: { type: string }
+        vars: { type: object, description: The vars when it ended. }
+        history: { type: array, description: Every step event in order — on a single read only., items: { $ref: '#/components/schemas/HistoryEntry' } }
+    InstancePage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/WorkflowInstance' } }
+        nextCursor: { $ref: '#/components/schemas/Ulid' }
     PaletteEntry:
       type: object
       required: [kind, label]

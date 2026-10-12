@@ -48,6 +48,9 @@ spec:
               value: http://iam:3000
             - name: ATLAS_NATS_URL
               value: nats://{{ .Values.nats.host }}:{{ .Values.nats.port }}
+            # ADR-0010: the workflow runtime — BMS is the only workload given this address.
+            - name: ATLAS_TEMPORAL_ADDRESS
+              value: {{ .Values.temporal.host }}:{{ .Values.temporal.port }}
             - name: PGUSER
               valueFrom:
                 secretKeyRef:
@@ -65,9 +68,14 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
-          # No CPU limit: CPU is compressible and a limit only adds latency. Memory is not.
+          # No CPU limit: CPU is compressible and a limit only adds latency. Memory is not — and BMS
+          # also runs the Temporal worker: its native core and the workflow sandbox (EP-22.3).
           resources:
             {{- toYaml .Values.resources.bms | nindent 12 }}
+          volumeMounts:
+            # The worker's scratch; the root stays read-only.
+            - name: tmp
+              mountPath: /tmp
           # Liveness: is the process wedged — no dependencies, or an outage becomes a restart loop.
           livenessProbe:
             httpGet:
@@ -90,6 +98,10 @@ spec:
               port: http
             periodSeconds: 3
             failureThreshold: 40
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ .Values.scratch.bms }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

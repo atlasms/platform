@@ -19,7 +19,15 @@ import {
   loadConfig,
   MetricRegistry,
 } from '@atlas/service-kit';
-import { BmsService, buildBmsApp, pgMigrations, pgWorkflowStore } from './index.ts';
+import {
+  BmsRuntime,
+  BmsService,
+  buildBmsApp,
+  pgMigrations,
+  pgWorkflowStore,
+  type InstanceRunner,
+} from './index.ts';
+import { connectTemporal, type TemporalRuntime } from './temporal/runner.ts';
 
 const config = loadConfig({
   port: { env: 'PORT', type: 'number', default: 3000 },
@@ -36,6 +44,10 @@ const config = loadConfig({
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
   relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 250 },
   policyTtlMs: { env: 'ATLAS_POLICY_TTL_MS', type: 'number', default: 30_000 },
+  // ADR-0010: the workflow runtime. Only BMS is given this address — Temporal's frontend has no
+  // authentication of its own (runbook §5.1).
+  temporalAddress: { env: 'ATLAS_TEMPORAL_ADDRESS', type: 'string', default: 'temporal:7233' },
+  temporalNamespace: { env: 'ATLAS_TEMPORAL_NAMESPACE', type: 'string', default: 'atlas' },
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
   // still propagates, so a site without a collector pays only the cost of an id.
   otlpEndpoint: { env: 'ATLAS_OTLP_ENDPOINT', type: 'string', default: '' },
@@ -99,10 +111,63 @@ const health = new HealthRegistry()
   )
   .register('postgres', async () => (await pool.query('SELECT 1').catch(() => null)) !== null, {
     critical: true,
-  });
+  })
+  // NOT critical: authoring definitions needs no runtime, so BMS stays in service without it —
+  // starting an instance answers 503 until it is back. Reported, so an operator sees which.
+  .register('temporal', async () => (temporal ? await temporal.healthy() : false));
+
+// --- the workflow runtime (ADR-0010) -------------------------------------------------------------
+//
+// Connected in the background and retried, like the broker: a Temporal that is slow to start must
+// not crash-loop the service that authors definitions. Once connected, the worker runs every
+// instance from here; if it dies, the process exits and Kubernetes restarts it — an instance never
+// waits on a worker that is not polling.
+const store = pgWorkflowStore(pool);
+const runtime = new BmsRuntime({ store });
+let temporal: TemporalRuntime | undefined;
+let temporalTimer: NodeJS.Timeout | undefined;
+
+const runner: InstanceRunner = {
+  start: async (input) => {
+    if (!temporal) throw new Error('the workflow runtime is not connected yet');
+    await temporal.runner.start(input);
+  },
+  signal: async (instanceId, stepId, payload) => {
+    if (!temporal) throw new Error('the workflow runtime is not connected yet');
+    await temporal.runner.signal(instanceId, stepId, payload);
+  },
+};
+
+async function startTemporal(): Promise<void> {
+  try {
+    temporal = await connectTemporal({
+      address: config.temporalAddress,
+      namespace: config.temporalNamespace,
+      runtime,
+      log: (message, fields) => log.info(message, fields ?? {}),
+    });
+  } catch (err) {
+    log.warn('temporal unavailable, retrying', {
+      address: config.temporalAddress,
+      error: (err as Error).message,
+    });
+    temporalTimer = setTimeout(() => void startTemporal(), 5_000);
+    return;
+  }
+  temporal.run().then(
+    () => log.info('temporal worker stopped'),
+    (err: unknown) => {
+      log.error('temporal worker failed', { error: (err as Error).message });
+      process.exit(1);
+    },
+  );
+}
 
 const service = new BmsService({
-  store: pgWorkflowStore(pool),
+  store,
+  runner,
+  onRunnerError: (err, ctx) =>
+    log.warn('workflow runtime refused', { ...ctx, error: (err as Error).message }),
   // The trace context is captured where the event is CREATED, inside the request (EP-13.3): the
   // relay publishes later on a timer with no ambient context at all.
   traceHeaders: () => {
@@ -166,6 +231,7 @@ async function startBroker(): Promise<void> {
 }
 
 void startBroker();
+void startTemporal();
 
 await app.listen({ port: config.port, host: config.host });
 log.info('bms listening', { port: config.port, host: config.host });
@@ -177,8 +243,11 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     log.info(`${signal} received, draining`);
     if (retryTimer) clearTimeout(retryTimer);
+    if (temporalTimer) clearTimeout(temporalTimer);
     void app
       .close()
+      // The worker finishes the activities it holds before the pool closes under them.
+      .then(() => temporal?.shutdown())
       // After Fastify closes, so spans for in-flight requests make the final batch.
       .then(() => tracer.shutdown())
       .then(() => broker?.close())

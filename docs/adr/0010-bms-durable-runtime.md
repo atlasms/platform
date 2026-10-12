@@ -2,8 +2,8 @@
 
 - **Status:** Accepted — chosen by the product owner, 2026-10-12, on the design's case without
   running the comparison spike; checks 1–3 of *Evidence* run and passed the same day (BMS's image is
-  `node:24-slim`, not Alpine), check 4 owed; deployed to the cluster by EP-22.3
-  (`infra/k8s/base/temporal.yaml`, runbook §5.1)
+  `node:24-slim`, not Alpine), and check 4 (the crash test) passed with EP-22.3; deployed by
+  EP-22.3 (`infra/k8s/base/temporal.yaml`, runbook §5.1)
 - **Date:** 2026-10-12
 - **Stories:** EP-22.1 (this ADR); built by EP-22.2 – EP-22.10
   ([#22](https://github.com/atlasms/platform/issues/22))
@@ -93,8 +93,23 @@ it in the bundle, so the strip-only rule (no emitting syntax) binds only the wor
   container being **deleted and recreated** and the worker being restarted: on the fresh server it
   took the signal and completed, its 15-event history replayed from Postgres.
 
-### 4. A crash test — **owed** (EP-22.7's preset, killing the worker and the server mid-wait, and the
-restore drill restoring a waiting instance)
+### 4. A crash test — **passed** (EP-22.3, 2026-10-12)
+
+Run on kind against the deployed shape (the server on Postgres, the worker in BMS's pod), not on the
+canonical preset — a timer and a wait exercise what a crash can break, and the preset's command and
+task steps are EP-22.4/22.5's:
+
+- **Killed mid-timer** — `npm run crash:bms` ([`infra/smoke/bms-crash.test.mjs`](../../infra/smoke/bms-crash.test.mjs),
+  the Smoke workflow's last step): an instance inside a 90 s durable timer; the Temporal server AND the
+  BMS pod force-deleted together (`--grace-period=0 --force`, no drain). Both back in 18 s; the timer
+  fired after the crash (it is Temporal's, in Postgres, not the dead process's), the instance reached
+  its wait, took a signal and ended — its history gapless, no step event lost and none written twice
+  by an activity Temporal re-ran.
+- **Restored** — the restore drill ([`scripts/restore-drill.mjs`](../../scripts/restore-drill.mjs))
+  leaves an instance WAITING before the backup; after destroy → reinstall → restore, Temporal's
+  executions compare equal (7) and the instance, signalled on the restored cluster, completes. Destroy
+  to smoke-green 712 s.
+- The worker also runs against Temporal's dev server in CI (`apps/bms/test/temporal.test.ts`).
 
 ## Decision
 

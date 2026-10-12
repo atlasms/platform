@@ -336,6 +336,19 @@ Production supplies a **Temporal adapter** implementing the same `Effects`:
 The interpreter is passed `def` as a workflow **argument** (pinned per instance, §10.6); only the
 adapter is Temporal-specific, so the tested logic ships unchanged.
 
+> **As built (EP-22.3)** — `apps/bms/src/engine` (the interpreter, lifted) and `src/temporal`
+> (the adapter); [bms.md §13b](services/bms.md). Where it differs from the sketch below:
+> - **One signal, `step`** (`{ stepId, payload }`), feeding one inbox — not separate completion and
+>   task signals. A completion, a task outcome and an external event all release a waiting step the
+>   same way, and one arriving before its step waits is kept.
+> - **`appendHistory` is an awaited activity**, keyed by the instance's own sequence number, so a
+>   retried write lands on the same row; every other activity commits behind a deterministic key
+>   in the seen-mark table (§9.3's idempotency, at the activity).
+> - The expression context has the **`steps` root** (`steps.<id>.output`, each step's `incoming`
+>   when it completed) and `instance.id`; a human task's `assignee.expression` is evaluated before
+>   the task is created.
+> - A command step records `workflow.step.requested`; issuing the target's own command is EP-22.4.
+
 ### 10.1 Shape
 ```ts
 // workflow (deterministic). def is passed in and frozen for this instance's life.
