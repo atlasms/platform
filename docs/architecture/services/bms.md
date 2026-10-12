@@ -288,6 +288,18 @@ routed ahead of EP-22.3):
 - Smoke authors the canonical preset through the gateway, is refused publish while a transition
   holds a FEEL loop, publishes it fixed, and reads the four audit revisions back.
 
+## 13b. As built — EP-22.3, the runtime (in progress)
+
+**Temporal in the cluster** ([ADR-0010](../../adr/0010-bms-durable-runtime.md); its checks 1–3 are
+the evidence): `infra/k8s/base/temporal.yaml`, and so the chart (`temporal.enabled`/`host`/`port`,
+its images under `images.temporal` and `images.temporal-admin-tools`, the registry rewrite reaching
+its initContainer too). The server's state is in `temporal`/`temporal_visibility` on the platform's
+Postgres, migrated by its schema initContainer on every start; the server is Ready when its frontend
+answers `SERVING`. **BMS's image is `node:24-slim`** — the shared Dockerfile takes `BASE_IMAGE`, and
+BMS's `k8s:build` line is the only one that passes it. The restore drill stops BMS and Temporal with
+the services and dumps, restores and fingerprints Temporal's databases with `atlas`.
+⬜ the worker behind `Effects`, the namespace ensured at BMS's start-up, and the crash test (check 4).
+
 ## 14. Open questions / future
 
 - **Decided:** Studio gets a **visual drag-and-drop designer** ([Foblex Flow](https://flow.foblex.com/))

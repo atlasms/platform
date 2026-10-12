@@ -57,10 +57,16 @@ const isAtlasImage = (repository) => repository.startsWith('atlas/');
  * break the install from values.yaml. MTS left this list in EP-16.6: its work area is per-pod
  * scratch since HSM holds inputs and renditions, and its workers lease from one queue table.
  */
-const PINNED_REPLICAS = new Set(['iam', 'rim', 'postgres', 'nats', 'opensearch']);
+const PINNED_REPLICAS = new Set(['iam', 'rim', 'postgres', 'nats', 'opensearch', 'temporal']);
+
+/** Values keys for third-party images whose own names are too generic to stand alone. */
+const IMAGE_KEYS = {
+  'temporalio/server': 'temporal',
+  'temporalio/admin-tools': 'temporal-admin-tools',
+};
 
 /** The data-plane components a customer may point at their own estate instead. */
-const DATA_PLANE = new Set(['postgres', 'nats', 'opensearch']);
+const DATA_PLANE = new Set(['postgres', 'nats', 'opensearch', 'temporal']);
 
 // --- template substitution ---------------------------------------------------
 //
@@ -126,7 +132,10 @@ function imageValue(image) {
   const [repository, tag = 'latest'] = image.includes('@')
     ? [image.split('@')[0], image.split('@')[1]]
     : [image.slice(0, image.lastIndexOf(':')), image.slice(image.lastIndexOf(':') + 1)];
-  const component = repository.split('/').pop();
+  // A third-party image is keyed by its last path segment, except where that segment says nothing
+  // on its own: Temporal publishes `temporalio/server` and `temporalio/admin-tools`, and
+  // `images.server` in a site's values file would not say whose server it is.
+  const component = IMAGE_KEYS[repository] ?? repository.split('/').pop();
   // An Atlas image's default tag is the chart's appVersion, expressed as an empty string here so
   // a release does not have to rewrite values.yaml. A third-party image keeps its pinned tag:
   // `opensearch:<atlas version>` would not exist.
@@ -184,6 +193,11 @@ function templateContainer(doc, path, container, workload) {
         [...at, 'value'],
         inline('http://{{ .Values.opensearch.host }}:{{ .Values.opensearch.port }}'),
       );
+    } else if (name === 'POSTGRES_SEEDS') {
+      // Temporal's own name for the Postgres host (ADR-0010): it follows the services' server.
+      doc.setIn([...at, 'value'], inline('{{ .Values.postgres.host }}'));
+    } else if (name === 'DB_PORT') {
+      doc.setIn([...at, 'value'], inline('{{ .Values.postgres.port | quote }}'));
     } else if (name === 'POSTGRES_DB') {
       doc.setIn([...at, 'value'], inline('{{ .Values.postgres.database }}'));
     } else if (name === 'OPENSEARCH_JAVA_OPTS') {
@@ -279,6 +293,18 @@ function templateDocument(doc) {
   const containers = doc.getIn(['spec', 'template', 'spec', 'containers']);
   for (const [i, container] of (containers?.items ?? []).entries()) {
     templateContainer(doc, ['spec', 'template', 'spec', 'containers', i], container, name);
+  }
+  // An init container's image comes from the same registry as the rest — an air-gapped install
+  // that rewrote every image but Temporal's schema step would stall on Docker Hub. Its resources
+  // are keyed `<workload>-<container>` so they do not overwrite the main container's.
+  const inits = doc.getIn(['spec', 'template', 'spec', 'initContainers']);
+  for (const [i, container] of (inits?.items ?? []).entries()) {
+    templateContainer(
+      doc,
+      ['spec', 'template', 'spec', 'initContainers', i],
+      container,
+      `${name}-${String(container.get('name'))}`,
+    );
   }
 
   // A private or mirrored registry is the normal case for an air-gapped install.
@@ -474,6 +500,13 @@ opensearch:
   port: 9200
   # The JVM heap — half the memory \`resources.opensearch\` gives the pod is the usual choice.
   heap: ${values.opensearchHeap}
+
+# BMS's workflow runtime (ADR-0010). Its state lives in two databases of its own on the Postgres
+# above (\`temporal\`, \`temporal_visibility\`), created and migrated by its own start-up.
+temporal:
+  enabled: true
+  host: temporal
+  port: 7233
 
 # --- ingress -----------------------------------------------------------------
 #

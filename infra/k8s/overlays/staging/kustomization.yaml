@@ -47,6 +47,11 @@ images:
   - name: atlas/bms
     newName: registry.example/atlas/bms
     newTag: 0.1.0
+  # Temporal (ADR-0010): third-party images, mirrored into the registry at their own pinned tags.
+  - name: temporalio/server
+    newName: registry.example/temporalio/server
+  - name: temporalio/admin-tools
+    newName: registry.example/temporalio/admin-tools
   - name: atlas/rim
     newName: registry.example/atlas/rim
     newTag: 0.1.0

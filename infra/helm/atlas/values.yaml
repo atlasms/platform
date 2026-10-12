@@ -55,6 +55,12 @@ images:
   scheduling:
     repository: atlas/scheduling
     tag: ""
+  temporal:
+    repository: temporalio/server
+    tag: 1.32.1
+  temporal-admin-tools:
+    repository: temporalio/admin-tools
+    tag: 1.32.1
   websocket:
     repository: atlas/websocket
     tag: ""
@@ -160,6 +166,18 @@ resources:
       memory: 128Mi
     limits:
       memory: 384Mi
+  temporal:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+  temporalSchema:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
   websocket:
     requests:
       cpu: 50m
@@ -187,6 +205,7 @@ storage:
 # `ephemeral-storage` request under `resources.mts` so the scheduler places workers by it.
 scratch:
   mts: 20Gi
+  temporal: 256Mi
 
 # --- the data plane ----------------------------------------------------------
 #
@@ -223,6 +242,13 @@ opensearch:
   port: 9200
   # The JVM heap — half the memory `resources.opensearch` gives the pod is the usual choice.
   heap: 512m
+
+# BMS's workflow runtime (ADR-0010). Its state lives in two databases of its own on the Postgres
+# above (`temporal`, `temporal_visibility`), created and migrated by its own start-up.
+temporal:
+  enabled: true
+  host: temporal
+  port: 7233
 
 # --- ingress -----------------------------------------------------------------
 #
