@@ -73,7 +73,18 @@ export default tseslint.config(
   },
   {
     files: ['scripts/**/*.mjs'],
-    languageOptions: { globals: { process: 'readonly', console: 'readonly', URL: 'readonly' } },
+    // Node's own globals the scripts use. `fetch`/`AbortSignal`/`setTimeout`: the restore drill
+    // drives a workflow instance through the gateway (EP-22.3).
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        URL: 'readonly',
+        fetch: 'readonly',
+        AbortSignal: 'readonly',
+        setTimeout: 'readonly',
+      },
+    },
     rules: { '@typescript-eslint/no-explicit-any': 'off' },
   },
 );
