@@ -89,6 +89,10 @@ export function entityRule(entityType: string): ReadRule {
   // A person (EP-28.5) is the people register's, which `people:read` governs; `person:read`
   // exists nowhere.
   if (entityType === 'person') return { permission: 'people:read' };
+  // A workflow instance (EP-22.3) is a workflow's run: it reads as the workflow does. Under the
+  // default it was `workflow-instance:read`, which no catalogue defines and no role holds — its
+  // started/completed audit would have been readable by nobody.
+  if (entityType === 'workflow-instance') return { permission: 'workflow:read' };
   return { permission: `${entityType}:read` };
 }
 

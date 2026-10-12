@@ -312,6 +312,11 @@ test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENT
     requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'person' } }),
     { permission: 'people:read' },
   );
+  // A workflow instance (EP-22.3) reads as its workflow does.
+  assert.deepEqual(
+    requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'workflow-instance' } }),
+    { permission: 'workflow:read' },
+  );
   // HSM (ADR-0009): a storage target is storage administration; an operation on a file reads as it.
   assert.deepEqual(
     requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'storage-target' } }),
