@@ -10,15 +10,7 @@
 // Running instances are EP-22.3's, on Temporal (ADR-0010); they pin a published version, which is
 // why a published version is never written again.
 
-import {
-  buildEnvelope,
-  delta,
-  subjectFor,
-  ulid,
-  validatePayload,
-  type Envelope,
-  type EventPayloads,
-} from '@atlas/contracts';
+import { delta, isUlid, ulid, type EventPayloads } from '@atlas/contracts';
 import {
   validateDefinition,
   type SubFlowConfig,
@@ -26,9 +18,12 @@ import {
   type ValidationResult,
   type WorkflowDefinition,
 } from '@atlas/contracts/workflow';
-import type { OutboxRecord } from '@atlas/messaging';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
-import { Conflict, Forbidden, NotFound, ValidationError } from '@atlas/service-kit';
+import { Conflict, Forbidden, NotFound, Unavailable, ValidationError } from '@atlas/service-kit';
+import { isTerminal, type HistoryEntry, type Instance } from './instance.ts';
+import { outboxRecord } from './record.ts';
+import type { InstanceRunner } from './runner.ts';
+import { instanceAudit } from './runtime.ts';
 import type { WorkflowStore } from './store.ts';
 import { definitionOf, type DraftInput, type Workflow, type WorkflowVersion } from './workflow.ts';
 
@@ -53,8 +48,19 @@ export interface PublishResult {
   warnings?: ValidationIssue[];
 }
 
+export interface StartInstanceInput {
+  workflowId: string;
+  version?: number;
+  vars?: Record<string, unknown>;
+  assetId?: string;
+}
+
 export interface BmsServiceOptions {
   store: WorkflowStore;
+  /** Starts and signals instances — Temporal in production (ADR-0010). Omitted: none can start. */
+  runner?: InstanceRunner;
+  /** Why the runtime refused — the log's business; the caller gets a 503. */
+  onRunnerError?: (err: unknown, context: { instanceId: string; action: string }) => void;
   now?: () => Date;
   /** Trace context captured into the event where it is created (EP-13.3). */
   traceHeaders?: () => Record<string, string> | undefined;
@@ -65,11 +71,15 @@ const NOT_IN_DELTA: ReadonlySet<string> = new Set(['revision', 'updatedAt']);
 
 export class BmsService {
   private readonly store: WorkflowStore;
+  private readonly runner: InstanceRunner | undefined;
+  private readonly onRunnerError: NonNullable<BmsServiceOptions['onRunnerError']>;
   private readonly now: () => Date;
   private readonly traceHeaders: () => Record<string, string> | undefined;
 
   constructor(options: BmsServiceOptions) {
     this.store = options.store;
+    this.runner = options.runner;
+    this.onRunnerError = options.onRunnerError ?? (() => undefined);
     this.now = options.now ?? (() => new Date());
     this.traceHeaders = options.traceHeaders ?? (() => undefined);
   }
@@ -276,6 +286,142 @@ export class BmsService {
     };
   }
 
+  // --- instances (EP-22.3) ----------------------------------------------------------------------------
+
+  /**
+   * Start an instance of a PUBLISHED version, pinned to it for its whole life. The mirror row and
+   * its audit commit first; then the runtime is asked. If the runtime is away the row records that
+   * it never ran — `failed`, with why — and the caller gets a 503, so a start that did not happen
+   * is never a `running` row nobody runs.
+   */
+  async startInstance(caller: Caller, input: StartInstanceInput): Promise<Instance> {
+    this.authorizeAct(caller);
+    const header = await this.header(caller, input.workflowId);
+    const version = input.version ?? header.latestVersion;
+    const published = version > 0 ? await this.store.version(header.id, version) : undefined;
+    if (!published || published.status !== 'published') {
+      throw new Conflict(
+        input.version === undefined
+          ? `workflow ${header.id} has never been published`
+          : `workflow ${header.id} has no published version ${version}`,
+      );
+    }
+    if (!this.runner) throw new Unavailable('the workflow runtime is not configured');
+
+    const instance: Instance = {
+      id: ulid(),
+      channelId: caller.channelId,
+      workflowId: header.id,
+      version: published.version,
+      ...(input.assetId !== undefined ? { assetId: input.assetId } : {}),
+      state: 'running',
+      currentSteps: [],
+      startedAt: this.now().toISOString(),
+      startedBy: caller.userId,
+    };
+    await this.store.transaction(async (tx) => {
+      await tx.insertInstance(instance);
+      await tx.enqueue(
+        instanceAudit(instance, 1, 'workflow-instance.started', undefined, {
+          kind: 'user',
+          id: caller.userId,
+        }),
+      );
+    });
+    try {
+      await this.runner.start({
+        definition: published.definition,
+        start: {
+          instanceId: instance.id,
+          ...(input.vars !== undefined ? { vars: input.vars } : {}),
+          ...(input.assetId !== undefined ? { incoming: { assetId: input.assetId } } : {}),
+        },
+      });
+    } catch (err) {
+      this.onRunnerError(err, { instanceId: instance.id, action: 'start' });
+      const failed: Instance = {
+        ...instance,
+        state: 'failed',
+        endedAt: this.now().toISOString(),
+        error: 'the workflow runtime could not be reached; the instance never started',
+      };
+      await this.store.transaction(async (tx) => {
+        await tx.putInstance(failed);
+        await tx.enqueue(instanceAudit(failed, 2, 'workflow-instance.failed', instance));
+      });
+      throw new Unavailable('the workflow runtime could not be reached; nothing was started');
+    }
+    return instance;
+  }
+
+  async listInstances(
+    caller: Caller,
+    options: { workflowId?: string; after?: string; limit?: number } = {},
+  ): Promise<{ items: Instance[]; nextCursor?: string }> {
+    this.authorizeInstanceRead(caller);
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+    const items = await this.store.instances(caller.channelId, {
+      ...(options.workflowId !== undefined ? { workflowId: options.workflowId } : {}),
+      ...(options.after !== undefined ? { after: options.after } : {}),
+      limit,
+    });
+    const last = items[items.length - 1];
+    return { items, ...(items.length === limit && last ? { nextCursor: last.id } : {}) };
+  }
+
+  async getInstance(
+    caller: Caller,
+    id: string,
+  ): Promise<Instance & { history: Omit<HistoryEntry, 'instanceId' | 'channelId'>[] }> {
+    this.authorizeInstanceRead(caller);
+    const instance = await this.instanceOf(caller, id);
+    const history = (await this.store.history(id)).map(
+      ({ instanceId: _i, channelId: _c, ...entry }) => entry,
+    );
+    return { ...instance, history };
+  }
+
+  /** Deliver a step's completion or event. A signal for a step not yet waiting is kept. */
+  async signalInstance(
+    caller: Caller,
+    id: string,
+    stepId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    this.authorizeAct(caller);
+    const instance = await this.instanceOf(caller, id);
+    if (isTerminal(instance.state))
+      throw new Conflict(`instance ${id} has ended (${instance.state})`);
+    if (!this.runner) throw new Unavailable('the workflow runtime is not configured');
+    try {
+      await this.runner.signal(id, stepId, payload);
+    } catch (err) {
+      this.onRunnerError(err, { instanceId: id, action: 'signal' });
+      throw new Unavailable('the workflow runtime could not be reached');
+    }
+  }
+
+  private async instanceOf(caller: Caller, id: string): Promise<Instance> {
+    if (!isUlid(id)) throw new NotFound(`instance ${id}`);
+    const instance = await this.store.instance(id);
+    if (!instance || instance.channelId !== caller.channelId) throw new NotFound(`instance ${id}`);
+    return instance;
+  }
+
+  /** Starting or moving an instance: `workflow:act` (the Editor's). */
+  private authorizeAct(caller: Caller): void {
+    const decision = canEnforce(caller.policy, 'workflow:act', { channelId: caller.channelId });
+    if (!decision.allowed) throw new Forbidden(decision.reason ?? 'workflow:act required');
+  }
+
+  /** Reading an instance: whoever may act in workflows, read them or administer them. */
+  private authorizeInstanceRead(caller: Caller): void {
+    const context = { channelId: caller.channelId };
+    for (const p of ['workflow:read', 'workflow:act', 'workflow:admin'])
+      if (canEnforce(caller.policy, p, context).allowed) return;
+    throw new Forbidden('workflow:read, workflow:act or workflow:admin required');
+  }
+
   // --- internals -----------------------------------------------------------------------------------------
 
   /** The pure rules, then what only the store knows: a sub-flow names a PUBLISHED workflow here. */
@@ -366,38 +512,25 @@ export class BmsService {
     action: string,
     before: Record<string, unknown> | undefined,
     after: Record<string, unknown>,
-  ): OutboxRecord {
-    const payload = {
-      entityType: 'workflow',
-      entityId: workflow.id,
-      revision: workflow.revision,
-      action,
-      origin: { service: 'bms' },
-      delta: delta(before, after, NOT_IN_DELTA),
-    } satisfies EventPayloads['audit.recorded'];
-    const check = validatePayload('audit.recorded', payload);
-    if (!check.valid) {
-      throw new ValidationError(
-        `audit.recorded payload does not match its schema: ${check.errors.map((e) => `${e.path} ${e.message}`).join('; ')}`,
-      );
-    }
-    const envelope: Envelope = buildEnvelope({
-      type: 'audit.recorded',
-      channelId: workflow.channelId,
-      payload,
-      actor: { kind: 'user', id: caller.userId },
-      ...(caller.correlationId !== undefined ? { correlationId: caller.correlationId } : {}),
-    });
+  ): ReturnType<typeof outboxRecord> {
     const headers = this.traceHeaders();
-    return {
-      id: envelope.messageId,
-      message: {
-        id: envelope.messageId,
-        subject: subjectFor(workflow.channelId, 'audit.recorded'),
-        body: envelope,
+    return outboxRecord(
+      'audit.recorded',
+      workflow.channelId,
+      {
+        entityType: 'workflow',
+        entityId: workflow.id,
+        revision: workflow.revision,
+        action,
+        origin: { service: 'bms' },
+        delta: delta(before, after, NOT_IN_DELTA),
+      } satisfies EventPayloads['audit.recorded'],
+      {
+        actor: { kind: 'user', id: caller.userId },
+        ...(caller.correlationId !== undefined ? { correlationId: caller.correlationId } : {}),
         ...(headers !== undefined ? { headers } : {}),
       },
-    };
+    );
   }
 }
 

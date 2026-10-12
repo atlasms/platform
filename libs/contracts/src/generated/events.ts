@@ -754,7 +754,7 @@ export interface WorkflowStepRequestedPayload {
   /** The asset in flow, when the step is asset-scoped. */
   assetId?: Ulid;
   /** Step-specific parameters; the target validates them against its own command contract. */
-  params?: Record<string, never>;
+  params?: Record<string, unknown>;
 }
 
 /** Emitted by BMS when a human-in-the-loop task is created. Consumed by Notifications. */

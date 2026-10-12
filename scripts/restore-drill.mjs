@@ -23,7 +23,9 @@
 //   5. verify BEFORE the services run (so nothing they write muddies the comparison): the same rows,
 //      the same chain heads, and every ledger file's bytes hashing to the ledger's checksum;
 //   6. start the services — OpenSearch is NOT restored: the projector rebuilds the hot index from
-//      Postgres, which is the claim ADR-0005 makes — and run the smoke suite and the MVP journey.
+//      Postgres, which is the claim ADR-0005 makes — and run the smoke suite and the MVP journey;
+//   7. and a workflow instance left WAITING before the backup (EP-22.3, ADR-0010 check 4) is
+//      signalled on the restored cluster and finishes — Temporal's state came back with Postgres.
 //
 // JetStream is not backed up: what the quiesce drained has been delivered, and a consumer's cursor
 // starts again on an empty stream. The timings are printed: destroy-to-green is this cluster's RTO.
@@ -140,6 +142,120 @@ function fingerprint() {
   return { counts, heads, files, temporal };
 }
 
+// --- a workflow instance left waiting across the restore (ADR-0010 check 4) ----
+
+const BASE = process.env.ATLAS_BASE_URL ?? 'http://localhost:30080';
+
+async function api(path, init = {}) {
+  const res = await fetch(new URL(path, BASE), { ...init, signal: AbortSignal.timeout(15_000) });
+  const text = await res.text();
+  return { status: res.status, text, json: () => JSON.parse(text) };
+}
+
+async function signIn() {
+  // Through the retry like every call here: on a cluster that has just been restored, a request can
+  // meet a connection being torn down (a drill once died on `write ECONNABORTED` at this line).
+  const login = await retrying('sign in', () =>
+    api('/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        username: process.env.ATLAS_SMOKE_USER ?? 'dev',
+        password: process.env.ATLAS_SMOKE_PASSWORD ?? 'dev-password',
+      }),
+    }),
+  );
+  if (login.status !== 200) throw new Error(`login failed: ${login.text}`);
+  return {
+    authorization: `Bearer ${login.json().accessToken}`,
+    'content-type': 'application/json',
+  };
+}
+
+/** Retried through 502/503 — BMS connects to Temporal in the background after a start. */
+async function retrying(what, fn, budgetMs = 180_000) {
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    const res = await fn().catch(() => ({ status: 0, text: 'unreachable' }));
+    if (![0, 502, 503].includes(res.status)) return res;
+    if (Date.now() > deadline) throw new Error(`${what}: ${res.status} ${res.text}`);
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
+async function instanceUntil(headers, id, what, ok) {
+  const deadline = Date.now() + 180_000;
+  for (;;) {
+    const res = await retrying('read the instance', () =>
+      api(`/api/v1/instances/${id}`, { headers }),
+    );
+    if (res.status === 200 && ok(res.json())) return res.json();
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}: ${res.text}`);
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
+/** Publish a one-wait workflow and start it; return its instance id once it is waiting. */
+async function leaveAnInstanceWaiting() {
+  const headers = await signIn();
+  const created = await retrying('create a workflow', () =>
+    api('/api/v1/workflows', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: `restore drill ${Date.now()}`,
+        vars: [{ name: 'verdict', type: 'string' }],
+        steps: [
+          { id: 's_start', kind: 'start' },
+          {
+            id: 's_wait',
+            kind: 'wait-event',
+            config: {
+              event: 'drill',
+              correlate: '= true',
+              output: { 'vars.verdict': '= incoming.verdict' },
+            },
+          },
+          { id: 's_end', kind: 'end' },
+        ],
+        transitions: [
+          { id: 't1', from: 's_start', to: 's_wait' },
+          { id: 't2', from: 's_wait', to: 's_end' },
+        ],
+      }),
+    }),
+  );
+  if (created.status !== 201) throw new Error(`create failed: ${created.text}`);
+  const workflowId = created.json().id;
+  const published = await retrying('publish', () =>
+    api(`/api/v1/workflows/${workflowId}/publish?revision=1`, { method: 'POST', headers }),
+  );
+  if (published.status !== 200) throw new Error(`publish failed: ${published.text}`);
+  const started = await retrying('start', () =>
+    api('/api/v1/instances', { method: 'POST', headers, body: JSON.stringify({ workflowId }) }),
+  );
+  if (started.status !== 201) throw new Error(`start failed: ${started.text}`);
+  const { id } = started.json();
+  await instanceUntil(headers, id, 'the wait', (i) => i.currentSteps.includes('s_wait'));
+  return id;
+}
+
+async function finishTheWaitingInstance(id) {
+  const headers = await signIn();
+  const signalled = await retrying('signal', () =>
+    api(`/api/v1/instances/${id}/signal`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ stepId: 's_wait', payload: { verdict: 'restored' } }),
+    }),
+  );
+  if (signalled.status !== 202) throw new Error(`signal failed: ${signalled.text}`);
+  const done = await instanceUntil(headers, id, 'the end', (i) => i.state === 'completed');
+  if (done.vars?.verdict !== 'restored')
+    throw new Error(`the signal did not land: ${JSON.stringify(done)}`);
+  return done;
+}
+
 function same(label, before, after) {
   const a = JSON.stringify(before);
   const b = JSON.stringify(after);
@@ -175,6 +291,12 @@ if (fromBackup) {
   step(`restore from the backup already in ${OUT}`);
   before = JSON.parse(readFileSync(fingerprintFile, 'utf8'));
 } else {
+  // --- 0. a workflow instance, left waiting ------------------------------------
+
+  step('leave a workflow instance waiting on Temporal (ADR-0010 check 4)');
+  const waitingInstance = await leaveAnInstanceWaiting();
+  console.log(`  instance ${waitingInstance} is waiting in s_wait`);
+
   // --- 1. quiesce --------------------------------------------------------------
 
   step('quiesce: wait for every outbox to drain, then stop every service');
@@ -207,7 +329,7 @@ if (fromBackup) {
   // --- 2. back up and fingerprint ----------------------------------------------
 
   step('back up: pg_dump of the whole database and Temporal’s two, the bytes of HSM’s online tier');
-  before = fingerprint();
+  before = { ...fingerprint(), waitingInstance };
   {
     const fd = openSync(dumpFile, 'w');
     try {
@@ -432,6 +554,8 @@ same(`row counts of ${Object.keys(before.counts).length} tables`, before.counts,
 same('audit chain heads (seq and hash, per channel)', before.heads, after.heads);
 same('the live file ledger', before.files, after.files);
 same('Temporal’s executions and their visibility rows', before.temporal, after.temporal);
+if (before.temporal.executions < 1)
+  throw new Error('Temporal held no executions — the waiting instance was not in the backup');
 let checked = 0;
 for (const line of after.files) {
   const [path, checksum, root] = line.split(' ');
@@ -455,6 +579,13 @@ step('smoke suite against the restored cluster');
 npm('smoke');
 step('the MVP journey against the restored cluster');
 npm('acceptance');
+step('the instance left waiting before the backup finishes on the restored cluster');
+{
+  const done = await finishTheWaitingInstance(before.waitingInstance);
+  console.log(
+    `  ✔ ${before.waitingInstance}: ${done.state}, ${done.history.length} history entries`,
+  );
+}
 
 console.log(
   `\nDRILL PASSED in ${elapsed()} — destroy to smoke-green ` +

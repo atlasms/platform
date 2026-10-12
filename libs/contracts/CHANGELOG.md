@@ -21,6 +21,14 @@ release is a statement of what changed, not a deploy step.
 
 ## [Unreleased]
 
+### Fixed
+
+- The generated payload types read an object schema with no `additionalProperties` keyword as
+  CLOSED (`Record<string, never>`); JSON Schema's default is open. `workflow.step.requested`'s
+  free-form `params` — the one such field — is now `Record<string, unknown>`, so a producer can put
+  something in it (EP-22.3, BMS's first emitter). Only an explicit `additionalProperties: false`
+  closes an object. Types only; no schema changed.
+
 ### Breaking
 
 - `recording.segment.completed` (EP-39; ADR-0007) now describes a recorder's FILE as it is handed

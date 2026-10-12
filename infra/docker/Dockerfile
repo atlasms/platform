@@ -55,7 +55,13 @@ COPY --from=manifests /app /app
 # `k8s:build` and `k8s:load` in the root package.json still name every image by hand, and the
 # generator (`nx g service`) extends them; the websocket service once shipped a manifest for an
 # image those scripts had never built. That one at least fails loudly (ImagePullBackOff).
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+#
+# ONE workspace's dependencies, not the whole tree's: `--workspace` installs this service and the
+# @atlas/* libraries it declares, with their dependencies, and nothing a sibling service needs. It
+# matters since BMS took Temporal's SDK (ADR-0010) — ~176 MB of native builds, webpack and swc that
+# every other image would otherwise carry. A library a service imports but does not declare is
+# already a CI failure (graph:check), so the scope cannot silently drop one.
+RUN npm ci --omit=dev --ignore-scripts --workspace=@atlas/${SERVICE} && npm cache clean --force
 
 # Source goes into THIS stage so the runtime can copy /app whole. Copying only the root
 # node_modules would silently drop NESTED ones, and the service would die at startup on a package
@@ -69,6 +75,11 @@ COPY libs ./libs
 COPY apps/${SERVICE} ./apps/${SERVICE}
 # Schemas are loaded and compiled at runtime by @atlas/contracts: executable input, not docs.
 COPY docs/architecture/schemas ./docs/architecture/schemas
+
+# A service with a build-time step runs it here, once — today BMS, whose Temporal workflow code is
+# bundled into apps/bms/dist so the worker never runs webpack in a pod (ADR-0010 evidence 2; a
+# read-only root has nowhere to write it anyway). No other service has a bundle.mjs.
+RUN if [ -f apps/${SERVICE}/bundle.mjs ]; then ATLAS_IMAGE_BUILD=1 node apps/${SERVICE}/bundle.mjs; fi
 
 # ---- runtime ----------------------------------------------------------------
 FROM ${BASE_IMAGE} AS runtime

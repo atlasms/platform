@@ -288,17 +288,54 @@ routed ahead of EP-22.3):
 - Smoke authors the canonical preset through the gateway, is refused publish while a transition
   holds a FEEL loop, publishes it fixed, and reads the four audit revisions back.
 
-## 13b. As built — EP-22.3, the runtime (in progress)
+## 13b. As built — EP-22.3, the runtime
 
-**Temporal in the cluster** ([ADR-0010](../../adr/0010-bms-durable-runtime.md); its checks 1–3 are
-the evidence): `infra/k8s/base/temporal.yaml`, and so the chart (`temporal.enabled`/`host`/`port`,
-its images under `images.temporal` and `images.temporal-admin-tools`, the registry rewrite reaching
-its initContainer too). The server's state is in `temporal`/`temporal_visibility` on the platform's
-Postgres, migrated by its schema initContainer on every start; the server is Ready when its frontend
-answers `SERVING`. **BMS's image is `node:24-slim`** — the shared Dockerfile takes `BASE_IMAGE`, and
-BMS's `k8s:build` line is the only one that passes it. The restore drill stops BMS and Temporal with
-the services and dumps, restores and fingerprints Temporal's databases with `atlas`.
-⬜ the worker behind `Effects`, the namespace ensured at BMS's start-up, and the crash test (check 4).
+**Temporal in the cluster** ([ADR-0010](../../adr/0010-bms-durable-runtime.md); its four checks
+are the evidence): `infra/k8s/base/temporal.yaml`, and so the chart (`temporal.enabled`/`host`/`port`,
+images under `images.temporal` and `images.temporal-admin-tools`). Its state is in
+`temporal`/`temporal_visibility` on the platform's Postgres, migrated by its schema initContainer on
+every start. **BMS's image is `node:24-slim`** (the SDK's native core is glibc-only), the only image
+built with `BASE_IMAGE`, and the only one carrying the SDK: the Dockerfile installs ONE workspace's
+dependencies (`npm ci --workspace`), and BMS's build keeps only the linux core of the five the SDK
+ships.
+
+**The worker runs in BMS** (`src/temporal/`): one generic workflow (`atlasWorkflow`) runs every
+definition — the published definition is its argument, so an instance is pinned to its version — by
+handing the interpreter (`src/engine/`, lifted from `reference/bms-workflow`) an `Effects` made of
+Temporal primitives: durable timers, `condition` over an inbox filled by the `step` signal, child
+workflows for sub-flows, and five activities. The workflow code is bundled at IMAGE build
+(`apps/bms/bundle.mjs`, run by the Dockerfile); without the bundle — a laptop, a test — the worker
+bundles from source. BMS ensures its namespace (`atlas`) at start-up, connects to Temporal in the
+background (authoring needs no runtime; starting an instance is a 503 until it is connected) and
+exits if the worker dies.
+
+**Every activity is idempotent** (`src/runtime.ts`), because Temporal runs one again after a crash:
+a history entry is keyed by the instance's own sequence number; every other write commits behind a
+deterministic key in the seen-mark table in its transaction; a task or a child instance is named by a
+ULID DERIVED from the instance and the key, so a retry names the same one.
+
+| Activity | Writes |
+|---|---|
+| `recordHistory` | `workflow_step_history` (instance, seq) and the mirror's state / `currentSteps` |
+| `requestStep` | `workflow.step.requested` — issuing the target's own command is EP-22.4 |
+| `createTask` | `workflow.task.created` — Notifications materializes it (EP-25) |
+| `prepareChild` | the sub-flow's instance row + its audit |
+| `finish` | the mirror's terminal state, `workflow.completed`, `audit.recorded` |
+
+**Instances** (`bms.yaml`): `POST /instances` starts a PUBLISHED version (`workflow:act`) — the
+mirror row and its audit commit first, then Temporal is asked; if it cannot be, the row says the
+instance never ran (`failed`, with why) and the caller gets a 503, never a `running` row nobody
+runs. `GET /instances[/{id}]` lists and reads (any workflow grant), the single read with its step
+history (FR-BMS-6). `POST /instances/{id}/signal {stepId, payload}` delivers a completion or an
+event to a waiting step (kept if the step is not waiting yet) — the generic path until EP-22.4's
+router delivers completions from the bus. An escalation is recorded in the history; notifying anyone
+is EP-25's.
+
+Evidence on kind: smoke runs an instance through a durable timer, a wait and a signal; the **crash
+test** (`npm run crash:bms`, the Smoke workflow's last step) force-kills the Temporal server and the
+BMS pod while an instance is inside a timer — both back in 18 s, the timer fires, the instance ends
+with a gapless history; the **restore drill** leaves an instance waiting, restores, and finishes it.
+CI runs the worker against Temporal's dev server (`apps/bms/test/temporal.test.ts`).
 
 ## 14. Open questions / future
 

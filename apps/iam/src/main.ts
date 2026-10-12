@@ -198,6 +198,8 @@ if (seedUser && seedPassword) {
           // back (`workflow:read` also reads its audit history).
           'workflow:read',
           'workflow:admin',
+          // EP-22.3: start and signal an instance on the cluster's Temporal.
+          'workflow:act',
         ],
         scope: { channelIds: [channelId] },
       },

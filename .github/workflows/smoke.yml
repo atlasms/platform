@@ -136,6 +136,12 @@ jobs:
       - name: Performance sanity
         run: npm run perf
 
+      # EP-22.3 — ADR-0010 check 4: an instance inside a durable timer survives the Temporal server
+      # and its BMS worker being force-killed together, and finishes with a gapless history. Last,
+      # because it kills two pods.
+      - name: BMS crash test
+        run: npm run crash:bms
+
       # Only on failure, and it is the difference between "CI went red" and knowing why. A smoke
       # failure is a deployment failure: the interesting state is in the pods, and the runner is
       # destroyed the moment this job ends.

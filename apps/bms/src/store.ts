@@ -6,6 +6,7 @@
 // index; a published row is never updated — the adapters refuse it in the statement itself).
 
 import type { OutboxRecord } from '@atlas/messaging';
+import type { HistoryEntry, Instance } from './instance.ts';
 import type { Workflow, WorkflowVersion } from './workflow.ts';
 
 export interface WorkflowStore {
@@ -16,6 +17,14 @@ export interface WorkflowStore {
   version(workflowId: string, version: number): Promise<WorkflowVersion | undefined>;
   /** The published versions, newest first. */
   published(workflowId: string): Promise<WorkflowVersion[]>;
+  instance(id: string): Promise<Instance | undefined>;
+  /** One channel's instances, newest first (keyset on id descending). */
+  instances(
+    channelId: string,
+    options: { workflowId?: string; after?: string; limit: number },
+  ): Promise<Instance[]>;
+  /** An instance's step history, in order. */
+  history(instanceId: string): Promise<HistoryEntry[]>;
   close(): Promise<void>;
 }
 
@@ -33,4 +42,16 @@ export interface WorkflowTx {
    */
   putVersion(version: WorkflowVersion): Promise<boolean>;
   enqueue(record: OutboxRecord): Promise<void>;
+  /** Insert an instance; `false` if the id exists (a retried start is the same instance). */
+  insertInstance(instance: Instance): Promise<boolean>;
+  /** The instance, read THROUGH the transaction and locked for its update. */
+  instanceForUpdate(id: string): Promise<Instance | undefined>;
+  putInstance(instance: Instance): Promise<void>;
+  /** Append a history entry; `false` if (instance, seq) is already there — a retried write. */
+  appendHistory(entry: HistoryEntry): Promise<boolean>;
+  /**
+   * An activity's idempotency key, in the same transaction as its writes (EP-03.3's seen-mark):
+   * `false` means a previous attempt already committed them, and the retry writes nothing.
+   */
+  markSeen(key: string): Promise<boolean>;
 }

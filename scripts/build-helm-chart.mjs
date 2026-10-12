@@ -193,6 +193,11 @@ function templateContainer(doc, path, container, workload) {
         [...at, 'value'],
         inline('http://{{ .Values.opensearch.host }}:{{ .Values.opensearch.port }}'),
       );
+    } else if (name === 'ATLAS_TEMPORAL_ADDRESS') {
+      doc.setIn(
+        [...at, 'value'],
+        inline('{{ .Values.temporal.host }}:{{ .Values.temporal.port }}'),
+      );
     } else if (name === 'POSTGRES_SEEDS') {
       // Temporal's own name for the Postgres host (ADR-0010): it follows the services' server.
       doc.setIn([...at, 'value'], inline('{{ .Values.postgres.host }}'));

@@ -433,14 +433,17 @@ function tsType(schema, where, resolveRef = openApiRef) {
           .join('; ');
         return `{ ${fields} }` + nullable;
       }
-      if (schema.additionalProperties === true) return 'Record<string, unknown>' + nullable;
-      if (schema.additionalProperties) {
-        return (
-          `Record<string, ${tsType(schema.additionalProperties, `${where}{}`, resolveRef)}>` +
-          nullable
-        );
-      }
-      return 'Record<string, never>' + nullable;
+      // No `additionalProperties` keyword is JSON Schema's default — anything — exactly as `true`
+      // is. Only an explicit `false` closes the object. Reading the absent keyword as closed typed
+      // `workflow.step.requested`'s free-form `params` as `Record<string, never>`: an object the
+      // schema accepts with any content, that no TypeScript caller could put anything in.
+      if (schema.additionalProperties === undefined || schema.additionalProperties === true)
+        return 'Record<string, unknown>' + nullable;
+      if (schema.additionalProperties === false) return 'Record<string, never>' + nullable;
+      return (
+        `Record<string, ${tsType(schema.additionalProperties, `${where}{}`, resolveRef)}>` +
+        nullable
+      );
     }
     default:
       // Loudly. A generator that quietly emits `unknown` for a construct it does not handle

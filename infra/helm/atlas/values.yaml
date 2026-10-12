@@ -96,10 +96,10 @@ resources:
       memory: 512Mi
   bms:
     requests:
-      cpu: 50m
-      memory: 128Mi
+      cpu: 100m
+      memory: 256Mi
     limits:
-      memory: 384Mi
+      memory: 768Mi
   hsm:
     requests:
       cpu: 50m
@@ -204,6 +204,7 @@ storage:
 # renditions; a pod that outgrows it is evicted rather than filling the node. Add an
 # `ephemeral-storage` request under `resources.mts` so the scheduler places workers by it.
 scratch:
+  bms: 64Mi
   mts: 20Gi
   temporal: 256Mi
 

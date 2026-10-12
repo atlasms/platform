@@ -1559,6 +1559,89 @@ test('smoke: EP-22.2 — a workflow is authored, refused while invalid, publishe
   );
 });
 
+test('smoke: EP-22.3 — an instance runs on Temporal: a durable timer, a wait, a signal, its history', async () => {
+  // The workflow runtime on a live cluster (ADR-0010): a published flow started through the gateway
+  // runs on Temporal's worker inside BMS — past a durable timer into a wait, released by a signal,
+  // to its end — and its mirror, history and audit say so.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const created = await get('/api/v1/workflows', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      name: `smoke instance ${Date.now()}`,
+      vars: [{ name: 'verdict', type: 'string' }],
+      steps: [
+        { id: 's_start', kind: 'start' },
+        { id: 's_settle', kind: 'timer', config: { mode: 'duration', value: 'PT2S' } },
+        {
+          id: 's_wait',
+          kind: 'wait-event',
+          config: {
+            event: 'asset.approved',
+            correlate: '= true',
+            output: { 'vars.verdict': '= incoming.verdict' },
+          },
+        },
+        { id: 's_end', kind: 'end', config: { status: 'done' } },
+      ],
+      transitions: [
+        { id: 't1', from: 's_start', to: 's_settle' },
+        { id: 't2', from: 's_settle', to: 's_wait' },
+        { id: 't3', from: 's_wait', to: 's_end' },
+      ],
+    }),
+  });
+  assert.equal(created.status, 201, created.text);
+  const w = json(created);
+  const published = await get(`/api/v1/workflows/${w.id}/publish?revision=1`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(published.status, 200, published.text);
+
+  // BMS connects to Temporal in the background; on a fresh cluster the first start may be early.
+  let started;
+  const startBy = Date.now() + 60_000;
+  for (;;) {
+    started = await get('/api/v1/instances', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workflowId: w.id }),
+    });
+    if (started.status !== 503 || Date.now() > startBy) break;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  assert.equal(started.status, 201, `start failed: ${started.text}`);
+  const { id } = json(started);
+
+  const until = async (what, ok) => {
+    const deadline = Date.now() + 60_000;
+    for (;;) {
+      const res = await get(`/api/v1/instances/${id}`, { headers });
+      assert.equal(res.status, 200, res.text);
+      const instance = json(res);
+      if (ok(instance)) return instance;
+      if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}: ${res.text}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+  await until('the wait, past the timer', (i) => i.currentSteps.includes('s_wait'));
+  const signalled = await get(`/api/v1/instances/${id}/signal`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ stepId: 's_wait', payload: { verdict: 'approved' } }),
+  });
+  assert.equal(signalled.status, 202, signalled.text);
+  const done = await until('the end', (i) => i.state === 'completed');
+  assert.equal(done.endStepId, 's_end');
+  assert.equal(done.vars.verdict, 'approved', 'the signal reached the output mapping');
+  assert.ok(done.history.some((h) => h.stepId === 's_settle' && h.event === 'completed'));
+  // Its audit (`workflow-instance` started/completed) is in the log; reading it there waits on the
+  // log's read rule for the entity type (a visibility change, held for review separately).
+});
+
 test('smoke: EP-31 — a range copied onto another day: one audited write over the target version', async () => {
   // §3.7 on a live cluster: two days, a reel on the first, its first hour copied onto the second at
   // 20:00 by overwrite — the items re-timed with new ids, the target one version on, a stale

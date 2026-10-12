@@ -12,6 +12,7 @@ import { isUlid, ulid } from '@atlas/contracts';
 import type { EffectivePolicy } from '@atlas/policy';
 import type { BmsService, Caller as ServiceCaller } from './service.ts';
 import { parseDraftInput, parseRevision } from './workflow.ts';
+import { parseSignal, parseStartInstance } from './instance-input.ts';
 import {
   accessRecord,
   goldenSignals,
@@ -304,6 +305,39 @@ export async function buildBmsApp(options: BmsAppOptions): Promise<FastifyInstan
     handle(req, reply, 200, (caller) =>
       service.publish(caller, req.params.id, parseRevision(req.query['revision'])),
     ),
+  );
+
+  // --- instances (EP-22.3) ------------------------------------------------------------------------
+
+  app.get<{ Querystring: Q }>('/api/v1/instances', (req, reply) =>
+    handle(req, reply, 200, (caller) => {
+      const limit = req.query['limit'];
+      if (limit !== undefined && !/^\d+$/.test(limit))
+        throw new ValidationError('limit must be a positive integer');
+      return service.listInstances(caller, {
+        ...(req.query['workflowId'] !== undefined ? { workflowId: req.query['workflowId'] } : {}),
+        ...(req.query['after'] !== undefined ? { after: req.query['after'] } : {}),
+        ...(limit !== undefined ? { limit: Number(limit) } : {}),
+      });
+    }),
+  );
+
+  app.post('/api/v1/instances', (req, reply) =>
+    handle(req, reply, 201, (caller) =>
+      service.startInstance(caller, parseStartInstance(req.body)),
+    ),
+  );
+
+  app.get<{ Params: P }>('/api/v1/instances/:id', (req, reply) =>
+    handle(req, reply, 200, (caller) => service.getInstance(caller, req.params.id)),
+  );
+
+  app.post<{ Params: P }>('/api/v1/instances/:id/signal', (req, reply) =>
+    handle(req, reply, 202, async (caller) => {
+      const { stepId, payload } = parseSignal(req.body);
+      await service.signalInstance(caller, req.params.id, stepId, payload);
+      return { accepted: true };
+    }),
   );
 
   app.get<{ Params: P }>('/api/v1/workflows/:id/versions/:version', (req, reply) =>

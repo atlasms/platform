@@ -13,7 +13,7 @@ export interface Workflow {
   /** The open draft's name while there is one, else the latest published version's. */
   name: string;
   description?: string;
-  scope?: WorkflowDefinition['scope'];
+  scope?: NonNullable<WorkflowDefinition['scope']>;
   /** Every write bumps it; a write names the revision it was made on (compare-and-set). */
   revision: number;
   /** The newest PUBLISHED version; 0 before the first publish. */
@@ -41,8 +41,8 @@ export interface WorkflowVersion {
 export interface DraftInput {
   name: string;
   description?: string;
-  scope?: WorkflowDefinition['scope'];
-  vars?: WorkflowDefinition['vars'];
+  scope?: NonNullable<WorkflowDefinition['scope']>;
+  vars?: NonNullable<WorkflowDefinition['vars']>;
   steps: WorkflowDefinition['steps'];
   transitions: WorkflowDefinition['transitions'];
 }
@@ -85,8 +85,8 @@ export function parseDraftInput(body: unknown): DraftInput {
   return {
     name: name.trim(),
     ...(description !== undefined ? { description } : {}),
-    ...(scope !== undefined ? { scope: scope as DraftInput['scope'] } : {}),
-    ...(parsedVars !== undefined ? { vars: parsedVars as DraftInput['vars'] } : {}),
+    ...(scope !== undefined ? { scope: scope as NonNullable<DraftInput['scope']> } : {}),
+    ...(parsedVars !== undefined ? { vars: parsedVars as NonNullable<DraftInput['vars']> } : {}),
     steps: list(steps, 'steps', MAX_STEPS, true) as DraftInput['steps'],
     transitions: list(
       transitions,

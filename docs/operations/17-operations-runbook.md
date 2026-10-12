@@ -181,6 +181,12 @@ suite passes against it.
 > matching, smoke 38/38, the journey 12/12. **Destroy to smoke-green: 612 s.** Temporal's tables
 > held no executions yet (no workflow has run in the cluster before EP-22.3's worker), so this run
 > proves the mechanics; the crash test (ADR-0010 check 4) is where a waiting instance is restored.
+>
+> **Third run — a workflow instance across the restore (EP-22.3, 2026-10-12).** The drill now
+> starts a one-wait workflow instance before the quiesce and leaves it WAITING; it is in the backup
+> (Temporal's executions: 7), comes back with it, and — signalled on the restored cluster after the
+> smoke suite and the journey — completes, its history intact. 4.7 MB database, 1.8 GB online tier;
+> 66 tables, 835 files; smoke 39/39, the journey 12/12. **Destroy to smoke-green: 712 s.**
 
 ### 5.1 Temporal (BMS's runtime — ADR-0010)
 
@@ -196,6 +202,12 @@ idempotent, so an image upgrade upgrades the schema. It reads `DYNAMIC_CONFIG_FI
 kubectl -n atlas run temporal-probe --rm -i --restart=Never --image=temporalio/admin-tools:1.32.1   --command -- temporal operator cluster health --address temporal:7233      # SERVING
 kubectl -n atlas logs deployment/temporal -c schema                            # the migration
 ```
+
+**BMS** ensures its namespace (`atlas`) when it connects, runs the worker in its own pod, and
+reports `temporal` in its readiness (not critical: authoring needs no runtime; starting an instance
+answers 503 until Temporal is back). A BMS pod whose worker dies exits and is restarted. The
+instances survive both pods dying — `npm run crash:bms` force-kills the server and the worker mid-
+timer and checks the instance finishes with a gapless history (ADR-0010 check 4).
 
 Its frontend has **no authentication**: it is a ClusterIP Service, never routed by the gateway or
 an Ingress, and only BMS is given its address. A site running its own Temporal sets

@@ -46,7 +46,8 @@
     "reference:test": "node scripts/test-reference.mjs",
     "perf": "node infra/smoke/perf-sanity.mjs",
     "drill": "node scripts/restore-drill.mjs",
-    "triage": "node scripts/triage-report.mjs"
+    "triage": "node scripts/triage-report.mjs",
+    "crash:bms": "node --test infra/smoke/bms-crash.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
