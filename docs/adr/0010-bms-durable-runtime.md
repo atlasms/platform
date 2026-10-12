@@ -1,7 +1,8 @@
 # ADR-0010 — BMS runs workflows on Temporal
 
 - **Status:** Accepted — chosen by the product owner, 2026-10-12, on the design's case without
-  running the comparison spike (see *Evidence*)
+  running the comparison spike; checks 1–3 of *Evidence* run and passed the same day (BMS's image is
+  `node:24-slim`, not Alpine), check 4 owed
 - **Date:** 2026-10-12
 - **Stories:** EP-22.1 (this ADR); built by EP-22.2 – EP-22.10
   ([#22](https://github.com/atlasms/platform/issues/22))
@@ -50,19 +51,49 @@ is the engine semantics, Temporal supplies them, and the `Effects` boundary keep
 were Temporal to prove unworkable for an air-gapped install, the saga is an adapter under the same
 tested interpreter, not a rewrite.
 
-What EP-22.3 must establish, and record here, before BMS is deployed beyond the dev cluster:
+What EP-22.3 must establish, and record here, before BMS is deployed beyond the dev cluster — four
+checks. **Checks 1–3 were run on 2026-10-12** against real containers (Temporal server 1.32.1, the
+TypeScript SDK 1.24.0, Node 24.21.0, the dev compose Postgres 17); the harness is
+[`spikes/temporal/run.sh`](../../spikes/temporal/run.sh) and reproduces every line below from scratch.
 
-1. **The worker runs in our image.** The TypeScript SDK's worker loads a native core (Rust); our
-   images are `node:24-alpine`. Whether a musl build is published for the SDK version we pin decides
-   whether BMS's image takes a glibc base (`node:24-slim`) — the shared Dockerfile's `BASE` would
-   become per-service.
-2. **Workflow code under strip-only TypeScript.** The worker bundles workflow code for its
-   deterministic sandbox; the bundle is built at image build time, not at start-up, and the rule
-   against emitting syntax (parameter properties, enums) still holds.
-3. **Persistence on our Postgres.** Temporal's default and visibility stores on the platform's
-   Postgres, in a database of their own, schema applied by Temporal's admin tool as an install step.
-4. **A crash test.** The canonical ingest-to-air preset (EP-22.7) survives killing the BMS worker
-   and the Temporal server mid-wait, and the restore drill restores an instance that was waiting.
+### 1. The worker in our image — **not on Alpine; on `node:24-slim`, yes**
+
+The SDK's native core (`@temporalio/core-bridge`) ships prebuilt binaries for linux-x64/arm64 **gnu**,
+macOS and Windows — no musl build. On our base image it does not load:
+
+| Base | Result |
+|---|---|
+| `node:24-alpine` (every service's today) | `Error loading shared library ld-linux-x86-64.so.2 … (needed by …/core-bridge/releases/x86_64-unknown-linux-gnu/index.node)` |
+| `node:24-alpine` + `gcompat` | `Error relocating …/index.node: gnu_get_libc_version: symbol not found` |
+| **`node:24-slim`** (Debian, glibc) | **worker ready in 737–926 ms; an activity and a durable timer ran** |
+
+The slim run was in our container shape: **read-only root filesystem** (`/tmp` a tmpfs), **non-root**
+(`node`), `node src/worker.ts` on Node's strip-only TypeScript — no tsx, no bundler at start.
+
+### 2. Workflow code bundled at image build — **yes**
+
+`bundleWorkflowCode` runs in the image build (`RUN node bundle.mjs`: 1.56 MB, 2.2 s of webpack, 3.3 s
+in all) and the worker loads the file (`workflowBundle: { codePath }`), so webpack never runs in a
+pod and start-up stays under a second. The workflow source is TypeScript; the SDK's own swc compiles
+it in the bundle, so the strip-only rule (no emitting syntax) binds only the worker's side.
+
+### 3. Temporal's state on our Postgres — **yes, and it is the only copy**
+
+- Two databases of their own in the platform's Postgres, **`temporal`** and **`temporal_visibility`**,
+  created and migrated by Temporal's admin tool (`temporalio/admin-tools`, `temporal-sql-tool
+  --plugin postgres12`: `create-database`, `setup-schema -v 0.0`, `update-schema -d
+  …/postgresql/v12/{temporal,visibility}/versioned`) — schema 1.19 and 1.14. The `postgres12` plugin
+  is the one for Postgres ≥ 12; ours is 17. Visibility needs no Elasticsearch.
+- The server (`temporalio/server`, env `DB=postgres12`, `POSTGRES_SEEDS`, `DBNAME`,
+  `VISIBILITY_DBNAME`) **refuses to start without a dynamic-config file** —
+  `DYNAMIC_CONFIG_FILE_PATH` must name one (a ConfigMap in the cluster).
+- A namespace is created once per install (`temporal operator namespace create --namespace atlas`).
+- An instance started and left WAITING on a signal (one row in `executions`) survived the server
+  container being **deleted and recreated** and the worker being restarted: on the fresh server it
+  took the signal and completed, its 15-event history replayed from Postgres.
+
+### 4. A crash test — **owed** (EP-22.7's preset, killing the worker and the server mid-wait, and the
+restore drill restoring a waiting instance)
 
 ## Decision
 
@@ -91,6 +122,12 @@ What EP-22.3 must establish, and record here, before BMS is deployed beyond the 
 
 ## Consequences
 
+- **BMS's image is `node:24-slim`, not Alpine** (check 1): the shared Dockerfile's base becomes a
+  per-service build argument, and BMS's `k8s:build` line passes the glibc one. Every other service
+  stays on Alpine. The SDK carries 176 MB of `node_modules` (native builds for every platform);
+  EP-22.3 prunes the other platforms' from the image.
+- The install gains Temporal's steps: the two databases and their schema by the admin tool (an init
+  Job, like the services' own migrations), a dynamic-config ConfigMap, the namespace.
 - One more stateful component to install, monitor (its metrics into the observability overlay) and
   upgrade; the operations runbook gains its section with EP-22.3.
 - The pilot profile's sizing (doc 07 §9, `infra/helm/profiles/pilot.yaml`) grows by Temporal's

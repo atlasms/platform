@@ -415,7 +415,7 @@ Source: [bms-plan](services/bms-plan.md) §2; [bms.md](../architecture/services/
 |----|-------|:---:|
 | 22.1 | ✅ ADR: durable runtime — **Temporal** (TS SDK), self-hosted on the platform's Postgres; decided without the comparison spike, the checks it would have run are EP-22.3's ([ADR-0010](../adr/0010-bms-durable-runtime.md)) | 5 |
 | 22.2 | ✅ Scaffold `bms` (`nx g service`) + the `WorkflowDefinition` store; the DSL validator in `@atlas/contracts/workflow`, the FEEL subset enforced, validated on publish (#510) | 5 |
-| 22.3 | Temporal in the cluster + the worker behind the `Effects` boundary with the pure interpreter — one instance per workflow; timers, retries and waits survive restarts; ADR-0010's four checks recorded (worker on our base image, prebundled workflow code, persistence on our Postgres, a crash test) | 8 |
+| 22.3 | Temporal in the cluster + the worker behind the `Effects` boundary with the pure interpreter — one instance per workflow; timers, retries and waits survive restarts; ADR-0010's four checks recorded — 1–3 done 2026-10-12 (the worker needs glibc: BMS on `node:24-slim`; workflow code bundled at image build; state in our Postgres, surviving a server replacement); the crash test owed | 8 |
 | 22.4 | Command/event adapters — a command step issues the target service's own command, records `workflow.step.requested`, awaits its completion event | 5 |
 | 22.5 | Human-task step — `workflow.task.created` (user/role), waits on the correlated completion | 5 |
 | 22.6 | Manual-review step — `reviewPointId`, resolves on `asset.approved`/`rejected`, placeable at several points (review plan WS-G) | 3 |
