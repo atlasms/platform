@@ -101,6 +101,9 @@ jobs:
           kubectl -n atlas rollout status statefulset/nats --timeout=180s
           # The JVM, plus a ~1 GB image the node pulls on first use: the longest wait here.
           kubectl -n atlas rollout status statefulset/opensearch --timeout=300s
+          # Temporal (ADR-0010): its schema initContainer migrates its two databases first, then the
+          # server is Ready only once it answers SERVING on its own gRPC health service.
+          kubectl -n atlas rollout status deployment/temporal --timeout=240s
 
       # Available, not yet necessarily reachable: `rollout status` returns when the pod is Ready,
       # and kube-proxy programs its endpoint a moment later. That gap is the suite's to absorb,
@@ -150,6 +153,9 @@ jobs:
             kubectl -n atlas logs "deployment/$d" --tail=100 --all-containers || true
             echo "::endgroup::"
           done
+          echo "::group::logs temporal"
+          kubectl -n atlas logs deployment/temporal --tail=60 --all-containers || true
+          echo "::endgroup::"
           echo "::group::logs opensearch"
           kubectl -n atlas logs statefulset/opensearch --tail=60 || true
           echo "::endgroup::"

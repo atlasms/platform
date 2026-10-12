@@ -2,7 +2,8 @@
 
 - **Status:** Accepted — chosen by the product owner, 2026-10-12, on the design's case without
   running the comparison spike; checks 1–3 of *Evidence* run and passed the same day (BMS's image is
-  `node:24-slim`, not Alpine), check 4 owed
+  `node:24-slim`, not Alpine), check 4 owed; deployed to the cluster by EP-22.3
+  (`infra/k8s/base/temporal.yaml`, runbook §5.1)
 - **Date:** 2026-10-12
 - **Stories:** EP-22.1 (this ADR); built by EP-22.2 – EP-22.10
   ([#22](https://github.com/atlasms/platform/issues/22))

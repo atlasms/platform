@@ -14,6 +14,12 @@
 
 ARG SERVICE
 
+# The base image, per service. Alpine for every service but one: BMS runs Temporal's worker, whose
+# native core is built for glibc only — on Alpine it cannot load, with or without gcompat (ADR-0010
+# evidence 1). BMS's `k8s:build` line passes `BASE_IMAGE=node:24-slim`. Every stage uses the same
+# base, so `npm ci` installs for the libc the runtime has.
+ARG BASE_IMAGE=node:24-alpine
+
 # ---- manifests: every workspace package.json, and nothing else ------------
 #
 # Manifests before source: dependencies change far less often than code, and `npm ci` is the
@@ -27,7 +33,7 @@ ARG SERVICE
 # missing too. The first dependency unique to one service turned that into a startup crash
 # (`Cannot find package '@atlas/data-opensearch'`, EP-07.4). A list you must remember to extend
 # fails when you forget; a tree you must remember to PRUNE only bloats when you forget.
-FROM node:24-alpine AS manifests
+FROM ${BASE_IMAGE} AS manifests
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY libs ./libs
@@ -40,7 +46,7 @@ RUN rm -rf apps/studio \
  && find libs apps -maxdepth 1 -type f -delete
 
 # ---- dependencies + source --------------------------------------------------
-FROM node:24-alpine AS deps
+FROM ${BASE_IMAGE} AS deps
 ARG SERVICE
 WORKDIR /app
 
@@ -65,7 +71,7 @@ COPY apps/${SERVICE} ./apps/${SERVICE}
 COPY docs/architecture/schemas ./docs/architecture/schemas
 
 # ---- runtime ----------------------------------------------------------------
-FROM node:24-alpine AS runtime
+FROM ${BASE_IMAGE} AS runtime
 ARG SERVICE
 ENV NODE_ENV=production
 WORKDIR /app
@@ -77,8 +83,11 @@ WORKDIR /app
 # APK_PACKAGES is what a service needs from the OS beyond Node — passed by ITS entry in
 # `k8s:build`, so only that image carries it: rim's ffprobe (EP-15.4) is the ffmpeg package,
 # ~80 MB the gateway has no use for. Empty for every other service.
+#
+# On a Debian base (BMS) there is no apk: dumb-init comes from apt, and APK_PACKAGES is refused
+# rather than silently dropped.
 ARG APK_PACKAGES=""
-RUN apk add --no-cache dumb-init ${APK_PACKAGES}
+RUN if command -v apk >/dev/null; then       apk add --no-cache dumb-init ${APK_PACKAGES};     elif [ -n "${APK_PACKAGES}" ]; then       echo "APK_PACKAGES is for an Alpine base; this one is not" >&2; exit 1;     else       apt-get update && apt-get install -y --no-install-recommends dumb-init       && rm -rf /var/lib/apt/lists/*;     fi
 
 COPY --from=deps --chown=node:node /app /app
 

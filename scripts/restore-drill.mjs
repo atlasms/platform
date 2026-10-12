@@ -14,8 +14,9 @@
 //
 //   1. quiesce: every service's outbox drained, then every service stopped — so the dump holds no
 //      event that is half-announced, and nothing writes while it is taken;
-//   2. back up Postgres (all schemas) and HSM's online tier, and fingerprint what was there:
-//      row counts per table, the audit log's per-channel chain heads, every live file's checksum;
+//   2. back up Postgres (all schemas) — and Temporal's two databases beside it (ADR-0010) — and
+//      HSM's online tier, and fingerprint what was there: row counts per table, the audit log's
+//      per-channel chain heads, every live file's checksum, Temporal's executions;
 //   3. destroy the namespace — volumes and all — and reinstall from the same manifests;
 //   4. restore in the runbook's order: the data plane first, the database before any service
 //      starts, HSM's bytes before anything reads them;
@@ -46,8 +47,16 @@ const SERVICES = [
   'rim',
   'mts',
   'hsm',
+  'bms',
+  // BMS's workflow runtime (ADR-0010): it writes Temporal's databases, so it stops with the rest.
+  'temporal',
 ];
-const SCHEMAS = ['iam', 'mam', 'logging', 'scheduling', 'rim', 'mts', 'hsm'];
+const SCHEMAS = ['iam', 'mam', 'logging', 'scheduling', 'rim', 'mts', 'hsm', 'bms'];
+/**
+ * Temporal's state is in databases of its own, beside `atlas` (ADR-0010) — a dump of `atlas` alone
+ * would restore every definition and lose every running workflow.
+ */
+const TEMPORAL_DBS = ['temporal', 'temporal_visibility'];
 /** The schemas with an outbox — logging is the sink, and appends directly. */
 const OUTBOXES = SCHEMAS.filter((s) => s !== 'logging');
 
@@ -62,8 +71,8 @@ function kubectl(args, options = {}) {
     ...options,
   });
 }
-const psql = (sql) =>
-  kubectl(['exec', 'postgres-0', '--', 'psql', '-U', 'atlas', '-d', 'atlas', '-tAc', sql]).trim();
+const psql = (sql, db = 'atlas') =>
+  kubectl(['exec', 'postgres-0', '--', 'psql', '-U', 'atlas', '-d', db, '-tAc', sql]).trim();
 
 function npm(script) {
   const run = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', script], {
@@ -123,7 +132,12 @@ function fingerprint() {
   )
     .split('\n')
     .filter(Boolean);
-  return { counts, heads, files };
+  // Temporal: its workflow executions and their visibility rows — what a restore must not lose.
+  const temporal = {
+    executions: Number(psql('select count(*) from executions', 'temporal')),
+    visibility: Number(psql('select count(*) from executions_visibility', 'temporal_visibility')),
+  };
+  return { counts, heads, files, temporal };
 }
 
 function same(label, before, after) {
@@ -178,7 +192,9 @@ if (fromBackup) {
       .split('\n')
       .every(
         (p) =>
-          !/pod\/(api-gateway|iam|mam|websocket|logging|scheduling|rim|mts|rim-recorder)-/.test(p),
+          !/pod\/(api-gateway|iam|mam|websocket|logging|scheduling|rim|mts|bms|temporal|rim-recorder)-/.test(
+            p,
+          ),
       ),
   );
   // HSM's own queue (copies, moves, releases) must be idle, then it stops writing too.
@@ -190,7 +206,7 @@ if (fromBackup) {
 
   // --- 2. back up and fingerprint ----------------------------------------------
 
-  step('back up: pg_dump of the whole database, the bytes of HSM’s online tier');
+  step('back up: pg_dump of the whole database and Temporal’s two, the bytes of HSM’s online tier');
   before = fingerprint();
   {
     const fd = openSync(dumpFile, 'w');
@@ -210,6 +226,31 @@ if (fromBackup) {
           'atlas',
           '-Fc',
           'atlas',
+        ],
+        { stdio: ['ignore', fd, 'inherit'], maxBuffer: 1 << 30 },
+      );
+    } finally {
+      closeSync(fd);
+    }
+  }
+  for (const db of TEMPORAL_DBS) {
+    const fd = openSync(join(OUT, `${db}.dump`), 'w');
+    try {
+      execFileSync(
+        'kubectl',
+        [
+          '--context',
+          CONTEXT,
+          '-n',
+          NS,
+          'exec',
+          'postgres-0',
+          '--',
+          'pg_dump',
+          '-U',
+          'atlas',
+          '-Fc',
+          db,
         ],
         { stdio: ['ignore', fd, 'inherit'], maxBuffer: 1 << 30 },
       );
@@ -306,6 +347,38 @@ kubectl(['exec', 'postgres-0', '--', 'createdb', '-U', 'atlas', 'atlas']);
   }
 }
 
+// Temporal's databases the same way. Its Deployment is held at zero with the services, so its schema
+// initContainer has not run against the fresh server — and if it had, the drop takes that back.
+for (const db of TEMPORAL_DBS) {
+  kubectl(['exec', 'postgres-0', '--', 'dropdb', '-U', 'atlas', '--if-exists', '--force', db]);
+  kubectl(['exec', 'postgres-0', '--', 'createdb', '-U', 'atlas', db]);
+  const fd = openSync(join(OUT, `${db}.dump`), 'r');
+  try {
+    execFileSync(
+      'kubectl',
+      [
+        '--context',
+        CONTEXT,
+        '-n',
+        NS,
+        'exec',
+        '-i',
+        'postgres-0',
+        '--',
+        'pg_restore',
+        '-U',
+        'atlas',
+        '-d',
+        db,
+        '--no-owner',
+      ],
+      { stdio: [fd, 'inherit', 'inherit'] },
+    );
+  } finally {
+    closeSync(fd);
+  }
+}
+
 step('restore: HSM’s online tier, before anything reads it');
 scale(['hsm'], 1);
 // STARTED, not Ready: HSM's readiness asks IAM, and IAM is held at zero until the data is back —
@@ -358,6 +431,7 @@ const after = fingerprint();
 same(`row counts of ${Object.keys(before.counts).length} tables`, before.counts, after.counts);
 same('audit chain heads (seq and hash, per channel)', before.heads, after.heads);
 same('the live file ledger', before.files, after.files);
+same('Temporal’s executions and their visibility rows', before.temporal, after.temporal);
 let checked = 0;
 for (const line of after.files) {
   const [path, checksum, root] = line.split(' ');

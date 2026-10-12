@@ -124,6 +124,7 @@ This is what makes a rollback safe: release _N+1_ never removes what release _N_
 | Store | What | Method | Cadence → RPO |
 |-------|------|--------|---------------|
 | **Postgres** (metadata, identity, ledger, schedules) | the SoR for structured state | streaming WAL / PITR + nightly base backup | continuous → **< 5 min** ([NFR-AVAIL-6](../requirements/06-non-functional-requirements.md#availability)) |
+| **Temporal** (BMS's running workflows — [ADR-0010](../adr/0010-bms-durable-runtime.md)) | instance state + history | **two databases beside `atlas` on the same Postgres** (`temporal`, `temporal_visibility`) — backed up with it, by the same method; a dump of `atlas` alone restores every definition and loses every running workflow | as Postgres |
 | **Mongo** (extensible metadata, edit projects, scripts) | document state | oplog tailing / managed continuous backup | continuous → < 5 min |
 | **Object storage** (asset files) | the bytes | tier replication + versioning; masters protected by [tiering + checksum](../architecture/services/hsm.md) | replicated; **RPO = last placement** |
 | **OpenSearch** (search + audit/history) | projections | rebuildable from events; snapshot the audit index (compliance) | snapshot hourly; **rebuild** for search |
@@ -169,6 +170,37 @@ suite passes against it.
 > Ready never finishes while IAM is held back; and from Git Bash, a hand-typed
 > `kubectl exec … tar -C /storage` is rewritten to a Windows path — set `MSYS_NO_PATHCONV=1` (the
 > script calls kubectl directly and is not affected).
+>
+> **Second run — with BMS and Temporal (EP-22.3, 2026-10-12).** The drill had not been touched
+> since BMS shipped, so it neither stopped BMS nor counted its schema; and with Temporal deployed, a
+> dump of `atlas` alone would restore every workflow definition and lose every running instance.
+> Now BMS and Temporal stop with the services, `bms` is fingerprinted with the other schemas, and
+> `temporal`/`temporal_visibility` are dumped, dropped, restored and compared (executions and their
+> visibility rows) with `atlas`. 4.2 MB database + 57 kB + 45 kB for Temporal's, 1.6 GB online tier;
+> 63 tables, chain head `ch12` at seq 11393, 757 files — every check equal, every file's bytes
+> matching, smoke 38/38, the journey 12/12. **Destroy to smoke-green: 612 s.** Temporal's tables
+> held no executions yet (no workflow has run in the cluster before EP-22.3's worker), so this run
+> proves the mechanics; the crash test (ADR-0010 check 4) is where a waiting instance is restored.
+
+### 5.1 Temporal (BMS's runtime — ADR-0010)
+
+One Deployment (`temporal`, one replica — its membership ring is a topology decision, not a replica
+count), the server image `temporalio/server`, its state in `temporal` and `temporal_visibility` on
+the platform's Postgres. Its **schema initContainer** (`temporalio/admin-tools`, `temporal-sql-tool
+--plugin postgres12`) creates both databases if absent and migrates them on every start —
+idempotent, so an image upgrade upgrades the schema. It reads `DYNAMIC_CONFIG_FILE_PATH` from the
+`temporal-dynamicconfig` ConfigMap and **will not start without it**. Ready = its frontend answers
+`SERVING` on its gRPC health service.
+
+```sh
+kubectl -n atlas run temporal-probe --rm -i --restart=Never --image=temporalio/admin-tools:1.32.1   --command -- temporal operator cluster health --address temporal:7233      # SERVING
+kubectl -n atlas logs deployment/temporal -c schema                            # the migration
+```
+
+Its frontend has **no authentication**: it is a ClusterIP Service, never routed by the gateway or
+an Ingress, and only BMS is given its address. A site running its own Temporal sets
+`temporal.enabled: false` and `temporal.host` in the chart. Restores: its databases are dumped and
+restored with `atlas`, and it is stopped with the services during the quiesce (the drill does both).
 
 ## 6. Disaster recovery (meeting RTO < 1 h)
 

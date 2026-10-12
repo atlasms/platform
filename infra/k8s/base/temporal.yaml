@@ -1,0 +1,204 @@
+# Temporal — BMS's durable workflow runtime ([ADR-0010](../../../docs/adr/0010-bms-durable-runtime.md)).
+#
+# Self-hosted, one process at our scale (frontend, history, matching and worker roles together),
+# its state in TWO databases of its own on the platform's Postgres — `temporal` and
+# `temporal_visibility`, beside (not inside) the services' `atlas` database — so the backup and the
+# restore drill cover it. Only BMS talks to it.
+#
+# The shape is what ADR-0010's checks measured (spikes/temporal/run.sh): the schema applied by
+# Temporal's own admin tool, idempotently, so it is an initContainer that runs on every start like
+# the services' own migrations; the server refuses to start without a dynamic-config file; both
+# images run non-root on a read-only root with only /tmp writable. The namespace is BMS's to ensure
+# at its start-up (EP-22.3), not a Job here: a Job is immutable once applied, and the chart is
+# generated from Deployments and StatefulSets.
+#
+# Its frontend has NO authentication — it is reachable inside the cluster only (a ClusterIP
+# Service, no route through the gateway, no Ingress path), and only BMS is given its address.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: temporal-dynamicconfig
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/part-of: atlas
+data:
+  # Server defaults, overridden key by key. Empty of overrides today; the file must exist.
+  atlas.yaml: |
+    system.forceSearchAttributesCacheRefreshOnRead:
+      - value: true
+        constraints: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/part-of: atlas
+spec:
+  # One. Running several means configuring Temporal's membership ring (and, at scale, its roles as
+  # separate deployments) — a topology decision, not a replica count.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: temporal
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: temporal
+        app.kubernetes.io/part-of: atlas
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Temporal's schema, by Temporal's tool: create the two databases if absent, then bring each
+        # schema to the version this server expects. Every step is idempotent (measured: re-run on
+        # a current database, all three exit 0), so this runs on every start and upgrades the
+        # schema with the image.
+        - name: schema
+          image: temporalio/admin-tools:1.32.1
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-ec"]
+          args:
+            - |
+              SQL="temporal-sql-tool --plugin postgres12 --ep $POSTGRES_SEEDS -p $DB_PORT -u $POSTGRES_USER --pw $POSTGRES_PWD"
+              S=/etc/temporal/schema/postgresql/v12
+              for db in "$DBNAME" "$VISIBILITY_DBNAME"; do $SQL --db "$db" create-database; done
+              $SQL --db "$DBNAME" setup-schema -v 0.0
+              $SQL --db "$DBNAME" update-schema -d "$S/temporal/versioned"
+              $SQL --db "$VISIBILITY_DBNAME" setup-schema -v 0.0
+              $SQL --db "$VISIBILITY_DBNAME" update-schema -d "$S/visibility/versioned"
+          env:
+            - name: POSTGRES_SEEDS
+              value: postgres
+            - name: DB_PORT
+              value: "5432"
+            - name: DBNAME
+              value: temporal
+            - name: VISIBILITY_DBNAME
+              value: temporal_visibility
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: POSTGRES_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: temporal
+          image: temporalio/server:1.32.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 7233
+          env:
+            - name: DB
+              value: postgres12
+            - name: POSTGRES_SEEDS
+              value: postgres
+            - name: DB_PORT
+              value: "5432"
+            - name: DBNAME
+              value: temporal
+            - name: VISIBILITY_DBNAME
+              value: temporal_visibility
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: POSTGRES_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            - name: DYNAMIC_CONFIG_FILE_PATH
+              value: /etc/temporal/config/dynamicconfig/atlas.yaml
+            - name: BIND_ON_IP
+              value: 0.0.0.0
+            # The address the roles advertise to each other — the pod's own, rather than the
+            # entrypoint's `getent hosts $(hostname)`, which depends on the cluster's DNS.
+            - name: TEMPORAL_BROADCAST_ADDRESS
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: dynamicconfig
+              mountPath: /etc/temporal/config/dynamicconfig
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          # The frontend's own gRPC health service — what `temporal operator cluster health` asks.
+          # Ready means it answers SERVING, which it does only once the history shards are owned.
+          readinessProbe:
+            grpc:
+              port: 7233
+              service: temporal.api.workflowservice.v1.WorkflowService
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            grpc:
+              port: 7233
+              service: temporal.api.workflowservice.v1.WorkflowService
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 6
+      volumes:
+        - name: dynamicconfig
+          configMap:
+            name: temporal-dynamicconfig
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/part-of: atlas
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: temporal
+  ports:
+    - name: grpc
+      port: 7233
+      targetPort: grpc

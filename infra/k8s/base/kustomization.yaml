@@ -16,6 +16,8 @@ resources:
   - postgres.yaml
   - nats.yaml
   - opensearch.yaml
+  # BMS's workflow runtime (ADR-0010) — its state is in Postgres, so it follows it.
+  - temporal.yaml
   # Services.
   - iam.yaml
   - mam.yaml
