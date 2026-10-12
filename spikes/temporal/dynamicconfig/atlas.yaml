@@ -1,0 +1,4 @@
+# Atlas: Temporal dynamic config. Empty = the server defaults.
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}

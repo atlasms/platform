@@ -8,9 +8,10 @@ Spikes are workspace packages so their dependencies resolve normally, but they d
 **no `test` script**: they need real servers, and CI has none. `nx run-many -t test` cannot reach
 them. Lint and typecheck still apply, so they cannot silently rot.
 
-| Spike                | Question                              | Outcome                                                         |
-| -------------------- | ------------------------------------- | --------------------------------------------------------------- |
-| [`broker/`](broker/) | NATS JetStream or RabbitMQ? (EP-03.0) | [ADR-0001](../docs/adr/0001-message-broker.md) — NATS JetStream |
+| Spike                    | Question                                                 | Outcome                                                                                              |
+| ------------------------ | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| [`broker/`](broker/)     | NATS JetStream or RabbitMQ? (EP-03.0)                    | [ADR-0001](../docs/adr/0001-message-broker.md) — NATS JetStream                                      |
+| [`temporal/`](temporal/) | Does Temporal fit our images and our Postgres? (EP-22.3) | [ADR-0010](../docs/adr/0010-bms-durable-runtime.md) checks 1–3 — yes, on `node:24-slim` (not Alpine) |
 
 ## Running one
 
