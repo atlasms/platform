@@ -484,8 +484,14 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
 
       const body = await upstream.text();
       void reply.code(upstream.status);
-      const ct = upstream.headers.get('content-type');
-      if (ct !== null) void reply.header('content-type', ct);
+      // The response headers a client acts on, relayed. `etag` + `cache-control` are a conditional
+      // read's other half: the gateway forwarded `if-none-match` but dropped the validator it is
+      // answered with, so no client could ever send one — BMS's workflow catalog (EP-22.11), the
+      // first service ETag through the proxy, was a full 200 every time.
+      for (const h of ['content-type', 'etag', 'cache-control']) {
+        const value = upstream.headers.get(h);
+        if (value !== null) void reply.header(h, value);
+      }
       return reply.send(body);
     } catch {
       // An unreachable upstream is a gateway problem, not a mystery 500 from Fastify.

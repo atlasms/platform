@@ -141,6 +141,49 @@ test('a valid token is proxied with the internal identity header set', async () 
   assert.equal(h['cache-control'], 'no-cache');
 });
 
+test('a conditional read works through the proxy: the ETag comes back, a 304 stays a 304', async () => {
+  // The gateway forwarded `if-none-match` but relayed only `content-type` back — so a client never
+  // saw the validator it should send. Found by BMS's workflow catalog (EP-22.11).
+  const key = await generateTestKey();
+  const sent: (string | null)[] = [];
+  const app = buildGateway({
+    jwks: key.jwks,
+    routes,
+    fetchImpl: async (_url, init) => {
+      const inm = new Headers(init?.headers as ConstructorParameters<typeof Headers>[0]).get(
+        'if-none-match',
+      );
+      sent.push(inm);
+      return inm === '"v1"'
+        ? new Response(null, { status: 304, headers: { etag: '"v1"' } })
+        : new Response('{"items":[]}', {
+            status: 200,
+            headers: {
+              'content-type': 'application/json',
+              etag: '"v1"',
+              'cache-control': 'no-cache',
+            },
+          });
+    },
+  });
+  const token = await key.sign({ sub: 'u', channelId: 'ch12' });
+  const first = await app.inject({
+    method: 'GET',
+    url: '/api/v1/assets',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.headers['etag'], '"v1"');
+  assert.equal(first.headers['cache-control'], 'no-cache');
+  const again = await app.inject({
+    method: 'GET',
+    url: '/api/v1/assets',
+    headers: { authorization: `Bearer ${token}`, 'if-none-match': '"v1"' },
+  });
+  assert.equal(again.statusCode, 304);
+  assert.deepEqual(sent, [null, '"v1"']);
+});
+
 test('SECURITY: the raw Authorization header is NOT forwarded upstream', async () => {
   const { app, key, seen } = await gatewayWith();
   const token = await key.sign({ sub: 'u' });

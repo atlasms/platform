@@ -24,8 +24,9 @@ paths:
     get:
       operationId: listWorkflows
       tags: [workflows]
-      summary: The channel's workflows, by id (workflow:read or workflow:admin)
+      summary: The channel's workflows in every state, by id (workflow:read or workflow:admin)
       parameters:
+        - { name: state, in: query, required: false, schema: { $ref: '#/components/schemas/WorkflowState' } }
         - { name: after, in: query, required: false, schema: { $ref: '#/components/schemas/Ulid' }, description: The last id of the previous page. }
         - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
@@ -42,6 +43,67 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
+  /workflows/catalog:
+    get:
+      operationId: getWorkflowCatalog
+      tags: [workflows]
+      summary: >-
+        Every ACTIVE workflow of the channel with its published definition — the copy every
+        authenticated user's client loads at sign-in and refreshes on `workflow.changed` (EP-22.11).
+        No workflow permission is needed: an active workflow is visible to everyone in the channel.
+      parameters:
+        - { name: If-None-Match, in: header, required: false, schema: { type: string }, description: "The catalog's ETag as last fetched: unchanged is a 304." }
+      responses:
+        '200':
+          description: The catalog
+          headers:
+            ETag: { schema: { type: string }, description: Changes whenever any workflow in it does. }
+          content: { application/json: { schema: { $ref: '#/components/schemas/Catalog' } } }
+        '304': { description: Unchanged since the ETag sent. }
+        '401': { $ref: '#/components/responses/Error' }
+  /workflows/{id}/activate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      - { name: revision, in: query, required: true, schema: { type: integer, minimum: 1 } }
+    post:
+      operationId: activateWorkflow
+      tags: [workflows]
+      summary: An inactive workflow becomes active again — in the catalog, able to start instances (workflow:admin)
+      responses:
+        '200': { description: Active, content: { application/json: { schema: { $ref: '#/components/schemas/Workflow' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: "Not inactive (a draft is activated by publishing it; an archived workflow is final), or the revision moved.", content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /workflows/{id}/deactivate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      - { name: revision, in: query, required: true, schema: { type: integer, minimum: 1 } }
+    post:
+      operationId: deactivateWorkflow
+      tags: [workflows]
+      summary: >-
+        An active workflow becomes inactive — out of the catalog, no new instances (workflow:admin).
+        REFUSED while any instance of it is still running or waiting.
+      responses:
+        '200': { description: Inactive, content: { application/json: { schema: { $ref: '#/components/schemas/Workflow' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: "Not active, the revision moved, or instances are still running (`details.running` counts them).", content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /workflows/{id}/archive:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      - { name: revision, in: query, required: true, schema: { type: integer, minimum: 1 } }
+    post:
+      operationId: archiveWorkflow
+      tags: [workflows]
+      summary: >-
+        Retire a workflow for good — kept for its history, never active again (workflow:admin).
+        REFUSED while any instance of it is still running or waiting.
+      responses:
+        '200': { description: Archived, content: { application/json: { schema: { $ref: '#/components/schemas/Workflow' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: "Already archived, the revision moved, or instances are still running (`details.running` counts them).", content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /workflows/palette:
     get:
       operationId: getPalette
@@ -161,7 +223,7 @@ paths:
         '201': { description: Started, content: { application/json: { schema: { $ref: '#/components/schemas/WorkflowInstance' } } } }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
-        '409': { description: The workflow has no published version (or not the one named)., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: "The workflow is not active, or has no published version (or not the one named).", content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '422': { $ref: '#/components/responses/Error' }
         '503': { description: The workflow runtime (Temporal) could not be reached; nothing was started., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /instances/{id}:
@@ -216,6 +278,30 @@ components:
         vars: { type: array, maxItems: 100, items: { type: object } }
         steps: { type: array, maxItems: 500, items: { type: object } }
         transitions: { type: array, maxItems: 1000, items: { type: object } }
+    WorkflowState:
+      type: string
+      enum: [draft, active, inactive, archived]
+      description: >-
+        draft — never published; active — in the catalog, starts instances (a first publish makes
+        it so); inactive — out of the catalog, no new instances, can be reactivated; archived —
+        final, kept for its history. Deactivating and archiving are refused while instances run.
+    CatalogEntry:
+      type: object
+      required: [id, name, revision, version, definition]
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        name: { type: string }
+        description: { type: string }
+        scope: { type: object, properties: { categoryId: { type: string }, mediaType: { type: string }, usage: { type: string } } }
+        revision: { type: integer }
+        version: { type: integer, description: The published version a new instance runs. }
+        definition: { $ref: '#/components/schemas/WorkflowDefinition' }
+    Catalog:
+      type: object
+      required: [etag, items]
+      properties:
+        etag: { type: string, description: The same value as the ETag header. }
+        items: { type: array, items: { $ref: '#/components/schemas/CatalogEntry' } }
     VersionSummary:
       type: object
       required: [version, publishedAt, publishedBy]
@@ -225,10 +311,11 @@ components:
         publishedBy: { type: string }
     Workflow:
       type: object
-      required: [id, channelId, name, revision, latestVersion, versions, createdBy, createdAt, updatedAt]
+      required: [id, channelId, name, state, revision, latestVersion, versions, createdBy, createdAt, updatedAt]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
         channelId: { type: string }
+        state: { $ref: '#/components/schemas/WorkflowState' }
         name: { type: string, description: "The draft's name while one is open, else the latest published version's." }
         description: { type: string }
         scope: { type: object, properties: { categoryId: { type: string }, mediaType: { type: string }, usage: { type: string } } }
@@ -242,11 +329,12 @@ components:
         updatedAt: { type: string, format: date-time }
     WorkflowSummary:
       type: object
-      required: [id, channelId, name, revision, latestVersion]
+      required: [id, channelId, name, state, revision, latestVersion]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
         channelId: { type: string }
         name: { type: string }
+        state: { $ref: '#/components/schemas/WorkflowState' }
         description: { type: string }
         revision: { type: integer }
         latestVersion: { type: integer }
@@ -339,9 +427,10 @@ components:
         issues: { type: array, items: { $ref: '#/components/schemas/ValidationIssue' } }
     PublishResult:
       type: object
-      required: [workflowId, version, publishedAt, revision]
+      required: [workflowId, version, publishedAt, revision, state]
       properties:
         workflowId: { $ref: '#/components/schemas/Ulid' }
+        state: { $ref: '#/components/schemas/WorkflowState', description: "A first publish makes the workflow active; a later one leaves its state as it was." }
         version: { type: integer }
         publishedAt: { type: string, format: date-time }
         revision: { type: integer, description: The workflow's revision after publishing. }

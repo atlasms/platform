@@ -138,6 +138,10 @@ export class BmsRuntime {
     const header = await this.store.get(input.workflowId);
     if (!header || header.channelId !== parent.channelId)
       throw new NotFound(`workflow ${input.workflowId}`);
+    // Only an active workflow starts (EP-22.11) — a child as much as a top-level instance. Publish
+    // refused a sub-flow naming one that was not; this is it being deactivated since.
+    if (header.state !== 'active')
+      throw new Conflict(`sub-flow workflow ${header.id} is ${header.state}, not active`);
     const version = input.version === 'latest' ? header.latestVersion : input.version;
     const published = version > 0 ? await this.store.version(header.id, version) : undefined;
     if (!published || published.status !== 'published')

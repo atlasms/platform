@@ -42,6 +42,8 @@
   "events/task.updated.payload.schema.json#/properties/state": "Task lifecycle state machine; forwarded and cancelled have distinct notification behaviour.",
   "events/taxonomy.updated.payload.schema.json#/properties/kind": "The SET of vocabularies is code — each has its own table, index and UI. The TERMS are Tier 2.",
   "events/taxonomy.updated.payload.schema.json#/properties/action": "Each action drives a different search-index and cache update; merge and deprecate are not deletes.",
+  "events/workflow.changed.payload.schema.json#/properties/change": "Every client's workflow catalog branches on it: published/activated refetch, deactivated/archived drop (EP-22.11).",
+  "events/workflow.changed.payload.schema.json#/properties/state": "BMS's workflow lifecycle (EP-22.11): only an active workflow starts instances and is in the catalog; the transitions are code.",
   "events/workflow.completed.payload.schema.json#/properties/outcome": "Completed, failed, cancelled and compensated end a workflow instance through different paths.",
   "events/workflow.step.requested.payload.schema.json#/properties/stepKind": "The step executor is chosen by kind."
 }

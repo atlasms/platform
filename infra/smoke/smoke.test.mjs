@@ -1642,6 +1642,101 @@ test('smoke: EP-22.3 — an instance runs on Temporal: a durable timer, a wait, 
   // log's read rule for the entity type (a visibility change, held for review separately).
 });
 
+test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {
+  // A workflow's lifecycle on a live cluster (decided 2026-10-13): a first publish makes it active
+  // and puts it in the catalog every client loads; deactivating it is refused while an instance is
+  // still waiting, and allowed — taking it out of the catalog — once that instance has ended.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const created = await get('/api/v1/workflows', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      name: `smoke lifecycle ${Date.now()}`,
+      steps: [
+        { id: 's_start', kind: 'start' },
+        { id: 's_wait', kind: 'wait-event', config: { event: 'x', correlate: '= true' } },
+        { id: 's_end', kind: 'end' },
+      ],
+      transitions: [
+        { id: 't1', from: 's_start', to: 's_wait' },
+        { id: 't2', from: 's_wait', to: 's_end' },
+      ],
+    }),
+  });
+  assert.equal(created.status, 201, created.text);
+  const w = json(created);
+  assert.equal(w.state, 'draft');
+  const published = await get(`/api/v1/workflows/${w.id}/publish?revision=1`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(json(published).state, 'active', published.text);
+
+  const catalog = await get('/api/v1/workflows/catalog', { headers });
+  assert.equal(catalog.status, 200, catalog.text);
+  assert.ok(
+    json(catalog).items.some((i) => i.id === w.id),
+    'an active workflow is in the catalog',
+  );
+  const etag = catalog.headers.get('etag');
+  const unchanged = await get('/api/v1/workflows/catalog', {
+    headers: { ...headers, 'if-none-match': etag },
+  });
+  assert.equal(unchanged.status, 304, 'the ETag comes back through the gateway');
+
+  let started;
+  const startBy = Date.now() + 60_000;
+  for (;;) {
+    started = await get('/api/v1/instances', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workflowId: w.id }),
+    });
+    if (started.status !== 503 || Date.now() > startBy) break;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  assert.equal(started.status, 201, started.text);
+  const { id } = json(started);
+  const refused = await get(`/api/v1/workflows/${w.id}/deactivate?revision=2`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(refused.status, 409, refused.text);
+  assert.equal(json(refused).details.running, 1);
+
+  const deadline = Date.now() + 60_000;
+  for (;;) {
+    const inst = json(await get(`/api/v1/instances/${id}`, { headers }));
+    if (inst.currentSteps?.includes('s_wait')) break;
+    if (Date.now() > deadline) assert.fail('the instance never reached its wait');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  await get(`/api/v1/instances/${id}/signal`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ stepId: 's_wait' }),
+  });
+  for (;;) {
+    const inst = json(await get(`/api/v1/instances/${id}`, { headers }));
+    if (inst.state === 'completed') break;
+    if (Date.now() > deadline) assert.fail('the instance never ended');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  const off = await get(`/api/v1/workflows/${w.id}/deactivate?revision=2`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(off.status, 200, off.text);
+  assert.equal(json(off).state, 'inactive');
+  const after = await get('/api/v1/workflows/catalog', { headers });
+  assert.ok(
+    !json(after).items.some((i) => i.id === w.id),
+    'an inactive workflow leaves the catalog',
+  );
+});
+
 test('smoke: EP-31 — a range copied onto another day: one audited write over the target version', async () => {
   // §3.7 on a live cluster: two days, a reel on the first, its first hour copied onto the second at
   // 20:00 by overwrite — the items re-timed with new ids, the target one version on, a stale

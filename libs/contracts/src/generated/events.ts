@@ -727,6 +727,20 @@ export interface UserUpdatedPayload {
   at: string;
 }
 
+/** Emitted by BMS when the channel's CATALOG of workflows changes — a version published, a workflow activated, deactivated or archived (EP-22.11). The catalog (`GET /workflows/catalog`) is every ACTIVE workflow with its published definition, which every authenticated user's client keeps a copy of; this event is broadcast to all of them so each refetches what changed (an ETag'd catalog read, or the one version) and drops what left. Saving a draft does not emit it: drafts are not in anyone's copy. */
+export interface WorkflowChangedPayload {
+  workflowId: Ulid;
+  /** What happened. A client branches on it: published/activated → (re)fetch; deactivated/archived → drop from the copy. */
+  change: 'published' | 'activated' | 'deactivated' | 'archived';
+  /** The workflow's state after the change. Only `active` is in the catalog. */
+  state: 'draft' | 'active' | 'inactive' | 'archived';
+  /** The newest published version — the one the catalog carries. */
+  latestVersion: number;
+  /** The workflow's revision after the change; a client holding an older one is stale. */
+  revision: number;
+  name?: string;
+}
+
 /** Emitted by BMS when a workflow instance reaches a terminal state. Consumed by Notifications and Logging. */
 export interface WorkflowCompletedPayload {
   instanceId: Ulid;
@@ -821,6 +835,7 @@ export interface EventPayloads {
   'transcode.started': TranscodeStartedPayload;
   'user.created': UserCreatedPayload;
   'user.updated': UserUpdatedPayload;
+  'workflow.changed': WorkflowChangedPayload;
   'workflow.completed': WorkflowCompletedPayload;
   'workflow.step.requested': WorkflowStepRequestedPayload;
   'workflow.task.created': WorkflowTaskCreatedPayload;

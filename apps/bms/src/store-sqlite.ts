@@ -14,7 +14,7 @@ import {
 } from '@atlas/data';
 import type { HistoryEntry, Instance } from './instance.ts';
 import type { WorkflowStore, WorkflowTx } from './store.ts';
-import type { Workflow, WorkflowVersion } from './workflow.ts';
+import { withState, type Workflow, type WorkflowVersion } from './workflow.ts';
 
 export const sqliteMigrations: Migration[] = [
   outboxMigration,
@@ -62,7 +62,22 @@ export const sqliteMigrations: Migration[] = [
            PRIMARY KEY (instance_id, seq)
          );`,
   },
+  // EP-22.11: a workflow's lifecycle state, as a column the catalog and the list filter on. A header
+  // written before it is backfilled as its reader would interpret it (withState): published once →
+  // active, never → draft.
+  {
+    id: 'bms_workflow_state',
+    up: `ALTER TABLE workflows ADD COLUMN state TEXT;
+         UPDATE workflows SET state = CASE WHEN json_extract(data, '$.latestVersion') > 0 THEN 'active' ELSE 'draft' END WHERE state IS NULL;
+         CREATE INDEX IF NOT EXISTS workflows_state_idx ON workflows (channel_id, state, id);`,
+  },
 ];
+
+/** The row's `state` column is the truth for the filter, so it is the truth on the record too. */
+const fromRow = (r: { data: string; state: string | null }): Workflow => {
+  const w = JSON.parse(r.data) as Workflow;
+  return r.state !== null ? { ...w, state: r.state as Workflow['state'] } : withState(w);
+};
 
 export function sqliteWorkflowStore(path = ':memory:'): WorkflowStore & { db: Db } {
   const db = openDb(path);
@@ -77,13 +92,15 @@ export function sqliteWorkflowStore(path = ':memory:'): WorkflowStore & { db: Db
         ifRevision === undefined
           ? db
               .prepare(
-                `INSERT INTO workflows (id, channel_id, revision, data) VALUES (?, ?, ?, ?)
+                `INSERT INTO workflows (id, channel_id, revision, state, data) VALUES (?, ?, ?, ?, ?)
                  ON CONFLICT (id) DO NOTHING`,
               )
-              .run(w.id, w.channelId, w.revision, data)
+              .run(w.id, w.channelId, w.revision, w.state, data)
           : db
-              .prepare(`UPDATE workflows SET revision = ?, data = ? WHERE id = ? AND revision = ?`)
-              .run(w.revision, data, w.id, ifRevision);
+              .prepare(
+                `UPDATE workflows SET revision = ?, state = ?, data = ? WHERE id = ? AND revision = ?`,
+              )
+              .run(w.revision, w.state, data, w.id, ifRevision);
       return Number(result.changes) === 1;
     },
     async putVersion(v) {
@@ -101,6 +118,21 @@ export function sqliteWorkflowStore(path = ':memory:'): WorkflowStore & { db: Db
     },
     async enqueue(record) {
       outbox.enqueue(record);
+    },
+    async workflowForUpdate(id) {
+      // sqlite serializes writers; the transaction is the lock.
+      const row = db.prepare('SELECT data, state FROM workflows WHERE id = ?').get(id) as
+        { data: string; state: string | null } | undefined;
+      return row ? fromRow(row) : undefined;
+    },
+    async liveInstances(workflowId) {
+      const row = db
+        .prepare(
+          `SELECT count(*) AS n FROM workflow_instances
+           WHERE workflow_id = ? AND state NOT IN ('completed', 'failed')`,
+        )
+        .get(workflowId) as { n: number };
+      return Number(row.n);
     },
     async insertInstance(i) {
       const result = db
@@ -144,23 +176,26 @@ export function sqliteWorkflowStore(path = ':memory:'): WorkflowStore & { db: Db
       return withTransactionAsync(db, () => fn(tx));
     },
     async get(id) {
-      const row = db.prepare('SELECT data FROM workflows WHERE id = ?').get(id) as
-        { data: string } | undefined;
-      return row ? (JSON.parse(row.data) as Workflow) : undefined;
+      const row = db.prepare('SELECT data, state FROM workflows WHERE id = ?').get(id) as
+        { data: string; state: string | null } | undefined;
+      return row ? fromRow(row) : undefined;
     },
-    async list(channelId, { after, limit }) {
-      const rows = (
-        after === undefined
-          ? db
-              .prepare('SELECT data FROM workflows WHERE channel_id = ? ORDER BY id LIMIT ?')
-              .all(channelId, limit)
-          : db
-              .prepare(
-                'SELECT data FROM workflows WHERE channel_id = ? AND id > ? ORDER BY id LIMIT ?',
-              )
-              .all(channelId, after, limit)
-      ) as { data: string }[];
-      return rows.map((r) => JSON.parse(r.data) as Workflow);
+    async list(channelId, { state, after, limit }) {
+      const params: (string | number)[] = [channelId];
+      let where = 'channel_id = ?';
+      if (state !== undefined) {
+        where += ' AND state = ?';
+        params.push(state);
+      }
+      if (after !== undefined) {
+        where += ' AND id > ?';
+        params.push(after);
+      }
+      params.push(limit);
+      const rows = db
+        .prepare(`SELECT data, state FROM workflows WHERE ${where} ORDER BY id LIMIT ?`)
+        .all(...params) as { data: string; state: string | null }[];
+      return rows.map(fromRow);
     },
     async version(workflowId, version) {
       const row = db

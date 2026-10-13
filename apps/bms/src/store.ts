@@ -7,13 +7,16 @@
 
 import type { OutboxRecord } from '@atlas/messaging';
 import type { HistoryEntry, Instance } from './instance.ts';
-import type { Workflow, WorkflowVersion } from './workflow.ts';
+import type { Workflow, WorkflowState, WorkflowVersion } from './workflow.ts';
 
 export interface WorkflowStore {
   transaction<T>(fn: (tx: WorkflowTx) => Promise<T>): Promise<T>;
   get(id: string): Promise<Workflow | undefined>;
-  /** One channel's workflows, keyset on id ascending. */
-  list(channelId: string, options: { after?: string; limit: number }): Promise<Workflow[]>;
+  /** One channel's workflows, keyset on id ascending; with `state`, only those in it. */
+  list(
+    channelId: string,
+    options: { state?: WorkflowState; after?: string; limit: number },
+  ): Promise<Workflow[]>;
   version(workflowId: string, version: number): Promise<WorkflowVersion | undefined>;
   /** The published versions, newest first. */
   published(workflowId: string): Promise<WorkflowVersion[]>;
@@ -42,6 +45,14 @@ export interface WorkflowTx {
    */
   putVersion(version: WorkflowVersion): Promise<boolean>;
   enqueue(record: OutboxRecord): Promise<void>;
+  /**
+   * The header, read THROUGH the transaction and locked: a state change and a start of an
+   * instance both take it first, so "no instance is running" and "the workflow is active" are
+   * each true at the moment of the write that depends on it (EP-22.11).
+   */
+  workflowForUpdate(id: string): Promise<Workflow | undefined>;
+  /** Instances of a workflow not yet completed or failed. */
+  liveInstances(workflowId: string): Promise<number>;
   /** Insert an instance; `false` if the id exists (a retried start is the same instance). */
   insertInstance(instance: Instance): Promise<boolean>;
   /** The instance, read THROUGH the transaction and locked for its update. */

@@ -7,9 +7,18 @@
 import type { WorkflowDefinition } from '@atlas/contracts/workflow';
 import { ValidationError } from '@atlas/service-kit';
 
+/**
+ * A workflow's lifecycle (EP-22.11, decided 2026-10-13). `draft` — never published; `active` — in
+ * every user's catalog, starts instances (a first publish makes it so); `inactive` — out of the
+ * catalog, no new instances, can be reactivated; `archived` — final, kept for its history.
+ * Deactivating and archiving are refused while an instance of the workflow is still running.
+ */
+export type WorkflowState = 'draft' | 'active' | 'inactive' | 'archived';
+
 export interface Workflow {
   id: string;
   channelId: string;
+  state: WorkflowState;
   /** The open draft's name while there is one, else the latest published version's. */
   name: string;
   description?: string;
@@ -121,4 +130,13 @@ export function parseRevision(raw: unknown): number {
       '?revision= is required: the workflow revision this edit was made on',
     );
   return n;
+}
+
+/**
+ * A header as written before EP-22.11 carries no `state`: one that was ever published was, in
+ * effect, active (instances started from it), and one that never was is a draft.
+ */
+export function withState(w: Workflow): Workflow {
+  if (w.state !== undefined) return w;
+  return { ...w, state: w.latestVersion > 0 ? 'active' : 'draft' };
 }

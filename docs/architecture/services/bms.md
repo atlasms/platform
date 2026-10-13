@@ -337,6 +337,36 @@ BMS pod while an instance is inside a timer — both back in 18 s, the timer fir
 with a gapless history; the **restore drill** leaves an instance waiting, restores, and finishes it.
 CI runs the worker against Temporal's dev server (`apps/bms/test/temporal.test.ts`).
 
+## 13c. Workflow lifecycle and the catalog (EP-22.11, decided 2026-10-13)
+
+| State | In the catalog | Starts instances | Reached by |
+|---|---|---|---|
+| `draft` | no | no | creating it; it stays a draft until its first publish |
+| `active` | **yes** | **yes** | the first publish; `POST …/activate` from inactive |
+| `inactive` | no | no | `POST …/deactivate` — can be reactivated |
+| `archived` | no | no | `POST …/archive` from any state — **final**, kept for its history |
+
+- **Deactivating and archiving are REFUSED while any instance of the workflow is still running or
+  waiting** (409, `details.running`). Both count the live instances under the workflow header's row
+  lock, and starting an instance takes the same lock to check the state — so the two cannot
+  interleave into an instance running on an inactive workflow (a conformance case races them on
+  Postgres). Running instances are never cancelled by a state change.
+- A later publish leaves the state alone: a new version of an inactive workflow does not reactivate
+  it. An archived workflow cannot be edited or published. A sub-flow must name an ACTIVE workflow —
+  at publish (`SUBFLOW_INACTIVE`) and when the child starts (a non-retryable refusal: the step fails).
+- **The catalog** — `GET /workflows/catalog` — is every active workflow of the channel with the
+  published definition a new instance runs. **Every authenticated user** reads it, with no workflow
+  permission: an active workflow is visible to everyone in its channel. A client loads it at sign-in
+  and keeps it; it is ETag'd (each entry's id and revision), so an unchanged re-fetch is a 304. Drafts
+  and inactive or archived workflows stay behind `workflow:read`/`:admin` (`GET /workflows?state=`).
+- **`workflow.changed`** (`published` / `activated` / `deactivated` / `archived`, with the state,
+  latest version and revision after it) is emitted in the transaction of every change to the
+  catalog, for every client to refetch or drop what changed. Saving a draft emits nothing.
+- **Change logs** — a workflow's and its instances' audit history, and `workflow.*` entries in the
+  log — are read under a dedicated `workflow:audit` permission. Broadcasting `workflow.changed` to
+  every user, and the read rule for the logs, are a WebSocket eligibility and a log visibility change
+  plus a new permission: that half is its own PR, held for the product owner's review.
+
 ## 14. Open questions / future
 
 - **Decided:** Studio gets a **visual drag-and-drop designer** ([Foblex Flow](https://flow.foblex.com/))
