@@ -121,7 +121,11 @@ projection Logging builds from the audit stream ([FR-AUD](../../requirements/05-
   so a full state is cheap to reconstruct.
 - **Read.** `GET /history/{entityType}/{id}` returns the revision timeline; `…/diff?from&to`
   returns (or recomputes) the field-level diff between two revisions. Results are **permission-filtered**
-  — the caller needs both `logs:read` and read access to the entity.
+  — the caller needs both `logs:read` and read access to the entity. Where an entity's read
+  access is NOT its change log's audience, the log names its own: a workflow's history, its
+  instances', and every `workflow.*` entry are read under **`workflow:audit`** (EP-22.11, decided
+  2026-10-13) — active workflows are visible to every user, who changed them is not
+  (`visibility.ts`, `entityRule`).
 - **Coverage.** Works uniformly for entities that already version in their owning service (assets,
   workflow definitions, schedules — the diff aligns to their version chain) and for those that don't
   (a tag rename, a permission change — reconstructed from the audit deltas).

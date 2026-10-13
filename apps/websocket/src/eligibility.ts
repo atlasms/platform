@@ -31,6 +31,18 @@ const DOMAIN_READ: Readonly<Record<string, { permission: string; fieldGroup?: st
   file: { permission: 'asset:read', fieldGroup: 'files' },
 };
 
+/**
+ * Messages EVERY authenticated user of the channel receives, whatever their grants — checked after
+ * tenant isolation, never instead of it. Each entry is a decision, not a convenience:
+ *
+ * - `workflow.changed` (EP-22.11, decided by the product owner 2026-10-13): an active workflow is
+ *   visible to everyone in its channel, and every client keeps a copy of the catalog
+ *   (`GET /workflows/catalog`) that this event tells it to refresh. It carries the workflow's id,
+ *   state, version and name — what the catalog itself shows them. Every OTHER `workflow.*` event
+ *   (a step requested, a task created, an instance completed) stays under `workflow:read`.
+ */
+const CHANNEL_WIDE: ReadonlySet<string> = new Set(['workflow.changed']);
+
 function readRuleFor(domain: string): { permission: string; fieldGroup?: string } {
   return DOMAIN_READ[domain] ?? { permission: `${domain}:read` };
 }
@@ -101,6 +113,8 @@ export function mayReceive(sub: Subscriber, subject: string): EligibilityDecisio
     return { allowed: false, reason: 'subject belongs to another channel' };
   }
 
+  if (CHANNEL_WIDE.has([parsed.domain, ...parsed.rest].join('.'))) return { allowed: true };
+
   const { permission, fieldGroup } = readRuleFor(parsed.domain);
   // STRICT: the full context is known here, so an unsatisfiable predicate must not pass
   // (authorization-model.md §5.1 — lenient mode would widen the grant).
@@ -154,6 +168,9 @@ export function maySubscribe(sub: Subscriber, pattern: string): EligibilityDecis
   if (channelToken !== sub.channelId) {
     return { allowed: false, reason: 'subject belongs to another channel' };
   }
+
+  // A channel-wide subject, named exactly: anyone in the tenant may subscribe to it.
+  if (CHANNEL_WIDE.has(parts.slice(2).join('.'))) return { allowed: true };
 
   const domainToken = parts[2] ?? '';
   if (WILDCARD.has(domainToken)) {

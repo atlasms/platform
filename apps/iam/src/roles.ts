@@ -73,6 +73,9 @@ export const STARTER_ROLES: Role[] = [
         'user:admin',
         'metadata:admin',
         'workflow:admin',
+        // EP-22.11: who changed a workflow, and its instances' history — the change log every
+        // user of an active workflow does NOT see (decided 2026-10-13).
+        'workflow:audit',
         'feed:admin',
         'compliance:admin',
         'config:admin',

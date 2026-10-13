@@ -44,7 +44,7 @@ A permission is `resource:action` — flat, greppable, and stable.
 |----------|---------|
 | `asset` | `read`, `write`, `approve`, `delete`, `restore` |
 | `schedule` | `read`, `write`, `send`, `admin` |
-| `workflow` | `read`, `act`, `admin` |
+| `workflow` | `read`, `act`, `admin`, `audit` (its change log — EP-22.11; ACTIVE workflows themselves are visible to every authenticated user of the channel, through BMS's catalog) |
 | `taxonomy` | `read`, `admin` (categories, structures, classifications, subjects, tags) |
 | `people` | `read`, `admin` |
 | `metadata` | `admin` (field schemas) |
@@ -183,7 +183,7 @@ Ship these as defaults; operators clone and adjust ([FR-IAM-1](../requirements/0
 | **Scheduler** | Viewer + `schedule:write`; `schedule:send` usually a **separate** role (privileged, audited) |
 | **Librarian** | `asset:write` (`files`,`rights`), `asset:restore`, `taxonomy:admin`, `people:admin` |
 | **Ops** | `ops:read`, `logs:read`, `storage:admin` |
-| **Administrator** | `user:admin`, `metadata:admin`, `workflow:admin`, `feed:admin`, `compliance:admin`, `config:admin` |
+| **Administrator** | `user:admin`, `metadata:admin`, `workflow:admin`, `workflow:audit`, `feed:admin`, `compliance:admin`, `config:admin` |
 
 ## 10. Packaging — keep policy separate from IAM
 

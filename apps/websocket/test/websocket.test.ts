@@ -71,6 +71,22 @@ test('SECURITY: tenant isolation beats even a wildcard grant', () => {
   assert.match(cross.reason ?? '', /another channel/);
 });
 
+test('workflow.changed reaches EVERY user of its channel — and only of its channel (EP-22.11)', () => {
+  // Decided 2026-10-13: active workflows are visible to everyone in the channel, and every client
+  // refreshes its catalog copy on this event. A user with no workflow grant at all gets it…
+  const nobody = { userId: 'user-9', channelId: 'ch12', policy: policyFor('user-9', []) };
+  assert.equal(mayReceive(nobody, 'atlas.ch12.workflow.changed').allowed, true);
+  assert.equal(maySubscribe(nobody, 'atlas.ch12.workflow.changed').allowed, true);
+  // …not another channel's, whatever the grants…
+  const wide = { userId: 'user-1', channelId: 'ch12', policy: policyFor('user-1', ['*:*']) };
+  assert.equal(mayReceive(wide, 'atlas.ch99.workflow.changed').allowed, false);
+  assert.equal(maySubscribe(nobody, 'atlas.ch99.workflow.changed').allowed, false);
+  // …and no OTHER workflow event, nor the whole domain: those stay under workflow:read.
+  assert.equal(mayReceive(nobody, 'atlas.ch12.workflow.completed').allowed, false);
+  assert.equal(mayReceive(nobody, 'atlas.ch12.workflow.task.created').allowed, false);
+  assert.equal(maySubscribe(nobody, 'atlas.ch12.workflow.>').allowed, false);
+});
+
 test('SECURITY: a private stream reaches its owner and nobody else, whatever their grants', () => {
   const owner = { userId: 'user-7', channelId: 'ch12', policy: policyFor('user-7', []) };
   const admin = { userId: 'user-1', channelId: 'ch12', policy: policyFor('user-1', ['*:*']) };

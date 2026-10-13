@@ -89,6 +89,12 @@ export function entityRule(entityType: string): ReadRule {
   // A person (EP-28.5) is the people register's, which `people:read` governs; `person:read`
   // exists nowhere.
   if (entityType === 'person') return { permission: 'people:read' };
+  // A workflow's change log — its audit history, its instances' (`workflow-instance`), and every
+  // `workflow.*` entry in the log — is read under a DEDICATED permission (EP-22.11, decided by the
+  // product owner 2026-10-13): active workflows are visible to everyone, who changed them is not.
+  // Under the default the instance's was `workflow-instance:read`, which nothing holds.
+  if (entityType === 'workflow' || entityType === 'workflow-instance')
+    return { permission: 'workflow:audit' };
   return { permission: `${entityType}:read` };
 }
 
