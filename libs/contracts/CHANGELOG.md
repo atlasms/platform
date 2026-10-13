@@ -21,6 +21,12 @@ release is a statement of what changed, not a deploy step.
 
 ## [Unreleased]
 
+### Added
+
+- `workflow.changed` (EP-22.11): BMS emits it whenever the channel's workflow catalog changes —
+  `change` (published / activated / deactivated / archived), the `state` after it, `latestVersion`,
+  `revision`. Every user's client refreshes its copy of the catalog on it. Both enums are Tier 0.
+
 ### Fixed
 
 - The generated payload types read an object schema with no `additionalProperties` keyword as

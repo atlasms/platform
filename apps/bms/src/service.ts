@@ -10,6 +10,7 @@
 // Running instances are EP-22.3's, on Temporal (ADR-0010); they pin a published version, which is
 // why a published version is never written again.
 
+import { createHash } from 'node:crypto';
 import { delta, isUlid, ulid, type EventPayloads } from '@atlas/contracts';
 import {
   validateDefinition,
@@ -25,7 +26,13 @@ import { outboxRecord } from './record.ts';
 import type { InstanceRunner } from './runner.ts';
 import { instanceAudit } from './runtime.ts';
 import type { WorkflowStore } from './store.ts';
-import { definitionOf, type DraftInput, type Workflow, type WorkflowVersion } from './workflow.ts';
+import {
+  definitionOf,
+  type DraftInput,
+  type Workflow,
+  type WorkflowState,
+  type WorkflowVersion,
+} from './workflow.ts';
 
 export interface Caller {
   userId: string;
@@ -42,10 +49,22 @@ export interface WorkflowView extends Workflow {
 
 export interface PublishResult {
   workflowId: string;
+  state: WorkflowState;
   version: number;
   publishedAt: string;
   revision: number;
   warnings?: ValidationIssue[];
+}
+
+/** One active workflow in the catalog (bms.yaml `CatalogEntry`). */
+export interface CatalogEntry {
+  id: string;
+  name: string;
+  description?: string;
+  scope?: Workflow['scope'];
+  revision: number;
+  version: number;
+  definition: WorkflowDefinition;
 }
 
 export interface StartInstanceInput {
@@ -88,16 +107,59 @@ export class BmsService {
 
   async list(
     caller: Caller,
-    options: { after?: string; limit?: number } = {},
+    options: { state?: WorkflowState; after?: string; limit?: number } = {},
   ): Promise<{ items: Workflow[]; nextCursor?: string }> {
     this.authorizeRead(caller);
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
     const items = await this.store.list(caller.channelId, {
+      ...(options.state !== undefined ? { state: options.state } : {}),
       ...(options.after !== undefined ? { after: options.after } : {}),
       limit,
     });
     const last = items[items.length - 1];
     return { items, ...(items.length === limit && last ? { nextCursor: last.id } : {}) };
+  }
+
+  /**
+   * Every ACTIVE workflow of the channel with the definition a new instance runs — the copy every
+   * authenticated user's client loads at sign-in (EP-22.11). No workflow permission: an active
+   * workflow is visible to everyone in its channel (decided 2026-10-13); drafts, inactive and
+   * archived workflows stay behind `workflow:read`/`:admin`. The ETag is a hash of each entry's id
+   * and revision — every change to an entry bumps its revision — so an unchanged catalog is a 304.
+   */
+  async catalog(
+    caller: Pick<Caller, 'channelId'>,
+  ): Promise<{ etag: string; items: CatalogEntry[] }> {
+    const headers: Workflow[] = [];
+    for (let after: string | undefined; ;) {
+      const page = await this.store.list(caller.channelId, {
+        state: 'active',
+        ...(after !== undefined ? { after } : {}),
+        limit: 200,
+      });
+      headers.push(...page);
+      if (page.length < 200) break;
+      after = page[page.length - 1]?.id;
+    }
+    const items: CatalogEntry[] = [];
+    for (const w of headers) {
+      const version = await this.store.version(w.id, w.latestVersion);
+      if (!version || version.status !== 'published') continue;
+      items.push({
+        id: w.id,
+        name: w.name,
+        ...(w.description !== undefined ? { description: w.description } : {}),
+        ...(w.scope !== undefined ? { scope: w.scope } : {}),
+        revision: w.revision,
+        version: version.version,
+        definition: version.definition,
+      });
+    }
+    const etag = `"${createHash('sha256')
+      .update(items.map((i) => `${i.id}:${i.revision}`).join(','))
+      .digest('base64url')
+      .slice(0, 27)}"`;
+    return { etag, items };
   }
 
   async get(caller: Caller, id: string): Promise<WorkflowView> {
@@ -138,6 +200,7 @@ export class BmsService {
       name: input.name,
       ...(input.description !== undefined ? { description: input.description } : {}),
       ...(input.scope !== undefined ? { scope: input.scope } : {}),
+      state: 'draft',
       revision: 1,
       latestVersion: 0,
       draftVersion: 1,
@@ -169,6 +232,7 @@ export class BmsService {
     this.authorizeAdmin(caller);
     const before = await this.header(caller, id);
     if (before.revision !== revision) throw this.stale(id);
+    if (before.state === 'archived') throw new Conflict(`workflow ${id} is archived`);
     const priorDraft =
       before.draftVersion !== undefined
         ? await this.store.version(id, before.draftVersion)
@@ -226,6 +290,7 @@ export class BmsService {
     this.authorizeAdmin(caller);
     const before = await this.header(caller, id);
     if (before.revision !== revision) throw this.stale(id);
+    if (before.state === 'archived') throw new Conflict(`workflow ${id} is archived`);
     if (before.draftVersion === undefined)
       throw new Conflict(`workflow ${id} has no draft to publish`);
     const draft = await this.store.version(id, before.draftVersion);
@@ -256,8 +321,11 @@ export class BmsService {
       publishedAt: at,
     };
     const { draftVersion: _closed, ...rest } = before;
+    // A first publish makes the workflow active; a later one leaves its state alone — publishing a
+    // new version of an inactive workflow does not quietly reactivate it.
     const after: Workflow = {
       ...rest,
+      state: before.state === 'draft' ? 'active' : before.state,
       revision: revision + 1,
       latestVersion: draft.version,
       updatedAt: at,
@@ -271,19 +339,129 @@ export class BmsService {
           caller,
           after,
           'workflow.published',
-          { latestVersion: before.latestVersion, draftVersion: before.draftVersion },
-          { latestVersion: after.latestVersion, publishedVersion: draft.version },
+          {
+            latestVersion: before.latestVersion,
+            draftVersion: before.draftVersion,
+            state: before.state,
+          },
+          {
+            latestVersion: after.latestVersion,
+            publishedVersion: draft.version,
+            state: after.state,
+          },
         ),
       );
+      await tx.enqueue(this.changed(caller, after, 'published'));
     });
     const warnings = result.issues.filter((i) => i.severity === 'warning');
     return {
       workflowId: id,
+      state: after.state,
       version: draft.version,
       publishedAt: at,
       revision: after.revision,
       ...(warnings.length > 0 ? { warnings } : {}),
     };
+  }
+
+  // --- the lifecycle (EP-22.11) ------------------------------------------------------------------------
+
+  /** inactive → active: back in the catalog, able to start instances. */
+  async activate(caller: Caller, id: string, revision: number): Promise<WorkflowView> {
+    return this.transition(caller, id, revision, 'activated', (w) => {
+      if (w.state !== 'inactive')
+        throw new Conflict(
+          w.state === 'draft'
+            ? `workflow ${id} is a draft — publishing it makes it active`
+            : `workflow ${id} is ${w.state}, not inactive`,
+        );
+      return 'active';
+    });
+  }
+
+  /** active → inactive: out of the catalog, no new instances. Refused while instances run. */
+  async deactivate(caller: Caller, id: string, revision: number): Promise<WorkflowView> {
+    return this.transition(caller, id, revision, 'deactivated', (w) => {
+      if (w.state !== 'active') throw new Conflict(`workflow ${id} is ${w.state}, not active`);
+      return 'inactive';
+    });
+  }
+
+  /** Any state but archived → archived, for good. Refused while instances run. */
+  async archive(caller: Caller, id: string, revision: number): Promise<WorkflowView> {
+    return this.transition(caller, id, revision, 'archived', (w) => {
+      if (w.state === 'archived') throw new Conflict(`workflow ${id} is already archived`);
+      return 'archived';
+    });
+  }
+
+  /**
+   * One state change, compare-and-set on `revision`, under the header's row lock. Deactivating and
+   * archiving count the workflow's live instances INSIDE that lock — and a start takes the same
+   * lock to check the state — so "no instance is running" holds at the moment of the change, not
+   * merely a moment before it (decided 2026-10-13).
+   */
+  private async transition(
+    caller: Caller,
+    id: string,
+    revision: number,
+    change: 'activated' | 'deactivated' | 'archived',
+    next: (w: Workflow) => WorkflowState,
+  ): Promise<WorkflowView> {
+    this.authorizeAdmin(caller);
+    await this.header(caller, id); // 404 for another channel's id, before any lock
+    await this.store.transaction(async (tx) => {
+      const before = await tx.workflowForUpdate(id);
+      if (!before || before.channelId !== caller.channelId) throw new NotFound(`workflow ${id}`);
+      if (before.revision !== revision) throw this.stale(id);
+      const state = next(before);
+      if (change !== 'activated') {
+        const running = await tx.liveInstances(id);
+        if (running > 0)
+          throw new Conflict(
+            `workflow ${id} has ${running} instance${running === 1 ? '' : 's'} still running — it cannot be ${change} until ${running === 1 ? 'it ends' : 'they end'}`,
+            { running },
+          );
+      }
+      const after: Workflow = {
+        ...before,
+        state,
+        revision: revision + 1,
+        updatedAt: this.now().toISOString(),
+      };
+      if (!(await tx.put(after, revision))) throw this.stale(id);
+      await tx.enqueue(
+        this.audit(caller, after, `workflow.${change}`, { state: before.state }, { state }),
+      );
+      await tx.enqueue(this.changed(caller, after, change));
+    });
+    return this.get(caller, id);
+  }
+
+  /** `workflow.changed` — what every client's catalog copy refreshes on (EP-22.11). */
+  private changed(
+    caller: Caller,
+    w: Workflow,
+    change: 'published' | 'activated' | 'deactivated' | 'archived',
+  ): ReturnType<typeof outboxRecord> {
+    const headers = this.traceHeaders();
+    return outboxRecord(
+      'workflow.changed',
+      w.channelId,
+      {
+        workflowId: w.id,
+        change,
+        state: w.state,
+        latestVersion: w.latestVersion,
+        revision: w.revision,
+        name: w.name,
+      } satisfies EventPayloads['workflow.changed'],
+      {
+        actor: { kind: 'user', id: caller.userId },
+        ...(caller.correlationId !== undefined ? { correlationId: caller.correlationId } : {}),
+        ...(headers !== undefined ? { headers } : {}),
+      },
+    );
   }
 
   // --- instances (EP-22.3) ----------------------------------------------------------------------------
@@ -297,6 +475,10 @@ export class BmsService {
   async startInstance(caller: Caller, input: StartInstanceInput): Promise<Instance> {
     this.authorizeAct(caller);
     const header = await this.header(caller, input.workflowId);
+    if (header.state !== 'active')
+      throw new Conflict(
+        `workflow ${header.id} is ${header.state} — only an active workflow starts`,
+      );
     const version = input.version ?? header.latestVersion;
     const published = version > 0 ? await this.store.version(header.id, version) : undefined;
     if (!published || published.status !== 'published') {
@@ -320,6 +502,13 @@ export class BmsService {
       startedBy: caller.userId,
     };
     await this.store.transaction(async (tx) => {
+      // Under the header's lock, the same one deactivate and archive take: either this start sees
+      // the workflow still active and they then see this instance running, or they won.
+      const locked = await tx.workflowForUpdate(header.id);
+      if (locked?.state !== 'active')
+        throw new Conflict(
+          `workflow ${header.id} is ${locked?.state ?? 'gone'} — only an active workflow starts`,
+        );
       await tx.insertInstance(instance);
       await tx.enqueue(
         instanceAudit(instance, 1, 'workflow-instance.started', undefined, {
@@ -439,6 +628,13 @@ export class BmsService {
           severity: 'error',
           code: 'SUBFLOW_UNKNOWN',
           message: `sub-flow "${step.id}" names workflow ${cfg.workflowId}, which does not exist`,
+          stepId: step.id,
+        });
+      } else if (target.state === 'inactive' || target.state === 'archived') {
+        issues.push({
+          severity: 'error',
+          code: 'SUBFLOW_INACTIVE',
+          message: `sub-flow "${step.id}" names workflow "${target.name}", which is ${target.state}`,
           stepId: step.id,
         });
       } else if (target.latestVersion === 0) {

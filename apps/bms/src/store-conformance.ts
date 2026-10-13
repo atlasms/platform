@@ -311,4 +311,44 @@ export function workflowStoreConformance(name: string, harness: WorkflowStoreHar
       assert.equal(first.length + next.length, 3);
     });
   });
+
+  test(`[${name}] a start racing a deactivation: never both — no instance runs on an inactive workflow`, async () => {
+    await withFixture(async ({ store }) => {
+      // A runner that accepts and does nothing: the instance stays `running` in the mirror, which
+      // is exactly what deactivation must see.
+      const service = new BmsService({
+        store,
+        runner: { start: async () => undefined, signal: async () => undefined },
+      });
+      const admin: Caller = {
+        ...caller(),
+        policy: compile({
+          subjectId: 'user-1',
+          permVersion: 1,
+          rules: [{ id: 'r', permissions: ['workflow:admin', 'workflow:act'] }],
+          roles: [],
+          groups: [],
+        }),
+      };
+      for (let round = 0; round < 5; round++) {
+        const w = await service.create(admin, presetInput('simple-approval.workflow.json'));
+        await service.publish(admin, w.id, 1);
+        const [started, deactivated] = await Promise.allSettled([
+          service.startInstance(admin, { workflowId: w.id }),
+          service.deactivate(admin, w.id, 2),
+        ]);
+        assert.ok(
+          !(started.status === 'fulfilled' && deactivated.status === 'fulfilled'),
+          `round ${round}: an instance started AND the workflow was deactivated`,
+        );
+        assert.ok(
+          started.status === 'fulfilled' || deactivated.status === 'fulfilled',
+          `round ${round}: neither won: ${String((started as PromiseRejectedResult).reason)} / ${String((deactivated as PromiseRejectedResult).reason)}`,
+        );
+        const header = await store.get(w.id);
+        const live = (await store.instances(CH, { workflowId: w.id, limit: 10 })).length;
+        assert.equal(header?.state === 'inactive' ? live : 1, header?.state === 'inactive' ? 0 : 1);
+      }
+    });
+  });
 }

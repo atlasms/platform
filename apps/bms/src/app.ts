@@ -11,7 +11,9 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { isUlid, ulid } from '@atlas/contracts';
 import type { EffectivePolicy } from '@atlas/policy';
 import type { BmsService, Caller as ServiceCaller } from './service.ts';
-import { parseDraftInput, parseRevision } from './workflow.ts';
+import { parseDraftInput, parseRevision, type WorkflowState } from './workflow.ts';
+
+const WORKFLOW_STATES: readonly WorkflowState[] = ['draft', 'active', 'inactive', 'archived'];
 import { parseSignal, parseStartInstance } from './instance-input.ts';
 import {
   accessRecord,
@@ -265,12 +267,42 @@ export async function buildBmsApp(options: BmsAppOptions): Promise<FastifyInstan
       const limit = req.query['limit'];
       if (limit !== undefined && !/^\d+$/.test(limit))
         throw new ValidationError('limit must be a positive integer');
+      const state = req.query['state'];
+      if (state !== undefined && !WORKFLOW_STATES.includes(state as WorkflowState))
+        throw new ValidationError(`state must be one of ${WORKFLOW_STATES.join(', ')}`);
       return service.list(caller, {
+        ...(state !== undefined ? { state: state as WorkflowState } : {}),
         ...(req.query['after'] !== undefined ? { after: req.query['after'] } : {}),
         ...(limit !== undefined ? { limit: Number(limit) } : {}),
       });
     }),
   );
+
+  // The catalog every authenticated user's client loads at sign-in (EP-22.11): the caller is
+  // established by the gateway, and no workflow permission is asked — an active workflow is
+  // visible to everyone in its channel. ETag'd: an unchanged catalog is a 304 with no body.
+  app.get('/api/v1/workflows/catalog', async (req, reply) => {
+    try {
+      const caller = callerOf(req.headers);
+      const catalog = await service.catalog(caller);
+      reply.header('etag', catalog.etag).header('cache-control', 'no-cache');
+      if (req.headers['if-none-match'] === catalog.etag) return reply.code(304).send();
+      return reply.code(200).send(catalog);
+    } catch (err) {
+      const problem = toProblem(err, req.correlationId);
+      if (problem.status >= 500)
+        options.onError?.(err, { correlationId: req.correlationId, url: req.url });
+      return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
+    }
+  });
+
+  for (const action of ['activate', 'deactivate', 'archive'] as const) {
+    app.post<{ Params: P; Querystring: Q }>(`/api/v1/workflows/:id/${action}`, (req, reply) =>
+      handle(req, reply, 200, (caller) =>
+        service[action](caller, req.params.id, parseRevision(req.query['revision'])),
+      ),
+    );
+  }
 
   app.post('/api/v1/workflows', (req, reply) =>
     handle(req, reply, 201, (caller) => service.create(caller, parseDraftInput(req.body))),

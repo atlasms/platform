@@ -12,7 +12,7 @@ import {
 } from '@atlas/data-pg';
 import type { HistoryEntry, Instance } from './instance.ts';
 import type { WorkflowStore, WorkflowTx } from './store.ts';
-import type { Workflow, WorkflowVersion } from './workflow.ts';
+import { withState, type Workflow, type WorkflowVersion } from './workflow.ts';
 
 export const pgMigrations: Migration[] = [
   outboxMigration,
@@ -60,7 +60,20 @@ export const pgMigrations: Migration[] = [
            PRIMARY KEY (instance_id, seq)
          );`,
   },
+  // EP-22.11: a workflow's lifecycle state, as a column the catalog and the list filter on. A header
+  // written before it is backfilled as its reader would interpret it (withState): published once →
+  // active, never → draft.
+  {
+    id: 'bms_workflow_state',
+    up: `ALTER TABLE workflows ADD COLUMN state text;
+         UPDATE workflows SET state = CASE WHEN (data->>'latestVersion')::int > 0 THEN 'active' ELSE 'draft' END WHERE state IS NULL;
+         CREATE INDEX IF NOT EXISTS workflows_state_idx ON workflows (channel_id, state, id);`,
+  },
 ];
+
+/** The row's `state` column is the truth for the filter, so it is the truth on the record too. */
+const fromRow = (r: { data: Workflow; state: string | null }): Workflow =>
+  r.state !== null ? { ...r.data, state: r.state as Workflow['state'] } : withState(r.data);
 
 export function pgWorkflowStore(pool: PgPool): WorkflowStore {
   const outbox = new PgOutboxStore(pool);
@@ -75,13 +88,13 @@ export function pgWorkflowStore(pool: PgPool): WorkflowStore {
             const result =
               ifRevision === undefined
                 ? await client.query(
-                    `INSERT INTO workflows (id, channel_id, revision, data) VALUES ($1, $2, $3, $4)
+                    `INSERT INTO workflows (id, channel_id, revision, state, data) VALUES ($1, $2, $3, $4, $5)
                      ON CONFLICT (id) DO NOTHING`,
-                    [w.id, w.channelId, w.revision, data],
+                    [w.id, w.channelId, w.revision, w.state, data],
                   )
                 : await client.query(
-                    `UPDATE workflows SET revision = $1, data = $2 WHERE id = $3 AND revision = $4`,
-                    [w.revision, data, w.id, ifRevision],
+                    `UPDATE workflows SET revision = $1, state = $2, data = $3 WHERE id = $4 AND revision = $5`,
+                    [w.revision, w.state, data, w.id, ifRevision],
                   );
             return result.rowCount === 1;
           },
@@ -98,6 +111,21 @@ export function pgWorkflowStore(pool: PgPool): WorkflowStore {
           },
           async enqueue(record) {
             await outbox.enqueue(client, record);
+          },
+          async workflowForUpdate(id) {
+            const { rows } = await client.query<{ data: Workflow; state: string | null }>(
+              'SELECT data, state FROM workflows WHERE id = $1 FOR UPDATE',
+              [id],
+            );
+            return rows[0] ? fromRow(rows[0]) : undefined;
+          },
+          async liveInstances(workflowId) {
+            const { rows } = await client.query<{ n: string }>(
+              `SELECT count(*) AS n FROM workflow_instances
+               WHERE workflow_id = $1 AND state NOT IN ('completed', 'failed')`,
+              [workflowId],
+            );
+            return Number(rows[0]?.n ?? 0);
           },
           async insertInstance(i) {
             const result = await client.query(
@@ -136,24 +164,29 @@ export function pgWorkflowStore(pool: PgPool): WorkflowStore {
       });
     },
     async get(id) {
-      const { rows } = await pool.query<{ data: Workflow }>(
-        'SELECT data FROM workflows WHERE id = $1',
+      const { rows } = await pool.query<{ data: Workflow; state: string | null }>(
+        'SELECT data, state FROM workflows WHERE id = $1',
         [id],
       );
-      return rows[0]?.data;
+      return rows[0] ? fromRow(rows[0]) : undefined;
     },
-    async list(channelId, { after, limit }) {
-      const { rows } =
-        after === undefined
-          ? await pool.query<{ data: Workflow }>(
-              'SELECT data FROM workflows WHERE channel_id = $1 ORDER BY id LIMIT $2',
-              [channelId, limit],
-            )
-          : await pool.query<{ data: Workflow }>(
-              'SELECT data FROM workflows WHERE channel_id = $1 AND id > $2 ORDER BY id LIMIT $3',
-              [channelId, after, limit],
-            );
-      return rows.map((r) => r.data);
+    async list(channelId, { state, after, limit }) {
+      const params: (string | number)[] = [channelId];
+      let where = 'channel_id = $1';
+      if (state !== undefined) {
+        params.push(state);
+        where += ` AND state = $${params.length}`;
+      }
+      if (after !== undefined) {
+        params.push(after);
+        where += ` AND id > $${params.length}`;
+      }
+      params.push(limit);
+      const { rows } = await pool.query<{ data: Workflow; state: string | null }>(
+        `SELECT data, state FROM workflows WHERE ${where} ORDER BY id LIMIT $${params.length}`,
+        params,
+      );
+      return rows.map(fromRow);
     },
     async version(workflowId, version) {
       const { rows } = await pool.query<{ data: WorkflowVersion }>(

@@ -423,6 +423,7 @@ Source: [bms-plan](services/bms-plan.md) §2; [bms.md](../architecture/services/
 | 22.8 | Instance state API — `GET /instances/{id}` with step history | 3 |
 | 22.9 | Timeout / retry / compensation semantics; a step that keeps failing dead-letters | 5 |
 | 22.10 | Re-review re-entry — `asset.expired` opens a fresh manual-review task | 2 |
+| 22.11 | Workflow states `draft` / `active` / `inactive` / `archived` (deactivate and archive refused while instances run), the catalog every authenticated user loads at sign-in, `workflow.changed` broadcast to all; change logs under a dedicated `workflow:audit` (decided 2026-10-13, #516) | 5 |
 
 **Decided 2026-10-12:** 22.1 → Temporal ([ADR-0010](../adr/0010-bms-durable-runtime.md)).
 

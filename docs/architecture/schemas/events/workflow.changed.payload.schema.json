@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/workflow.changed.payload.schema.json",
+  "title": "workflow.changed payload",
+  "description": "Emitted by BMS when the channel's CATALOG of workflows changes — a version published, a workflow activated, deactivated or archived (EP-22.11). The catalog (`GET /workflows/catalog`) is every ACTIVE workflow with its published definition, which every authenticated user's client keeps a copy of; this event is broadcast to all of them so each refetches what changed (an ETag'd catalog read, or the one version) and drops what left. Saving a draft does not emit it: drafts are not in anyone's copy.",
+  "type": "object",
+  "required": ["workflowId", "change", "state", "latestVersion", "revision"],
+  "additionalProperties": false,
+  "properties": {
+    "workflowId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "change": {
+      "enum": ["published", "activated", "deactivated", "archived"],
+      "description": "What happened. A client branches on it: published/activated → (re)fetch; deactivated/archived → drop from the copy."
+    },
+    "state": {
+      "enum": ["draft", "active", "inactive", "archived"],
+      "description": "The workflow's state after the change. Only `active` is in the catalog."
+    },
+    "latestVersion": { "type": "integer", "minimum": 0, "description": "The newest published version — the one the catalog carries." },
+    "revision": { "type": "integer", "minimum": 1, "description": "The workflow's revision after the change; a client holding an older one is stale." },
+    "name": { "type": "string" }
+  }
+}
