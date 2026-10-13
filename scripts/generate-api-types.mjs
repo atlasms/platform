@@ -49,7 +49,25 @@ const SPECS = [
     ops: 'scheduling.operations.ts',
     title: 'Scheduling',
   },
+  // Every user's copy of the active workflows — the catalog — is loaded at sign-in (EP-22.11).
+  { file: 'bms.yaml', out: 'bms.types.ts', ops: 'bms.operations.ts', title: 'BMS' },
 ];
+
+/**
+ * A contract that REFERENCES a domain schema rather than copying it (bms.yaml's
+ * `WorkflowDefinition` → workflow-definition.schema.json) is typed by that schema's own TypeScript
+ * twin in @atlas/contracts — a browser-safe, types-only subpath, held to the schema by the
+ * contracts' validator tests — imported here, never re-derived. An explicit list: an external ref
+ * not on it still fails, so no reference quietly widens to `unknown`.
+ */
+const EXTERNAL_TYPES = {
+  '../schemas/workflow-definition.schema.json': {
+    type: 'WorkflowDefinition',
+    from: '@atlas/contracts/workflow-types',
+  },
+};
+/** The external types the spec being rendered uses — its file's `import type` lines. */
+const usedExternals = new Map();
 
 const METHODS = ['get', 'post', 'put', 'patch', 'delete'];
 
@@ -138,9 +156,14 @@ for (const spec of SPECS) {
   const doc = parse(readFileSync(path, 'utf8'));
   const schemas = doc?.components?.schemas ?? {};
 
-  const body = Object.entries(schemas)
+  usedExternals.clear();
+  const rendered = Object.entries(schemas)
     .map(([name, schema]) => renderNamed(name, schema, spec.file))
     .join('\n\n');
+  const imports = [...usedExternals]
+    .map(([alias, { type, from }]) => `import type { ${type} as ${alias} } from '${from}';`)
+    .join('\n');
+  const body = imports ? `${imports}\n\n${rendered}` : rendered;
 
   // Formatted with the repo's own prettier config before it is written OR compared.
   //
@@ -357,6 +380,12 @@ function renderNamed(name, schema, file, resolveRef = openApiRef) {
 
 /** OpenAPI: `#/components/schemas/X` names a sibling in the same document. */
 function openApiRef(ref, where) {
+  const external = EXTERNAL_TYPES[ref];
+  if (external) {
+    const alias = `${external.type}Contract`;
+    usedExternals.set(alias, external);
+    return alias;
+  }
   const match = /^#\/components\/schemas\/(.+)$/.exec(ref);
   if (!match) fail(where, `only local component refs are supported, got ${ref}`);
   return match[1];

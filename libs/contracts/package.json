@@ -6,7 +6,8 @@
   "description": "Executable message contracts: the envelope + every event payload schema, an envelope builder/validator, ULID, and subject helpers. Reads the single-source schemas in docs/architecture/schemas.",
   "exports": {
     ".": "./src/index.ts",
-    "./workflow": "./src/workflow/index.ts"
+    "./workflow": "./src/workflow/index.ts",
+    "./workflow-types": "./src/workflow/types.ts"
   },
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts",

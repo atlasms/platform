@@ -147,6 +147,18 @@ scopes lists, browse trees, live subscriptions and where new things are created.
 client choice, never an authorization boundary; cross-channel views are possible later on the same
 session.
 
+## 3b. The workflow catalog — every user's copy (EP-22.11, decided 2026-10-13)
+
+Every signed-in user keeps a copy of the channel's ACTIVE workflows and their published definitions
+(`WorkflowCatalogStore`, started by the workbench): read from BMS's `GET /workflows/catalog` when the
+session starts — no workflow permission needed — and re-read whenever `workflow.changed` arrives
+(the WebSocket service broadcasts it to everyone in the channel) and on every resync. The catalog is
+ETag'd with `Cache-Control: no-cache`, so the browser revalidates by itself and an unchanged catalog
+is a 304; the store compares ETags and leaves its signal untouched, so nothing re-renders for it. A
+failed refresh keeps the copy; signing out, or switching channel, drops it. What uses it — starting
+an instance from a workflow, the designer's sub-flow picker, the instance overlay — reads the store,
+never the API.
+
 ## 4. Welcome & What's New
 
 On login **after a version rollout**, Studio shows a **Welcome / What's New** editor tab

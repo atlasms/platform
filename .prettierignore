@@ -22,3 +22,6 @@ docs/
 # expressions in it — prettier cannot parse `{{ ... }}` as a value, and reformatting a generated
 # file would only make `npm run k8s:check` fail. Change the manifests, not the chart.
 infra/helm/
+
+# Local git worktrees (a working copy of another branch, git-ignored via info/exclude) — not this tree.
+.worktrees/
