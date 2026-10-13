@@ -12,6 +12,7 @@ import { PermissionService } from '../core/permission.service.ts';
 import { ErrorReferenceStore } from '../core/error-reference.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { WebSocketService } from '../core/websocket.service.ts';
+import { WorkflowCatalogStore } from '../core/workflow-catalog.store.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { EditorArea } from './editor-area.ts';
 import { EditorStore } from './editor.store.ts';
@@ -160,6 +161,12 @@ export class Workbench {
   private readonly permissions = inject(PermissionService);
   private readonly auth = inject(AuthService);
   protected readonly ws = inject(WebSocketService);
+  /**
+   * Every signed-in user's copy of the active workflows (EP-22.11): started here, the frame every
+   * signed-in view lives in; it loads on sign-in and follows `workflow.changed` from then on.
+   */
+  private readonly workflowCatalog = inject(WorkflowCatalogStore);
+  private readonly startCatalog = this.workflowCatalog.start();
   protected readonly errors = inject(ErrorReferenceStore);
   protected readonly copied = signal(false);
   private readonly router = inject(Router);

@@ -23,6 +23,10 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `@atlas/contracts/workflow-types` (EP-22.11): the workflow DSL's TYPES alone (`src/workflow/types.ts`),
+  a browser-safe subpath — `@atlas/contracts/workflow` brings the validator, ajv and `node:fs` with
+  it. Studio's generated BMS types import `WorkflowDefinition` from it rather than re-deriving the
+  domain schema the contract references.
 - `workflow.changed` (EP-22.11): BMS emits it whenever the channel's workflow catalog changes —
   `change` (published / activated / deactivated / archived), the `state` after it, `latestVersion`,
   `revision`. Every user's client refreshes its copy of the catalog on it. Both enums are Tier 0.
