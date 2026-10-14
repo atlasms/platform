@@ -26,7 +26,7 @@
     "@temporalio/worker": "1.24.0",
     "@temporalio/workflow": "1.24.0",
     "fastify": "^5.12.3",
-    "feelin": "^7.0.1"
+    "feelin": "^8.2.0"
   },
   "devDependencies": {
     "tsx": "^4.23.13"
