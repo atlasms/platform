@@ -44,7 +44,7 @@ A permission is `resource:action` — flat, greppable, and stable.
 |----------|---------|
 | `asset` | `read`, `write`, `approve`, `delete`, `restore` |
 | `schedule` | `read`, `write`, `send`, `admin` |
-| `workflow` | `read`, `act`, `admin` |
+| `workflow` | `read`, `act`, `admin`, `audit` (its change log — EP-22.11; ACTIVE workflows themselves are visible to every authenticated user of the channel, through BMS's catalog) |
 | `taxonomy` | `read`, `admin` (categories, structures, classifications, subjects, tags) |
 | `people` | `read`, `admin` |
 | `metadata` | `admin` (field schemas) |
@@ -183,7 +183,12 @@ Ship these as defaults; operators clone and adjust ([FR-IAM-1](../requirements/0
 | **Scheduler** | Viewer + `schedule:write`; `schedule:send` usually a **separate** role (privileged, audited) |
 | **Librarian** | `asset:write` (`files`,`rights`), `asset:restore`, `taxonomy:admin`, `people:admin` |
 | **Ops** | `ops:read`, `logs:read`, `storage:admin` |
-| **Administrator** | `user:admin`, `metadata:admin`, `workflow:admin`, `feed:admin`, `compliance:admin`, `config:admin` |
+| **Administrator** | **every permission** — `*:*` (decided 2026-10-15): every action on every resource, including `logs:read` and `workflow:audit`, and any a later catalogue adds. Bounded, like every grant, by the scope of its assignment; never across tenants |
+
+> Starter roles are seeded only where missing — an operator's edit is never overwritten — so an
+> install that already has an `administrator` role keeps the one it has. None in production predates
+> the `*:*` decision (2026-10-15); a dev cluster that does is updated through IAM's admin API
+> (`PATCH /roles/administrator`) or recreated.
 
 ## 10. Packaging — keep policy separate from IAM
 

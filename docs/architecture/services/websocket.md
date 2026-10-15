@@ -93,6 +93,13 @@ field group, as MAM's `GET /assets/{id}/files` and the audit log's history of bo
 `transcode:read` nor `file:read` exists in any catalogue or role; under the default rule their
 messages reached nobody (`DOMAIN_READ` in `eligibility.ts`; #384).
 
+**Channel-wide messages (EP-22.11, decided 2026-10-13).** A short, explicit list of subjects
+reaches EVERY authenticated user of the channel, whatever their grants — after tenant isolation,
+never instead of it: today only `workflow.changed`, because active workflows are visible to everyone
+in the channel and every client keeps a copy of BMS's catalog that this event tells it to refresh.
+Every other `workflow.*` event stays under `workflow:read`, and a pattern over the whole domain
+(`atlas.<ch>.workflow.>`) still needs it. `CHANNEL_WIDE` in `eligibility.ts`.
+
 **Private per-user streams (decided 2026-10-12, EP-25.7).** A message meant for one person — a
 notification, a direct message, a task assigned to them — names its recipient
 (`recipientUserId` in the envelope's payload) and is delivered **only** to connections

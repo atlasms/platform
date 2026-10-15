@@ -195,9 +195,10 @@ if (seedUser && seedPassword) {
           // can write a channel profile and is refused a platform-wide one.
           'config:admin',
           // EP-22.2: workflow definitions, so the smoke suite can author, publish and read one
-          // back (`workflow:read` also reads its audit history).
+          // back; `workflow:audit` reads its audit history (EP-22.11).
           'workflow:read',
           'workflow:admin',
+          'workflow:audit',
           // EP-22.3: start and signal an instance on the cluster's Temporal.
           'workflow:act',
         ],

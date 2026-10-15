@@ -69,14 +69,11 @@ export const STARTER_ROLES: Role[] = [
     id: 'administrator',
     name: 'Administrator',
     rules: [
-      r('admin', [
-        'user:admin',
-        'metadata:admin',
-        'workflow:admin',
-        'feed:admin',
-        'compliance:admin',
-        'config:admin',
-      ]),
+      // EVERY permission (decided by the product owner 2026-10-15): `*:*` — every action on every
+      // resource, today's and any a later catalogue adds. Like every starter role it ships
+      // unscoped for an operator to narrow; the assignment's scope (a channel) still bounds it, and
+      // tenant isolation is never a permission.
+      r('admin', ['*:*']),
     ],
   },
 ];
