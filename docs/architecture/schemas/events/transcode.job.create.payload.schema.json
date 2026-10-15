@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas.example/schemas/events/transcode.job.create.payload.schema.json",
   "title": "transcode.job.create payload (command)",
-  "description": "Command issued by BMS/RIM to MTS to enqueue a transcode job.",
+  "description": "Command issued by BMS/RIM to MTS to enqueue a transcode job. Answered by transcode.completed or transcode.failed under the command's own correlationId — a well-formed command MTS cannot honour (an unknown preset, an input it cannot read) is answered transcode.failed at once (EP-22.4), so the issuer never waits on a job that was never queued.",
   "type": "object",
   "required": ["assetId", "presetIds"],
   "additionalProperties": false,
@@ -14,7 +14,20 @@
       "minItems": 1,
       "description": "Transcode profile ids to produce."
     },
-    "inputPath": { "type": "string", "description": "HSM-resolved input path." },
+    "inputPath": {
+      "type": "string",
+      "description": "A file under MTS's work root. Exactly one of inputPath and inputFile."
+    },
+    "inputFile": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "description": "The asset's file in HSM, fetched by MTS at run time (EP-14.7) — how BMS names an input (EP-22.4). Exactly one of inputPath and inputFile.",
+      "properties": {
+        "kind": { "type": "string", "minLength": 1, "description": "e.g. original, broadcast, proxy." },
+        "variant": { "type": "string", "minLength": 1 }
+      }
+    },
     "outputPaths": {
       "type": "object",
       "additionalProperties": { "type": "string" },

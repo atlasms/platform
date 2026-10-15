@@ -21,7 +21,8 @@ test('canonical happy path: transcode -> ready -> approve -> schedulable', async
   assert.equal(res.endStepId, 's_end_ok');
   assert.deepEqual(res.vars.renditions, ['proxy', 'broadcast']); // command output mapped
   assert.equal(res.vars.verdict, 'approved');                    // task output mapped
-  assert.deepEqual(sim.emitted[0].payload, { profile: 'broadcast', assetId: 'A1' }); // input mapped via FEEL
+  // The preset's input became a valid transcode.job.create in EP-22.4 (the docs it reads moved on).
+  assert.deepEqual(sim.emitted[0].payload, { assetId: 'A1', presetIds: ['broadcast'], 'inputFile.kind': 'original' }); // input mapped via FEEL
   assert.ok(sim.completedSteps().includes('s_end_ok'));
 });
 

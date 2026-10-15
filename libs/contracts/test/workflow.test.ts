@@ -1,9 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EVENT_TYPES, payloadShape } from '../src/index.ts';
 import {
+  commandAnswers,
   feelProblem,
   validateDefinition,
+  WORKFLOW_COMMANDS,
+  type CommandConfig,
   type BranchConfig,
   type WorkflowDefinition,
 } from '../src/workflow/index.ts';
@@ -13,11 +17,7 @@ import {
 const presets = new URL('../../../docs/architecture/workflows/presets/', import.meta.url);
 const load = (name: string): WorkflowDefinition =>
   JSON.parse(readFileSync(new URL(name, presets), 'utf8')) as WorkflowDefinition;
-const PRESETS = [
-  'canonical-ingest-to-air.workflow.json',
-  'simple-approval.workflow.json',
-  'post-approval-distribution.workflow.json',
-];
+const PRESETS = ['canonical-ingest-to-air.workflow.json', 'simple-approval.workflow.json'];
 
 for (const name of PRESETS) {
   test(`the preset ${name} validates clean, inside the FEEL subset`, () => {
@@ -114,4 +114,59 @@ test('the subset: what §3 leaves out is refused, by name', () => {
   assert.equal(feelProblem('= ')?.code, 'FEEL_PARSE');
   // `instance` is a context root, so `instance of` no longer parses at all — refused either way.
   assert.notEqual(feelProblem('= vars.x instance of number'), null);
+});
+
+// EP-22.4 — a command step issues a PLATFORM command, from a closed list, with its own fields.
+
+test('every command a workflow may issue, and every event that answers one, has a schema', () => {
+  for (const [command, spec] of Object.entries(WORKFLOW_COMMANDS)) {
+    assert.ok(EVENT_TYPES.includes(command), command);
+    for (const e of [...spec.completes, ...spec.fails]) assert.ok(EVENT_TYPES.includes(e), e);
+    // A failure fails the step with its error, so the answer must carry one.
+    for (const e of spec.fails) assert.ok(payloadShape(e)?.required.includes('error'), e);
+  }
+  assert.deepEqual(commandAnswers(), {
+    completes: ['transcode.completed'],
+    fails: ['transcode.failed'],
+  });
+});
+
+test('a command step may not publish a fact, nor a command nobody consumes', () => {
+  const def = load('canonical-ingest-to-air.workflow.json');
+  const step = def.steps.find((s) => s.id === 's_transcode')!;
+  (step.config as CommandConfig).request.event = 'asset.approved';
+  const res = validateDefinition(def);
+  assert.equal(res.valid, false);
+  const issue = res.issues.find((i) => i.code === 'UNKNOWN_COMMAND');
+  assert.equal(issue?.stepId, 's_transcode');
+  assert.equal(issue?.path, '/steps/1/config/request/event');
+
+  // The distribution preset names EP-37's publishing commands, which do not exist yet.
+  const later = validateDefinition(load('post-approval-distribution.workflow.json'));
+  assert.deepEqual(
+    later.issues.filter((i) => i.severity === 'error').map((i) => [i.code, i.stepId]),
+    [
+      ['UNKNOWN_COMMAND', 's_web'],
+      ['UNKNOWN_COMMAND', 's_social'],
+    ],
+  );
+});
+
+test("a command's input names its fields — a misspelt one and a missing one are refused", () => {
+  const def = load('canonical-ingest-to-air.workflow.json');
+  const cfg = def.steps.find((s) => s.id === 's_transcode')!.config as CommandConfig;
+  cfg.request.input = { assetId: '= vars.assetId', profile: '= vars.profile' };
+  const issues = validateDefinition(def).issues.filter((i) => i.code === 'COMMAND_INPUT');
+  assert.equal(issues.length, 2);
+  assert.match(issues[0]!.message, /no field "profile"/);
+  assert.match(issues[1]!.message, /needs "presetIds"/);
+});
+
+test('the awaited event must answer the command, and is matched by correlation id only', () => {
+  const def = load('canonical-ingest-to-air.workflow.json');
+  const cfg = def.steps.find((s) => s.id === 's_transcode')!.config as CommandConfig;
+  cfg.await = { event: 'asset.ready', correlate: '= incoming.assetId = vars.assetId' };
+  const codes = validateDefinition(def).issues.map((i) => i.code);
+  assert.ok(codes.includes('AWAIT_EVENT'));
+  assert.ok(codes.includes('CORRELATE_UNSUPPORTED'));
 });

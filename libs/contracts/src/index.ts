@@ -5,6 +5,8 @@ export {
   isEventType,
   validatePayload,
   validateDomain,
+  payloadShape,
+  type PayloadShape,
   envelopeShapeErrors,
   type CheckResult,
 } from './registry.ts';

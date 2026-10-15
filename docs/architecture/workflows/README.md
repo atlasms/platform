@@ -11,9 +11,9 @@
 |------|-----------|--------|
 | [`palette.json`](palette.json) | Reference payload for `GET /workflows/palette` — one entry per step kind (label, icon, BPMN element, config-schema pointer). | — |
 | [`atlas.moddle.json`](atlas.moddle.json) | The `bpmn-moddle` extension descriptor for the `atlas:` namespace (engine policy carried in BPMN `extensionElements`). | round-trips clean |
-| [`presets/canonical-ingest-to-air.workflow.json`](presets/canonical-ingest-to-air.workflow.json) | Ingest → transcode → ready → review → schedulable/rejected. Uses command+await, wait-event, human-task, branch. | schema+graph valid |
-| [`presets/simple-approval.workflow.json`](presets/simple-approval.workflow.json) | Minimal approve/reject → publish. | schema+graph valid |
-| [`presets/post-approval-distribution.workflow.json`](presets/post-approval-distribution.workflow.json) | Parallel fan-out to web/social/archive, then a settle timer. Uses parallel split/join, sub-flow, timer. | schema+graph valid |
+| [`presets/canonical-ingest-to-air.workflow.json`](presets/canonical-ingest-to-air.workflow.json) | Ingest → transcode → ready → review → schedulable/rejected. Uses command+await, wait-event, human-task, branch. | publishable |
+| [`presets/simple-approval.workflow.json`](presets/simple-approval.workflow.json) | Minimal approve/reject (human-task + branch). | publishable |
+| [`presets/post-approval-distribution.workflow.json`](presets/post-approval-distribution.workflow.json) | Parallel fan-out to web/social/archive, then a settle timer. Uses parallel split/join, sub-flow, timer. | schema+graph valid; **not publishable** until EP-37 adds the publishing commands — its `publish.*.requested` steps are refused `UNKNOWN_COMMAND` (EP-22.4) |
 | [`fixtures/canonical-ingest-to-air.bpmn`](fixtures/canonical-ingest-to-air.bpmn) | Golden **BPMN 2.0** export of the canonical preset (with `atlas:` ext + DI layout). The converter round-trip test target. | moddle: 0 warnings |
 
 Across the three presets, **all nine step kinds** are exercised (start, end, command, human-task,

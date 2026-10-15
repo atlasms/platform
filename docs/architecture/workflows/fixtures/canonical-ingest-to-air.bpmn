@@ -32,8 +32,9 @@
         <atlas:OnError mode="compensate"/>
         <atlas:Await event="transcode.completed"/>
         <atlas:Io>
-          <atlas:Mapping direction="in" target="request.profile" source="= vars.profile"/>
           <atlas:Mapping direction="in" target="request.assetId" source="= vars.assetId"/>
+          <atlas:Mapping direction="in" target="request.presetIds" source="= [vars.profile]"/>
+          <atlas:Mapping direction="in" target="request.inputFile.kind" source="= &quot;original&quot;"/>
           <atlas:Mapping direction="out" target="vars.renditions" source="= incoming.renditions"/>
         </atlas:Io>
       </bpmn:extensionElements>

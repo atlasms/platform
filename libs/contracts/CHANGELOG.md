@@ -28,6 +28,11 @@ release is a statement of what changed, not a deploy step.
   `user | group` must handle it.
 - `workflow.task.created.assigneeKind` — what `assignee` names (user, group or role). Absent means a
   user, which is what BMS sent before it said.
+- `WORKFLOW_COMMANDS` and `commandAnswers()` in `@atlas/contracts/workflow` (EP-22.4): the closed list
+  of commands a workflow's command step may issue, each with the events that complete and fail it.
+- `payloadShape(type)`: an event payload's top-level fields and its required ones.
+- `transcode.job.create` takes `inputFile` (`{ kind, variant? }`, the asset's file in HSM) as the
+  alternative to `inputPath`, and its description says how it is answered.
 - `@atlas/contracts/workflow-types` (EP-22.11): the workflow DSL's TYPES alone (`src/workflow/types.ts`),
   a browser-safe subpath — `@atlas/contracts/workflow` brings the validator, ajv and `node:fs` with
   it. Studio's generated BMS types import `WorkflowDefinition` from it rather than re-deriving the
@@ -46,6 +51,13 @@ release is a statement of what changed, not a deploy step.
 
 ### Breaking
 
+- `validateDefinition` (EP-22.4) refuses a command step that issues anything but a command in
+  `WORKFLOW_COMMANDS` (`UNKNOWN_COMMAND`), names an input that is not a field of the command or omits a
+  required one (`COMMAND_INPUT`), awaits an event that does not answer it (`AWAIT_EVENT`), or sets
+  `await.correlate` (`CORRELATE_UNSUPPORTED`). A definition that published before can be refused now —
+  BMS checks at publish, so what is already published keeps running. The presets moved with it:
+  `simple-approval` no longer has a publish step, and `post-approval-distribution` is refused until
+  EP-37 adds the publishing commands.
 - `recording.segment.completed` (EP-39; ADR-0007) now describes a recorder's FILE as it is handed
   over: `captureId`, `jobId`, `fileStart`/`fileEnd`, `part`, `partial`, `sizeBytes` and `checksum`
   are required; `index` and `path` are gone — a file is named by its grid slot and part, and the
