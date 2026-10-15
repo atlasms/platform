@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildEnvelope, ulid } from '@atlas/contracts';
+import { buildEnvelope, ulid, type Envelope, type EventPayloads } from '@atlas/contracts';
+import { SqliteOutboxStore } from '@atlas/data';
 import { InMemoryBroker } from '@atlas/messaging';
 import { compile } from '@atlas/policy';
 import {
@@ -31,12 +32,13 @@ async function harness() {
   const store = sqliteJobStore();
   const service = new MtsService({ store, transcoder: fakeTranscoder(), workRoot: root });
   const bus = new InMemoryBroker();
-  const publish = (payload: Record<string, unknown>) => {
+  const publish = (payload: Record<string, unknown>, correlationId?: string) => {
     const envelope = buildEnvelope({
       type: 'transcode.job.create',
       channelId: CH,
       payload,
       actor: { kind: 'service', id: 'bms' },
+      ...(correlationId !== undefined ? { correlationId } : {}),
     });
     return bus.publish({
       id: envelope.messageId,
@@ -59,28 +61,49 @@ test('the subscription pattern is every channel’s command, and nothing else', 
   assert.equal(JOB_CREATE_PATTERN, 'atlas.*.transcode.job.create');
 });
 
-test('a command over the broker becomes a queued job; one MTS cannot honour is dead-lettered, not lost', async () => {
+test('a command over the broker becomes a queued job; one MTS cannot honour is ANSWERED, not dead-lettered', async () => {
   const h = await harness();
   try {
     const queued: string[] = [];
     const refused: string[] = [];
+    const errors: string[] = [];
     startJobConsumer({
       broker: h.bus,
       service: h.service,
       maxAttempts: 2,
       onQueued: (subject) => queued.push(subject),
-      onError: (err) => refused.push((err as Error).message),
+      onRefused: (subject) => refused.push(subject),
+      onError: (err) => errors.push((err as Error).message),
     });
 
-    await h.publish({ assetId: ulid(), presetIds: ['proxy'], inputPath: h.input });
+    const correlationId = ulid();
+    await h.publish({ assetId: ulid(), presetIds: ['proxy'], inputPath: h.input }, correlationId);
     assert.equal(queued.length, 1);
-    assert.equal((await h.store.jobs({ channelId: CH }))[0]?.state, 'queued');
+    const [job] = await h.store.jobs({ channelId: CH });
+    assert.equal(job?.state, 'queued');
+    assert.equal(job?.correlationId, correlationId, "the job keeps the command's correlation");
 
-    // An unknown preset: thrown on every attempt, then parked where `scripts/dlq.mjs` shows it.
-    await h.publish({ assetId: ulid(), presetIds: ['hologram'], inputPath: h.input });
-    assert.equal(refused.length, 2, 'retried up to maxAttempts');
+    // An unknown preset: the issuer is TOLD — transcode.failed under its correlation id — once,
+    // with nothing queued and nothing dead-lettered. Retrying a refusal would change nothing.
+    const assetId = ulid();
+    const asked = ulid();
+    await h.publish({ assetId, presetIds: ['hologram'], inputPath: h.input }, asked);
+    assert.equal(refused.length, 1);
+    assert.equal(errors.length, 0);
+    assert.equal(h.bus.deadLetters.length, 0);
+    assert.equal((await h.store.jobs({ channelId: CH })).length, 1, 'nothing was queued');
+    const answer = (await new SqliteOutboxStore(h.store.db).listUnsent(1000))
+      .map((r) => r.message.body as Envelope<EventPayloads['transcode.failed']>)
+      .find((e) => e.type === 'transcode.failed');
+    assert.equal(answer?.correlationId, asked);
+    assert.equal(answer?.payload.assetId, assetId);
+    assert.equal(answer?.payload.error.code, 'COMMAND_REFUSED');
+    assert.match(answer?.payload.error.message ?? '', /hologram/);
+
+    // Not a command at all — nobody to answer: thrown, retried, dead-lettered.
+    await h.publish({ presetIds: ['proxy'] });
+    assert.equal(errors.length, 2, 'retried up to maxAttempts');
     assert.equal(h.bus.deadLetters.length, 1);
-    assert.equal((await h.store.jobs({ channelId: CH })).length, 1, 'and nothing was written');
   } finally {
     await h.cleanup();
   }
