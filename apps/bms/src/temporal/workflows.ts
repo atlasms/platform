@@ -8,6 +8,7 @@
 // `Date.now()` here is the workflow's own replay-safe clock.
 
 import {
+  ActivityFailure,
   condition,
   defineSignal,
   executeChild,
@@ -17,12 +18,12 @@ import {
 } from '@temporalio/workflow';
 import type { WorkflowDefinition } from '@atlas/contracts/workflow';
 import { StepTimeout, type Effects, type RunResult, type StartContext } from '../engine/effects.ts';
+import { StepInbox, type StepSignal } from '../engine/inbox.ts';
 import { runWorkflow } from '../engine/interpreter.ts';
 import type { BmsActivities } from './activities.ts';
 
-/** A step's completion, task outcome or event: `{ stepId, payload }` (the API's signal, EP-22.4's router). */
-export const stepSignal =
-  defineSignal<[{ stepId: string; payload: Record<string, unknown> }]>('step');
+/** A step's completion, task outcome or event — the API's signal, or the completion router's (EP-22.4). */
+export const stepSignal = defineSignal<[StepSignal]>('step');
 
 const act = proxyActivities<BmsActivities>({
   startToCloseTimeout: '30 seconds',
@@ -31,17 +32,29 @@ const act = proxyActivities<BmsActivities>({
   retry: { initialInterval: '1 second', backoffCoefficient: 2, maximumInterval: '1 minute' },
 });
 
+/**
+ * An activity's own words. Temporal hands the workflow an `ActivityFailure` that says only
+ * "Activity task failed", with the refusal (a payload off its schema, a command not allowed) as its
+ * cause — and the interpreter records what it is given in the step's history and the instance's
+ * error, where a person reads it.
+ */
+async function unwrapped<T>(call: Promise<T>): Promise<T> {
+  try {
+    return await call;
+  } catch (err) {
+    throw err instanceof ActivityFailure && err.cause !== undefined ? err.cause : err;
+  }
+}
+
 export async function atlasWorkflow(
   definition: WorkflowDefinition,
   start: StartContext,
 ): Promise<RunResult> {
   const { instanceId } = start;
   // Completions that arrive before their step waits are kept — a fast service must not lose a race
-  // with the workflow reaching the wait.
-  const inbox = new Map<string, Record<string, unknown>>();
-  setHandler(stepSignal, ({ stepId, payload }) => {
-    inbox.set(stepId, payload);
-  });
+  // with the workflow reaching the wait — and a command step takes only its own command's answer.
+  const inbox = new StepInbox();
+  setHandler(stepSignal, (signal) => inbox.put(signal));
 
   // Deterministic keys: the n-th activity of this instance is the n-th on every replay.
   let op = 0;
@@ -54,15 +67,16 @@ export async function atlasWorkflow(
         ? (await condition(() => inbox.has(stepId)), true)
         : await condition(() => inbox.has(stepId), timeoutMs);
     if (!arrived) throw new StepTimeout(stepId);
-    const payload = inbox.get(stepId) ?? {};
-    inbox.delete(stepId);
-    return payload;
+    return inbox.take(stepId);
   };
 
   const fx: Effects = {
     now: () => Date.now(),
     sleep: (ms) => sleep(ms),
-    emitCommand: (req) => act.requestStep({ key: key(), instanceId, req }),
+    emitCommand: async (req) => {
+      const { correlationId } = await unwrapped(act.requestStep({ key: key(), instanceId, req }));
+      inbox.expect(req.stepId, correlationId);
+    },
     waitForCompletion: take,
     waitForTask: take,
     waitForEvent: take,

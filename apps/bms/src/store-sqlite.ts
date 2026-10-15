@@ -12,7 +12,7 @@ import {
   type Db,
   type Migration,
 } from '@atlas/data';
-import type { HistoryEntry, Instance } from './instance.ts';
+import type { CommandAwait, HistoryEntry, Instance } from './instance.ts';
 import type { WorkflowStore, WorkflowTx } from './store.ts';
 import { withState, type Workflow, type WorkflowVersion } from './workflow.ts';
 
@@ -70,6 +70,18 @@ export const sqliteMigrations: Migration[] = [
     up: `ALTER TABLE workflows ADD COLUMN state TEXT;
          UPDATE workflows SET state = CASE WHEN json_extract(data, '$.latestVersion') > 0 THEN 'active' ELSE 'draft' END WHERE state IS NULL;
          CREATE INDEX IF NOT EXISTS workflows_state_idx ON workflows (channel_id, state, id);`,
+  },
+  // EP-22.4: the commands command steps issued, by the correlation id their answers carry back.
+  {
+    id: 'bms_command_awaits',
+    up: `CREATE TABLE IF NOT EXISTS command_awaits (
+           correlation_id TEXT PRIMARY KEY,
+           channel_id     TEXT NOT NULL,
+           instance_id    TEXT NOT NULL,
+           answered_at    TEXT,
+           data           TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS command_awaits_instance_idx ON command_awaits (channel_id, instance_id);`,
   },
 ];
 
@@ -168,6 +180,26 @@ export function sqliteWorkflowStore(path = ':memory:'): WorkflowStore & { db: Db
     async markSeen(key) {
       return seen.mark(db, key);
     },
+    async insertAwait(a) {
+      const result = db
+        .prepare(
+          `INSERT INTO command_awaits (correlation_id, channel_id, instance_id, data)
+           VALUES (?, ?, ?, ?) ON CONFLICT (correlation_id) DO NOTHING`,
+        )
+        .run(a.correlationId, a.channelId, a.instanceId, JSON.stringify(a));
+      return Number(result.changes) === 1;
+    },
+    async answerAwait(correlationId, answeredAt, answeredBy) {
+      const result = db
+        .prepare(
+          `UPDATE command_awaits
+              SET answered_at = ?,
+                  data = json_set(data, '$.answeredAt', ?, '$.answeredBy', ?)
+            WHERE correlation_id = ? AND answered_at IS NULL`,
+        )
+        .run(answeredAt, answeredAt, answeredBy, correlationId);
+      return Number(result.changes) === 1;
+    },
   };
 
   return {
@@ -239,6 +271,12 @@ export function sqliteWorkflowStore(path = ':memory:'): WorkflowStore & { db: Db
         .prepare('SELECT data FROM workflow_step_history WHERE instance_id = ? ORDER BY seq')
         .all(instanceId) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as HistoryEntry);
+    },
+    async commandAwait(correlationId) {
+      const row = db
+        .prepare('SELECT data FROM command_awaits WHERE correlation_id = ?')
+        .get(correlationId) as { data: string } | undefined;
+      return row ? (JSON.parse(row.data) as CommandAwait) : undefined;
     },
     async close() {
       db.close();

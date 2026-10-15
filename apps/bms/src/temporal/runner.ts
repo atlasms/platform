@@ -6,12 +6,18 @@
 // worker loads the workflow code BUNDLED AT IMAGE BUILD when the bundle is there (bundle.mjs;
 // ADR-0010 evidence 2) and bundles at start only where it is not — a laptop, a test.
 
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Client, Connection, WorkflowExecutionAlreadyStartedError } from '@temporalio/client';
+import {
+  Client,
+  Connection,
+  WorkflowExecutionAlreadyStartedError,
+  WorkflowNotFoundError,
+} from '@temporalio/client';
 import { msToTs } from '@temporalio/common/lib/time.js';
 import { NativeConnection, Worker } from '@temporalio/worker';
-import type { InstanceRunner } from '../runner.ts';
+import { InstanceNotRunning, type InstanceRunner } from '../runner.ts';
 import type { BmsRuntime } from '../runtime.ts';
 import { createActivities } from './activities.ts';
 
@@ -48,7 +54,11 @@ export async function connectTemporal(options: TemporalOptions): Promise<Tempora
   const client = new Client({ connection, namespace });
 
   const nativeConnection = await NativeConnection.connect({ address });
-  const bundled = existsSync(BUNDLE_PATH);
+  const bundled = bundleIsCurrent();
+  if (!bundled && existsSync(BUNDLE_PATH))
+    log('temporal workflow bundle is older than the source; bundling from source', {
+      bundle: BUNDLE_PATH,
+    });
   const worker = await Worker.create({
     connection: nativeConnection,
     namespace,
@@ -73,8 +83,14 @@ export async function connectTemporal(options: TemporalOptions): Promise<Tempora
         if (!(err instanceof WorkflowExecutionAlreadyStartedError)) throw err;
       }
     },
-    async signal(instanceId, stepId, payload) {
-      await client.workflow.getHandle(instanceId).signal('step', { stepId, payload });
+    async signal(instanceId, signal) {
+      try {
+        await client.workflow.getHandle(instanceId).signal('step', signal);
+      } catch (err) {
+        // Ended (or never started): nothing is waiting, and the caller decides what that means.
+        if (err instanceof WorkflowNotFoundError) throw new InstanceNotRunning(instanceId);
+        throw err;
+      }
     },
   };
 
@@ -94,6 +110,25 @@ export async function connectTemporal(options: TemporalOptions): Promise<Tempora
       }
     },
   };
+}
+
+/**
+ * The build-time bundle, when it was built from the source beside it. In the image it always was —
+ * bundle.mjs runs after the source is copied in. On a laptop a bundle left by an earlier
+ * `bundle.mjs` would otherwise run the workflow code of THAT day against today's activities, and
+ * every test against a real Temporal would be testing the wrong workflow while passing.
+ */
+function bundleIsCurrent(): boolean {
+  if (!existsSync(BUNDLE_PATH)) return false;
+  const built = statSync(BUNDLE_PATH).mtimeMs;
+  const srcDir = fileURLToPath(new URL('../', import.meta.url));
+  const newest = (dir: string): number =>
+    readdirSync(dir, { withFileTypes: true }).reduce((max, entry) => {
+      const path = join(dir, entry.name);
+      const t = entry.isDirectory() ? newest(path) : statSync(path).mtimeMs;
+      return Math.max(max, t);
+    }, 0);
+  return built >= newest(srcDir);
 }
 
 async function ensureNamespace(

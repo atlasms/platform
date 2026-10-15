@@ -27,6 +27,7 @@ import {
   pgWorkflowStore,
   type InstanceRunner,
 } from './index.ts';
+import { CompletionRouter, startCompletionRouter } from './router.ts';
 import { connectTemporal, type TemporalRuntime } from './temporal/runner.ts';
 
 const config = loadConfig({
@@ -132,9 +133,9 @@ const runner: InstanceRunner = {
     if (!temporal) throw new Error('the workflow runtime is not connected yet');
     await temporal.runner.start(input);
   },
-  signal: async (instanceId, stepId, payload) => {
+  signal: async (instanceId, signal) => {
     if (!temporal) throw new Error('the workflow runtime is not connected yet');
-    await temporal.runner.signal(instanceId, stepId, payload);
+    await temporal.runner.signal(instanceId, signal);
   },
 };
 
@@ -213,6 +214,22 @@ async function startBroker(): Promise<void> {
     retryTimer = setTimeout(() => void startBroker(), 5_000);
     return;
   }
+
+  // EP-22.4: the answers to the commands command steps issued, delivered to the waiting step. A
+  // runtime that is not connected yet throws, and the broker redelivers.
+  startCompletionRouter({
+    broker,
+    router: new CompletionRouter({ store, runner }),
+    onOutcome: (subject, outcome) => {
+      if (outcome !== 'ignored') log.info('command answer routed', { subject, outcome });
+    },
+    onError: (err, msg) =>
+      log.warn('command answer not routed', {
+        subject: msg.subject,
+        messageId: msg.id,
+        error: (err as Error).message,
+      }),
+  });
 
   const relay = new OutboxRelay(outbox, broker);
   log.info('outbox relay started', { intervalMs: config.relayIntervalMs });

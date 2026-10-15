@@ -76,6 +76,16 @@ Deliberately thin — MTS is queue-driven, not user-facing:
 - **Emits:** `transcode.started` (jobId, assetId), `transcode.progress` (jobId, pct — **best-
   effort**, drives progress bars), `transcode.completed` (assetId, renditions[] + checksums —
   consumed by MAM + HSM), `transcode.failed` (assetId, error — to Notifications/BMS).
+- **A command is answered under its own correlation id** (EP-22.4): the job keeps the command's
+  `correlationId`, and its `transcode.completed`/`failed` carry it back — how BMS's completion router
+  finds the waiting step. A WELL-FORMED command MTS cannot honour (an unknown preset, an input outside
+  the work root, an HSM input with no HSM configured) is answered `transcode.failed` at once —
+  `error.code: COMMAND_REFUSED`, no `jobId`, with the seen-mark, acknowledged — rather than retried
+  into the dead-letter queue: retrying a refusal changes nothing, and the issuer would wait out its
+  timeout. Only a message that is not a command at all (not an envelope, off its schema) still goes
+  to the DLQ, having nobody to answer. The input is `inputPath` (under the work root) or `inputFile`
+  (`{ kind, variant? }`, the asset's file in HSM, fetched at run time) — exactly one, over the broker
+  as over HTTP.
 
 See [Messaging §Transcode](../04-messaging-and-data.md#transcode).
 

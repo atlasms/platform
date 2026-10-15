@@ -30,7 +30,10 @@ export class WorkflowError extends Error {
   readonly stepId: string;
   readonly compensate: boolean;
   constructor(stepId: string, compensate: boolean, cause?: unknown) {
-    super(`workflow failed at "${stepId}"`, cause === undefined ? undefined : { cause });
+    // The cause's words ride in the message: it is what the instance's `error` shows, and "failed
+    // at s_tx" without MTS's reason sends whoever reads it to the logs.
+    const why = cause instanceof Error ? `: ${cause.message}` : '';
+    super(`workflow failed at "${stepId}"${why}`, cause === undefined ? undefined : { cause });
     this.name = 'WorkflowError';
     this.stepId = stepId;
     this.compensate = compensate;
@@ -191,7 +194,7 @@ export async function runWorkflow(
         await fx.emitCommand({
           stepId: step.id,
           event: c.request.event,
-          payload: evalObject(c.request.input),
+          payload: evalInput(c.request.input),
           correlationId: `${start.instanceId}::${step.id}:${attempt}`,
           idempotencyKey: `${start.instanceId}:${step.id}:${attempt}`,
         });
@@ -263,22 +266,35 @@ export async function runWorkflow(
     return out;
   }
 
+  /**
+   * A command's payload (EP-22.4): a dotted key builds a nested field — `"inputFile.kind"` is
+   * `{ inputFile: { kind } }` — since the FEEL subset has no context literal to write one with.
+   */
+  function evalInput(map?: DataMapping): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [key, expr] of Object.entries(map ?? {}))
+      setPath(out, key.split('.'), feelEval(expr, ctx()));
+    return out;
+  }
+
   /** `{ "vars.a.b": "= expr" }` — every target is a dotted path into vars. */
   function applyToVars(map: DataMapping): void {
-    for (const [target, expr] of Object.entries(map)) {
-      const path = target.replace(/^vars\./, '').split('.');
-      const last = path.pop();
-      if (last === undefined) continue;
-      let obj: Record<string, unknown> = vars;
-      for (const key of path) {
-        const next = obj[key];
-        obj = (typeof next === 'object' && next !== null ? next : (obj[key] = {})) as Record<
-          string,
-          unknown
-        >;
-      }
-      obj[last] = feelEval(expr, ctx());
+    for (const [target, expr] of Object.entries(map))
+      setPath(vars, target.replace(/^vars\./, '').split('.'), feelEval(expr, ctx()));
+  }
+
+  function setPath(root: Record<string, unknown>, path: string[], value: unknown): void {
+    const last = path.pop();
+    if (last === undefined) return;
+    let obj = root;
+    for (const key of path) {
+      const next = obj[key];
+      obj = (typeof next === 'object' && next !== null ? next : (obj[key] = {})) as Record<
+        string,
+        unknown
+      >;
     }
+    obj[last] = value;
   }
 
   function findJoin(splitId: string): string | undefined {

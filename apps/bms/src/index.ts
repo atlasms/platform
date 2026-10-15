@@ -12,5 +12,12 @@ export {
 } from './workflow.ts';
 export { BmsRuntime } from './runtime.ts';
 export { inProcessRunner, type InProcessRunner } from './runner-inprocess.ts';
-export type { InstanceRunner } from './runner.ts';
-export type { Instance, HistoryEntry } from './instance.ts';
+export { InstanceNotRunning, type InstanceRunner } from './runner.ts';
+export type { Instance, HistoryEntry, CommandAwait } from './instance.ts';
+export {
+  CompletionRouter,
+  startCompletionRouter,
+  answerPatterns,
+  type RouteOutcome,
+} from './router.ts';
+export { StepInbox, CommandFailed, type StepSignal } from './engine/inbox.ts';

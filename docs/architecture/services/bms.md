@@ -146,7 +146,9 @@ BPMN XML.
   `workflow.completed`.
 - **Consumes:** the **completion events of every service it orchestrates** — `ingest.accepted`,
   `transcode.completed`/`failed`, `asset.ready`/`approved`/`rejected`, `restore.completed`,
-  `schedule.sent-to-air`, etc. — to advance waiting instances.
+  `schedule.sent-to-air`, etc. — to advance waiting instances. As built (§13d): the answers to the
+  commands in `WORKFLOW_COMMANDS`, matched by correlation id (`transcode.completed`/`failed`);
+  the events a wait-event step waits on come with EP-22.6.
 
 See [Messaging §Workflow/scheduling](../04-messaging-and-data.md#workflow--scheduling--people).
 
@@ -317,7 +319,7 @@ ULID DERIVED from the instance and the key, so a retry names the same one.
 | Activity | Writes |
 |---|---|
 | `recordHistory` | `workflow_step_history` (instance, seq) and the mirror's state / `currentSteps` |
-| `requestStep` | `workflow.step.requested` — issuing the target's own command is EP-22.4 |
+| `requestStep` | the target's own command, `workflow.step.requested` and the await row (EP-22.4, §13d) |
 | `createTask` | `workflow.task.created` — Notifications materializes it (EP-25) |
 | `prepareChild` | the sub-flow's instance row + its audit |
 | `finish` | the mirror's terminal state, `workflow.completed`, `audit.recorded` |
@@ -363,9 +365,73 @@ CI runs the worker against Temporal's dev server (`apps/bms/test/temporal.test.t
   latest version and revision after it) is emitted in the transaction of every change to the
   catalog, for every client to refetch or drop what changed. Saving a draft emits nothing.
 - **Change logs** — a workflow's and its instances' audit history, and `workflow.*` entries in the
-  log — are read under a dedicated `workflow:audit` permission. Broadcasting `workflow.changed` to
-  every user, and the read rule for the logs, are a WebSocket eligibility and a log visibility change
-  plus a new permission: that half is its own PR, held for the product owner's review.
+  log — are read under a dedicated `workflow:audit` permission. `workflow.changed` reaches every
+  user of the channel over the socket (the WebSocket service's channel-wide set, after tenant
+  isolation). Both were reviewed and merged (#518, 2026-10-15), with the Administrator starter role
+  holding every permission (`*:*`).
+
+## 13d. As built — EP-22.4, command steps and the completion router
+
+**A command step issues the target service's OWN command** — today `transcode.job.create` to MTS.
+The commands a workflow may issue are a closed, Tier-0 list in the contracts both sides read
+(`WORKFLOW_COMMANDS`, `@atlas/contracts/workflow`), each with the events that answer it:
+
+| Command | Target | Completes the step | Fails the step |
+|---|---|---|---|
+| `transcode.job.create` | mts | `transcode.completed` | `transcode.failed` |
+
+Closed because BMS publishes with the platform's authority: a workflow author with `workflow:admin`
+must not be able to make it publish a FACT another service believes (`asset.approved`,
+`permissions.changed`), nor a command nobody consumes, whose step would wait forever. Adding one is a
+code change on both sides — the target consumes it and answers it under the command's correlation id.
+
+**Publish refuses** (DSL doc §6): `UNKNOWN_COMMAND` (not in the list), `COMMAND_INPUT` (an input key
+that is not a field of the command's payload schema, or a required field missing — the values are
+FEEL and known only at run time, the keys are not), `AWAIT_EVENT` (an awaited event that does not
+answer the command) and `CORRELATE_UNSUPPORTED` (`await.correlate` — the answer is matched by
+correlation id; matching on an expression is the event fan-out wait-event steps get with EP-22.6). A
+dotted input key builds a nested field (`"inputFile.kind": "= \"original\""`), since the FEEL subset
+has no context literal. The presets moved with it: the canonical preset's transcode step is now a
+valid command (`presetIds`, the original in HSM); `simple-approval` no longer publishes to the web;
+`post-approval-distribution` stays unpublishable until EP-37 adds the publishing commands.
+
+**Issuing** (`requestStep`, one transaction through the outbox): the command,
+`workflow.step.requested` (`target`; `params` with the command, its input and correlation id) and a
+row in `command_awaits`. The command's envelope carries a correlation id DERIVED from the instance and
+the activity's key — a retried activity names the same command, and every visit of a step (a retry, a
+loop) a new one — and the activity returns it, so the workflow takes only THAT command's answer: a
+late answer to an earlier attempt is not the current attempt's (`StepInbox`, shared by the Temporal
+workflow and the in-process runner). The payload is validated against the command's schema at run
+time too; a refusal fails the step without retrying the activity.
+
+**The completion router** (`src/router.ts`) is a durable consumer of every answer type
+(`atlas.*.transcode.completed`, `atlas.*.transcode.failed`). It looks the answer's correlation id up
+in `command_awaits` — most events of those types are nobody's (MTS's own first renditions, a person's
+transcode) and are acknowledged untouched, as is one from another channel — and signals the waiting
+step with the answer (`{ stepId, correlationId, payload }`, plus `error` for a failure, which fails
+the step so its retries and `onError` take over instead of its timeout). The signal goes first and
+the await is then marked answered by a conditional update: a redelivery is a duplicate, an answer to
+an ended instance is `orphaned` (Temporal has nothing to signal), and a crash between the two re-sends
+a signal the instance already matched — harmless. The step's history and the instance's error carry
+the target's words (`workflow failed at "s_tx": COMMAND_REFUSED: unknown preset(s): …`).
+
+**MTS answers a refusal** (mts.md §5): a well-formed command it cannot honour is answered
+`transcode.failed` (`COMMAND_REFUSED`) at once under the command's correlation id, rather than retried
+into the dead-letter queue while the issuing step waited out its timeout. And it takes `inputFile`
+(the asset's file in HSM) over the broker, as over HTTP — how a workflow names an input.
+
+Evidence: `test/router.test.ts` (end to end through the in-process runner — the answer, a failure and
+the retry's new command, the late answer, ignored/duplicate/orphaned), the conformance suite on sqlite
+and Postgres, `test/temporal.test.ts` on a real Temporal (a refusal, the retry, the answer, an orphan),
+and smoke on kind: a workflow transcodes an uploaded asset's original through MTS and ends with MTS's
+rendition in its vars; one asking for an unknown preset fails with MTS's words.
+
+Found on the way: the worker loaded `dist/workflow-bundle.js` whenever it existed, so on a laptop a
+bundle left by an earlier `bundle.mjs` ran THAT day's workflow code against today's activities —
+every test against a local Temporal tested the wrong workflow, and passed. It now uses the bundle only
+when it is newer than every BMS source file (always, in the image) and bundles from source otherwise.
+And an activity's refusal reached the workflow as Temporal's `ActivityFailure` ("Activity task
+failed"); the workflow unwraps it, so the history says what was refused.
 
 ## 14. Open questions / future
 

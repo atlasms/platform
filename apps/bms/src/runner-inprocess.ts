@@ -4,8 +4,9 @@
 // what it does NOT have is durability, which is Temporal's and is tested against a real server.
 import type { WorkflowDefinition } from '@atlas/contracts/workflow';
 import { StepTimeout, type Effects, type RunResult, type StartContext } from './engine/effects.ts';
+import { StepInbox } from './engine/inbox.ts';
 import { runWorkflow } from './engine/interpreter.ts';
-import type { InstanceRunner } from './runner.ts';
+import { InstanceNotRunning, type InstanceRunner } from './runner.ts';
 import type { BmsRuntime } from './runtime.ts';
 
 export interface InProcessRunner extends InstanceRunner {
@@ -14,13 +15,13 @@ export interface InProcessRunner extends InstanceRunner {
 }
 
 export function inProcessRunner(runtime: BmsRuntime): InProcessRunner {
-  const inboxes = new Map<string, Map<string, Record<string, unknown>>>();
+  const inboxes = new Map<string, StepInbox>();
   const waiters = new Map<string, () => void>();
   const runs = new Map<string, Promise<RunResult>>();
 
   const run = (definition: WorkflowDefinition, start: StartContext): Promise<RunResult> => {
     const { instanceId } = start;
-    const inbox = new Map<string, Record<string, unknown>>();
+    const inbox = new StepInbox();
     inboxes.set(instanceId, inbox);
     let op = 0;
     const key = (): string => `${instanceId}:${++op}`;
@@ -33,14 +34,15 @@ export function inProcessRunner(runtime: BmsRuntime): InProcessRunner {
         });
         if (!arrived && !inbox.has(stepId)) throw new StepTimeout(stepId);
       }
-      const payload = inbox.get(stepId) ?? {};
-      inbox.delete(stepId);
-      return payload;
+      return inbox.take(stepId);
     };
     const fx: Effects = {
       now: () => Date.now(),
       sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 50))),
-      emitCommand: (req) => runtime.requestStep({ key: key(), instanceId, req }),
+      emitCommand: async (req) => {
+        const { correlationId } = await runtime.requestStep({ key: key(), instanceId, req });
+        inbox.expect(req.stepId, correlationId);
+      },
       waitForCompletion: take,
       waitForTask: take,
       waitForEvent: take,
@@ -83,11 +85,11 @@ export function inProcessRunner(runtime: BmsRuntime): InProcessRunner {
       if (runs.has(start.instanceId)) return;
       void run(definition, start);
     },
-    async signal(instanceId, stepId, payload) {
+    async signal(instanceId, signal) {
       const inbox = inboxes.get(instanceId);
-      if (!inbox) throw new Error(`instance ${instanceId} is not running here`);
-      inbox.set(stepId, payload);
-      waiters.get(`${instanceId}:${stepId}`)?.();
+      if (!inbox) throw new InstanceNotRunning(instanceId);
+      inbox.put(signal);
+      waiters.get(`${instanceId}:${signal.stepId}`)?.();
     },
     async settled(instanceId) {
       const done = runs.get(instanceId);

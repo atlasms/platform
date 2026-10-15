@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { ulid, type Envelope, type EventPayloads } from '@atlas/contracts';
+import { isUlid, ulid, type Envelope, type EventPayloads } from '@atlas/contracts';
 import type { WorkflowDefinition } from '@atlas/contracts/workflow';
 import { InMemoryBroker, OutboxRelay, type OutboxStore } from '@atlas/messaging';
 import { compile } from '@atlas/policy';
@@ -262,12 +262,13 @@ export function workflowStoreConformance(name: string, harness: WorkflowStoreHar
       const req = {
         stepId: 's_cmd',
         event: 'transcode.job.create',
-        payload: { assetId: 'A1' },
+        payload: { assetId: ulid(), presetIds: ['proxy'], inputFile: { kind: 'original' } },
         correlationId: `${i.id}::s_cmd:1`,
         idempotencyKey: `${i.id}:s_cmd:1`,
       };
-      await runtime.requestStep({ key: `${i.id}:1`, instanceId: i.id, req });
-      await runtime.requestStep({ key: `${i.id}:1`, instanceId: i.id, req });
+      const first = await runtime.requestStep({ key: `${i.id}:1`, instanceId: i.id, req });
+      const again = await runtime.requestStep({ key: `${i.id}:1`, instanceId: i.id, req });
+      assert.equal(again.correlationId, first.correlationId, 'a retry names the same command');
       const spec = {
         instanceId: i.id,
         stepId: 's_task',
@@ -283,9 +284,78 @@ export function workflowStoreConformance(name: string, harness: WorkflowStoreHar
 
       const types = (await drain()).map((e) => e.type);
       assert.deepEqual(types.filter((t) => t === 'workflow.step.requested').length, 1);
+      assert.deepEqual(types.filter((t) => t === 'transcode.job.create').length, 1);
       assert.deepEqual(types.filter((t) => t === 'workflow.task.created').length, 1);
       assert.deepEqual(types.filter((t) => t === 'workflow.completed').length, 1);
       assert.equal((await store.instance(i.id))?.state, 'completed');
+    });
+  });
+
+  test(`[${name}] a command step issues the target's OWN command under a derived correlation id, and awaits it`, async () => {
+    await withFixture(async ({ store, drain }) => {
+      const runtime = new BmsRuntime({ store });
+      const i = instance();
+      await store.transaction((tx) => tx.insertInstance(i));
+      const assetId = ulid();
+      const req = (payload: Record<string, unknown>, event = 'transcode.job.create') => ({
+        stepId: 's_cmd',
+        event,
+        payload,
+        correlationId: `${i.id}::s_cmd:1`,
+        idempotencyKey: `${i.id}:s_cmd:1`,
+      });
+      const good = { assetId, presetIds: ['broadcast'], inputFile: { kind: 'original' } };
+      const { correlationId } = await runtime.requestStep({
+        key: `${i.id}:1`,
+        instanceId: i.id,
+        req: req(good),
+      });
+      assert.ok(isUlid(correlationId), 'an envelope correlation id is a ULID');
+
+      const sent = await drain();
+      const command = sent.find((e) => e.type === 'transcode.job.create');
+      assert.equal(command?.channelId, i.channelId);
+      assert.equal(command?.correlationId, correlationId, 'what the answer will carry back');
+      assert.deepEqual(command?.actor, { kind: 'service', id: 'bms' });
+      assert.deepEqual(command?.payload, good);
+      const requested = sent.find((e) => e.type === 'workflow.step.requested');
+      assert.equal((requested?.payload as { target?: string }).target, 'mts');
+
+      const awaited = await store.commandAwait(correlationId);
+      assert.equal(awaited?.instanceId, i.id);
+      assert.equal(awaited?.stepId, 's_cmd');
+      assert.equal(awaited?.answeredAt, undefined);
+
+      // The same step visited again (a loop, a retry) is a NEW command — the key is the activity's.
+      const next = await runtime.requestStep({
+        key: `${i.id}:2`,
+        instanceId: i.id,
+        req: req(good),
+      });
+      assert.notEqual(next.correlationId, correlationId);
+
+      // Answered at most once.
+      const answer = (by: string) =>
+        store.transaction((tx) => tx.answerAwait(correlationId, new Date().toISOString(), by));
+      assert.equal(await answer('m1'), true);
+      assert.equal(await answer('m2'), false);
+      assert.equal((await store.commandAwait(correlationId))?.answeredBy, 'm1');
+
+      // A command off its schema, or not one a workflow may issue: refused, nothing written.
+      const before = (await drain()).length;
+      await assert.rejects(
+        runtime.requestStep({ key: `${i.id}:3`, instanceId: i.id, req: req({ assetId }) }),
+        /presetIds/,
+      );
+      await assert.rejects(
+        runtime.requestStep({
+          key: `${i.id}:4`,
+          instanceId: i.id,
+          req: req({ assetId }, 'asset.approved'),
+        }),
+        /not a command a workflow may issue/,
+      );
+      assert.equal((await drain()).length, before);
     });
   });
 

@@ -583,7 +583,8 @@ export class BmsService {
       throw new Conflict(`instance ${id} has ended (${instance.state})`);
     if (!this.runner) throw new Unavailable('the workflow runtime is not configured');
     try {
-      await this.runner.signal(id, stepId, payload);
+      // Uncorrelated: a person's signal completes whatever the step is waiting for.
+      await this.runner.signal(id, { stepId, payload });
     } catch (err) {
       this.onRunnerError(err, { instanceId: id, action: 'signal' });
       throw new Unavailable('the workflow runtime could not be reached');

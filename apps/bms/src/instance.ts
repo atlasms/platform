@@ -50,3 +50,22 @@ export function afterHistory(i: Instance, stepId: string, event: HistoryEvent): 
   const currentSteps = [...waiting];
   return { ...i, currentSteps, state: currentSteps.length > 0 ? 'waiting' : 'running' };
 }
+
+/**
+ * A command a command step issued (EP-22.4): its correlation id is the one the target carries to
+ * its answer, and the completion router finds the waiting step by it. Answered at most once.
+ */
+export interface CommandAwait {
+  /** The command envelope's correlationId — a ULID derived from the instance and the activity. */
+  correlationId: string;
+  channelId: string;
+  instanceId: string;
+  stepId: string;
+  /** The command, e.g. `transcode.job.create`. */
+  command: string;
+  issuedAt: string;
+  /** When its answer reached the instance; absent while outstanding. */
+  answeredAt?: string;
+  /** The message id of the answer. */
+  answeredBy?: string;
+}
