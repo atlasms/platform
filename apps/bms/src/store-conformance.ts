@@ -359,6 +359,89 @@ export function workflowStoreConformance(name: string, harness: WorkflowStoreHar
     });
   });
 
+  test(`[${name}] a step waiting for an event: its keys as a row, found by type and asset, answered once`, async () => {
+    await withFixture(async ({ store, drain }) => {
+      const runtime = new BmsRuntime({ store });
+      const assetId = ulid();
+      const i = { ...instance(), assetId };
+      await store.transaction((tx) => tx.insertInstance(i));
+      const wait = { stepId: 's_wait', event: 'asset.ready', match: { assetId } };
+      const { correlationId } = await runtime.awaitEvent({
+        key: `${i.id}:1`,
+        instanceId: i.id,
+        wait,
+      });
+      // A retried activity names the same row and writes nothing new.
+      const again = await runtime.awaitEvent({ key: `${i.id}:1`, instanceId: i.id, wait });
+      assert.equal(again.correlationId, correlationId);
+      // A wait keyed on something other than an asset is offered every asset of the type.
+      await runtime.awaitEvent({
+        key: `${i.id}:2`,
+        instanceId: i.id,
+        wait: { stepId: 's_any', event: 'asset.ready', match: { 'meta.x': 1 } },
+      });
+
+      const open = await store.openEventAwaits(CH, 'asset.ready', assetId);
+      assert.deepEqual(open.map((a) => a.stepId).sort(), ['s_any', 's_wait']);
+      assert.deepEqual(
+        (await store.openEventAwaits(CH, 'asset.ready', ulid())).map((a) => a.stepId),
+        ['s_any'],
+        'another asset narrows to the unkeyed wait',
+      );
+      assert.equal((await store.openEventAwaits('ch99', 'asset.ready', assetId)).length, 0);
+      assert.equal((await store.openEventAwaits(CH, 'asset.approved', assetId)).length, 0);
+
+      const answer = (by: string) =>
+        store.transaction((tx) =>
+          tx.answerEventAwaits(correlationId, new Date().toISOString(), by),
+        );
+      assert.equal(await answer('m1'), true);
+      assert.equal(await answer('m2'), false);
+      assert.deepEqual(
+        (await store.openEventAwaits(CH, 'asset.ready', assetId)).map((a) => a.stepId),
+        ['s_any'],
+      );
+      await assert.rejects(
+        runtime.awaitEvent({
+          key: `${i.id}:3`,
+          instanceId: i.id,
+          wait: { ...wait, event: 'permissions.changed' },
+        }),
+        /not an event a workflow may wait for/,
+      );
+
+      // A review step's task: two verdict rows under the task's id, the point on each, answered
+      // together; the task names the point.
+      const taskId = await runtime.createTask({
+        key: `${i.id}:4`,
+        spec: {
+          instanceId: i.id,
+          stepId: 's_review',
+          taskType: 'approve',
+          assignee: { role: 'editor' },
+          reviewPointId: 'pre-schedule',
+        },
+      });
+      for (const type of ['asset.approved', 'asset.rejected']) {
+        const [row] = await store.openEventAwaits(CH, type, assetId);
+        assert.equal(row?.correlationId, taskId, type);
+        assert.equal(row?.reviewPointId, 'pre-schedule', type);
+      }
+      const task = (await drain()).find((e) => e.type === 'workflow.task.created');
+      assert.equal(
+        (task?.payload as unknown as EventPayloads['workflow.task.created']).reviewPointId,
+        'pre-schedule',
+      );
+      assert.equal(
+        await store.transaction((tx) =>
+          tx.answerEventAwaits(taskId, new Date().toISOString(), 'v'),
+        ),
+        true,
+      );
+      assert.equal((await store.openEventAwaits(CH, 'asset.rejected', assetId)).length, 0);
+    });
+  });
+
   test(`[${name}] instances list newest first, by channel, and by workflow`, async () => {
     await withFixture(async ({ store }) => {
       const wf = ulid();

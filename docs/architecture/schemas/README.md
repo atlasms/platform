@@ -99,6 +99,7 @@ schemas/
 | `playout.export.completed` | HSM | [playout.export.completed](events/playout.export.completed.payload.schema.json) |
 | `workflow.step.requested` | BMS | [workflow.step.requested](events/workflow.step.requested.payload.schema.json) |
 | `workflow.task.created` | BMS | [workflow.task.created](events/workflow.task.created.payload.schema.json) |
+| `workflow.task.resolved` | BMS | [workflow.task.resolved](events/workflow.task.resolved.payload.schema.json) |
 | `workflow.completed` | BMS | [workflow.completed](events/workflow.completed.payload.schema.json) |
 | `editor.render.requested` *(cmd)* | Studio/BFF | [editor.render.requested](events/editor.render.requested.payload.schema.json) |
 | `schedule.updated` | Scheduling | [schedule.updated](events/schedule.updated.payload.schema.json) |

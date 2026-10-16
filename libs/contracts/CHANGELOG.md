@@ -23,6 +23,17 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `WORKFLOW_EVENTS` and `REVIEW_VERDICTS` in `@atlas/contracts/workflow` (EP-22.6): the closed list of
+  events a wait-event step may wait for, and the two verdict events that resolve a review step.
+- `@atlas/contracts/workflow-correlate` (`correlationKeys`): a wait-event's `correlate` read as
+  equality keys — a subpath that loads in Temporal's workflow sandbox (FEEL's parser only).
+- `validateDefinition` refuses `UNKNOWN_EVENT`, `CORRELATE_SHAPE`, `CORRELATE_FIELD`,
+  `REVIEW_TASK_TYPE` and `DUP_REVIEW_POINT`. **Breaking** for a draft with a free-form `correlate`
+  (e.g. `= true`) or an unlisted wait-event `event`: it no longer publishes.
+- `workflow.task.created.reviewPointId` — a review step's task names its point.
+- `workflow.task.resolved` — BMS closes a workflow's task that something other than its completion
+  ended (a review's verdict); Notifications consumes it.
+
 - `PrincipalKind` gains `role` (EP-25.1, decided 2026-10-16): a workflow's human step offers a task to
   everyone holding a role, resolved to people when an inbox is read. A consumer that switched on
   `user | group` must handle it.

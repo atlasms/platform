@@ -107,7 +107,7 @@ and is overridable per asset; absent ⇒ permanent. An **internal scheduler** fi
 |--------|------|---------|-------|
 | `GET/POST/PATCH` | `/assets`, `/assets/{id}` | Core + extensible metadata CRUD. | `asset:read`/`asset:write` (dept-scoped) |
 | `POST` | `/assets/{id}/versions` | Create a new version (clone metadata on replace). | `asset:write` |
-| `POST` | `/assets/{id}/approve` · `/reject` | Lifecycle verdict (approve body MAY set `expiresAt`; reject body MAY set `reason`/`retainUntil`). | `asset:approve` |
+| `POST` | `/assets/{id}/approve` · `/reject` | Lifecycle verdict (approve body MAY set `expiresAt`; reject body MAY set `reason`/`retainUntil`). Either MAY name the workflow `reviewPointId` it is given at, carried on `asset.approved`/`asset.rejected` — what resolves a waiting review step (EP-22.6, bms.md §13f); only a verdict names one. | `asset:approve` |
 | `GET` | `/assets/{id}/verdicts` | Retained review-verdict history for the asset. | `asset:read` |
 | `GET` | `/search?q=…` | Simple search. | `asset:read` |
 | `POST` | `/search` | Advanced **faceted** search (category + subject + tag + person). | `asset:read` |

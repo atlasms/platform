@@ -4,6 +4,7 @@
 // - `workflow.task.created` (BMS) → a TASK, offered to the user, group or role it names. One row
 //   whoever it reaches: a group or a role is resolved to its people when an inbox is read (decided
 //   2026-10-16; the resolution itself is EP-25.3).
+// - `workflow.task.resolved` (BMS) → a workflow's task closed by MAM's verdict (EP-22.6).
 // - `asset.expired` (MAM) → a re-review-due NOTIFICATION for the person whose approval lapsed.
 //
 // Each event is one unit of work: the seen-mark, the row, and what it announces — `task.created`
@@ -20,8 +21,8 @@ import {
   type EventPayloads,
 } from '@atlas/contracts';
 import type { Message } from '@atlas/messaging';
-import { ValidationError } from '@atlas/service-kit';
-import type { EntityRef, Inbox, Notification, Task } from './inbox.ts';
+import { Conflict, NotFound, ValidationError } from '@atlas/service-kit';
+import { isClosed, type EntityRef, type Inbox, type Notification, type Task } from './inbox.ts';
 import { outboxRecord } from './record.ts';
 import type { Principal, PrincipalSource } from './principals.ts';
 import type { InboxStore } from './store.ts';
@@ -113,6 +114,7 @@ export class NotificationsService {
       state: 'open',
       ...(subjectRef !== undefined ? { subjectRef } : {}),
       ...(p.workflowInstanceId !== undefined ? { workflowInstanceId: p.workflowInstanceId } : {}),
+      ...(p.reviewPointId !== undefined ? { reviewPointId: p.reviewPointId } : {}),
       ...(p.dueAt !== undefined ? { dueAt: p.dueAt } : {}),
       createdBy: envelope.actor?.id ?? 'bms',
       createdAt: this.now().toISOString(),
@@ -160,6 +162,77 @@ export class NotificationsService {
             action: 'task.created',
             origin: { service: 'notifications' },
             delta: delta(undefined, { ...task }),
+          } satisfies EventPayloads['audit.recorded'],
+          chain,
+        ),
+      );
+    });
+    return outcome;
+  }
+
+  /**
+   * `workflow.task.resolved` (EP-22.6) → a workflow's task closed by something other than its
+   * completion here — today a review step's verdict in MAM. The task is `done` with the verdict as
+   * its outcome and the verdict's author as who closed it (a participant from now on), announced
+   * (`task.updated`, which BMS finds already answered) and audited in one transaction.
+   *
+   * A task not here YET is thrown to the broker: its `workflow.task.created` rides another durable
+   * and may simply be behind. One already closed is a duplicate.
+   */
+  async consumeTaskResolved(msg: Message): Promise<'applied' | 'duplicate' | 'skipped'> {
+    const envelope = this.envelopeOf<EventPayloads['workflow.task.resolved']>(
+      msg,
+      'workflow.task.resolved',
+    );
+    const p = envelope.payload;
+    const before = await this.store.task(p.taskId);
+    if (!before) throw new NotFound(`task ${p.taskId} — not here yet`);
+    if (before.channelId !== envelope.channelId) return 'skipped';
+    if (isClosed(before)) return 'duplicate';
+    const after: Task = {
+      ...before,
+      state: 'done',
+      outcome: p.outcome,
+      closedBy: p.by ?? 'bms',
+      closedAt: p.at,
+      version: before.version + 1,
+      participants: [...new Set([...before.participants, ...(p.by !== undefined ? [p.by] : [])])],
+    };
+    const chain = this.chainOf(envelope);
+    let outcome: 'applied' | 'duplicate' = 'applied';
+    await this.store.transaction(async (tx) => {
+      if (!(await tx.markSeen(msg.id))) {
+        outcome = 'duplicate';
+        return;
+      }
+      // Someone moved it since the read (a claim): the broker redelivers, and it is read again.
+      if (!(await tx.updateTask(after, before.version)))
+        throw new Conflict(`task ${before.id} changed while it was being resolved`);
+      await tx.enqueue(
+        outboxRecord(
+          'task.updated',
+          after.channelId,
+          {
+            id: after.id,
+            state: 'done',
+            ...(p.by !== undefined ? { by: p.by } : {}),
+            outcome: p.outcome,
+            at: p.at,
+          } satisfies EventPayloads['task.updated'],
+          chain,
+        ),
+      );
+      await tx.enqueue(
+        outboxRecord(
+          'audit.recorded',
+          after.channelId,
+          {
+            entityType: 'task',
+            entityId: after.id,
+            revision: after.version,
+            action: 'task.resolved',
+            origin: { service: 'notifications' },
+            delta: delta({ ...before }, { ...after }),
           } satisfies EventPayloads['audit.recorded'],
           chain,
         ),

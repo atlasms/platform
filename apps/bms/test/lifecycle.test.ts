@@ -52,7 +52,11 @@ async function harness() {
     name: 'One wait',
     steps: [
       { id: 's_start', kind: 'start' },
-      { id: 's_wait', kind: 'wait-event', config: { event: 'x', correlate: '= true' } },
+      {
+        id: 's_wait',
+        kind: 'wait-event',
+        config: { event: 'asset.approved', correlate: '= incoming.assetId = vars.assetId' },
+      },
       { id: 's_end', kind: 'end' },
     ],
     transitions: [

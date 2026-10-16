@@ -6,7 +6,7 @@
 // index; a published row is never updated — the adapters refuse it in the statement itself).
 
 import type { OutboxRecord } from '@atlas/messaging';
-import type { CommandAwait, HistoryEntry, Instance } from './instance.ts';
+import type { CommandAwait, EventAwait, HistoryEntry, Instance } from './instance.ts';
 import type { Workflow, WorkflowState, WorkflowVersion } from './workflow.ts';
 
 export interface WorkflowStore {
@@ -30,6 +30,12 @@ export interface WorkflowStore {
   history(instanceId: string): Promise<HistoryEntry[]>;
   /** The command issued under this correlation id, answered or not (EP-22.4). */
   commandAwait(correlationId: string): Promise<CommandAwait | undefined>;
+  /**
+   * The OPEN event awaits of one type in one channel (EP-22.6). With `assetId`, only those keyed on
+   * that asset or on no asset at all — the narrowing every asset event gets; the caller matches the
+   * rest of the keys.
+   */
+  openEventAwaits(channelId: string, eventType: string, assetId?: string): Promise<EventAwait[]>;
   close(): Promise<void>;
 }
 
@@ -74,4 +80,15 @@ export interface WorkflowTx {
    * (or another answer) got there first, and nothing is written.
    */
   answerAwait(correlationId: string, answeredAt: string, answeredBy: string): Promise<boolean>;
+  /** Record a step waiting for an event; `false` if (correlation id, event type) exists — a retry. */
+  insertEventAwait(entry: EventAwait): Promise<boolean>;
+  /**
+   * Mark every open event await under this correlation id answered — a review's two verdict rows
+   * together. `false` means none was open: another event, or a delivery of this one, got there first.
+   */
+  answerEventAwaits(
+    correlationId: string,
+    answeredAt: string,
+    answeredBy: string,
+  ): Promise<boolean>;
 }

@@ -70,12 +70,23 @@ async function harness() {
         (e) => e.payload as { action: string; revision: number; delta: Record<string, unknown> },
       );
   /** A workflow's task, as BMS sends it. */
-  const workflowTask = async (assignee: string, assigneeKind: 'user' | 'role') => {
+  const workflowTask = async (
+    assignee: string,
+    assigneeKind: 'user' | 'role',
+    review?: { reviewPointId: string },
+  ) => {
     const taskId = ulid();
     const envelope = buildEnvelope({
       type: 'workflow.task.created',
       channelId: CH,
-      payload: { taskId, workflowInstanceId: ulid(), assignee, assigneeKind, kind: 'review' },
+      payload: {
+        taskId,
+        workflowInstanceId: ulid(),
+        assignee,
+        assigneeKind,
+        kind: review ? 'approve' : 'review',
+        ...(review ?? {}),
+      },
       actor: { kind: 'service', id: 'bms' },
     });
     await service.consumeTaskCreated({
@@ -85,7 +96,29 @@ async function harness() {
     });
     return taskId;
   };
-  return { app, call, audits, workflowTask, principals };
+  /** BMS closing a workflow's task with a review verdict (EP-22.6). */
+  const resolve = async (taskId: string, outcome: string, by: string, channelId = CH) => {
+    const envelope = buildEnvelope({
+      type: 'workflow.task.resolved',
+      channelId,
+      payload: {
+        taskId,
+        workflowInstanceId: ulid(),
+        outcome,
+        by,
+        reviewPointId: 'pre-schedule',
+        at: new Date().toISOString(),
+      },
+      actor: { kind: 'service', id: 'bms' },
+    });
+    const msg = {
+      id: envelope.messageId,
+      subject: subjectFor(channelId, 'workflow.task.resolved'),
+      body: envelope,
+    };
+    return { msg, outcome: await service.consumeTaskResolved(msg) };
+  };
+  return { app, call, audits, workflowTask, principals, resolve, service, outbox };
 }
 
 test('assigning by hand takes task:assign; the creator and a named assignee are its participants', async () => {
@@ -239,4 +272,55 @@ test('IAM away: a role task cannot be claimed (503), and nothing is written', as
     (await h.audits(id)).map((a) => a.action),
     ['task.created'],
   );
+});
+
+test('a review task (EP-22.6): never completed here — the verdict in MAM closes it, through BMS', async () => {
+  const h = await harness();
+  const id = await h.workflowTask('editor', 'role', { reviewPointId: 'pre-schedule' });
+  const read = await h.call('ana', 'GET', `/api/v1/tasks/${id}`);
+  assert.equal(read.json<Task>().reviewPointId, 'pre-schedule', 'the point to name in MAM');
+
+  // Claimed, it is still not completable by hand: the verdict is MAM's.
+  assert.equal((await h.call('ana', 'POST', `/api/v1/tasks/${id}/claim`)).statusCode, 200);
+  const refused = await h.call('ana', 'POST', `/api/v1/tasks/${id}/complete`, {
+    outcome: 'approved',
+  });
+  assert.equal(refused.statusCode, 409);
+  assert.match(refused.json<{ detail: string }>().detail, /review point "pre-schedule"/);
+
+  // Another channel's resolution is not this task's.
+  assert.equal((await h.resolve(id, 'approved', 'ana', 'ch99')).outcome, 'skipped');
+  const { msg, outcome } = await h.resolve(id, 'rejected', 'rev-1');
+  assert.equal(outcome, 'applied');
+  const task = (await h.call('ana', 'GET', `/api/v1/tasks/${id}`)).json<Task>();
+  assert.deepEqual([task.state, task.outcome, task.closedBy], ['done', 'rejected', 'rev-1']);
+  assert.ok(task.participants.includes('rev-1'), 'who gave the verdict acted on it');
+  // Redelivered, or resolved again: nothing more.
+  assert.equal(await h.service.consumeTaskResolved(msg), 'duplicate');
+
+  const audits = await h.audits(id);
+  assert.deepEqual(
+    audits.map((a) => [a.action, a.revision]),
+    [
+      ['task.created', 1],
+      ['task.claimed', 2],
+      ['task.resolved', 3],
+    ],
+  );
+  const updated = (await h.outbox.listUnsent(1000))
+    .map((r) => r.message.body as Envelope)
+    .filter((e) => e.type === 'task.updated')
+    .map((e) => e.payload as { state: string; outcome?: string; at: string });
+  assert.deepEqual(updated.at(-1), {
+    id,
+    state: 'done',
+    by: 'rev-1',
+    outcome: 'rejected',
+    at: updated.at(-1)?.at,
+  });
+});
+
+test('a resolution for a task not here yet is thrown to the broker — its creation may be behind', async () => {
+  const h = await harness();
+  await assert.rejects(h.resolve(ulid(), 'approved', 'rev-1'), /not here yet/);
 });

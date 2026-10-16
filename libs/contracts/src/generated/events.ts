@@ -784,6 +784,22 @@ export interface WorkflowTaskCreatedPayload {
   assetId?: Ulid;
   kind?: TaskKind;
   dueAt?: string;
+  /** Set on a review step's task (EP-22.6): the point in the workflow this approval is for. The verdict is given in MAM, naming this point (`POST /assets/{id}/approve` or `/reject` with `reviewPointId`), and it — not completing the task — moves the workflow; Notifications refuses to complete such a task by hand, and closes it on BMS's `workflow.task.resolved`. */
+  reviewPointId?: string;
+}
+
+/** Emitted by BMS when something other than its completion in Notifications ends a workflow's task — today a review step's verdict in MAM (EP-22.6): the asset was approved or rejected, so the review task is done, with the verdict as its outcome. Consumed by Notifications, which closes the task. */
+export interface WorkflowTaskResolvedPayload {
+  taskId: Ulid;
+  workflowInstanceId: Ulid;
+  /** The verdict: "approved" or "rejected". */
+  outcome: string;
+  /** Who gave the verdict — a user id, or `mam` for an automatic approval. */
+  by?: string;
+  assetId?: Ulid;
+  /** The point the verdict named; absent when it named none (it then resolves every review step waiting on the asset). */
+  reviewPointId?: string;
+  at: string;
 }
 
 /** Event type -> payload. `EventPayloads['asset.created']` is the payload of that event. */
@@ -843,6 +859,7 @@ export interface EventPayloads {
   'workflow.completed': WorkflowCompletedPayload;
   'workflow.step.requested': WorkflowStepRequestedPayload;
   'workflow.task.created': WorkflowTaskCreatedPayload;
+  'workflow.task.resolved': WorkflowTaskResolvedPayload;
 }
 
 export type EventType = keyof EventPayloads;

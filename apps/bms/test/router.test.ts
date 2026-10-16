@@ -289,6 +289,9 @@ test('over the broker: one subscription per answer type, every channel', async (
     'atlas.*.transcode.completed',
     'atlas.*.transcode.failed',
     'atlas.*.task.updated',
+    'atlas.*.asset.ready',
+    'atlas.*.asset.approved',
+    'atlas.*.asset.rejected',
   ]);
   const h = await harness();
   const outcomes: string[] = [];

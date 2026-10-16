@@ -239,6 +239,45 @@ test('the full happy path: created → processing → ready → approved', async
   assert.equal(events[1]?.type, 'audit.recorded');
 });
 
+test('EP-22.6: a verdict names the workflow review point it is given at, on its event', async () => {
+  const { service, caller, drain } = harness();
+  const ready = async () => {
+    const a = await service.create(caller(), { ...NEW_ASSET, categoryId: 'cat-1' });
+    await service.attachRenditions(caller(), a.id);
+    await service.transition(caller(), a.id, 'startProcessing');
+    await service.transition(caller(), a.id, 'markReady');
+    return a.id;
+  };
+  const one = await ready();
+  await service.transition(caller(), one, 'approve', { reviewPointId: 'pre-schedule' });
+  const two = await ready();
+  await service.transition(caller(), two, 'reject', {
+    reason: 'soft',
+    reviewPointId: 'post-ingest',
+  });
+  const three = await ready();
+  await service.transition(caller(), three, 'approve');
+  const verdicts = (await drain())
+    .filter((e) => e.type === 'asset.approved' || e.type === 'asset.rejected')
+    .map((e) => [e.payload['assetId'], e.payload['reviewPointId']]);
+  assert.deepEqual(verdicts, [
+    [one, 'pre-schedule'],
+    [two, 'post-ingest'],
+    [three, undefined],
+  ]);
+  // Only a verdict names one, and it names something.
+  const four = await ready();
+  await assert.rejects(
+    service.transition(caller(), four, 'approve', { reviewPointId: ' ' }),
+    /reviewPointId/,
+  );
+  const fresh = await service.create(caller(), NEW_ASSET);
+  await assert.rejects(
+    service.transition(caller(), fresh.id, 'startProcessing', { reviewPointId: 'x' }),
+    /only a verdict/,
+  );
+});
+
 /** The most recent audit record the relay has published — `drain()` is cumulative. */
 const lastAudit = (events: Envelope[]): EventPayloads['audit.recorded'] => {
   const audits = events.filter((e) => e.type === 'audit.recorded');

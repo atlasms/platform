@@ -10,9 +10,20 @@
 // outbox in its transaction (AGENTS.md §5.4).
 
 import { delta, type EventPayloads, type TaskKind } from '@atlas/contracts';
-import { WORKFLOW_COMMANDS, type WorkflowDefinition } from '@atlas/contracts/workflow';
+import {
+  REVIEW_VERDICTS,
+  WORKFLOW_COMMANDS,
+  WORKFLOW_EVENTS,
+  type WorkflowDefinition,
+} from '@atlas/contracts/workflow';
 import { Conflict, NotFound, ValidationError } from '@atlas/service-kit';
-import type { CommandRequest, HistoryEvent, RunResult, TaskSpec } from './engine/effects.ts';
+import type {
+  CommandRequest,
+  EventWait,
+  HistoryEvent,
+  RunResult,
+  TaskSpec,
+} from './engine/effects.ts';
 import { derivedUlid } from './ids.ts';
 import { afterHistory, isTerminal, type Instance } from './instance.ts';
 import { outboxRecord } from './record.ts';
@@ -125,19 +136,58 @@ export class BmsRuntime {
   }
 
   /**
+   * A wait-event step (EP-22.6): an await row of the event's type holding the keys its `correlate`
+   * evaluated to, which the router matches events by. The correlation id is derived, so a retry
+   * writes the same row (its primary key), and returned so the workflow takes only a signal sent
+   * for THIS wait — a loop's earlier visit of the step is another row.
+   */
+  async awaitEvent(input: {
+    key: string;
+    instanceId: string;
+    wait: EventWait;
+  }): Promise<{ correlationId: string }> {
+    const { wait } = input;
+    if (!WORKFLOW_EVENTS.includes(wait.event))
+      throw new ValidationError(`"${wait.event}" is not an event a workflow may wait for`);
+    const instance = await this.store.instance(input.instanceId);
+    if (!instance) throw new NotFound(`instance ${input.instanceId}`);
+    const correlationId = derivedUlid(Date.parse(instance.startedAt), `event:${input.key}`);
+    await this.store.transaction((tx) =>
+      tx.insertEventAwait({
+        correlationId,
+        eventType: wait.event,
+        channelId: instance.channelId,
+        instanceId: instance.id,
+        stepId: wait.stepId,
+        match: wait.match,
+        issuedAt: this.now().toISOString(),
+      }),
+    );
+    return { correlationId };
+  }
+
+  /**
    * A human task: `workflow.task.created`, which Notifications materializes (EP-25.1), and an await
    * row keyed by the task's id — the completion router finds the waiting step by it when the task
    * is completed (`task.updated` → `done`; EP-25.8). The id is derived, so a retry names the same
    * task, and it is returned so the workflow takes only THAT task's completion.
+   *
+   * A REVIEW step's task (a `reviewPointId`; EP-22.6) is resolved by MAM's verdict instead: the same
+   * transaction records an event await per verdict, keyed on the instance's asset, under the task's
+   * id — so the verdict is delivered as that task's outcome, and the step needs no second wait.
    */
   async createTask(input: { key: string; spec: TaskSpec }): Promise<string> {
     const instance = await this.store.instance(input.spec.instanceId);
     if (!instance) throw new NotFound(`instance ${input.spec.instanceId}`);
+    const { spec } = input;
+    if (spec.reviewPointId !== undefined && instance.assetId === undefined)
+      throw new ValidationError(
+        `step "${spec.stepId}" reviews point "${spec.reviewPointId}", but the instance has no asset to review`,
+      );
     const taskId = derivedUlid(Date.parse(instance.startedAt), `task:${input.key}`);
     const at = this.now().toISOString();
     await this.store.transaction(async (tx) => {
       if (!(await tx.markSeen(input.key))) return;
-      const { spec } = input;
       await tx.insertAwait({
         correlationId: taskId,
         channelId: instance.channelId,
@@ -146,6 +196,18 @@ export class BmsRuntime {
         command: HUMAN_TASK,
         issuedAt: at,
       });
+      if (spec.reviewPointId !== undefined)
+        for (const eventType of Object.keys(REVIEW_VERDICTS))
+          await tx.insertEventAwait({
+            correlationId: taskId,
+            eventType,
+            channelId: instance.channelId,
+            instanceId: instance.id,
+            stepId: spec.stepId,
+            match: { assetId: instance.assetId },
+            reviewPointId: spec.reviewPointId,
+            issuedAt: at,
+          });
       await tx.enqueue(
         outboxRecord(
           'workflow.task.created',
@@ -159,6 +221,7 @@ export class BmsRuntime {
             kind: spec.taskType as TaskKind,
             ...(instance.assetId !== undefined ? { assetId: instance.assetId } : {}),
             ...(spec.dueAt !== undefined ? { dueAt: new Date(spec.dueAt).toISOString() } : {}),
+            ...(spec.reviewPointId !== undefined ? { reviewPointId: spec.reviewPointId } : {}),
           } satisfies EventPayloads['workflow.task.created'],
           { ...SELF, correlationId: instance.id },
         ),

@@ -1,10 +1,14 @@
 import { payloadShape, validateDomain } from '../registry.ts';
 import { WORKFLOW_COMMANDS } from './commands.ts';
+import { correlationKeys } from './correlate.ts';
+import { WORKFLOW_EVENTS } from './events.ts';
 import { feelProblem, referencedVars } from './feel.ts';
 import type {
   CommandConfig,
+  HumanTaskConfig,
   ValidationIssue,
   ValidationResult,
+  WaitEventConfig,
   WorkflowDefinition,
 } from './types.ts';
 
@@ -174,15 +178,72 @@ export function validateDefinition(def: unknown): ValidationResult {
         `step "${s.id}" awaits "${cfg.await.event}", but ${cfg.request.event} is answered by ${command.completes.join(', ')}`,
         { stepId: s.id, path: `/steps/${steps.indexOf(s)}/config/await/event` },
       );
-    // The answer is matched by the command's correlation id. Matching on an expression instead
-    // means offering every answer to every waiting step — the event fan-out wait-event steps get
-    // with EP-22.6 — so until then it is refused rather than silently ignored.
+    // The answer is matched by the command's correlation id, which the target carries back — no
+    // expression could pick it out more exactly, so one is refused rather than silently ignored.
+    // Waiting for an event by its keys is a wait-event step's (below).
     if (cfg.await?.correlate !== undefined)
       error(
         'CORRELATE_UNSUPPORTED',
         `step "${s.id}": a command's answer is matched by its correlation id; await.correlate is not supported`,
         { stepId: s.id, path: `/steps/${steps.indexOf(s)}/config/await/correlate` },
       );
+  }
+
+  // A wait-event step (EP-22.6): an event from the closed list the router consumes, matched by
+  // equality keys on fields the event's payload has (events.ts, correlate.ts).
+  for (const s of steps.filter((x) => x.kind === 'wait-event')) {
+    const cfg = s.config as WaitEventConfig;
+    const at = (key: string) => ({
+      stepId: s.id,
+      path: `/steps/${steps.indexOf(s)}/config/${key}`,
+    });
+    if (!WORKFLOW_EVENTS.includes(cfg.event)) {
+      error(
+        'UNKNOWN_EVENT',
+        `step "${s.id}" waits for "${cfg.event}", which is not an event a workflow may wait for (${WORKFLOW_EVENTS.join(', ')})`,
+        at('event'),
+      );
+      continue;
+    }
+    const parsed = correlationKeys(cfg.correlate);
+    if ('problem' in parsed) {
+      error('CORRELATE_SHAPE', `step "${s.id}": correlate — ${parsed.problem}`, at('correlate'));
+      continue;
+    }
+    const shape = payloadShape(cfg.event);
+    for (const { field } of parsed.keys) {
+      const top = field.split('.')[0]!;
+      if (shape && !shape.properties.includes(top))
+        error(
+          'CORRELATE_FIELD',
+          `step "${s.id}": ${cfg.event} has no field "${top}" (${shape.properties.join(', ')})`,
+          at('correlate'),
+        );
+    }
+  }
+
+  // A review step (EP-22.6, review plan WS-G): a human step with a `reviewPointId` is resolved by
+  // MAM's verdict at that point, so it is an approval, and each point in a flow is its own — the
+  // verdict history says WHERE each decision was made.
+  const points = new Map<string, string>();
+  for (const s of steps.filter((x) => x.kind === 'human-task')) {
+    const cfg = s.config as HumanTaskConfig;
+    if (cfg.reviewPointId === undefined) continue;
+    const at = { stepId: s.id, path: `/steps/${steps.indexOf(s)}/config/reviewPointId` };
+    if (cfg.taskType !== 'approve')
+      error(
+        'REVIEW_TASK_TYPE',
+        `step "${s.id}" names review point "${cfg.reviewPointId}", so its taskType must be "approve" (not "${cfg.taskType}")`,
+        at,
+      );
+    const other = points.get(cfg.reviewPointId);
+    if (other !== undefined)
+      error(
+        'DUP_REVIEW_POINT',
+        `steps "${other}" and "${s.id}" share review point "${cfg.reviewPointId}" — each point is its own`,
+        at,
+      );
+    else points.set(cfg.reviewPointId, s.id);
   }
 
   const exprs: { path: string; expr: string }[] = [];

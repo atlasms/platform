@@ -23,6 +23,7 @@ import type {
   WaitEventConfig,
   WorkflowDefinition,
 } from '@atlas/contracts/workflow';
+import { correlationKeys } from '@atlas/contracts/workflow-correlate';
 import type { Effects, RunResult, StartContext } from './effects.ts';
 import { feelEval, type FeelContext } from './feel-eval.ts';
 
@@ -131,8 +132,18 @@ export async function runWorkflow(
 
       case 'wait-event': {
         const c = step.config as WaitEventConfig;
+        // The keys are evaluated NOW, against what the instance knows before the event exists
+        // (EP-22.6): publish held `correlate` to `incoming.<field> = <expr>` equalities.
+        const parsed = correlationKeys(c.correlate);
+        if ('problem' in parsed)
+          throw new WorkflowError(step.id, false, new Error(`correlate — ${parsed.problem}`));
+        const match: Record<string, unknown> = {};
+        for (const k of parsed.keys) match[k.field] = feelEval(k.expr, ctx());
         await fx.appendHistory(step.id, 'awaiting');
-        incoming = await fx.waitForEvent(step.id, toMs(step.timeout));
+        incoming = await fx.waitForEvent(
+          { stepId: step.id, event: c.event, match },
+          toMs(step.timeout),
+        );
         if (c.output) applyToVars(c.output);
         await done(step);
         return { kind: 'next', next: singleOut(step.id) };

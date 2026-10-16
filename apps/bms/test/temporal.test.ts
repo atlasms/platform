@@ -85,7 +85,7 @@ if (!ADDRESS) {
             kind: 'wait-event',
             config: {
               event: 'asset.approved',
-              correlate: '= true',
+              correlate: '= incoming.assetId = vars.assetId',
               output: { 'vars.verdict': '= incoming.verdict' },
             },
           },
@@ -269,6 +269,100 @@ if (!ADDRESS) {
       );
       assert.equal(await router.route(orphan), 'orphaned');
       assert.equal(await router.route(orphan), 'duplicate');
+    } finally {
+      await temporal.shutdown();
+      await running;
+    }
+  });
+
+  test('BMS on a real Temporal: a wait-event found by its key, then a review step resolved by MAM’s verdict', async () => {
+    const store = sqliteWorkflowStore();
+    const runtime = new BmsRuntime({ store });
+    const namespace = `bms-test-${ulid().toLowerCase()}`;
+    const temporal = await connectTemporal({ address, namespace, runtime });
+    const running = temporal.run();
+    const service = new BmsService({ store, runner: temporal.runner });
+    const router = new CompletionRouter({ store, runner: temporal.runner });
+    const caller = {
+      userId: 'user-1',
+      channelId: 'ch12',
+      policy: compile({
+        subjectId: 'user-1',
+        permVersion: 1,
+        rules: [{ id: 'r', permissions: ['workflow:admin', 'workflow:act'] }],
+        roles: [],
+        groups: [],
+      }),
+    };
+    const event = (type: string, payload: Record<string, unknown>) => {
+      const e = buildEnvelope({
+        type,
+        channelId: 'ch12',
+        payload,
+        actor: { kind: 'user', id: 'rev-1' },
+      });
+      return { id: e.messageId, subject: subjectFor('ch12', type), body: e };
+    };
+    const until = async (id: string, ok: (i: Instance | undefined) => boolean) => {
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        const i = await store.instance(id);
+        if (ok(i)) return i!;
+        if (Date.now() > deadline) throw new Error(`timed out: ${JSON.stringify(i)}`);
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    };
+    try {
+      const w = await service.create(caller, {
+        name: 'Ready, then review',
+        vars: [
+          { name: 'assetId', type: 'string' },
+          { name: 'verdict', type: 'string' },
+        ],
+        steps: [
+          { id: 's_start', kind: 'start' },
+          {
+            id: 's_ready',
+            kind: 'wait-event',
+            config: { event: 'asset.ready', correlate: '= incoming.assetId = vars.assetId' },
+          },
+          {
+            id: 's_review',
+            kind: 'human-task',
+            config: {
+              taskType: 'approve',
+              assignee: { role: 'editor' },
+              reviewPointId: 'pre-schedule',
+              output: { 'vars.verdict': '= incoming.outcome' },
+            },
+          },
+          { id: 's_end', kind: 'end' },
+        ],
+        transitions: [
+          { id: 't1', from: 's_start', to: 's_ready' },
+          { id: 't2', from: 's_ready', to: 's_review' },
+          { id: 't3', from: 's_review', to: 's_end' },
+        ],
+      });
+      await service.publish(caller, w.id, 1);
+      const assetId = ulid();
+      const { id } = await service.startInstance(caller, {
+        workflowId: w.id,
+        assetId,
+        vars: { assetId },
+      });
+      await until(id, (i) => i?.currentSteps.includes('s_ready') === true);
+      assert.equal(await router.routeEvent(event('asset.ready', { assetId: ulid() })), 'ignored');
+      assert.equal(await router.routeEvent(event('asset.ready', { assetId })), 'delivered');
+      await until(id, (i) => i?.currentSteps.includes('s_review') === true);
+      const verdict = event('asset.approved', {
+        assetId,
+        approver: 'rev-1',
+        reviewPointId: 'pre-schedule',
+      });
+      assert.equal(await router.routeEvent(verdict), 'delivered');
+      const done = await until(id, (i) => i?.state === 'completed');
+      assert.equal(done.vars?.['verdict'], 'approved');
     } finally {
       await temporal.shutdown();
       await running;

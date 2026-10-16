@@ -13,7 +13,7 @@ export {
 export { BmsRuntime } from './runtime.ts';
 export { inProcessRunner, type InProcessRunner } from './runner-inprocess.ts';
 export { InstanceNotRunning, type InstanceRunner } from './runner.ts';
-export type { Instance, HistoryEntry, CommandAwait } from './instance.ts';
+export type { Instance, HistoryEntry, CommandAwait, EventAwait } from './instance.ts';
 export {
   CompletionRouter,
   startCompletionRouter,

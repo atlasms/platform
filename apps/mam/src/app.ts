@@ -25,7 +25,7 @@ import {
   type Tracer,
 } from '@atlas/service-kit';
 import type { LifecycleAction } from './lifecycle.ts';
-import type { MamService, Caller, ReadOptions } from './service.ts';
+import type { MamService, Caller, ReadOptions, TransitionOptions } from './service.ts';
 
 export interface MamAppOptions {
   service: MamService;
@@ -573,7 +573,7 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
           await callerOf(req),
           (req.params as { id: string }).id,
           action,
-          (req.body ?? {}) as { expiresAt?: string; retainUntil?: string; reason?: string },
+          (req.body ?? {}) as TransitionOptions,
         ),
       ),
     );

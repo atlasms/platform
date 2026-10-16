@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/workflow.task.resolved.payload.schema.json",
+  "title": "workflow.task.resolved payload",
+  "description": "Emitted by BMS when something other than its completion in Notifications ends a workflow's task — today a review step's verdict in MAM (EP-22.6): the asset was approved or rejected, so the review task is done, with the verdict as its outcome. Consumed by Notifications, which closes the task.",
+  "type": "object",
+  "required": [
+    "taskId",
+    "workflowInstanceId",
+    "outcome",
+    "at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "taskId": {
+      "$ref": "../common.schema.json#/$defs/Ulid"
+    },
+    "workflowInstanceId": {
+      "$ref": "../common.schema.json#/$defs/Ulid"
+    },
+    "outcome": {
+      "type": "string",
+      "description": "The verdict: \"approved\" or \"rejected\"."
+    },
+    "by": {
+      "type": "string",
+      "description": "Who gave the verdict — a user id, or `mam` for an automatic approval."
+    },
+    "assetId": {
+      "$ref": "../common.schema.json#/$defs/Ulid"
+    },
+    "reviewPointId": {
+      "type": "string",
+      "description": "The point the verdict named; absent when it named none (it then resolves every review step waiting on the asset)."
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

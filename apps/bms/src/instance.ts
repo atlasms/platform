@@ -69,3 +69,37 @@ export interface CommandAwait {
   /** The message id of the answer. */
   answeredBy?: string;
 }
+
+/**
+ * A step waiting for an EVENT rather than an answer (EP-22.6; bms.md §13f) — a wait-event step, or a
+ * review step waiting for MAM's verdict. Nobody carries a correlation id to an event BMS did not
+ * ask for, so the router finds the step by the event's KEYS instead: `match` holds the values the
+ * step's `correlate` evaluated to when it started waiting. Answered at most once.
+ */
+export interface EventAwait {
+  /**
+   * What the waiting step expects its signal to carry (StepInbox): a ULID derived from the instance
+   * and the activity, or — for a review step — its task's id, shared by its two verdict rows.
+   */
+  correlationId: string;
+  /** One of WORKFLOW_EVENTS. */
+  eventType: string;
+  channelId: string;
+  instanceId: string;
+  stepId: string;
+  /** Payload path (dotted) → the value it must equal. */
+  match: Record<string, unknown>;
+  /**
+   * A review step's verdict await: the point it reviews. A verdict naming this point, or naming
+   * none, resolves it (decided 2026-10-16); one naming another point does not.
+   */
+  reviewPointId?: string;
+  issuedAt: string;
+  answeredAt?: string;
+  /** The message id of the event that answered it. */
+  answeredBy?: string;
+}
+
+/** The asset an await is keyed on — the column every asset event narrows by. */
+export const assetKey = (a: EventAwait): string | null =>
+  typeof a.match['assetId'] === 'string' ? a.match['assetId'] : null;

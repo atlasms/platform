@@ -45,7 +45,13 @@ export function inProcessRunner(runtime: BmsRuntime): InProcessRunner {
       },
       waitForCompletion: take,
       waitForTask: take,
-      waitForEvent: take,
+      // The step's keys become an await row the router matches events by (EP-22.6); only an
+      // event that matched them — or a person's signal — completes the step.
+      waitForEvent: async (wait, timeoutMs) => {
+        const { correlationId } = await runtime.awaitEvent({ key: key(), instanceId, wait });
+        inbox.expect(wait.stepId, correlationId);
+        return take(wait.stepId, timeoutMs);
+      },
       createTask: async (spec) => {
         const taskId = await runtime.createTask({ key: key(), spec });
         inbox.expect(spec.stepId, taskId);

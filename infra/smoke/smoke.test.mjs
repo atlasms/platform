@@ -1582,7 +1582,7 @@ test('smoke: EP-22.3 — an instance runs on Temporal: a durable timer, a wait, 
           kind: 'wait-event',
           config: {
             event: 'asset.approved',
-            correlate: '= true',
+            correlate: '= incoming.assetId = vars.assetId',
             output: { 'vars.verdict': '= incoming.verdict' },
           },
         },
@@ -1972,6 +1972,165 @@ test('smoke: EP-25.2/25.3/25.8 — a ROLE’s task reaches its holder, is claime
   }
 });
 
+test('smoke: EP-22.6 — a wait-event moves on asset.ready; a review step is resolved by MAM’s verdict, which closes its task', async () => {
+  // On a live cluster: a workflow waits for its asset to become ready (a wait-event keyed on the
+  // asset), then offers the review to the smoke user. The task names its review point; completing
+  // it by hand is refused (the verdict is MAM's, decided 2026-10-16). The asset is approved in MAM
+  // AT that point — and the instance completes with the verdict, and the task is closed with it.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const poll = async (fn, done, budgetMs, what) => {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const value = await fn();
+      if (done(value)) return value;
+      assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(value)}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+  const me = json(await get('/api/v1/users/me/effective-permissions', { headers })).subjectId;
+
+  // An asset with a rendition, so it can become ready.
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      title: 'Smoke review',
+      mediaType: 'video',
+      fileType: 'mp4',
+      categoryId: await categoryFor(token),
+    }),
+  });
+  assert.equal(created.status, 201, `asset create failed: ${created.text}`);
+  const assetId = json(created).id;
+  const enqueued = await get('/api/v1/jobs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId, presetIds: ['proxy'], inputPath: 'samples/smoke.mp4' }),
+  });
+  assert.equal(enqueued.status, 202, `enqueue failed: ${enqueued.text}`);
+  await poll(
+    async () =>
+      json(
+        await get(`/api/v1/assets/${assetId}`, {
+          headers: { ...headers, 'cache-control': 'no-cache' },
+        }),
+      ),
+    (a) => a.hasRenditions === true,
+    60_000,
+    'the asset never got its rendition',
+  );
+
+  const point = 'smoke-review';
+  const made = await get('/api/v1/workflows', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      name: `smoke review ${Date.now()}`,
+      vars: [
+        { name: 'assetId', type: 'string' },
+        { name: 'verdict', type: 'string' },
+      ],
+      steps: [
+        { id: 's_start', kind: 'start' },
+        {
+          id: 's_ready',
+          kind: 'wait-event',
+          config: { event: 'asset.ready', correlate: '= incoming.assetId = vars.assetId' },
+        },
+        {
+          id: 's_review',
+          kind: 'human-task',
+          config: {
+            taskType: 'approve',
+            assignee: { userId: me },
+            reviewPointId: point,
+            output: { 'vars.verdict': '= incoming.outcome' },
+          },
+        },
+        { id: 's_end', kind: 'end' },
+      ],
+      transitions: [
+        { id: 't1', from: 's_start', to: 's_ready' },
+        { id: 't2', from: 's_ready', to: 's_review' },
+        { id: 't3', from: 's_review', to: 's_end' },
+      ],
+    }),
+  });
+  assert.equal(made.status, 201, made.text);
+  const w = json(made);
+  const published = await get(`/api/v1/workflows/${w.id}/publish?revision=1`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(published.status, 200, published.text);
+  let started;
+  const startBy = Date.now() + 60_000;
+  for (;;) {
+    started = await get('/api/v1/instances', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workflowId: w.id, assetId, vars: { assetId } }),
+    });
+    if (started.status !== 503 || Date.now() > startBy) break;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  assert.equal(started.status, 201, started.text);
+  const instanceId = json(started).id;
+  const instance = () => get(`/api/v1/instances/${instanceId}`, { headers }).then((r) => json(r));
+  await poll(
+    instance,
+    (i) => i.currentSteps?.includes('s_ready'),
+    60_000,
+    'the instance never waited for asset.ready',
+  );
+
+  // The asset becomes ready: the wait-event moves on, to the review.
+  for (const step of ['process', 'ready']) {
+    const res = await get(`/api/v1/assets/${assetId}/${step}`, { method: 'POST', headers });
+    assert.equal(res.status, 200, `${step} failed: ${res.text}`);
+  }
+  const task = await poll(
+    async () =>
+      json(
+        await get('/api/v1/inbox', { headers: { ...headers, 'cache-control': 'no-cache' } }),
+      ).tasks.find((t) => t.workflowInstanceId === instanceId),
+    (t) => t !== undefined,
+    60_000,
+    'the review task never reached the inbox',
+  );
+  assert.deepEqual([task.kind, task.reviewPointId], ['approve', point]);
+  const byHand = await get(`/api/v1/tasks/${task.id}/complete`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ outcome: 'approved' }),
+  });
+  assert.equal(byHand.status, 409, `a review task completed by hand: ${byHand.text}`);
+
+  const approved = await get(`/api/v1/assets/${assetId}/approve`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ expiresAt: '2099-01-01T00:00:00.000Z', reviewPointId: point }),
+  });
+  assert.equal(approved.status, 200, `approve failed: ${approved.text}`);
+  const done = await poll(
+    instance,
+    (i) => i.state === 'completed' || i.state === 'failed',
+    60_000,
+    'the verdict never moved the instance',
+  );
+  assert.equal(done.state, 'completed', JSON.stringify(done));
+  assert.equal(done.vars?.verdict, 'approved');
+  const closed = await poll(
+    async () => json(await get(`/api/v1/tasks/${task.id}`, { headers })),
+    (t) => t.state === 'done',
+    30_000,
+    'the verdict never closed the task',
+  );
+  assert.deepEqual([closed.outcome, closed.closedBy], ['approved', me]);
+});
+
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {
   // A workflow's lifecycle on a live cluster (decided 2026-10-13): a first publish makes it active
   // and puts it in the catalog every client loads; deactivating it is refused while an instance is
@@ -1986,7 +2145,11 @@ test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation
       name: `smoke lifecycle ${Date.now()}`,
       steps: [
         { id: 's_start', kind: 'start' },
-        { id: 's_wait', kind: 'wait-event', config: { event: 'x', correlate: '= true' } },
+        {
+          id: 's_wait',
+          kind: 'wait-event',
+          config: { event: 'asset.approved', correlate: '= incoming.assetId = vars.assetId' },
+        },
         { id: 's_end', kind: 'end' },
       ],
       transitions: [

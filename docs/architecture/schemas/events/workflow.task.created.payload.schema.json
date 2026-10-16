@@ -16,6 +16,7 @@
     },
     "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
     "kind": { "$ref": "../common.schema.json#/$defs/TaskKind" },
-    "dueAt": { "type": "string", "format": "date-time" }
+    "dueAt": { "type": "string", "format": "date-time" },
+    "reviewPointId": { "type": "string", "description": "Set on a review step's task (EP-22.6): the point in the workflow this approval is for. The verdict is given in MAM, naming this point (`POST /assets/{id}/approve` or `/reject` with `reviewPointId`), and it — not completing the task — moves the workflow; Notifications refuses to complete such a task by hand, and closes it on BMS's `workflow.task.resolved`." }
   }
 }

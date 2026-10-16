@@ -21,6 +21,11 @@ export interface Task {
   subjectRef?: EntityRef;
   /** Set when a workflow's human step made it (BMS). */
   workflowInstanceId?: string;
+  /**
+   * A workflow REVIEW step's task (EP-22.6): the point the verdict is given at. Such a task is
+   * closed by the verdict in MAM (BMS's `workflow.task.resolved`), never completed here.
+   */
+  reviewPointId?: string;
   dueAt?: string;
   /** What a person wrote when assigning it by hand. */
   title?: string;
