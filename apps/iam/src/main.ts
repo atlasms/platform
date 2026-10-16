@@ -11,6 +11,7 @@ import {
   createLogger,
   currentTraceparent,
   HealthRegistry,
+  internalKeys,
   loadConfig,
 } from '@atlas/service-kit';
 import {
@@ -29,6 +30,9 @@ const config = loadConfig({
   host: { env: 'HOST', type: 'string', default: '0.0.0.0' },
   issuer: { env: 'ATLAS_ISSUER', type: 'string', default: 'atlas-iam' },
   audience: { env: 'ATLAS_AUDIENCE', type: 'string', default: 'atlas' },
+  // The keys READERS sign with (iam-read-keys; ADR-0008, EP-25.3): Notifications asking who a user
+  // is as an addressee. They open the principals route and nothing else. Comma-separated.
+  readKeys: { env: 'ATLAS_IAM_READ_KEYS', type: 'string', default: '' },
   accessTokenTtl: { env: 'ATLAS_ACCESS_TOKEN_TTL', type: 'string', default: '15m' },
   // EP-10.4: identity persists. Before this IAM was in-memory Maps, and every user, grant and
   // session vanished with the pod.
@@ -231,6 +235,8 @@ const app = buildIamApp({
   health,
   tracer,
   onAccessLog: (record) => log.info('access', { ...record }),
+  readKeys: internalKeys(config.readKeys),
+  onInternalRefused: (reason, ctx) => log.warn('internal request refused', { ...ctx, reason }),
 });
 
 // --- the broker: the outbox relay (EP-10.6) ----------------------------------------------------------

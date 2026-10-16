@@ -46,6 +46,14 @@ spec:
               value: "3000"
             - name: ATLAS_IAM_ORIGIN
               value: http://iam:3000
+            # IAM's READ key (iam-read-keys; EP-25.3): who a caller is as an addressee, when an inbox is
+            # read. Optional — without it an inbox holds tasks offered by name only (`partial`).
+            - name: ATLAS_IAM_READ_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: iam-read-keys
+                  key: keys
+                  optional: true
             - name: ATLAS_NATS_URL
               value: nats://{{ .Values.nats.host }}:{{ .Values.nats.port }}
             - name: PGUSER

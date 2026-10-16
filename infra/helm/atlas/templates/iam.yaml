@@ -51,6 +51,14 @@ spec:
               value: atlas-iam
             - name: ATLAS_AUDIENCE
               value: atlas
+            # Readers sign with these (iam-read-keys; ADR-0008 amended, EP-25.3: Notifications asking
+            # who a user is as an addressee). They open the read-only principals route ONLY. Optional.
+            - name: ATLAS_IAM_READ_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: iam-read-keys
+                  key: keys
+                  optional: true
             # EP-10.4: identity persists in Postgres — users, credentials, sessions, grants —
             # wired the way every other service's store is.
             - name: PGUSER

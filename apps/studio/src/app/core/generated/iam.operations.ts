@@ -69,6 +69,8 @@ export const IamOperations = {
   deleteRole: { method: 'DELETE', path: '/api/v1/roles/{id}', params: ['id'] },
   /** Who holds this role — directly, and through which groups */
   listRoleHolders: { method: 'GET', path: '/api/v1/roles/{id}/holders', params: ['id'] },
+  /** Who a user is as an addressee: their groups, and every role they hold (signed; read-only) */
+  userPrincipals: { method: 'GET', path: '/internal/v1/users/{id}/principals', params: ['id'] },
 } as const;
 
 export type IamOperation = keyof typeof IamOperations;

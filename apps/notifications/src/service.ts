@@ -23,6 +23,7 @@ import type { Message } from '@atlas/messaging';
 import { ValidationError } from '@atlas/service-kit';
 import type { EntityRef, Inbox, Notification, Task } from './inbox.ts';
 import { outboxRecord } from './record.ts';
+import type { Principal, PrincipalSource } from './principals.ts';
 import type { InboxStore } from './store.ts';
 
 /** Who is reading — the gateway's caller. */
@@ -33,6 +34,13 @@ export interface Caller {
 
 export interface NotificationsOptions {
   store: InboxStore;
+  /**
+   * Who the caller is as an addressee — groups and roles, from IAM (EP-25.3). Omitted, the inbox
+   * holds what is offered to the caller by name, and says it is `partial`.
+   */
+  principals?: PrincipalSource;
+  /** Why an inbox was partial — IAM away. Never a reason to fail the read. */
+  onPrincipalsUnavailable?: (err: unknown, userId: string) => void;
   now?: () => Date;
 }
 
@@ -41,10 +49,14 @@ const INBOX_NOTIFICATIONS = 50;
 
 export class NotificationsService {
   private readonly store: InboxStore;
+  private readonly principals: PrincipalSource | undefined;
+  private readonly onPrincipalsUnavailable: NotificationsOptions['onPrincipalsUnavailable'];
   private readonly now: () => Date;
 
   constructor(options: NotificationsOptions) {
     this.store = options.store;
+    this.principals = options.principals;
+    this.onPrincipalsUnavailable = options.onPrincipalsUnavailable;
     this.now = options.now ?? (() => new Date());
   }
 
@@ -52,16 +64,27 @@ export class NotificationsService {
 
   /**
    * The caller's own inbox — any authenticated caller, nobody else's. The open tasks offered to
-   * them BY NAME; a task offered to a role or a group joins them when EP-25.3 resolves the caller's
-   * roles and groups at read time.
+   * them by name, to a group they are in, or to a role they hold — resolved NOW, at read time
+   * (decided 2026-10-16), so a new holder sees an open task and someone who left does not. IAM
+   * away is not a failed read: the inbox holds what is theirs by name and says it is `partial`.
    */
   async inbox(caller: Caller): Promise<Inbox> {
+    const principals: Principal[] = [{ kind: 'user', id: caller.userId }];
+    let partial = this.principals === undefined;
+    if (this.principals) {
+      try {
+        principals.push(...(await this.principals.principalsOf(caller.userId)));
+      } catch (err) {
+        partial = true;
+        this.onPrincipalsUnavailable?.(err, caller.userId);
+      }
+    }
     const [tasks, notifications, unreadCount] = await Promise.all([
-      this.store.openTasks(caller.channelId, [{ kind: 'user', id: caller.userId }], INBOX_TASKS),
+      this.store.openTasks(caller.channelId, principals, INBOX_TASKS),
       this.store.notifications(caller.channelId, caller.userId, INBOX_NOTIFICATIONS),
       this.store.unreadCount(caller.channelId, caller.userId),
     ]);
-    return { tasks, notifications, unreadCount };
+    return { tasks, notifications, unreadCount, partial };
   }
 
   // --- consumers -------------------------------------------------------------------------------------

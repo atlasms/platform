@@ -10,5 +10,18 @@ export { NotificationsService, type NotificationsOptions } from './service.ts';
 export type { InboxStore, InboxTx } from './store.ts';
 export { sqliteInboxStore, sqliteMigrations } from './store-sqlite.ts';
 export { pgInboxStore, pgMigrations } from './store-pg.ts';
-export { startConsumers, TASK_CREATED_PATTERN, ASSET_EXPIRED_PATTERN } from './consumers.ts';
+export {
+  startConsumers,
+  startPrincipalInvalidation,
+  TASK_CREATED_PATTERN,
+  ASSET_EXPIRED_PATTERN,
+  PERMISSIONS_CHANGED_PATTERN,
+  MEMBERSHIP_CHANGED_PATTERN,
+} from './consumers.ts';
+export {
+  iamPrincipals,
+  fakePrincipals,
+  type Principal,
+  type PrincipalSource,
+} from './principals.ts';
 export type { Inbox, Notification, Task, TaskState } from './inbox.ts';

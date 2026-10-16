@@ -76,6 +76,12 @@ secretGenerator:
       - keys=dev-only-hsm-read-signing-key-000000000000000
     options:
       disableNameSuffixHash: true
+  # IAM's READ key (EP-25.3): what Notifications signs its principals question with. Dev only.
+  - name: iam-read-keys
+    literals:
+      - keys=dev-only-iam-read-signing-key-000000000000000
+    options:
+      disableNameSuffixHash: true
 
 # ONE `patches:` key. Two would not be a merge — YAML duplicate keys silently override, so the
 # second list wins and the first is dropped without a warning from kustomize or kubectl.

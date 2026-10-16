@@ -3,7 +3,7 @@
 // EP-10.8 — the login-event audit trail.
 
 import { ulid } from '@atlas/contracts';
-import { MetricRegistry, Unauthorized } from '@atlas/service-kit';
+import { MetricRegistry, NotFound, Unauthorized } from '@atlas/service-kit';
 import { compile, type EffectivePolicy, type Rule, type Role } from '@atlas/policy';
 import { authSignals, type AuthSignals, type LoginOutcome } from './auth-signals.ts';
 import {
@@ -310,6 +310,34 @@ export class IamService {
     const user = await this.store.user(userId);
     if (!user) throw new Unauthorized('unknown user');
     return this.#compile(user);
+  }
+
+  /**
+   * Who a user is as an ADDRESSEE (EP-25.3): their groups, and every role they hold — assigned
+   * directly or carried by a group. Notifications asks when an inbox is read, so a task offered to
+   * a role reaches whoever holds it NOW (decided 2026-10-16). A disabled user is addressed as
+   * nobody; a locked one is still themselves.
+   */
+  async principals(
+    userId: string,
+  ): Promise<{ userId: string; groups: string[]; roles: string[]; permVersion: number }> {
+    const user = await this.store.user(userId);
+    if (!user || user.state === 'disabled') throw new NotFound(`user ${userId}`);
+    const roles = new Set<string>();
+    for (const a of await this.store.assignments(user.id)) if (a.roleId) roles.add(a.roleId);
+    const groups: string[] = [];
+    for (const m of await this.store.memberships(user.id)) {
+      const g = await this.store.group(m.groupId);
+      if (!g) continue;
+      groups.push(g.id);
+      for (const r of g.roleIds ?? []) roles.add(r);
+    }
+    return {
+      userId: user.id,
+      groups: groups.sort(),
+      roles: [...roles].sort(),
+      permVersion: user.permVersion,
+    };
   }
 
   async #compile(user: User): Promise<EffectivePolicy> {
