@@ -10,8 +10,8 @@
 // outbox in its transaction (AGENTS.md §5.4).
 
 import { delta, type EventPayloads, type TaskKind } from '@atlas/contracts';
-import type { WorkflowDefinition } from '@atlas/contracts/workflow';
-import { Conflict, NotFound } from '@atlas/service-kit';
+import { WORKFLOW_COMMANDS, type WorkflowDefinition } from '@atlas/contracts/workflow';
+import { Conflict, NotFound, ValidationError } from '@atlas/service-kit';
 import type { CommandRequest, HistoryEvent, RunResult, TaskSpec } from './engine/effects.ts';
 import { derivedUlid } from './ids.ts';
 import { afterHistory, isTerminal, type Instance } from './instance.ts';
@@ -59,19 +59,47 @@ export class BmsRuntime {
   }
 
   /**
-   * A command step: `workflow.step.requested`, the observable record that BMS asked for it.
-   * Issuing the target service's own command (transcode.job.create, …) is EP-22.4's adapters; the
-   * correlation and idempotency keys ride in `params` so the record says what will be matched.
+   * A command step (EP-22.4): the target service's OWN command, `workflow.step.requested` (the
+   * observable record that BMS asked) and the await row the completion router answers by — one
+   * transaction, through the outbox.
+   *
+   * The command's envelope carries a correlation id DERIVED from the instance and this activity's
+   * key, so a retried activity names the same command and every visit of a step (a loop, a retry)
+   * a new one; the target carries it to its answer (follow()'s rule). It is returned so the
+   * workflow takes only that answer. Only a command in `WORKFLOW_COMMANDS` is issued — publish
+   * refused anything else, and a definition is not trusted twice; a payload off the command's
+   * schema is a ValidationError, which fails the step without retrying the activity.
    */
   async requestStep(input: {
     key: string;
     instanceId: string;
     req: CommandRequest;
-  }): Promise<void> {
+  }): Promise<{ correlationId: string }> {
+    const { req } = input;
+    const command = WORKFLOW_COMMANDS[req.event];
+    if (!command) {
+      throw new ValidationError(`"${req.event}" is not a command a workflow may issue`);
+    }
+    const known = await this.store.instance(input.instanceId);
+    if (!known) throw new NotFound(`instance ${input.instanceId}`);
+    const correlationId = derivedUlid(Date.parse(known.startedAt), `command:${input.key}`);
+    const at = this.now().toISOString();
     await this.store.transaction(async (tx) => {
       if (!(await tx.markSeen(input.key))) return;
       const instance = await this.forUpdate(tx, input.instanceId);
-      const { req } = input;
+      // Built (and so validated) first: a refused payload writes nothing.
+      const issued = outboxRecord(req.event, instance.channelId, req.payload, {
+        ...SELF,
+        correlationId,
+      });
+      await tx.insertAwait({
+        correlationId,
+        channelId: instance.channelId,
+        instanceId: instance.id,
+        stepId: req.stepId,
+        command: req.event,
+        issuedAt: at,
+      });
       await tx.enqueue(
         outboxRecord(
           'workflow.step.requested',
@@ -81,18 +109,16 @@ export class BmsRuntime {
             definitionId: instance.workflowId,
             stepId: req.stepId,
             stepKind: 'command',
+            target: command.target,
             ...(instance.assetId !== undefined ? { assetId: instance.assetId } : {}),
-            params: {
-              event: req.event,
-              input: req.payload,
-              correlationId: req.correlationId,
-              idempotencyKey: req.idempotencyKey,
-            },
+            params: { command: req.event, input: req.payload, correlationId },
           } satisfies EventPayloads['workflow.step.requested'],
           { ...SELF, correlationId: instance.id },
         ),
       );
+      await tx.enqueue(issued);
     });
+    return { correlationId };
   }
 
   /** A human task: `workflow.task.created`, which Notifications materializes (EP-25.2). */

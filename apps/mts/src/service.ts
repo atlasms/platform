@@ -213,46 +213,36 @@ export class MtsService {
    * The command names no channel of its own — the envelope does, as every event does — and no
    * user: the actor is the service that asked. The seen-mark commits with the job, so a
    * redelivery creates nothing and reports `duplicate`.
+   *
+   * A command that is not one — not an envelope, a payload off its schema — is thrown to the
+   * broker, retried and dead-lettered: there is nobody to answer. A WELL-FORMED command this MTS
+   * cannot honour (an unknown preset, an input outside the work root, an HSM input with no HSM) is
+   * ANSWERED (EP-22.4): `transcode.failed` under the command's own correlation id, with the
+   * seen-mark, and acknowledged — retrying a refusal changes nothing, and the issuer (a BMS step)
+   * would otherwise wait out its timeout for a job that was never queued.
    */
-  async consumeJobCreate(msg: Message): Promise<'applied' | 'duplicate'> {
+  async consumeJobCreate(msg: Message): Promise<'applied' | 'duplicate' | 'refused'> {
     const envelope = this.envelopeOf<EventPayloads['transcode.job.create']>(
       msg,
       'transcode.job.create',
     );
-    const { assetId, presetIds, inputPath, priority } = envelope.payload;
-    if (inputPath === undefined) {
-      throw new ValidationError(`message ${msg.id}: inputPath is required until HSM resolves one`);
-    }
-    const unknown = await this.unresolvable(envelope.channelId, presetIds);
-    if (unknown.length > 0) throw new ValidationError(`unknown preset(s): ${unknown.join(', ')}`);
-    const resolved = this.resolveInput(inputPath);
-
-    const at = this.now().toISOString();
     // follow()'s rule (@atlas/contracts): the chain continues, or starts at the command.
     const correlationId = envelope.correlationId ?? envelope.messageId;
-    const job: TranscodeJob = {
-      id: ulid(),
-      channelId: envelope.channelId,
-      assetId,
-      presetIds: [...presetIds],
-      inputPath: resolved,
-      state: 'queued',
-      attempts: 0,
-      priority: priority ?? 0,
-      createdBy: envelope.actor?.id ?? 'service',
-      createdAt: at,
-      updatedAt: at,
-      version: 1,
-      correlationId,
-      causationId: envelope.messageId,
-    };
     const caller: Caller = {
-      userId: job.createdBy,
+      userId: envelope.actor?.id ?? 'service',
       channelId: envelope.channelId,
       actorKind: 'service',
       correlationId,
       causationId: envelope.messageId,
     };
+
+    let job: TranscodeJob;
+    try {
+      job = await this.jobFromCommand(envelope, caller);
+    } catch (err) {
+      if (!(err instanceof ValidationError)) throw err;
+      return this.refuseCommand(msg, envelope, err);
+    }
 
     let outcome: 'applied' | 'duplicate' = 'applied';
     await this.options.store.transaction(async (tx) => {
@@ -262,6 +252,77 @@ export class MtsService {
       }
       await tx.putJob(job);
       await tx.enqueue(this.audit(caller, job, undefined, job, 'transcode.queued'));
+    });
+    return outcome;
+  }
+
+  /** The job a command asks for — or a ValidationError naming why it cannot be one. */
+  private async jobFromCommand(
+    envelope: Envelope<EventPayloads['transcode.job.create']>,
+    caller: Caller,
+  ): Promise<TranscodeJob> {
+    const { assetId, presetIds, inputPath, inputFile, priority } = envelope.payload;
+    if ((inputPath === undefined) === (inputFile === undefined)) {
+      throw new ValidationError('give exactly one of inputPath and inputFile');
+    }
+    const unknown = await this.unresolvable(envelope.channelId, presetIds);
+    if (unknown.length > 0) throw new ValidationError(`unknown preset(s): ${unknown.join(', ')}`);
+    const id = ulid();
+    let resolved: string;
+    if (inputFile !== undefined) {
+      if (!this.options.files) {
+        throw new ValidationError('inputFile needs HSM, and this MTS has none configured');
+      }
+      // Fetched at run time to scratch, named by the job — as over HTTP (enqueue).
+      resolved = join(this.options.workRoot, 'inputs', id, inputFile.kind);
+    } else {
+      resolved = this.resolveInput(inputPath!);
+    }
+    const at = this.now().toISOString();
+    return {
+      id,
+      channelId: envelope.channelId,
+      assetId,
+      presetIds: [...presetIds],
+      inputPath: resolved,
+      ...(inputFile !== undefined ? { inputFile: { ...inputFile } } : {}),
+      state: 'queued',
+      attempts: 0,
+      priority: priority ?? 0,
+      createdBy: caller.userId,
+      createdAt: at,
+      updatedAt: at,
+      version: 1,
+      ...(caller.correlationId !== undefined ? { correlationId: caller.correlationId } : {}),
+      ...(caller.causationId !== undefined ? { causationId: caller.causationId } : {}),
+    };
+  }
+
+  /** A refused command, answered once: `transcode.failed` with the seen-mark, nothing queued. */
+  private async refuseCommand(
+    msg: Message,
+    envelope: Envelope<EventPayloads['transcode.job.create']>,
+    why: ValidationError,
+  ): Promise<'refused' | 'duplicate'> {
+    const answer: Caller = {
+      userId: 'mts',
+      channelId: envelope.channelId,
+      actorKind: 'service',
+      correlationId: envelope.correlationId ?? envelope.messageId,
+      causationId: envelope.messageId,
+    };
+    let outcome: 'refused' | 'duplicate' = 'refused';
+    await this.options.store.transaction(async (tx) => {
+      if (!(await tx.markSeen(msg.id))) {
+        outcome = 'duplicate';
+        return;
+      }
+      await tx.enqueue(
+        this.record(answer, envelope.channelId, 'transcode.failed', {
+          assetId: envelope.payload.assetId,
+          error: { code: 'COMMAND_REFUSED', message: why.message, retryable: false },
+        } satisfies EventPayloads['transcode.failed']),
+      );
     });
     return outcome;
   }

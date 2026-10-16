@@ -677,13 +677,15 @@ export interface TranscodeFailedPayload {
   error: Error;
 }
 
-/** Command issued by BMS/RIM to MTS to enqueue a transcode job. */
+/** Command issued by BMS/RIM to MTS to enqueue a transcode job. Answered by transcode.completed or transcode.failed under the command's own correlationId — a well-formed command MTS cannot honour (an unknown preset, an input it cannot read) is answered transcode.failed at once (EP-22.4), so the issuer never waits on a job that was never queued. */
 export interface TranscodeJobCreatePayload {
   assetId: Ulid;
   /** Transcode profile ids to produce. */
   presetIds: string[];
-  /** HSM-resolved input path. */
+  /** A file under MTS's work root. Exactly one of inputPath and inputFile. */
   inputPath?: string;
+  /** The asset's file in HSM, fetched by MTS at run time (EP-14.7) — how BMS names an input (EP-22.4). Exactly one of inputPath and inputFile. */
+  inputFile?: { kind: string; variant?: string };
   /** Optional preset-id -> desired output path. */
   outputPaths?: Record<string, string>;
   /** Higher runs sooner. */

@@ -208,7 +208,10 @@ required per-kind config, id patterns, `maxContains:1` on `start`.
 | `branch` outgoing edges cover all cases or define `default` | error |
 | `parallel split` is matched by a `parallel join` (structured) | error |
 | Every FEEL expression compiles; referenced `vars`/paths are declared | error / warning |
-| `command.await.event`, `wait-event.event` are known broker subjects | warning |
+| `command.request.event` is a command a workflow may issue — `WORKFLOW_COMMANDS` (`UNKNOWN_COMMAND`, EP-22.4) | error |
+| `command.request.input` keys are fields of that command's payload, and its required fields are given (`COMMAND_INPUT`); a dotted key builds a nested field | error |
+| `command.await.event` answers the command (`AWAIT_EVENT`); `command.await.correlate` is refused until EP-22.6 — the answer is matched by correlation id (`CORRELATE_UNSUPPORTED`) | error |
+| `wait-event.event` is a known broker subject | warning |
 | `sub-flow.workflowId` exists and is published | error |
 | `compensation` references an existing step | error |
 | Unreachable-after-terminate, unused `vars` | warning |

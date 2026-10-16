@@ -565,22 +565,34 @@ export function jobStoreConformance(name: string, harness: JobStoreHarness): voi
       assert.equal(jobs[0]?.createdBy, 'bms');
       assert.deepEqual(audits(await drain()), ['transcode.queued']);
 
-      await assert.rejects(
-        service.consumeJobCreate(command({ assetId: ulid(), presetIds: ['proxy'] })),
-        /inputPath is required/,
-      );
-      await assert.rejects(
-        service.consumeJobCreate(
-          command({ assetId: ulid(), presetIds: ['nope'], inputPath: path }),
-        ),
-        /unknown preset/,
-      );
-      await assert.rejects(
-        service.consumeJobCreate(
-          command({ assetId: ulid(), presetIds: ['proxy'], inputPath: join(root, '..', 'x') }),
-        ),
-        /inside the work root/,
-      );
+      // A well-formed command MTS cannot honour is ANSWERED (EP-22.4): transcode.failed, once,
+      // under the command's correlation id — a redelivery of the refusal is a duplicate.
+      const refusals: [Record<string, unknown>, RegExp][] = [
+        [{ assetId: ulid(), presetIds: ['proxy'] }, /exactly one of inputPath and inputFile/],
+        [{ assetId: ulid(), presetIds: ['nope'], inputPath: path }, /unknown preset/],
+        [
+          { assetId: ulid(), presetIds: ['proxy'], inputPath: join(root, '..', 'x') },
+          /inside the work root/,
+        ],
+        [{ assetId: ulid(), presetIds: ['proxy'], inputFile: { kind: 'original' } }, /needs HSM/],
+      ];
+      for (const [payload, why] of refusals) {
+        const refused = command(payload);
+        assert.equal(await service.consumeJobCreate(refused), 'refused');
+        assert.equal(await service.consumeJobCreate(refused), 'duplicate');
+        const sent = await drain();
+        assert.deepEqual(
+          sent.map((e) => e.type),
+          ['transcode.failed'],
+        );
+        const failed = sent[0] as unknown as Envelope<EventPayloads['transcode.failed']>;
+        assert.equal(failed.correlationId, (refused.body as Envelope).messageId, 'follow()');
+        assert.equal(failed.causationId, refused.id);
+        assert.equal(failed.payload.assetId, payload['assetId']);
+        assert.equal(failed.payload.error.code, 'COMMAND_REFUSED');
+        assert.match(failed.payload.error.message, why);
+      }
+      // Not a command at all: nobody to answer — thrown to the broker.
       await assert.rejects(
         service.consumeJobCreate({ id: ulid(), subject: 's', body: { not: 'an envelope' } }),
         /not an envelope/,

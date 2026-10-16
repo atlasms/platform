@@ -6,7 +6,7 @@
 // index; a published row is never updated — the adapters refuse it in the statement itself).
 
 import type { OutboxRecord } from '@atlas/messaging';
-import type { HistoryEntry, Instance } from './instance.ts';
+import type { CommandAwait, HistoryEntry, Instance } from './instance.ts';
 import type { Workflow, WorkflowState, WorkflowVersion } from './workflow.ts';
 
 export interface WorkflowStore {
@@ -28,6 +28,8 @@ export interface WorkflowStore {
   ): Promise<Instance[]>;
   /** An instance's step history, in order. */
   history(instanceId: string): Promise<HistoryEntry[]>;
+  /** The command issued under this correlation id, answered or not (EP-22.4). */
+  commandAwait(correlationId: string): Promise<CommandAwait | undefined>;
   close(): Promise<void>;
 }
 
@@ -65,4 +67,11 @@ export interface WorkflowTx {
    * `false` means a previous attempt already committed them, and the retry writes nothing.
    */
   markSeen(key: string): Promise<boolean>;
+  /** Record a command BMS issued and will hear back about; `false` if the id exists. */
+  insertAwait(entry: CommandAwait): Promise<boolean>;
+  /**
+   * Mark it answered — only if it is not already: `false` means an earlier delivery of the answer
+   * (or another answer) got there first, and nothing is written.
+   */
+  answerAwait(correlationId: string, answeredAt: string, answeredBy: string): Promise<boolean>;
 }

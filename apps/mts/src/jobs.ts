@@ -16,6 +16,8 @@ export interface JobConsumerOptions {
   maxAttempts?: number;
   onQueued?: (subject: string) => void;
   onDuplicate?: (subject: string) => void;
+  /** A well-formed command MTS cannot honour, answered with `transcode.failed` (EP-22.4). */
+  onRefused?: (subject: string) => void;
   onError?: (err: unknown, msg: Message) => void;
 }
 
@@ -29,11 +31,13 @@ export function startJobConsumer(options: JobConsumerOptions): Subscription {
       try {
         const outcome = await options.service.consumeJobCreate(msg);
         if (outcome === 'applied') options.onQueued?.(msg.subject);
+        else if (outcome === 'refused') options.onRefused?.(msg.subject);
         else options.onDuplicate?.(msg.subject);
       } catch (err) {
-        // Thrown, not swallowed: a command this service cannot honour — not an envelope, an
-        // unknown preset, an input outside the work root — is retried and then dead-lettered
-        // where `scripts/dlq.mjs` shows it to a person. Acking it would lose the job silently.
+        // Thrown, not swallowed: a message that is not a command at all (not an envelope, a
+        // payload off its schema) has nobody to answer, so it is retried and then dead-lettered
+        // where `scripts/dlq.mjs` shows it to a person. Acking it would lose it silently. (A
+        // well-formed command MTS cannot honour is ANSWERED instead — `refused` above.)
         options.onError?.(err, msg);
         throw err;
       }

@@ -10,7 +10,7 @@ import {
   withTransaction,
   type PgPool,
 } from '@atlas/data-pg';
-import type { HistoryEntry, Instance } from './instance.ts';
+import type { CommandAwait, HistoryEntry, Instance } from './instance.ts';
 import type { WorkflowStore, WorkflowTx } from './store.ts';
 import { withState, type Workflow, type WorkflowVersion } from './workflow.ts';
 
@@ -68,6 +68,18 @@ export const pgMigrations: Migration[] = [
     up: `ALTER TABLE workflows ADD COLUMN state text;
          UPDATE workflows SET state = CASE WHEN (data->>'latestVersion')::int > 0 THEN 'active' ELSE 'draft' END WHERE state IS NULL;
          CREATE INDEX IF NOT EXISTS workflows_state_idx ON workflows (channel_id, state, id);`,
+  },
+  // EP-22.4: the commands command steps issued, by the correlation id their answers carry back.
+  {
+    id: 'bms_command_awaits',
+    up: `CREATE TABLE IF NOT EXISTS command_awaits (
+           correlation_id text PRIMARY KEY,
+           channel_id     text NOT NULL,
+           instance_id    text NOT NULL,
+           answered_at    timestamptz,
+           data           jsonb NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS command_awaits_instance_idx ON command_awaits (channel_id, instance_id);`,
   },
 ];
 
@@ -159,6 +171,24 @@ export function pgWorkflowStore(pool: PgPool): WorkflowStore {
           async markSeen(key) {
             return seen.mark(client, key);
           },
+          async insertAwait(a) {
+            const result = await client.query(
+              `INSERT INTO command_awaits (correlation_id, channel_id, instance_id, data)
+               VALUES ($1, $2, $3, $4) ON CONFLICT (correlation_id) DO NOTHING`,
+              [a.correlationId, a.channelId, a.instanceId, JSON.stringify(a)],
+            );
+            return result.rowCount === 1;
+          },
+          async answerAwait(correlationId, answeredAt, answeredBy) {
+            const result = await client.query(
+              `UPDATE command_awaits
+                  SET answered_at = $1,
+                      data = data || jsonb_build_object('answeredAt', $2::text, 'answeredBy', $3::text)
+                WHERE correlation_id = $4 AND answered_at IS NULL`,
+              [answeredAt, answeredAt, answeredBy, correlationId],
+            );
+            return result.rowCount === 1;
+          },
         };
         return fn(tx);
       });
@@ -234,6 +264,13 @@ export function pgWorkflowStore(pool: PgPool): WorkflowStore {
         [instanceId],
       );
       return rows.map((r) => r.data);
+    },
+    async commandAwait(correlationId) {
+      const { rows } = await pool.query<{ data: CommandAwait }>(
+        'SELECT data FROM command_awaits WHERE correlation_id = $1',
+        [correlationId],
+      );
+      return rows[0]?.data;
     },
     async close() {
       // The pool is main.ts's to end.

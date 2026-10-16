@@ -1719,6 +1719,147 @@ test('smoke: EP-25.1 — a workflow’s human step lands in its assignee’s inb
   assert.equal(signalled.status, 202, signalled.text);
 });
 
+test('smoke: EP-22.4 — a command step transcodes through MTS and MTS’s answer completes it; a refusal fails it', async () => {
+  // The orchestration loop on a live cluster: a workflow's command step issues MTS's OWN command
+  // (transcode.job.create, the asset's original in HSM as input), MTS runs FFmpeg and answers
+  // under the command's correlation id, and BMS's completion router hands the answer to the
+  // waiting step — renditions mapped into the instance's vars. A command MTS cannot honour is
+  // answered at once (transcode.failed), so its instance fails with MTS's words instead of waiting.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const poll = async (fn, done, budgetMs, what) => {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const value = await fn();
+      if (done(value)) return value;
+      assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(value)}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+
+  // An asset with an original in HSM: an accepted upload (EP-15.5).
+  const wav = silentWav(2);
+  const upload = json(
+    await get('/api/v1/uploads', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ filename: 'Smoke Workflow.wav', sizeBytes: wav.length }),
+    }),
+  );
+  const put = await get(`/api/v1/uploads/${upload.uploadId}/parts/1`, {
+    method: 'PUT',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' },
+    body: wav,
+  });
+  assert.equal(put.status, 204, put.text);
+  const completed = await get(`/api/v1/uploads/${upload.uploadId}/complete`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(completed.status, 202, completed.text);
+  const job = await poll(
+    async () => json(await get(`/api/v1/ingest/${json(completed).id}`, { headers })),
+    (j) => ['registered', 'rejected', 'quarantined'].includes(j.state),
+    60_000,
+    'the upload was never registered',
+  );
+  assert.equal(job.state, 'registered', JSON.stringify(job));
+  const assetId = job.assetId;
+
+  const flow = (name, presetId) => ({
+    name,
+    vars: [
+      { name: 'assetId', type: 'string' },
+      { name: 'renditions', type: 'array' },
+    ],
+    steps: [
+      { id: 's_start', kind: 'start' },
+      {
+        id: 's_tx',
+        kind: 'command',
+        timeout: 'PT2M',
+        config: {
+          action: 'transcode',
+          request: {
+            event: 'transcode.job.create',
+            input: {
+              assetId: '= vars.assetId',
+              presetIds: `= ["${presetId}"]`,
+              'inputFile.kind': '= "original"',
+            },
+          },
+          await: {
+            event: 'transcode.completed',
+            output: { 'vars.renditions': '= incoming.renditions' },
+          },
+        },
+      },
+      { id: 's_end', kind: 'end', config: { status: 'transcoded' } },
+    ],
+    transitions: [
+      { id: 't1', from: 's_start', to: 's_tx' },
+      { id: 't2', from: 's_tx', to: 's_end' },
+    ],
+  });
+  const run = async (definition) => {
+    const created = await get('/api/v1/workflows', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(definition),
+    });
+    assert.equal(created.status, 201, created.text);
+    const w = json(created);
+    const published = await get(`/api/v1/workflows/${w.id}/publish?revision=1`, {
+      method: 'POST',
+      headers,
+    });
+    assert.equal(published.status, 200, published.text);
+    const started = await poll(
+      async () =>
+        get('/api/v1/instances', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ workflowId: w.id, vars: { assetId } }),
+        }),
+      (res) => res.status !== 503,
+      60_000,
+      'BMS never reached Temporal',
+    );
+    assert.equal(started.status, 201, started.text);
+    return poll(
+      async () => json(await get(`/api/v1/instances/${json(started).id}`, { headers })),
+      (i) => i.state === 'completed' || i.state === 'failed',
+      150_000,
+      'the instance never ended',
+    );
+  };
+
+  const done = await run(flow(`smoke command ${Date.now()}`, 'audio-proxy'));
+  assert.equal(done.state, 'completed', JSON.stringify(done));
+  assert.equal(done.endStepId, 's_end');
+  assert.deepEqual(
+    done.vars.renditions.map((r) => r.kind),
+    ['proxy'],
+    "MTS's answer reached the output mapping",
+  );
+  // The job BMS asked for is MTS's — from HSM's original, its rendition placed and checksummed.
+  const jobs = json(await get(`/api/v1/jobs?assetId=${assetId}`, { headers }));
+  assert.ok(
+    jobs.some(
+      (j) =>
+        j.state === 'completed' &&
+        j.inputFile?.kind === 'original' &&
+        j.renditions?.some((r) => r.checksum?.value === done.vars.renditions[0].checksum.value),
+    ),
+    `no MTS job produced the instance's rendition: ${JSON.stringify(jobs)}`,
+  );
+
+  const refused = await run(flow(`smoke refused ${Date.now()}`, 'no-such-preset'));
+  assert.equal(refused.state, 'failed', JSON.stringify(refused));
+  assert.match(refused.error, /COMMAND_REFUSED: unknown preset\(s\): no-such-preset/);
+});
+
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {
   // A workflow's lifecycle on a live cluster (decided 2026-10-13): a first publish makes it active
   // and puts it in the catalog every client loads; deactivating it is refused while an instance is

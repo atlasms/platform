@@ -1,6 +1,12 @@
-import { validateDomain } from '../registry.ts';
+import { payloadShape, validateDomain } from '../registry.ts';
+import { WORKFLOW_COMMANDS } from './commands.ts';
 import { feelProblem, referencedVars } from './feel.ts';
-import type { ValidationIssue, ValidationResult, WorkflowDefinition } from './types.ts';
+import type {
+  CommandConfig,
+  ValidationIssue,
+  ValidationResult,
+  WorkflowDefinition,
+} from './types.ts';
 
 /**
  * Tier 1 (the schema) and Tier 2 (the graph and its expressions) — the rules of
@@ -127,6 +133,55 @@ export function validateDefinition(def: unknown): ValidationResult {
         'BAD_ONERROR_TARGET',
         `step "${s.id}" onError.transitionTo "${s.onError.transitionTo}" is not a step`,
         { stepId: s.id },
+      );
+  }
+
+  // A command step issues a platform command, and its completion is the command's own answer
+  // (commands.ts): anything else would publish what BMS has no business publishing, or wait for
+  // what nobody sends.
+  for (const s of steps.filter((x) => x.kind === 'command')) {
+    const cfg = s.config as CommandConfig;
+    const command = WORKFLOW_COMMANDS[cfg.request.event];
+    if (!command) {
+      error(
+        'UNKNOWN_COMMAND',
+        `step "${s.id}" issues "${cfg.request.event}", which is not a command a workflow may issue (${Object.keys(WORKFLOW_COMMANDS).join(', ')})`,
+        { stepId: s.id, path: `/steps/${steps.indexOf(s)}/config/request/event` },
+      );
+      continue;
+    }
+    // The input is FEEL, so its VALUES are known only at run time — but its keys are the
+    // command's fields (a dotted key builds a nested one: `inputFile.kind`). A misspelt or a
+    // missing field is refused here rather than by the target, a step and an instance later.
+    const shape = payloadShape(cfg.request.event);
+    if (shape) {
+      const at = { stepId: s.id, path: `/steps/${steps.indexOf(s)}/config/request/input` };
+      const given = new Set(Object.keys(cfg.request.input ?? {}).map((k) => k.split('.')[0]!));
+      for (const field of given)
+        if (!shape.properties.includes(field))
+          error(
+            'COMMAND_INPUT',
+            `step "${s.id}": ${cfg.request.event} has no field "${field}" (${shape.properties.join(', ')})`,
+            at,
+          );
+      for (const field of shape.required)
+        if (!given.has(field))
+          error('COMMAND_INPUT', `step "${s.id}": ${cfg.request.event} needs "${field}"`, at);
+    }
+    if (cfg.await?.event !== undefined && !command.completes.includes(cfg.await.event))
+      error(
+        'AWAIT_EVENT',
+        `step "${s.id}" awaits "${cfg.await.event}", but ${cfg.request.event} is answered by ${command.completes.join(', ')}`,
+        { stepId: s.id, path: `/steps/${steps.indexOf(s)}/config/await/event` },
+      );
+    // The answer is matched by the command's correlation id. Matching on an expression instead
+    // means offering every answer to every waiting step — the event fan-out wait-event steps get
+    // with EP-22.6 — so until then it is refused rather than silently ignored.
+    if (cfg.await?.correlate !== undefined)
+      error(
+        'CORRELATE_UNSUPPORTED',
+        `step "${s.id}": a command's answer is matched by its correlation id; await.correlate is not supported`,
+        { stepId: s.id, path: `/steps/${steps.indexOf(s)}/config/await/correlate` },
       );
   }
 

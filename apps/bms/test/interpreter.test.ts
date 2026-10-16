@@ -51,7 +51,12 @@ test('canonical happy path: transcode → ready → approve', async () => {
   assert.equal(res.endStepId, 's_end_ok');
   assert.deepEqual(res.vars['renditions'], ['proxy', 'broadcast'], 'command output mapped');
   assert.equal(res.vars['verdict'], 'approved', 'task output mapped');
-  assert.deepEqual(sim.emitted[0]?.payload, { profile: 'broadcast', assetId: 'A1' });
+  // A valid transcode.job.create (EP-22.4): a dotted input key builds a nested field.
+  assert.deepEqual(sim.emitted[0]?.payload, {
+    assetId: 'A1',
+    presetIds: ['broadcast'],
+    inputFile: { kind: 'original' },
+  });
 });
 
 test('canonical reject path takes the default branch edge', async () => {

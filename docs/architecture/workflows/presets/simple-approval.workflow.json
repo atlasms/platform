@@ -2,7 +2,7 @@
   "id": "01J9ZKQ2M8XABCDEFGHJKMNPQS",
   "channelId": "ch12",
   "name": "Simple approval",
-  "description": "Preset: a bare review gate — assign, approve/reject, publish on approval. Minimal human-task + branch + fire-and-forget command.",
+  "description": "Preset: a bare review gate — assign, approve or reject. Minimal human-task + branch. (It published to the web on approval until EP-22.4 closed the list of commands a workflow may issue; publishing is EP-37's.)",
   "version": 1,
   "status": "published",
   "vars": [
@@ -16,16 +16,13 @@
                   "output": { "vars.verdict": "= incoming.outcome" } } },
     { "id": "s_gate", "kind": "branch", "name": "Approved?", "position": { "x": 360, "y": 0 },
       "config": { "default": "t_no" } },
-    { "id": "s_publish", "kind": "command", "name": "Publish", "position": { "x": 540, "y": -60 },
-      "config": { "action": "publish", "request": { "event": "publish.web.requested", "input": { "assetId": "= vars.assetId" } } } },
-    { "id": "s_end_yes", "kind": "end", "name": "Published", "position": { "x": 720, "y": -60 }, "config": { "status": "published" } },
+    { "id": "s_end_yes", "kind": "end", "name": "Approved", "position": { "x": 540, "y": -60 }, "config": { "status": "approved" } },
     { "id": "s_end_no", "kind": "end", "name": "Rejected", "position": { "x": 540, "y": 60 }, "config": { "status": "rejected" } }
   ],
   "transitions": [
     { "id": "t1", "from": "s_start", "to": "s_task" },
     { "id": "t2", "from": "s_task", "to": "s_gate" },
-    { "id": "t_yes", "from": "s_gate", "to": "s_publish", "name": "approved", "when": "= vars.verdict = \"approved\"" },
-    { "id": "t_pub", "from": "s_publish", "to": "s_end_yes" },
+    { "id": "t_yes", "from": "s_gate", "to": "s_end_yes", "name": "approved", "when": "= vars.verdict = \"approved\"" },
     { "id": "t_no", "from": "s_gate", "to": "s_end_no", "name": "rejected", "isDefault": true }
   ],
   "metadata": { "createdBy": "system", "createdAt": "2026-07-24T10:00:00Z" }

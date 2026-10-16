@@ -19,7 +19,7 @@
       "onError": "compensate",
       "config": {
         "action": "transcode",
-        "request": { "event": "transcode.job.create", "input": { "profile": "= vars.profile", "assetId": "= vars.assetId" } },
+        "request": { "event": "transcode.job.create", "input": { "assetId": "= vars.assetId", "presetIds": "= [vars.profile]", "inputFile.kind": "= \"original\"" } },
         "await": { "event": "transcode.completed", "output": { "vars.renditions": "= incoming.renditions" } }
       } },
     { "id": "s_wait_ready", "kind": "wait-event", "name": "Await ready", "position": { "x": 360, "y": 0 },

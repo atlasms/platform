@@ -60,6 +60,7 @@ export function validateDomain(name: string, value: unknown): CheckResult {
 const SUFFIX = '.payload.schema.json';
 export const EVENT_TYPES: string[] = [];
 const payloadValidators = new Map<string, ValidateFunction>();
+const payloadShapes = new Map<string, PayloadShape>();
 
 for (const file of readdirSync(eventsDir).sort()) {
   if (!file.endsWith(SUFFIX)) continue;
@@ -67,6 +68,21 @@ for (const file of readdirSync(eventsDir).sort()) {
   const schema = read(join(eventsDir, file));
   EVENT_TYPES.push(type);
   payloadValidators.set(type, ajv.compile(schema));
+  const top = schema as { properties?: Record<string, unknown>; required?: string[] };
+  payloadShapes.set(type, {
+    properties: Object.keys(top.properties ?? {}),
+    required: [...(top.required ?? [])],
+  });
+}
+
+/** A payload's top-level fields — what a workflow's command input may name (EP-22.4). */
+export interface PayloadShape {
+  properties: string[];
+  required: string[];
+}
+
+export function payloadShape(type: string): PayloadShape | undefined {
+  return payloadShapes.get(type);
 }
 
 export interface CheckResult {

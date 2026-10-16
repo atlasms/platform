@@ -220,6 +220,7 @@ async function startBroker(): Promise<void> {
     service,
     onQueued: (subject) => log.info('job queued from command', { subject }),
     onDuplicate: (subject) => log.info('job command redelivered', { subject }),
+    onRefused: (subject) => log.warn('job command refused, answered transcode.failed', { subject }),
     onError: (err, msg) =>
       log.warn('job command refused', {
         subject: msg.subject,
