@@ -9,7 +9,11 @@
   "properties": {
     "taskId": { "$ref": "../common.schema.json#/$defs/Ulid" },
     "workflowInstanceId": { "$ref": "../common.schema.json#/$defs/Ulid" },
-    "assignee": { "type": "string", "description": "User or group id." },
+    "assignee": { "type": "string", "description": "A user id, or the id of the group or role the task is offered to — `assigneeKind` says which." },
+    "assigneeKind": {
+      "$ref": "../common.schema.json#/$defs/PrincipalKind",
+      "description": "What `assignee` names. A workflow's human step names a user or a role (EP-25.1). Absent means a user — what BMS sent before it said."
+    },
     "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
     "kind": { "$ref": "../common.schema.json#/$defs/TaskKind" },
     "dueAt": { "type": "string", "format": "date-time" }

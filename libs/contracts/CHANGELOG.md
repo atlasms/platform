@@ -23,6 +23,11 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `PrincipalKind` gains `role` (EP-25.1, decided 2026-10-16): a workflow's human step offers a task to
+  everyone holding a role, resolved to people when an inbox is read. A consumer that switched on
+  `user | group` must handle it.
+- `workflow.task.created.assigneeKind` — what `assignee` names (user, group or role). Absent means a
+  user, which is what BMS sent before it said.
 - `@atlas/contracts/workflow-types` (EP-22.11): the workflow DSL's TYPES alone (`src/workflow/types.ts`),
   a browser-safe subpath — `@atlas/contracts/workflow` brings the validator, ajv and `node:fs` with
   it. Studio's generated BMS types import `WorkflowDefinition` from it rather than re-deriving the

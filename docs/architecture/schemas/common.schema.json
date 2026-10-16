@@ -93,8 +93,8 @@
       "description": "Kind of human-in-the-loop task. One definition: BMS declares it in a workflow, emits it in workflow.task.created, and Notifications re-emits it in task.created — three sites had two value sets (workflow.task.created could not express 'generic')."
     },
     "PrincipalKind": {
-      "enum": ["user", "group"],
-      "description": "Who a task is assigned to, or a message addressed to."
+      "enum": ["user", "group", "role"],
+      "description": "Who a task is assigned to, or a message addressed to. A workflow's human step names a user or a ROLE (the workflow DSL's assignee), so a task can be assigned to everyone holding a role; a group or a role is resolved to its people when the inbox is READ, not when the task is made (decided 2026-10-16)."
     },
     "UserState": {
       "enum": ["active", "disabled", "locked", "invited"],

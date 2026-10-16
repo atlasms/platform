@@ -5,7 +5,7 @@
   "common.schema.json#/$defs/RenditionKind": "MTS produces each kind; Studio picks a player or viewer per kind.",
   "common.schema.json#/$defs/Severity": "Notifications, tasks and alerts route and render by severity.",
   "common.schema.json#/$defs/TaskKind": "Each kind is a distinct task UI and completion rule; BMS declares it, emits it, Notifications re-emits it.",
-  "common.schema.json#/$defs/PrincipalKind": "Assignment and addressing resolve a user directly and a group through membership — two code paths.",
+  "common.schema.json#/$defs/PrincipalKind": "Assignment and addressing resolve a user directly, a group through membership and a role through its holders (directly or through a group) — three code paths, each resolved at read time (decided 2026-10-16).",
   "common.schema.json#/$defs/UserState": "IAM's account state machine: lockout, invitation and disabling are coded transitions.",
   "common.schema.json#/$defs/SettingScope": "The nearest-wins resolver walks these levels in a fixed order.",
   "common.schema.json#/$defs/AiTier": "Online and offline enrichment are different execution paths with different latency budgets.",
