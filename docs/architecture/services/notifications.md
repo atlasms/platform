@@ -61,9 +61,11 @@ stateDiagram-v2
 
 | Method | Path | Purpose | Authz |
 |--------|------|---------|-------|
-| `GET` | `/inbox` | Unified inbox (tasks + messages + notifications). | self |
-| `GET/POST` | `/messages` | List/send direct or group messages. | `message:send` |
-| `GET/POST/PATCH` | `/tasks`, `/tasks/{id}` | Create/list/update; forward or complete. | assignee/creator |
+| `GET` | `/inbox` | Unified inbox — open tasks offered to the caller by name, group or role (resolved at read time), and notifications. ✅ EP-25.1/25.3 | self |
+| `GET/POST` | `/messages` | List/send direct or group messages. EP-25.4 | `message:send` (to be added to the catalogue with 25.4) |
+| `POST` | `/tasks` | Assign a task by hand to a user, group or role. ✅ EP-25.2 | `task:assign` |
+| `GET` | `/tasks/{id}` | One task. ✅ EP-25.2 | a participant, a holder of what it is offered to, or `task:admin` |
+| `POST` | `/tasks/{id}/claim` · `/forward` · `/complete` · `/cancel` | Claim (first wins), hand on, complete with an outcome, cancel — §13c. ✅ EP-25.2 | the holder; `task:admin` to reassign or cancel |
 | `PATCH` | `/notifications/{id}` | Mark read/dismiss. | self |
 | `GET/PUT` | `/preferences` | Per-user delivery preferences. | self |
 

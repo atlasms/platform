@@ -34,6 +34,35 @@ helm install atlas infra/helm/atlas --namespace atlas \
 There is no seeded account: create the first administrator with the runbook's bootstrap
 procedure ([operations runbook](../../docs/operations/17-operations-runbook.md)).
 
+### The internal signing keys — create them before the first install
+
+Services that call each other's `/internal/` routes sign the request with a shared key
+([ADR-0008](../../docs/adr/0008-internal-signed-calls.md)). Each pair has its OWN Secret, mounted
+into exactly the services that sign and verify with it. The chart references them **optionally**,
+so an install without them starts cleanly — and then refuses those calls, which is easy to miss:
+
+| Secret              | Mounted into                      | Without it                                                                 |
+| ------------------- | --------------------------------- | -------------------------------------------------------------------------- |
+| `hsm-internal-keys` | `hsm`, `mts`, `rim`               | nothing is placed in storage: no originals from ingest, no renditions      |
+| `rim-internal-keys` | `rim`, `rim-recorder`             | recordings are captured but never handed over to ingest                    |
+| `hsm-read-keys`     | `hsm`, `scheduling`               | schedule validation reports availability as `unchecked`                    |
+| `iam-read-keys`     | `iam`, `notifications`            | inboxes show only tasks assigned by name (`partial: true`), and a task offered to a role cannot be claimed |
+
+Each holds one key `keys`: a comma-separated list, at least 32 bytes each. The verifier accepts any
+of them and the signer uses the first, so a key rotates without downtime — put the new key first,
+roll the services, then drop the old one.
+
+```sh
+for s in hsm-internal-keys rim-internal-keys hsm-read-keys iam-read-keys; do
+  kubectl -n atlas create secret generic "$s" --from-literal=keys="$(openssl rand -hex 32)"
+done
+```
+
+An S3-compatible storage target's credentials are another Secret, `hsm-storage-credentials`,
+mounted into HSM alone and named by the target's `credentialRef`
+([ADR-0009](../../docs/adr/0009-hsm-storage-and-placement.md)); a site with only filesystem targets
+needs none.
+
 ## What the cluster has to provide
 
 The chart installs the platform, not the platform's surroundings:
@@ -44,6 +73,7 @@ The chart installs the platform, not the platform's surroundings:
 | An Ingress controller              | Only if `ingress.enabled` — otherwise reach the gateway by `port-forward`      |
 | A certificate, or cert-manager     | `ingress.tls.secretName` names a Secret; cert-manager users add their issuer   |
 | A Secret with database credentials | Or `postgres.auth.username`/`password`, which has the chart create one         |
+| The internal signing-key Secrets   | See above — optional to the chart, required for ingest, recording and inboxes  |
 
 ## An air-gapped site
 

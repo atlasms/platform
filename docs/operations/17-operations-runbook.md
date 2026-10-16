@@ -257,7 +257,7 @@ triage runs daily during pilot weeks.
 | Task | How |
 |------|-----|
 | Add a channel/tenant | Helm value + `atlas ref seed --channel`; scoped roles auto-apply. |
-| Rotate a secret/credential | Update vault; services re-read on the next lease. Storage creds live only in HSM ([NFR-SEC-4](../requirements/06-non-functional-requirements.md#security--privacy)). |
+| Rotate a secret/credential | Update vault; services re-read on the next lease. Storage creds live only in HSM ([NFR-SEC-4](../requirements/06-non-functional-requirements.md#security--privacy)). The internal signing keys (`hsm-internal-keys`, `rim-internal-keys`, `hsm-read-keys`, `iam-read-keys` — [ADR-0008](../adr/0008-internal-signed-calls.md)) rotate without downtime: each Secret's `keys` is a list the verifier accepts whole and the signer reads from the front — put the new key FIRST, roll the services that mount it, then remove the old one ([helm README](../../infra/helm/README.md#the-internal-signing-keys--create-them-before-the-first-install)). |
 | Change reference data | Admin UI or `atlas ref import` → emits `config.changed`; no redeploy. |
 | Scale MTS for a spike | Raise worker replicas / KEDA on queue depth; drains when idle. |
 | Drain a node | Cordon + rolling evict; stateless services move freely, data-plane operators handle their own. |

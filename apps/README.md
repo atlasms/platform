@@ -4,7 +4,7 @@ One deployable per service, plus Studio. Each is built from the
 [service template](../docs/roadmap/21-epic-breakdown.md) (`service-kit`) so health, logging,
 config, auth, errors and tracing are identical everywhere and are never re-implemented per service.
 
-## Planned deployables
+## Deployables
 
 | App                 | Spec                                                                       | Plan                                                       | First ships     |
 | ------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------- |
@@ -35,7 +35,10 @@ config, auth, errors and tracing are identical everywhere and are never re-imple
   [event payload schemas](../docs/architecture/schemas/) are merged before its implementation
   stories are pulled.
 - Services **never** call IAM per request — they evaluate the compiled policy locally with
-  `@atlas/policy`.
+  `@atlas/policy`. The one exception is not an authorization question: Notifications asks IAM which
+  groups and roles a user holds, to know whose inbox a group or role task is in (EP-25.3) — cached
+  per user for 30 s and dropped on `permissions.changed` / `group.membership.changed`, the same
+  shape as the policy cache.
 - Only **HSM** holds storage credentials; every other service requests file operations through it.
 
 ---
