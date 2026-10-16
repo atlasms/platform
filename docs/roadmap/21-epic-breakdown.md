@@ -470,7 +470,7 @@ Source: [notifications-plan](services/notifications-plan.md) §2; lift from [`re
 | ID | Story | Est |
 |----|-------|:---:|
 | 25.1 | ✅ Scaffold `notifications`, lifting the reference slice — tasks from `workflow.task.created`, re-review notifications from `asset.expired`, `GET /inbox`, on a store port (sqlite + Postgres); routed, deployed, in the chart and the drill (notifications.md §13a) | 3 |
-| 25.2 | Task entity + state machine — create/assign/forward/close; materialised from `workflow.task.created` | 5 |
+| 25.2 | ✅ Task entity + state machine — create/assign/forward/close; materialised from `workflow.task.created`: claim first (first claim wins), `task:assign`/`task:admin`/`task:audit`, a task's participants read its history (decided 2026-10-16; notifications.md §13c) | 5 |
 | 25.3 | ✅ Inbox + unread counts — `GET /inbox`, resolving the caller's roles and groups at read time (a signed internal IAM call, `iam-read-keys`, decided 2026-10-16; notifications.md §13b) | 3 |
 | 25.4 | User and group messaging, permission-aware (a user messages only permitted peers/groups) | 5 |
 | 25.5 | Notification-type registry + templates (Tier 1) and the event → notification pipeline (`asset.approved`, `asset.expired`, `transcode.failed`, `alert.raised`, mentions) | 5 |
@@ -480,7 +480,7 @@ Source: [notifications-plan](services/notifications-plan.md) §2; lift from [`re
 | 25.9 | Studio inbox panel — tasks, messages, notifications, live | 5 |
 
 **Decided 2026-10-12:** 25.7 → per-user streams by identity match (security review on the PR).
-**Decided 2026-10-16:** a task offered to a role or a group is one row, resolved to people when an inbox is READ — not fanned out when it is made (`PrincipalKind` gains `role`).
+**Decided 2026-10-16:** a task offered to a role or a group is one row, resolved to people when an inbox is READ — not fanned out when it is made (`PrincipalKind` gains `role`). A role/group task is CLAIMED before it is acted on (first claim wins); `task:assign` (Editor+) hands work out, `task:admin` cancels or reassigns (a workflow's task is never cancelled by hand); a task's history is read by its participants or under `task:audit`.
 
 ### EP-26 — Media Editor v1 (refined 2026-10-11)
 

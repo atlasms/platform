@@ -12,7 +12,7 @@ import {
   type Db,
   type Migration,
 } from '@atlas/data';
-import type { Notification, Task } from './inbox.ts';
+import { normalizeTask, type Notification, type Task } from './inbox.ts';
 import type { InboxStore, InboxTx } from './store.ts';
 
 export const sqliteMigrations: Migration[] = [
@@ -42,6 +42,11 @@ export const sqliteMigrations: Migration[] = [
          CREATE INDEX IF NOT EXISTS notifications_user_idx
            ON notifications (channel_id, user_id, id);`,
   },
+  // EP-25.2: a task is acted on — claimed, forwarded, completed — each a compare-and-set.
+  {
+    id: 'notifications_task_version',
+    up: `ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`,
+  },
 ];
 
 export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
@@ -54,8 +59,8 @@ export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
     async insertTask(t) {
       const result = db
         .prepare(
-          `INSERT INTO tasks (id, channel_id, assignee_kind, assignee, state, due_at, data)
-           VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+          `INSERT INTO tasks (id, channel_id, assignee_kind, assignee, state, due_at, version, data)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
         )
         .run(
           t.id,
@@ -64,7 +69,26 @@ export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
           t.assignee,
           t.state,
           t.dueAt ?? null,
+          t.version,
           JSON.stringify(t),
+        );
+      return Number(result.changes) === 1;
+    },
+    async updateTask(t, ifVersion) {
+      const result = db
+        .prepare(
+          `UPDATE tasks SET assignee_kind = ?, assignee = ?, state = ?, due_at = ?, version = ?, data = ?
+            WHERE id = ? AND version = ?`,
+        )
+        .run(
+          t.assigneeKind,
+          t.assignee,
+          t.state,
+          t.dueAt ?? null,
+          t.version,
+          JSON.stringify(t),
+          t.id,
+          ifVersion,
         );
       return Number(result.changes) === 1;
     },
@@ -89,7 +113,7 @@ export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
     async task(id) {
       const row = db.prepare('SELECT data FROM tasks WHERE id = ?').get(id) as
         { data: string } | undefined;
-      return row ? (JSON.parse(row.data) as Task) : undefined;
+      return row ? normalizeTask(JSON.parse(row.data) as Task) : undefined;
     },
     async openTasks(channelId, principals, limit) {
       if (principals.length === 0) return [];
@@ -103,7 +127,7 @@ export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
         .all(channelId, ...principals.flatMap((p) => [p.kind, p.id]), limit) as {
         data: string;
       }[];
-      return rows.map((r) => JSON.parse(r.data) as Task);
+      return rows.map((r) => normalizeTask(JSON.parse(r.data) as Task));
     },
     async notifications(channelId, userId, limit) {
       const rows = db

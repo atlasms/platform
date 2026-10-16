@@ -45,6 +45,7 @@ A permission is `resource:action` — flat, greppable, and stable.
 | `asset` | `read`, `write`, `approve`, `delete`, `restore` |
 | `schedule` | `read`, `write`, `send`, `admin` |
 | `workflow` | `read`, `act`, `admin`, `audit` (its change log — EP-22.11; ACTIVE workflows themselves are visible to every authenticated user of the channel, through BMS's catalog) |
+| `task` | `assign` (hand work to a user, group or role by hand), `admin` (cancel or reassign any task), `audit` (any task's change log) — EP-25.2, decided 2026-10-16. Acting on a task you hold — claim, forward, complete — needs no permission: holding it IS the grant; a task's PARTICIPANTS read its history without `task:audit` |
 | `taxonomy` | `read`, `admin` (categories, structures, classifications, subjects, tags) |
 | `people` | `read`, `admin` |
 | `metadata` | `admin` (field schemas) |
@@ -190,7 +191,7 @@ Ship these as defaults; operators clone and adjust ([FR-IAM-1](../requirements/0
 | Role | Grants (sketch) |
 |------|-----------------|
 | **Viewer** | `asset:read`, `schedule:read`, `taxonomy:read`, `people:read` |
-| **Journalist / Editor** | Viewer + `asset:write` (`core`,`taxonomy`,`cast`,`shotlist`), `workflow:act` |
+| **Journalist / Editor** | Viewer + `asset:write` (`core`,`taxonomy`,`cast`,`shotlist`), `workflow:act`, `task:assign` |
 | **Approver** | Editor + `asset:approve` (scoped to a category subtree) |
 | **Scheduler** | Viewer + `schedule:write`; `schedule:send` usually a **separate** role (privileged, audited) |
 | **Librarian** | `asset:write` (`files`,`rights`), `asset:restore`, `taxonomy:admin`, `people:admin` |

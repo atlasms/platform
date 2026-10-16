@@ -95,6 +95,10 @@ export function entityRule(entityType: string): ReadRule {
   // Under the default the instance's was `workflow-instance:read`, which nothing holds.
   if (entityType === 'workflow' || entityType === 'workflow-instance')
     return { permission: 'workflow:audit' };
+  // A task's change log (EP-25.2, decided 2026-10-16): `task:audit` for anyone's — and its own
+  // PARTICIPANTS read it without that, a per-entity exception the history route makes
+  // (`taskParticipants`). Every `task.*` entry in the browse takes `task:audit`.
+  if (entityType === 'task') return { permission: 'task:audit' };
   return { permission: `${entityType}:read` };
 }
 
@@ -128,4 +132,22 @@ export function visible(policy: EffectivePolicy, channelId: string, event: Audit
     channelId,
     ...(fieldGroup !== undefined ? { fieldGroup } : {}),
   }).allowed;
+}
+
+/**
+ * Who took part in a task (EP-25.2): every user its history names in `participants` — assigned by
+ * name, its maker, whoever claimed it or acted on it. Notifications keeps that list on the task and
+ * every audit delta that changes it carries it, so the answer is read from the task's OWN records:
+ * no other service is asked, and a participant stays one after the task moves on.
+ */
+export function taskParticipants(
+  revisions: readonly { delta: Record<string, { before?: unknown; after?: unknown }> }[],
+): Set<string> {
+  const out = new Set<string>();
+  for (const r of revisions) {
+    const field = r.delta['participants'];
+    for (const side of [field?.before, field?.after])
+      if (Array.isArray(side)) for (const u of side) if (typeof u === 'string') out.add(u);
+  }
+  return out;
 }

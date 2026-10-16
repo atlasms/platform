@@ -190,6 +190,30 @@ their own name only).
 Smoke gives the smoke user the `viewer` role through a group, offers a workflow's human step to the
 role, and finds the task in the user's inbox through the gateway with `partial: false`.
 
+## 13c. As built — EP-25.2, what people do with tasks (decided 2026-10-16)
+
+| Action | Route | Who |
+|---|---|---|
+| Assign by hand | `POST /tasks` | `task:assign` in the channel (Editor and above) — to a user, a group or a role |
+| Claim | `POST /tasks/{id}/claim` | someone in the group / holding the role it is offered to — **first claim wins** (409 after) |
+| Forward | `POST /tasks/{id}/forward` | its holder (assigned by name) — or anyone with `task:admin` (a reassignment) |
+| Complete | `POST /tasks/{id}/complete` | its holder, with an `outcome` |
+| Cancel | `POST /tasks/{id}/cancel` | `task:admin` — and never a workflow's task, which its workflow ends |
+| Read one | `GET /tasks/{id}` | a participant, a holder of what it is offered to, or `task:admin`; anyone else a 404 |
+
+- **Claim first.** A task offered to a group or a role is claimed — it becomes the claimer's by name —
+  before it is forwarded or completed, so two people never complete one and the history says who did.
+- Every action is a **compare-and-set on the task's `version`** (two claims at once: one 200, one 409 —
+  the conformance suite races them on Postgres) and writes the task, `task.updated` (a claim or forward
+  is `forwarded`, naming who holds it now) and its `audit.recorded` delta in one transaction.
+- **Participants** — every user it was ever assigned to by name, its maker, whoever claimed or acted
+  on it — are kept on the task and ride in its audit deltas; the log lets them read its history with
+  no permission, `task:audit` reads anyone's (logging-analytics §6.4). A task stored before carries
+  none and is read as its first revision.
+- A role task cannot be claimed while IAM cannot say who holds the role (503); nothing is written.
+
+Completing a workflow's task does not yet move its workflow — that is EP-25.8.
+
 Not yet: a task's audit history (`task` entity) has no read rule in the log — choosing one is a log
 visibility change, reviewed with EP-25.2, which is when people first act on tasks. Live delivery is
 EP-25.7; until then `task.created`/`notification.raised` reach the log, not a socket.

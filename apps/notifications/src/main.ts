@@ -26,7 +26,9 @@ import {
   pgMigrations,
   startConsumers,
   startPrincipalInvalidation,
+  TaskActions,
 } from './index.ts';
+import { PolicyClient } from '@atlas/policy/client';
 
 const config = loadConfig({
   port: { env: 'PORT', type: 'number', default: 3000 },
@@ -44,6 +46,8 @@ const config = loadConfig({
   // The keys this service signs its question to IAM with (iam-read-keys; ADR-0008, EP-25.3): who a
   // user is as an addressee. The first signs. Unset, the inbox holds tasks offered by name only.
   iamReadKeys: { env: 'ATLAS_IAM_READ_KEYS', type: 'string', default: '' },
+  // How long a caller's compiled policy is reused (EP-25.2's task actions are authorized with it).
+  policyTtlMs: { env: 'ATLAS_POLICY_TTL_MS', type: 'number', default: 30_000 },
   relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 250 },
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
   // still propagates, so a site without a collector pays only the cost of an id.
@@ -123,8 +127,13 @@ const service = new NotificationsService({
     log.warn('principals unavailable; inbox partial', { userId, error: (err as Error).message }),
 });
 
+const policies = new PolicyClient({ origin: config.iamOrigin, ttlMs: config.policyTtlMs });
+const tasks = new TaskActions({ store, ...(principals ? { principals } : {}) });
+
 const app = await buildNotificationsApp({
   service,
+  tasks,
+  policyFor: (userId) => policies.policyFor(userId),
   health,
   metrics,
   tracer,

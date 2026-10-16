@@ -116,6 +116,8 @@ export class NotificationsService {
       ...(p.dueAt !== undefined ? { dueAt: p.dueAt } : {}),
       createdBy: envelope.actor?.id ?? 'bms',
       createdAt: this.now().toISOString(),
+      version: 1,
+      participants: (p.assigneeKind ?? 'user') === 'user' ? [p.assignee] : [],
     };
     const chain = this.chainOf(envelope);
 

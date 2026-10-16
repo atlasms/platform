@@ -7,7 +7,7 @@
 // What is here is the shape every Atlas service shares (generated from it, and kept to it by the
 // same tests). What a service DOES goes in `service.ts` and its routes below the marker.
 
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { isUlid, ulid } from '@atlas/contracts';
 import {
   accessRecord,
@@ -21,12 +21,20 @@ import {
   toProblem,
   Unauthorized,
   Unavailable,
+  ValidationError,
   type AccessLogPolicy,
   type AccessRecord,
   type Span,
   type Tracer,
 } from '@atlas/service-kit';
+import type { EffectivePolicy } from '@atlas/policy';
 import type { NotificationsService } from './service.ts';
+import {
+  parseAssignee,
+  type ActingCaller,
+  type NewTask,
+  type TaskActions,
+} from './task-actions.ts';
 
 export interface NotificationsAppOptions {
   /** Liveness and readiness. `main.ts` registers the real dependency checks. */
@@ -42,6 +50,12 @@ export interface NotificationsAppOptions {
   onError?: (err: unknown, context: { correlationId: string; url: string }) => void;
   /** The inbox. Omitted (the scaffold's own tests), its routes answer 503. */
   service?: NotificationsService;
+  /** What people do with tasks (EP-25.2). Omitted, those routes answer 503. */
+  tasks?: TaskActions;
+  /** The caller's compiled policy, from IAM — task actions are authorized with it. */
+  policyFor?: (
+    userId: string,
+  ) => Promise<EffectivePolicy | undefined> | EffectivePolicy | undefined;
 }
 
 /** Header names the gateway establishes and this service trusts. It never sees a token. */
@@ -221,6 +235,57 @@ export async function buildNotificationsApp(
   // handler `return await`s its work inside the try (a returned promise settles after the catch is
   // out of scope, so its rejection would escape the problem document — AGENTS.md §6).
 
+  // --- tasks (EP-25.2) ------------------------------------------------------------------------------
+  //
+  // The gateway authenticated; this service authorizes, with the caller's compiled policy. "We
+  // could not determine your permissions" never degrades into "you have none, carry on".
+
+  const acting = async (req: FastifyRequest): Promise<ActingCaller> => {
+    const caller = callerOf(req.headers);
+    if (!options.tasks || !options.policyFor) throw new Unavailable('tasks are not configured');
+    const policy = await options.policyFor(caller.userId);
+    if (!policy) throw new Unauthorized('no policy for subject');
+    return { ...caller, policy, correlationId: req.correlationId };
+  };
+  const tasks = (): TaskActions => {
+    if (!options.tasks) throw new Unavailable('tasks are not configured');
+    return options.tasks;
+  };
+  const objectBody = (req: FastifyRequest): Record<string, unknown> => {
+    if (req.body === undefined) return {};
+    if (typeof req.body !== 'object' || req.body === null || Array.isArray(req.body))
+      throw new ValidationError('body must be an object');
+    return req.body as Record<string, unknown>;
+  };
+  type Id = { Params: { id: string } };
+
+  app.post('/api/v1/tasks', async (req, reply) => {
+    const caller = await acting(req);
+    const body = objectBody(req);
+    const input = parseNewTask(body);
+    return reply.code(201).send(await tasks().create(caller, input));
+  });
+  app.get<Id>('/api/v1/tasks/:id', async (req) => {
+    return await tasks().get(await acting(req), req.params.id);
+  });
+  app.post<Id>('/api/v1/tasks/:id/claim', async (req) => {
+    return await tasks().claim(await acting(req), req.params.id);
+  });
+  app.post<Id>('/api/v1/tasks/:id/forward', async (req) => {
+    const caller = await acting(req);
+    return await tasks().forward(caller, req.params.id, parseAssignee(objectBody(req)));
+  });
+  app.post<Id>('/api/v1/tasks/:id/complete', async (req) => {
+    const caller = await acting(req);
+    const outcome = objectBody(req)['outcome'];
+    if (outcome !== undefined && (typeof outcome !== 'string' || outcome.length > 100))
+      throw new ValidationError('outcome must be a string of at most 100 characters');
+    return await tasks().complete(caller, req.params.id, outcome);
+  });
+  app.post<Id>('/api/v1/tasks/:id/cancel', async (req) => {
+    return await tasks().cancel(await acting(req), req.params.id);
+  });
+
   // The caller's own inbox (notifications.yaml getInbox): any authenticated caller, never anyone
   // else's — there is no parameter that names a user.
   app.get('/api/v1/inbox', async (req) => {
@@ -230,6 +295,45 @@ export async function buildNotificationsApp(
   });
 
   return app;
+}
+
+const TASK_KINDS = new Set(['approve', 'edit', 'review', 'generic']);
+
+/** `POST /tasks`'s body, as notifications.yaml says it is. */
+function parseNewTask(body: Record<string, unknown>): NewTask {
+  const known = new Set(['assignee', 'assigneeKind', 'kind', 'subjectRef', 'dueAt', 'title']);
+  for (const key of Object.keys(body))
+    if (!known.has(key)) throw new ValidationError(`unknown field ${key}`);
+  const { assignee, assigneeKind } = parseAssignee(body);
+  const kind = body['kind'];
+  if (kind !== undefined && (typeof kind !== 'string' || !TASK_KINDS.has(kind)))
+    throw new ValidationError('kind must be approve, edit, review or generic');
+  const ref = body['subjectRef'] as { entityType?: unknown; entityId?: unknown } | undefined;
+  if (
+    ref !== undefined &&
+    (typeof ref !== 'object' ||
+      ref === null ||
+      typeof ref.entityType !== 'string' ||
+      typeof ref.entityId !== 'string' ||
+      Object.keys(ref).length !== 2)
+  )
+    throw new ValidationError('subjectRef must be { entityType, entityId }');
+  const dueAt = body['dueAt'];
+  if (dueAt !== undefined && (typeof dueAt !== 'string' || Number.isNaN(Date.parse(dueAt))))
+    throw new ValidationError('dueAt must be a date-time');
+  const title = body['title'];
+  if (title !== undefined && (typeof title !== 'string' || title.length > 200))
+    throw new ValidationError('title must be a string of at most 200 characters');
+  return {
+    assignee,
+    assigneeKind,
+    ...(kind !== undefined ? { kind: kind as NewTask['kind'] & string } : {}),
+    ...(ref !== undefined
+      ? { subjectRef: { entityType: ref.entityType as string, entityId: ref.entityId as string } }
+      : {}),
+    ...(dueAt !== undefined ? { dueAt: new Date(dueAt as string).toISOString() } : {}),
+    ...(title !== undefined ? { title: title as string } : {}),
+  };
 }
 
 declare module 'fastify' {

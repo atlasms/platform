@@ -1860,7 +1860,7 @@ test('smoke: EP-22.4 — a command step transcodes through MTS and MTS’s answe
   assert.match(refused.error, /COMMAND_REFUSED: unknown preset\(s\): no-such-preset/);
 });
 
-test('smoke: EP-25.3 — a task offered to a ROLE reaches whoever holds it, resolved when the inbox is read', async () => {
+test('smoke: EP-25.2/25.3 — a task offered to a ROLE reaches whoever holds it, is claimed, completed and audited', async () => {
   // Read-time resolution on a live cluster (decided 2026-10-16): the smoke user is given the role
   // `viewer` through a group made here; a workflow offers its human step to the role; the user's
   // inbox — Notifications asking IAM over the signed principals route (ADR-0008, iam-read-keys) —
@@ -1937,6 +1937,29 @@ test('smoke: EP-25.3 — a task offered to a ROLE reaches whoever holds it, reso
   }
   assert.equal(inbox.partial, false, 'IAM answered: the roles were resolved');
   assert.deepEqual([task.assignee, task.assigneeKind], ['viewer', 'role']);
+
+  // EP-25.2: claimed by a holder — it becomes theirs by name — then completed, every step audited
+  // and readable back as the task's history.
+  const claimed = await get(`/api/v1/tasks/${task.id}/claim`, { method: 'POST', headers });
+  assert.equal(claimed.status, 200, claimed.text);
+  assert.deepEqual([json(claimed).assignee, json(claimed).assigneeKind], [me, 'user']);
+  const done = await get(`/api/v1/tasks/${task.id}/complete`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ outcome: 'reviewed' }),
+  });
+  assert.equal(done.status, 200, done.text);
+  assert.deepEqual([json(done).state, json(done).outcome], ['done', 'reviewed']);
+  const historyBy = Date.now() + 30_000;
+  let actions = [];
+  for (;;) {
+    const res = await get(`/api/v1/history/task/${task.id}`, { headers });
+    assert.equal(res.status, 200, res.text);
+    actions = json(res).revisions.map((r) => r.action);
+    if (actions.length >= 3 || Date.now() > historyBy) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.deepEqual(actions, ['task.created', 'task.claimed', 'task.completed']);
 
   const signalled = await get(`/api/v1/instances/${instanceId}/signal`, {
     method: 'POST',

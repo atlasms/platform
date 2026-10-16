@@ -125,7 +125,11 @@ projection Logging builds from the audit stream ([FR-AUD](../../requirements/05-
   access is NOT its change log's audience, the log names its own: a workflow's history, its
   instances', and every `workflow.*` entry are read under **`workflow:audit`** (EP-22.11, decided
   2026-10-13) — active workflows are visible to every user, who changed them is not
-  (`visibility.ts`, `entityRule`).
+  (`visibility.ts`, `entityRule`). A **task's** history (EP-25.2, decided 2026-10-16) is read under
+  `task:audit` — or by its own **participants**, with no permission at all: every user its audit
+  deltas name in `participants` (assigned by name, its maker, whoever claimed or acted on it). The
+  answer is read from the task's own records (`taskParticipants`), so no service is asked; a
+  stranger's refusal is the same 403 whether or not the task exists.
 - **Coverage.** Works uniformly for entities that already version in their owning service (assets,
   workflow definitions, schedules — the diff aligns to their version chain) and for those that don't
   (a tag rename, a permission change — reconstructed from the audit deltas).

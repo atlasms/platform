@@ -30,7 +30,8 @@ export const STARTER_ROLES: Role[] = [
         ...r('editor-write', ['asset:write']),
         fieldGroups: ['core', 'taxonomy', 'cast', 'shotlist'],
       },
-      r('editor-flow', ['workflow:act']),
+      // EP-25.2 (decided 2026-10-16): an editor hands work to a person, a group or a role.
+      r('editor-flow', ['workflow:act', 'task:assign']),
     ],
   },
   {

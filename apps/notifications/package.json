@@ -18,6 +18,7 @@
     "@atlas/data-pg": "*",
     "@atlas/messaging": "*",
     "@atlas/messaging-nats": "*",
+    "@atlas/policy": "*",
     "@atlas/service-kit": "*",
     "fastify": "^5.12.3"
   },
