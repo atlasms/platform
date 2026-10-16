@@ -15,6 +15,14 @@
 export interface WorkflowCommand {
   /** The service that carries it out — `workflow.step.requested.target`. */
   target: string;
+  /**
+   * The authority the command exercises — what the target would demand of a person asking it
+   * directly (decided 2026-10-16: a command step carries its PUBLISHER's authority). BMS issues the
+   * command as itself, and the target trusts its issuer; so whoever publishes or activates a
+   * workflow that issues it must hold this, channel-wide — and then anyone allowed to start the
+   * workflow runs it, because an administrator vouched for it (SQL's "security definer").
+   */
+  requires: { permission: string; resource: { type: string; fieldGroup?: string } };
   /** The events that complete the step; `await.event` must name one of these. */
   completes: readonly string[];
   /** The events that fail the step. */
@@ -24,6 +32,8 @@ export interface WorkflowCommand {
 export const WORKFLOW_COMMANDS: Readonly<Record<string, WorkflowCommand>> = {
   'transcode.job.create': {
     target: 'mts',
+    // MTS's own rule for a transcode over HTTP: renditions are the `files` group (mts.md §10).
+    requires: { permission: 'asset:write', resource: { type: 'asset', fieldGroup: 'files' } },
     completes: ['transcode.completed'],
     fails: ['transcode.failed'],
   },

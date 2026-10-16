@@ -19,6 +19,7 @@ import {
   sqliteWorkflowStore,
   startCompletionRouter,
 } from '../src/index.ts';
+import { compile, type Rule } from '@atlas/policy';
 import { policyOf } from './helpers.ts';
 
 const CH = 'ch12';
@@ -31,7 +32,8 @@ async function harness() {
   const router = new CompletionRouter({ store, runner });
   const app = await buildBmsApp({
     service,
-    policyFor: () => policyOf(['workflow:admin', 'workflow:act']),
+    // The publisher vouches for the transcode step's authority (decided 2026-10-16).
+    policyFor: () => policyOf(['workflow:admin', 'workflow:act', 'asset:write']),
   });
   const headers = {
     [INTERNAL_HEADERS.user]: 'user-1',
@@ -298,4 +300,62 @@ test('over the broker: one subscription per answer type, every channel', async (
   await h.broker.publish(done);
   assert.equal((await h.runner.settled(id)).state, 'completed');
   assert.ok(outcomes.includes('delivered'));
+});
+
+test("a command step carries its PUBLISHER's authority: publishing or activating it needs the command's permission", async () => {
+  const store = sqliteWorkflowStore();
+  const service = new BmsService({ store });
+  const as = (rules: Rule[]) => ({
+    userId: 'admin-1',
+    channelId: CH,
+    policy: compile({ subjectId: 'admin-1', permVersion: 1, rules, roles: [], groups: [] }),
+  });
+  const admin = { id: 'a', permissions: ['workflow:admin'] };
+  const definition = {
+    name: 'Transcode',
+    vars: [{ name: 'assetId', type: 'string' as const }],
+    steps: [
+      { id: 's_start', kind: 'start' as const },
+      {
+        id: 's_tx',
+        kind: 'command' as const,
+        config: {
+          action: 'transcode',
+          request: {
+            event: 'transcode.job.create',
+            input: {
+              assetId: '= vars.assetId',
+              presetIds: '= ["proxy"]',
+              'inputFile.kind': '= "original"',
+            },
+          },
+        },
+      },
+      { id: 's_end', kind: 'end' as const },
+    ],
+    transitions: [
+      { id: 't1', from: 's_start', to: 's_tx' },
+      { id: 't2', from: 's_tx', to: 's_end' },
+    ],
+  };
+
+  // workflow:admin alone: MTS would rewrite renditions with authority this person does not have.
+  const w = await service.create(as([admin]), definition);
+  await assert.rejects(service.publish(as([admin]), w.id, 1), (err: Error) => {
+    assert.equal((err as { status?: number }).status, 403);
+    assert.match(err.message, /s_tx.*asset:write on files/);
+    return true;
+  });
+  // A grant narrowed to a category does not vouch: an instance may run on any asset.
+  const narrowed = { id: 'n', permissions: ['asset:write'], scope: { categoryPaths: ['/news/'] } };
+  await assert.rejects(service.publish(as([admin, narrowed]), w.id, 1), /asset:write/);
+
+  const vouching = as([admin, { id: 'w', permissions: ['asset:write'] }]);
+  const published = await service.publish(vouching, w.id, 1);
+  assert.equal(published.state, 'active');
+
+  // Activating makes it runnable again: the activator vouches too.
+  const off = await service.deactivate(vouching, w.id, published.revision);
+  await assert.rejects(service.activate(as([admin]), w.id, off.revision), /asset:write/);
+  assert.equal((await service.activate(vouching, w.id, off.revision)).state, 'active');
 });

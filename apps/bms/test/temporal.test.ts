@@ -53,7 +53,7 @@ if (!ADDRESS) {
       policy: compile({
         subjectId: 'user-1',
         permVersion: 1,
-        rules: [{ id: 'r', permissions: ['workflow:admin', 'workflow:act'] }],
+        rules: [{ id: 'r', permissions: ['workflow:admin', 'workflow:act', 'asset:write'] }],
         roles: [],
         groups: [],
       }),
@@ -133,7 +133,7 @@ if (!ADDRESS) {
       policy: compile({
         subjectId: 'user-1',
         permVersion: 1,
-        rules: [{ id: 'r', permissions: ['workflow:admin', 'workflow:act'] }],
+        rules: [{ id: 'r', permissions: ['workflow:admin', 'workflow:act', 'asset:write'] }],
         roles: [],
         groups: [],
       }),

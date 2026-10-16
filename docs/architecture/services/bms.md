@@ -415,6 +415,15 @@ an ended instance is `orphaned` (Temporal has nothing to signal), and a crash be
 a signal the instance already matched — harmless. The step's history and the instance's error carry
 the target's words (`workflow failed at "s_tx": COMMAND_REFUSED: unknown preset(s): …`).
 
+**A command step carries its PUBLISHER's authority** (decided 2026-10-16; authorization-model
+§8.1). BMS issues the command as itself and MTS's broker path trusts its issuer, so without a check a
+person allowed only to start a workflow could have MTS rewrite any asset's renditions. Each command
+declares the authority it exercises (`requires` — transcode: `asset:write` on `files`), and
+**publishing or activating** a workflow is refused (403, naming the step) unless the caller holds all
+of them channel-wide, strictly — a category-narrowed grant does not vouch, since an instance may run
+on any asset of the channel. Starting it then needs only `workflow:act`. A grant revoked later does
+not reach into an already published version; deactivating the workflow does.
+
 **MTS answers a refusal** (mts.md §5): a well-formed command it cannot honour is answered
 `transcode.failed` (`COMMAND_REFUSED`) at once under the command's correlation id, rather than retried
 into the dead-letter queue while the issuing step waited out its timeout. And it takes `inputFile`

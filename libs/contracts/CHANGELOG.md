@@ -29,7 +29,9 @@ release is a statement of what changed, not a deploy step.
 - `workflow.task.created.assigneeKind` — what `assignee` names (user, group or role). Absent means a
   user, which is what BMS sent before it said.
 - `WORKFLOW_COMMANDS` and `commandAnswers()` in `@atlas/contracts/workflow` (EP-22.4): the closed list
-  of commands a workflow's command step may issue, each with the events that complete and fail it.
+  of commands a workflow's command step may issue, each with the events that complete and fail it,
+  and `requires` — the authority it exercises, which whoever publishes or activates the workflow must
+  hold (a command step carries its publisher's authority, decided 2026-10-16).
 - `payloadShape(type)`: an event payload's top-level fields and its required ones.
 - `transcode.job.create` takes `inputFile` (`{ kind, variant? }`, the asset's file in HSM) as the
   alternative to `inputPath`, and its description says how it is answered.

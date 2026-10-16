@@ -14,6 +14,8 @@ import { createHash } from 'node:crypto';
 import { delta, isUlid, ulid, type EventPayloads } from '@atlas/contracts';
 import {
   validateDefinition,
+  WORKFLOW_COMMANDS,
+  type CommandConfig,
   type SubFlowConfig,
   type ValidationIssue,
   type ValidationResult,
@@ -302,6 +304,7 @@ export class BmsService {
         issues: result.issues,
       });
     }
+    this.vouch(caller, draft.definition);
 
     const at = this.now().toISOString();
     const definition: WorkflowDefinition = {
@@ -366,8 +369,15 @@ export class BmsService {
 
   // --- the lifecycle (EP-22.11) ------------------------------------------------------------------------
 
-  /** inactive → active: back in the catalog, able to start instances. */
+  /**
+   * inactive → active: back in the catalog, able to start instances. Activating makes a definition
+   * runnable again, so the activator vouches for its commands as a publisher does.
+   */
   async activate(caller: Caller, id: string, revision: number): Promise<WorkflowView> {
+    const current = await this.header(caller, id);
+    const latest =
+      current.latestVersion > 0 ? await this.store.version(id, current.latestVersion) : undefined;
+    if (latest) this.vouch(caller, latest.definition);
     return this.transition(caller, id, revision, 'activated', (w) => {
       if (w.state !== 'inactive')
         throw new Conflict(
@@ -599,6 +609,33 @@ export class BmsService {
   }
 
   /** Starting or moving an instance: `workflow:act` (the Editor's). */
+  /**
+   * A command step carries its PUBLISHER's authority (decided 2026-10-16). BMS issues a command as
+   * itself and the target trusts its issuer — MTS's broker path checks nobody — so without this, a
+   * person allowed only to START a workflow could make MTS rewrite any asset's renditions, which
+   * over HTTP takes `asset:write` on `files`. Whoever makes a definition runnable (publish,
+   * activate) must hold every command's `requires`, channel-wide and strictly: an instance may run
+   * on any asset of the channel, so a grant narrowed to a category does not vouch for it.
+   */
+  private vouch(caller: Caller, definition: WorkflowDefinition): void {
+    for (const step of definition.steps) {
+      if (step.kind !== 'command') continue;
+      const event = (step.config as CommandConfig).request.event;
+      const requires = WORKFLOW_COMMANDS[event]?.requires;
+      if (!requires) continue; // an unknown command is the validator's to refuse
+      const decision = canEnforce(caller.policy, requires.permission, {
+        ...requires.resource,
+        channelId: caller.channelId,
+      });
+      if (!decision.allowed)
+        throw new Forbidden(
+          `step "${step.id}" issues ${event}, which needs ${requires.permission}` +
+            `${requires.resource.fieldGroup !== undefined ? ` on ${requires.resource.fieldGroup}` : ''}` +
+            ` across the channel: whoever publishes or activates the workflow vouches for it`,
+        );
+    }
+  }
+
   private authorizeAct(caller: Caller): void {
     const decision = canEnforce(caller.policy, 'workflow:act', { channelId: caller.channelId });
     if (!decision.allowed) throw new Forbidden(decision.reason ?? 'workflow:act required');

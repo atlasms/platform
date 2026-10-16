@@ -171,6 +171,18 @@ the same scope matching. Deny is powerful and hard to reason about at scale — 
 | **Owning service** | **The authority** — calls `can()` with the real resource context before mutating; also filters query results to permitted scope. |
 | **Studio** | Calls the same `can()` to show/hide/disable/read-only. **Never** the security boundary. |
 
+### 8.1 A workflow's commands carry their publisher's authority (decided 2026-10-16)
+
+A BMS command step publishes the target service's own command (`transcode.job.create`) as BMS, and
+the target's broker path trusts its issuer — it has no person to check. Left there, anyone allowed to
+START a workflow (`workflow:act`) could have MTS rewrite any asset's renditions, which over HTTP takes
+`asset:write` on `files`. So a command step carries the authority of whoever made the workflow
+runnable — like SQL's *security definer*: **publishing or activating a workflow requires holding
+every one of its commands' `requires`** (declared per command in `WORKFLOW_COMMANDS`), checked with
+`canEnforce` channel-wide — a grant narrowed to a category does not vouch, since an instance may run
+on any asset of the channel. Starting it then needs only `workflow:act`. A revoked grant does not
+reach back into a published version; deactivating the workflow does (bms.md §13d).
+
 ## 9. Starter roles
 
 Ship these as defaults; operators clone and adjust ([FR-IAM-1](../requirements/05-functional-requirements.md#iam)).

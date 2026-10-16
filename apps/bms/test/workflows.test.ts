@@ -7,7 +7,8 @@ import { BmsService, buildBmsApp, INTERNAL_HEADERS, sqliteWorkflowStore } from '
 import { presetInput } from '../src/store-conformance.ts';
 import { policyOf } from './helpers.ts';
 
-async function harness(permissions = ['workflow:admin']) {
+// asset:write: the canonical preset transcodes, and its publisher vouches for that (decided 2026-10-16).
+async function harness(permissions = ['workflow:admin', 'asset:write']) {
   const app = await buildBmsApp({
     service: new BmsService({ store: sqliteWorkflowStore() }),
     policyFor: (userId) => (userId === 'nobody' ? undefined : policyOf(permissions)),
