@@ -15,6 +15,7 @@ import {
   WorkflowExecutionAlreadyStartedError,
   WorkflowNotFoundError,
 } from '@temporalio/client';
+import { NamespaceNotFoundError } from '@temporalio/common';
 import { msToTs } from '@temporalio/common/lib/time.js';
 import { NativeConnection, Worker } from '@temporalio/worker';
 import { InstanceNotRunning, type InstanceRunner } from '../runner.ts';
@@ -26,6 +27,9 @@ export const TASK_QUEUE = 'bms';
 /** The bundle `bundle.mjs` writes when the image is built. */
 export const BUNDLE_PATH = fileURLToPath(new URL('../../dist/workflow-bundle.js', import.meta.url));
 const WORKFLOWS_PATH = fileURLToPath(new URL('./workflows.ts', import.meta.url));
+
+/** How long a just-registered namespace may take to reach the frontend's cache. */
+const NAMESPACE_SETTLE_MS = 10_000;
 
 /** How long a closed instance's history is kept by Temporal (the mirror keeps its summary). */
 const RETENTION = '72h';
@@ -72,15 +76,25 @@ export async function connectTemporal(options: TemporalOptions): Promise<Tempora
 
   const runner: InstanceRunner = {
     async start({ definition, start }) {
-      try {
-        await client.workflow.start('atlasWorkflow', {
-          taskQueue: TASK_QUEUE,
-          workflowId: start.instanceId,
-          args: [definition, start],
-        });
-      } catch (err) {
-        // The same instance started twice (a retried request) is the same instance.
-        if (!(err instanceof WorkflowExecutionAlreadyStartedError)) throw err;
+      // A namespace registered moments ago is not yet in the frontend's namespace cache, which
+      // answers "not found" for a few seconds — seen in CI on a fresh namespace, and the same on a
+      // fresh install's first start. Waited out within a bound; a namespace that is really missing
+      // still fails, after it.
+      const deadline = Date.now() + NAMESPACE_SETTLE_MS;
+      for (;;) {
+        try {
+          await client.workflow.start('atlasWorkflow', {
+            taskQueue: TASK_QUEUE,
+            workflowId: start.instanceId,
+            args: [definition, start],
+          });
+          return;
+        } catch (err) {
+          // The same instance started twice (a retried request) is the same instance.
+          if (err instanceof WorkflowExecutionAlreadyStartedError) return;
+          if (!(err instanceof NamespaceNotFoundError) || Date.now() > deadline) throw err;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
       }
     },
     async signal(instanceId, signal) {

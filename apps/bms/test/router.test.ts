@@ -285,7 +285,11 @@ test('what is not an answer to a command BMS issued is ignored — and an ended 
 });
 
 test('over the broker: one subscription per answer type, every channel', async () => {
-  assert.deepEqual(answerPatterns(), ['atlas.*.transcode.completed', 'atlas.*.transcode.failed']);
+  assert.deepEqual(answerPatterns(), [
+    'atlas.*.transcode.completed',
+    'atlas.*.transcode.failed',
+    'atlas.*.task.updated',
+  ]);
   const h = await harness();
   const outcomes: string[] = [];
   startCompletionRouter({
@@ -358,4 +362,97 @@ test("a command step carries its PUBLISHER's authority: publishing or activating
   const off = await service.deactivate(vouching, w.id, published.revision);
   await assert.rejects(service.activate(as([admin]), w.id, off.revision), /asset:write/);
   assert.equal((await service.activate(vouching, w.id, off.revision)).state, 'active');
+});
+
+// --- EP-25.8 / 22.5: a human step waits on ITS task, completed in Notifications ----------------------
+
+test('a human step waits on its task; the task completed in Notifications completes it — outcome mapped', async () => {
+  const h = await harness();
+  const created = await h.app.inject({
+    method: 'POST',
+    url: '/api/v1/workflows',
+    headers: h.headers,
+    payload: {
+      name: 'Review',
+      vars: [{ name: 'verdict', type: 'string' }],
+      steps: [
+        { id: 's_start', kind: 'start' },
+        {
+          id: 's_review',
+          kind: 'human-task',
+          config: {
+            taskType: 'approve',
+            assignee: { role: 'editor' },
+            output: { 'vars.verdict': '= incoming.outcome' },
+          },
+        },
+        { id: 's_end', kind: 'end' },
+      ],
+      transitions: [
+        { id: 't1', from: 's_start', to: 's_review' },
+        { id: 't2', from: 's_review', to: 's_end' },
+      ],
+    },
+  });
+  const { id: workflowId } = created.json<{ id: string }>();
+  const published = await h.app.inject({
+    method: 'POST',
+    url: `/api/v1/workflows/${workflowId}/publish?revision=1`,
+    headers: h.headers,
+  });
+  assert.equal(published.statusCode, 200, published.body);
+  const started = await h.app.inject({
+    method: 'POST',
+    url: '/api/v1/instances',
+    headers: h.headers,
+    payload: { workflowId },
+  });
+  const id = started.json<{ id: string }>().id;
+
+  // The task BMS asked for, as Notifications will see it.
+  const deadline = Date.now() + 2000;
+  let task: Envelope | undefined;
+  for (;;) {
+    await h.commands(); // drains the outbox onto the bus
+    task = h.broker.published
+      .map((m) => m.body as Envelope)
+      .find((e) => e.type === 'workflow.task.created');
+    if (task) break;
+    if (Date.now() > deadline) throw new Error('no task');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  const p = task.payload as { taskId: string; assignee: string; assigneeKind: string };
+  assert.deepEqual([p.assigneeKind, p.assignee], ['role', 'editor']);
+
+  const update = (state: string, extra: Record<string, unknown> = {}, channelId = CH): Message => {
+    const e = buildEnvelope({
+      type: 'task.updated',
+      channelId,
+      payload: { id: p.taskId, state, by: 'ana', at: new Date().toISOString(), ...extra },
+      actor: { kind: 'user', id: 'ana' },
+    });
+    return { id: e.messageId, subject: subjectFor(channelId, 'task.updated'), body: e };
+  };
+  // A claim is not a completion; another channel's update is not ours.
+  assert.equal(await h.router.routeTask(update('forwarded', { forwardedTo: 'ana' })), 'ignored');
+  assert.equal(await h.router.routeTask(update('done', {}, 'ch99')), 'ignored');
+  assert.equal((await h.store.instance(id))?.state, 'waiting');
+
+  const done = update('done', { outcome: 'approved' });
+  assert.equal(await h.router.routeTask(done), 'delivered');
+  const result = await h.runner.settled(id);
+  assert.equal(result.state, 'completed');
+  assert.equal(result.vars['verdict'], 'approved', 'the outcome reached the output mapping');
+  assert.equal(await h.router.routeTask(done), 'duplicate');
+  // A task assigned by hand — no await in BMS — is nobody's here.
+  const stranger = buildEnvelope({
+    type: 'task.updated',
+    channelId: CH,
+    payload: { id: ulid(), state: 'done', at: new Date().toISOString() },
+    actor: { kind: 'user', id: 'ana' },
+  });
+  assert.equal(
+    await h.router.routeTask({ id: stranger.messageId, subject: 's', body: stranger }),
+    'ignored',
+  );
 });

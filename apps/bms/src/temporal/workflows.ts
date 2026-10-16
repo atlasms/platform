@@ -81,7 +81,9 @@ export async function atlasWorkflow(
     waitForTask: take,
     waitForEvent: take,
     createTask: async (spec) => {
-      await act.createTask({ key: key(), spec });
+      const taskId = await unwrapped(act.createTask({ key: key(), spec }));
+      // Only this task's completion completes the step (EP-25.8) — a person's signal still does.
+      inbox.expect(spec.stepId, taskId);
     },
     // A notification to the escalation target is Notifications' (EP-25); the instance records the
     // escalation in its history (the interpreter's `escalated`), which the overlay shows.
