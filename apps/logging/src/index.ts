@@ -28,6 +28,7 @@ export {
   requiredRule,
   visible,
   type ReadRule,
+  taskParticipants,
 } from './visibility.ts';
 export { sqliteAuditStore, sqliteMigrations } from './store-sqlite.ts';
 export { pgAuditStore, pgMigrations } from './store-pg.ts';

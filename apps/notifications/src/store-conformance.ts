@@ -6,7 +6,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildEnvelope, subjectFor, ulid, type Envelope } from '@atlas/contracts';
 import { InMemoryBroker, OutboxRelay, type Message, type OutboxStore } from '@atlas/messaging';
+import { compile } from '@atlas/policy';
+import { fakePrincipals } from './principals.ts';
 import { NotificationsService } from './service.ts';
+import { TaskActions } from './task-actions.ts';
 import type { InboxStore } from './store.ts';
 
 export interface InboxStoreHarness {
@@ -200,6 +203,37 @@ export function inboxStoreConformance(name: string, harness: InboxStoreHarness):
       const raised = (await drain()).filter((e) => e.type === 'notification.raised');
       assert.equal(raised.length, 1);
       assert.equal((raised[0]?.payload as { userId: string }).userId, 'user-3');
+    });
+  });
+
+  test(`[${name}] RACE: two holders claim one role task at once — the version lets exactly one win`, async () => {
+    await withFixture(async ({ service, store }) => {
+      const taskId = ulid();
+      await service.consumeTaskCreated(
+        event('workflow.task.created', { taskId, assignee: 'editor', assigneeKind: 'role' }),
+      );
+      const actions = new TaskActions({
+        store,
+        principals: fakePrincipals({
+          ana: [{ kind: 'role', id: 'editor' }],
+          ben: [{ kind: 'role', id: 'editor' }],
+        }),
+      });
+      const as = (userId: string) => ({
+        userId,
+        channelId: CH,
+        policy: compile({ subjectId: userId, permVersion: 1, rules: [], roles: [], groups: [] }),
+      });
+      const outcomes = await Promise.allSettled([
+        actions.claim(as('ana'), taskId),
+        actions.claim(as('ben'), taskId),
+      ]);
+      assert.deepEqual(outcomes.map((o) => o.status).sort(), ['fulfilled', 'rejected']);
+      const rejected = outcomes.find((o) => o.status === 'rejected') as PromiseRejectedResult;
+      assert.equal((rejected.reason as { status?: number }).status, 409);
+      const task = await store.task(taskId);
+      assert.equal(task?.version, 2, 'one write, not two');
+      assert.ok(['ana', 'ben'].includes(task?.assignee ?? ''));
     });
   });
 

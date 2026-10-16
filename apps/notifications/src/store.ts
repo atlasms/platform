@@ -26,6 +26,11 @@ export interface InboxStore {
 export interface InboxTx {
   /** Insert a task; `false` if the id exists — the same task, delivered again. */
   insertTask(task: Task): Promise<boolean>;
+  /**
+   * Replace a task only over the version the action read (EP-25.2): `false` means someone acted in
+   * between — the second of two claims — and nothing was written.
+   */
+  updateTask(task: Task, ifVersion: number): Promise<boolean>;
   insertNotification(notification: Notification): Promise<void>;
   enqueue(record: OutboxRecord): Promise<void>;
   /** The consumer's dedup mark, in the transaction of its writes (EP-03.3). */

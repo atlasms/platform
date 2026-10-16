@@ -19,7 +19,7 @@ import {
 } from './retention.ts';
 import { appendEnvelope } from './sink.ts';
 import type { AuditStore, LogBrowser, LogFilter, RetentionPolicy } from './store.ts';
-import { entityRule, visible } from './visibility.ts';
+import { entityRule, taskParticipants, visible } from './visibility.ts';
 import {
   accessRecord,
   Forbidden,
@@ -247,6 +247,14 @@ export async function buildLoggingApp(options: LoggingAppOptions): Promise<Fasti
       if (!policy) throw new Unauthorized('no policy for subject');
 
       const { entityType, id } = req.params;
+      // A task's own participants read its history without logs:read or task:audit (EP-25.2,
+      // decided 2026-10-16). Read first, decided after — and a stranger gets the same 403 whether
+      // or not the task exists, so the refusal says nothing about it.
+      if (entityType === 'task') {
+        const entries = await options.store.history(caller.channelId, entityType, id);
+        if (taskParticipants(entries).has(caller.userId))
+          return { entityType, entityId: id, revisions: entries };
+      }
       const rule = entityRule(entityType);
       for (const [permission, context] of [
         ['logs:read', { channelId: caller.channelId }],

@@ -46,29 +46,109 @@ paths:
       responses:
         '201': { description: Sent, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
   /tasks:
-    get:
-      operationId: listTasks
-      tags: [tasks]
-      summary: List tasks assigned to or created by the caller
-      responses:
-        '200': { description: Tasks, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Task' } } } } }
     post:
       operationId: createTask
       tags: [tasks]
-      summary: Create/assign a task (FR-APP-1)
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+      summary: Assign a task by hand — to a user, a group or a role of the channel (FR-APP-1; task:assign)
+      description: >-
+        A person hands work to someone (EP-25.2): `task:assign` in the channel (Editor and above).
+        A workflow's tasks are made by BMS, not here. The creator and a named user assignee are its
+        first participants — the people who may read its history without `task:audit`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assignee, assigneeKind]
+              additionalProperties: false
+              properties:
+                assignee: { type: string, minLength: 1 }
+                assigneeKind: { type: string, enum: [user, group, role] }
+                kind: { type: string, enum: [approve, edit, review, generic], default: generic }
+                subjectRef: { $ref: '#/components/schemas/EntityRef' }
+                dueAt: { type: string, format: date-time }
+                title: { type: string, maxLength: 200 }
       responses:
-        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/InboxTask' } } } }
+        '403': { description: 'No task:assign in the channel' }
   /tasks/{id}:
-    patch:
-      operationId: updateTask
+    get:
+      operationId: getTask
       tags: [tasks]
-      summary: Update a task (forward or complete)
+      summary: One task — to a participant, a holder of what it is offered to, or task:admin
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
-      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
       responses:
-        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '200': { description: Task, content: { application/json: { schema: { $ref: '#/components/schemas/InboxTask' } } } }
+        '404': { description: 'No such task the caller may see' }
+  /tasks/{id}/claim:
+    post:
+      operationId: claimTask
+      tags: [tasks]
+      summary: Take a task offered to a group or role you are in — first claim wins (decided 2026-10-16)
+      description: >-
+        The task becomes the caller's by name. A second claim is a 409; claiming one already yours
+        is the same task back. A task offered to a group or a role must be claimed before it is
+        forwarded or completed.
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Claimed, content: { application/json: { schema: { $ref: '#/components/schemas/InboxTask' } } } }
+        '403': { description: 'Not in the group or role it is offered to' }
+        '409': { description: 'Claimed by someone else, or closed' }
+  /tasks/{id}/forward:
+    post:
+      operationId: forwardTask
+      tags: [tasks]
+      summary: Hand a task you hold to another user, group or role (or any task, with task:admin)
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assignee, assigneeKind]
+              additionalProperties: false
+              properties:
+                assignee: { type: string, minLength: 1 }
+                assigneeKind: { type: string, enum: [user, group, role] }
+      responses:
+        '200': { description: Forwarded, content: { application/json: { schema: { $ref: '#/components/schemas/InboxTask' } } } }
+        '403': { description: 'Not yours, and no task:admin' }
+        '409': { description: 'Closed, or offered to a group or role and not yet claimed' }
+  /tasks/{id}/complete:
+    post:
+      operationId: completeTask
+      tags: [tasks]
+      summary: Complete a task you hold, with its outcome
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                outcome: { type: string, maxLength: 100, description: 'For a decision task, e.g. approved/rejected.' }
+      responses:
+        '200': { description: Completed, content: { application/json: { schema: { $ref: '#/components/schemas/InboxTask' } } } }
+        '403': { description: 'Not yours' }
+        '409': { description: 'Closed, or not yet claimed' }
+  /tasks/{id}/cancel:
+    post:
+      operationId: cancelTask
+      tags: [tasks]
+      summary: Cancel a task (task:admin) — a workflow's task is ended by its workflow, never here
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200': { description: Cancelled, content: { application/json: { schema: { $ref: '#/components/schemas/InboxTask' } } } }
+        '403': { description: 'No task:admin' }
+        '409': { description: 'Closed, or a workflow task' }
   /notifications/{id}:
     patch:
       operationId: updateNotification
@@ -96,16 +176,6 @@ components:
         to: { type: array, items: { type: string }, description: 'user or group ids' }
         body: { type: string }
         threadId: { $ref: '#/components/schemas/Ulid' }
-    Task:
-      type: object
-      required: [assignee]
-      properties:
-        id: { $ref: '#/components/schemas/Ulid' }
-        assignee: { type: string }
-        kind: { type: string, enum: [approve, edit, review] }
-        subjectRef: { type: string }
-        state: { type: string, enum: [open, forwarded, done, cancelled] }
-        dueAt: { type: string, format: date-time }
     Inbox:
       type: object
       required: [tasks, notifications, unreadCount, partial]
@@ -117,7 +187,7 @@ components:
         unreadCount: { type: integer, minimum: 0, description: 'Unread notifications, all of them.' }
     InboxTask:
       type: object
-      required: [id, channelId, assignee, assigneeKind, kind, state, createdAt]
+      required: [id, channelId, assignee, assigneeKind, kind, state, createdAt, version, participants]
       additionalProperties: false
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
@@ -129,8 +199,14 @@ components:
         subjectRef: { $ref: '#/components/schemas/EntityRef' }
         workflowInstanceId: { $ref: '#/components/schemas/Ulid' }
         dueAt: { type: string, format: date-time }
+        title: { type: string }
         createdBy: { type: string }
         createdAt: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+        participants: { type: array, items: { type: string }, description: 'Every user it was ever assigned to by name, who claimed it, made it or acted on it — who may read its history.' }
+        outcome: { type: string }
+        closedBy: { type: string }
+        closedAt: { type: string, format: date-time }
     Notification:
       type: object
       required: [id, channelId, userId, type, severity, read, createdAt]

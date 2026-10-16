@@ -205,6 +205,10 @@ if (seedUser && seedPassword) {
           'workflow:audit',
           // EP-22.3: start and signal an instance on the cluster's Temporal.
           'workflow:act',
+          // EP-25.2: hand out, cancel and audit tasks, so the smoke suite can drive them.
+          'task:assign',
+          'task:admin',
+          'task:audit',
         ],
         scope: { channelIds: [channelId] },
       },

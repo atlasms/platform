@@ -25,3 +25,10 @@ export {
   type PrincipalSource,
 } from './principals.ts';
 export type { Inbox, Notification, Task, TaskState } from './inbox.ts';
+export {
+  TaskActions,
+  parseAssignee,
+  type ActingCaller,
+  type NewTask,
+  type TaskActionsOptions,
+} from './task-actions.ts';

@@ -10,7 +10,7 @@ import {
   withTransaction,
   type PgPool,
 } from '@atlas/data-pg';
-import type { Notification, Task } from './inbox.ts';
+import { normalizeTask, type Notification, type Task } from './inbox.ts';
 import type { InboxStore, InboxTx } from './store.ts';
 
 export const pgMigrations: Migration[] = [
@@ -40,6 +40,11 @@ export const pgMigrations: Migration[] = [
          CREATE INDEX IF NOT EXISTS notifications_user_idx
            ON notifications (channel_id, user_id, id);`,
   },
+  // EP-25.2: a task is acted on — claimed, forwarded, completed — each a compare-and-set.
+  {
+    id: 'notifications_task_version',
+    up: `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;`,
+  },
 ];
 
 export function pgInboxStore(pool: PgPool): InboxStore {
@@ -52,8 +57,8 @@ export function pgInboxStore(pool: PgPool): InboxStore {
         const tx: InboxTx = {
           async insertTask(t) {
             const result = await client.query(
-              `INSERT INTO tasks (id, channel_id, assignee_kind, assignee, state, due_at, data)
-               VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING`,
+              `INSERT INTO tasks (id, channel_id, assignee_kind, assignee, state, due_at, version, data)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (id) DO NOTHING`,
               [
                 t.id,
                 t.channelId,
@@ -61,7 +66,26 @@ export function pgInboxStore(pool: PgPool): InboxStore {
                 t.assignee,
                 t.state,
                 t.dueAt ?? null,
+                t.version,
                 JSON.stringify(t),
+              ],
+            );
+            return result.rowCount === 1;
+          },
+          async updateTask(t, ifVersion) {
+            const result = await client.query(
+              `UPDATE tasks SET assignee_kind = $1, assignee = $2, state = $3, due_at = $4,
+                      version = $5, data = $6
+                WHERE id = $7 AND version = $8`,
+              [
+                t.assigneeKind,
+                t.assignee,
+                t.state,
+                t.dueAt ?? null,
+                t.version,
+                JSON.stringify(t),
+                t.id,
+                ifVersion,
               ],
             );
             return result.rowCount === 1;
@@ -86,7 +110,7 @@ export function pgInboxStore(pool: PgPool): InboxStore {
       const { rows } = await pool.query<{ data: Task }>('SELECT data FROM tasks WHERE id = $1', [
         id,
       ]);
-      return rows[0]?.data;
+      return rows[0] !== undefined ? normalizeTask(rows[0].data) : undefined;
     },
     async openTasks(channelId, principals, limit) {
       if (principals.length === 0) return [];
@@ -104,7 +128,7 @@ export function pgInboxStore(pool: PgPool): InboxStore {
           ORDER BY due_at ASC NULLS LAST, id LIMIT $${params.length}`,
         params,
       );
-      return rows.map((r) => r.data);
+      return rows.map((r) => normalizeTask(r.data));
     },
     async notifications(channelId, userId, limit) {
       const { rows } = await pool.query<{ data: Notification }>(

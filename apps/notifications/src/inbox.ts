@@ -22,9 +22,34 @@ export interface Task {
   /** Set when a workflow's human step made it (BMS). */
   workflowInstanceId?: string;
   dueAt?: string;
+  /** What a person wrote when assigning it by hand. */
+  title?: string;
   createdBy: string;
   createdAt: string;
+  /** Compare-and-set on every action: two claims, one wins (EP-25.2). */
+  version: number;
+  /**
+   * Every user it was ever assigned to BY NAME, who made it, claimed it or acted on it — who may
+   * read its history without `task:audit` (decided 2026-10-16). Grows; never shrinks.
+   */
+  participants: string[];
+  /** For a completed decision task: the verdict. */
+  outcome?: string;
+  closedBy?: string;
+  closedAt?: string;
 }
+
+/** A task as stored before EP-25.2 carried no version or participants: read it as its first revision. */
+export function normalizeTask(t: Task): Task {
+  return {
+    ...t,
+    version: t.version ?? 1,
+    participants: t.participants ?? (t.assigneeKind === 'user' ? [t.assignee] : []),
+  };
+}
+
+/** An action may move an open task; a done or cancelled one is closed for good. */
+export const isClosed = (t: Task): boolean => t.state === 'done' || t.state === 'cancelled';
 
 /** Something a person should know, addressed to them. */
 export interface Notification {

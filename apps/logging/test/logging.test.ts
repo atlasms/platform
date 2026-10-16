@@ -14,6 +14,7 @@ import {
   requiredRule,
   visible,
   sqliteAuditStore,
+  taskParticipants,
 } from '../src/index.ts';
 
 const CH = 'ch12';
@@ -637,4 +638,90 @@ test('SECURITY: retention is governance — compliance:admin for the read and th
   assert.equal(read.statusCode, 200, read.body);
   assert.equal(read.json<{ revisions: unknown[] }>().revisions.length, 1);
   await auditor.app.close();
+});
+
+// --- a task's history: task:audit, or its own participants (EP-25.2, decided 2026-10-16) ------------
+
+async function taskRevision(
+  store: ReturnType<typeof sqliteAuditStore>,
+  entityId: string,
+  revision: number,
+  delta: EventPayloads['audit.recorded']['delta'],
+) {
+  const envelope = buildEnvelope({
+    type: 'audit.recorded',
+    channelId: CH,
+    payload: {
+      entityType: 'task',
+      entityId,
+      revision,
+      action: revision === 1 ? 'task.created' : 'task.claimed',
+      origin: { service: 'notifications' },
+      delta,
+    } satisfies EventPayloads['audit.recorded'],
+    actor: { kind: 'user', id: 'u' },
+  });
+  await ingest(store, {
+    id: envelope.messageId,
+    subject: `atlas.${CH}.audit.recorded`,
+    body: envelope,
+  });
+}
+
+test('a task’s history: its participants read it with NO permission; a stranger is refused; task:audit reads any', async () => {
+  // A caller with no logs:read and no task:audit at all.
+  const { app, store } = await harness({ permissions: [] });
+  const id = ulid();
+  await taskRevision(store, id, 1, {
+    participants: { after: ['ana'] },
+    assignee: { after: 'ana' },
+  });
+  // Forwarded on: ana stays a participant though she no longer holds it.
+  await taskRevision(store, id, 2, {
+    participants: { before: ['ana'], after: ['ana', 'user-1'] },
+    assignee: { before: 'ana', after: 'user-1' },
+  });
+  const read = (user: string) =>
+    app.inject({
+      method: 'GET',
+      url: `/api/v1/history/task/${id}`,
+      headers: { [INTERNAL_HEADERS.user]: user, [INTERNAL_HEADERS.channel]: CH },
+    });
+  const mine = await read('user-1');
+  assert.equal(mine.statusCode, 200, mine.body);
+  assert.equal(mine.json<{ revisions: unknown[] }>().revisions.length, 2);
+
+  // A stranger: the same 403 whether the task exists or not — the refusal says nothing about it.
+  const stranger = await app.inject({
+    method: 'GET',
+    url: `/api/v1/history/task/${id}`,
+    headers: { [INTERNAL_HEADERS.user]: 'user-1', [INTERNAL_HEADERS.channel]: 'ch99' },
+  });
+  assert.equal(stranger.statusCode, 403, 'another channel: not a participant there');
+  const nothing = await app.inject({
+    method: 'GET',
+    url: `/api/v1/history/task/${ulid()}`,
+    headers: { [INTERNAL_HEADERS.user]: 'user-1', [INTERNAL_HEADERS.channel]: CH },
+  });
+  assert.equal(nothing.statusCode, 403);
+  await app.close();
+
+  const auditor = await harness({ permissions: ['logs:read', 'task:audit'] });
+  await taskRevision(auditor.store, id, 1, { participants: { after: ['ana'] } });
+  const res = await auditor.app.inject({
+    method: 'GET',
+    url: `/api/v1/history/task/${id}`,
+    headers: auditor.caller,
+  });
+  assert.equal(res.statusCode, 200, 'task:audit reads anyone’s');
+  await auditor.app.close();
+});
+
+test('taskParticipants: everyone the deltas ever named, before and after', () => {
+  const names = taskParticipants([
+    { delta: { participants: { after: ['a'] } } },
+    { delta: { assignee: { before: 'a', after: 'b' } } },
+    { delta: { participants: { before: ['a'], after: ['a', 'b'] } } },
+  ]);
+  assert.deepEqual([...names].sort(), ['a', 'b']);
 });
