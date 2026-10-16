@@ -76,6 +76,7 @@ export interface ProductionOrigins {
   mts: string;
   hsm: string;
   bms: string;
+  notifications: string;
   /** The upload prefix's body cap (a chunked upload's part; EP-15.1). */
   uploadBodyLimit: number;
 }
@@ -152,6 +153,15 @@ export function productionRoutes(o: ProductionOrigins): RoutingTable {
     // BMS (EP-22): workflow definitions, and their running instances (EP-22.3). A workflow's human
     // tasks are Notifications' `/tasks`, not here (bms.yaml).
     ...to('bms', ['/api/v1/workflows', '/api/v1/instances']),
+    // Notifications (EP-25): a person's inbox, the tasks offered to them (a workflow's human steps
+    // among them), messages, notifications and their delivery preferences.
+    ...to('notifications', [
+      '/api/v1/inbox',
+      '/api/v1/tasks',
+      '/api/v1/messages',
+      '/api/v1/notifications',
+      '/api/v1/preferences',
+    ]),
   ];
 }
 

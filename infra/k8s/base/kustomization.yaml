@@ -23,6 +23,7 @@ resources:
   - mam.yaml
   - websocket.yaml
   - api-gateway.yaml
+  - notifications.yaml
   - bms.yaml
   - hsm.yaml
   - mts.yaml

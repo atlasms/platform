@@ -19,10 +19,11 @@ npm run k8s:up                          # builds atlas/<%= name %>:dev and deplo
 kubectl -n atlas logs deployment/<%= name %> -f
 ```
 
-Reachable inside the cluster as `http://<%= name %>:3000`. To route it through the gateway: an origin in
-its config and a row in its table, **both in `apps/api-gateway/src/main.ts`** (not `routing.ts` — that
-is a test fixture), the env in `infra/k8s/base/api-gateway.yaml`, and once it is proxied a probe in the
-smoke suite's upstream gate (`infra/smoke/smoke.test.mjs`).
+Reachable inside the cluster as `http://<%= name %>:3000`. To route it through the gateway: its
+contract in `apps/api-gateway/test/routes.test.ts`'s `DEPLOYED`, its prefixes in `productionRoutes`
+(`apps/api-gateway/src/routing.ts`) with an origin in `ProductionOrigins` and the gateway's config
+(`main.ts`), the env in `infra/k8s/base/api-gateway.yaml`, and a probe in the smoke suite's upstream
+gate (`infra/smoke/smoke.test.mjs`). The routes test fails on a contract path that does not reach you.
 
 ## Configuration
 

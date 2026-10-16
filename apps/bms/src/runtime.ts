@@ -111,6 +111,8 @@ export class BmsRuntime {
             taskId,
             workflowInstanceId: instance.id,
             assignee: spec.assignee.userId ?? spec.assignee.role ?? '',
+            // A role is offered to everyone who holds it, resolved when an inbox is read (EP-25.1).
+            assigneeKind: spec.assignee.userId !== undefined ? 'user' : 'role',
             kind: spec.taskType as TaskKind,
             ...(instance.assetId !== undefined ? { assetId: instance.assetId } : {}),
             ...(spec.dueAt !== undefined ? { dueAt: new Date(spec.dueAt).toISOString() } : {}),

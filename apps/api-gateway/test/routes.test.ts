@@ -25,6 +25,7 @@ const DEPLOYED: Readonly<Record<string, string>> = {
   'mts.yaml': 'mts',
   'hsm.yaml': 'hsm',
   'bms.yaml': 'bms',
+  'notifications.yaml': 'notifications',
 };
 
 /** Paths a contract declares that are deliberately NOT routed, each with its reason. */
@@ -44,6 +45,7 @@ const table = productionRoutes({
   mts: 'http://mts:3000',
   hsm: 'http://hsm:3000',
   bms: 'http://bms:3000',
+  notifications: 'http://notifications:3000',
   uploadBodyLimit: 8 * 1024 * 1024,
 });
 

@@ -148,6 +148,35 @@ messages/notifications.
   2026-10-12 (EP-25.7): a private message names its `recipientUserId` and reaches only that user's
   connections ([websocket §5](websocket.md#5-messaging)).
 
+## 13a. As built — EP-25.1, the scaffold and the lifted slice
+
+`apps/notifications`, generated (`nx g service notifications --db --broker`), then given the
+reference slice (`reference/notifications-service`) on a real store: an `InboxStore` port with a
+sqlite and a Postgres adapter, one conformance suite driven through the service.
+
+- **`workflow.task.created` → a task.** One row per task, keyed by BMS's own task id (derived, so a
+  retried BMS activity names the same task): the seen-mark, the row, `task.created` and its
+  `audit.recorded` commit together, so a redelivery — or the same task in another message — writes
+  nothing twice. The chain continues (`correlationId`, `causationId` = the BMS message).
+- **`asset.expired` → re-review due** for the `priorApprover` (`asset.re-review-due`, warning), with
+  `notification.raised`; nothing when there was no approver. Preferences are EP-25.6.
+- **`GET /inbox`** — the caller's own (no parameter names a user): open tasks oldest-due first, the 50
+  newest notifications, the unread count.
+- A message that is not the event it claims is thrown to the broker (retried, then dead-lettered).
+
+**Who a task reaches (decided 2026-10-16): resolved at READ time.** A workflow's human step names a
+user or a ROLE (the DSL's `assignee`), so `PrincipalKind` gained `role` and `workflow.task.created`
+says which (`assigneeKind`; absent = user, what BMS sent before). A task offered to a group or a role
+stays ONE row; whose inbox it is in is answered when an inbox is read — the caller's roles and groups
+from IAM, cached and dropped on `permissions.changed` / `group.membership.changed` — so a new holder
+sees an open task and someone who left stops seeing it; whoever claims it first owns it (25.2). As
+built here the inbox shows tasks offered to the caller BY NAME; resolving roles and groups needs a
+signed internal call to IAM (ADR-0008) and lands with EP-25.3 as its own reviewed change.
+
+Not yet: a task's audit history (`task` entity) has no read rule in the log — choosing one is a log
+visibility change, reviewed with EP-25.2, which is when people first act on tasks. Live delivery is
+EP-25.7; until then `task.created`/`notification.raised` reach the log, not a socket.
+
 ## 14. Open questions / future
 
 - Threaded conversations / read receipts depth.

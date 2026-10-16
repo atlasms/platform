@@ -22,9 +22,14 @@ paths:
     get:
       operationId: getInbox
       tags: [inbox]
-      summary: Unified inbox (tasks + messages + notifications) for the caller
+      summary: The caller's inbox — open tasks offered to them and their newest notifications
+      description: >-
+        Only ever the caller's own (any authenticated user; no permission). As built in EP-25.1, the
+        tasks are those assigned to the caller BY NAME; a task offered to a role or a group is held
+        and reaches its holders' inboxes when the inbox resolves them at read time (EP-25.3, decided
+        2026-10-16). Messages are EP-25.4.
       responses:
-        '200': { description: Inbox, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '200': { description: Inbox, content: { application/json: { schema: { $ref: '#/components/schemas/Inbox' } } } }
   /messages:
     get:
       operationId: listMessages
@@ -100,6 +105,51 @@ components:
         subjectRef: { type: string }
         state: { type: string, enum: [open, forwarded, done, cancelled] }
         dueAt: { type: string, format: date-time }
+    Inbox:
+      type: object
+      required: [tasks, notifications, unreadCount]
+      additionalProperties: false
+      properties:
+        tasks: { type: array, items: { $ref: '#/components/schemas/InboxTask' }, description: 'Open tasks, oldest due first.' }
+        notifications: { type: array, items: { $ref: '#/components/schemas/Notification' }, description: 'Newest first, at most 50.' }
+        unreadCount: { type: integer, minimum: 0, description: 'Unread notifications, all of them.' }
+    InboxTask:
+      type: object
+      required: [id, channelId, assignee, assigneeKind, kind, state, createdAt]
+      additionalProperties: false
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        assignee: { type: string }
+        assigneeKind: { type: string, enum: [user, group, role] }
+        kind: { type: string, enum: [approve, edit, review, generic] }
+        state: { type: string, enum: [open, forwarded, done, cancelled] }
+        subjectRef: { $ref: '#/components/schemas/EntityRef' }
+        workflowInstanceId: { $ref: '#/components/schemas/Ulid' }
+        dueAt: { type: string, format: date-time }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+    Notification:
+      type: object
+      required: [id, channelId, userId, type, severity, read, createdAt]
+      additionalProperties: false
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        userId: { type: string }
+        type: { type: string, description: 'Notification-type key, e.g. asset.re-review-due.' }
+        severity: { type: string, enum: [info, warning, critical] }
+        subjectRef: { $ref: '#/components/schemas/EntityRef' }
+        title: { type: string }
+        read: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    EntityRef:
+      type: object
+      required: [entityType, entityId]
+      additionalProperties: false
+      properties:
+        entityType: { type: string }
+        entityId: { type: string }
     Error:
       type: object
       required: [code, message]

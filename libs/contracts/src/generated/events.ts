@@ -76,8 +76,8 @@ export type Severity = (typeof SeverityValues)[number];
 export const TaskKindValues = ['approve', 'edit', 'review', 'generic'] as const;
 export type TaskKind = (typeof TaskKindValues)[number];
 
-/** Who a task is assigned to, or a message addressed to. */
-export const PrincipalKindValues = ['user', 'group'] as const;
+/** Who a task is assigned to, or a message addressed to. A workflow's human step names a user or a ROLE (the workflow DSL's assignee), so a task can be assigned to everyone holding a role; a group or a role is resolved to its people when the inbox is READ, not when the task is made (decided 2026-10-16). */
+export const PrincipalKindValues = ['user', 'group', 'role'] as const;
 export type PrincipalKind = (typeof PrincipalKindValues)[number];
 
 /** IAM account state; a state machine with coded transitions (lockout, invitation). */
@@ -775,8 +775,10 @@ export interface WorkflowStepRequestedPayload {
 export interface WorkflowTaskCreatedPayload {
   taskId: Ulid;
   workflowInstanceId?: Ulid;
-  /** User or group id. */
+  /** A user id, or the id of the group or role the task is offered to — `assigneeKind` says which. */
   assignee: string;
+  /** What `assignee` names. A workflow's human step names a user or a role (EP-25.1). Absent means a user — what BMS sent before it said. */
+  assigneeKind?: PrincipalKind;
   assetId?: Ulid;
   kind?: TaskKind;
   dueAt?: string;
