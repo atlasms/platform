@@ -222,8 +222,8 @@ async function leaveAnInstanceWaiting() {
             id: 's_wait',
             kind: 'wait-event',
             config: {
-              event: 'drill',
-              correlate: '= true',
+              event: 'asset.approved',
+              correlate: '= incoming.assetId = vars.assetId',
               output: { 'vars.verdict': '= incoming.verdict' },
             },
           },

@@ -12,7 +12,13 @@ import {
   type Db,
   type Migration,
 } from '@atlas/data';
-import type { CommandAwait, HistoryEntry, Instance } from './instance.ts';
+import {
+  assetKey,
+  type CommandAwait,
+  type EventAwait,
+  type HistoryEntry,
+  type Instance,
+} from './instance.ts';
 import type { WorkflowStore, WorkflowTx } from './store.ts';
 import { withState, type Workflow, type WorkflowVersion } from './workflow.ts';
 
@@ -82,6 +88,23 @@ export const sqliteMigrations: Migration[] = [
            data           TEXT NOT NULL
          );
          CREATE INDEX IF NOT EXISTS command_awaits_instance_idx ON command_awaits (channel_id, instance_id);`,
+  },
+  // EP-22.6: the steps waiting for an event, by its keys — the open ones of a type are what the
+  // router reads for every event of it, so they are indexed by type and asset, open only.
+  {
+    id: 'bms_event_awaits',
+    up: `CREATE TABLE IF NOT EXISTS event_awaits (
+           correlation_id TEXT NOT NULL,
+           event_type     TEXT NOT NULL,
+           channel_id     TEXT NOT NULL,
+           instance_id    TEXT NOT NULL,
+           asset_id       TEXT,
+           answered_at    TEXT,
+           data           TEXT NOT NULL,
+           PRIMARY KEY (correlation_id, event_type)
+         );
+         CREATE INDEX IF NOT EXISTS event_awaits_open_idx
+           ON event_awaits (channel_id, event_type, asset_id) WHERE answered_at IS NULL;`,
   },
 ];
 
@@ -200,6 +223,33 @@ export function sqliteWorkflowStore(path = ':memory:'): WorkflowStore & { db: Db
         .run(answeredAt, answeredAt, answeredBy, correlationId);
       return Number(result.changes) === 1;
     },
+    async insertEventAwait(a) {
+      const result = db
+        .prepare(
+          `INSERT INTO event_awaits (correlation_id, event_type, channel_id, instance_id, asset_id, data)
+           VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (correlation_id, event_type) DO NOTHING`,
+        )
+        .run(
+          a.correlationId,
+          a.eventType,
+          a.channelId,
+          a.instanceId,
+          assetKey(a),
+          JSON.stringify(a),
+        );
+      return Number(result.changes) === 1;
+    },
+    async answerEventAwaits(correlationId, answeredAt, answeredBy) {
+      const result = db
+        .prepare(
+          `UPDATE event_awaits
+              SET answered_at = ?,
+                  data = json_set(data, '$.answeredAt', ?, '$.answeredBy', ?)
+            WHERE correlation_id = ? AND answered_at IS NULL`,
+        )
+        .run(answeredAt, answeredAt, answeredBy, correlationId);
+      return Number(result.changes) > 0;
+    },
   };
 
   return {
@@ -277,6 +327,25 @@ export function sqliteWorkflowStore(path = ':memory:'): WorkflowStore & { db: Db
         .prepare('SELECT data FROM command_awaits WHERE correlation_id = ?')
         .get(correlationId) as { data: string } | undefined;
       return row ? (JSON.parse(row.data) as CommandAwait) : undefined;
+    },
+    async openEventAwaits(channelId, eventType, assetId) {
+      const rows = (
+        assetId === undefined
+          ? db
+              .prepare(
+                `SELECT data FROM event_awaits
+                  WHERE channel_id = ? AND event_type = ? AND answered_at IS NULL`,
+              )
+              .all(channelId, eventType)
+          : db
+              .prepare(
+                `SELECT data FROM event_awaits
+                  WHERE channel_id = ? AND event_type = ? AND answered_at IS NULL
+                    AND (asset_id IS NULL OR asset_id = ?)`,
+              )
+              .all(channelId, eventType, assetId)
+      ) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as EventAwait);
     },
     async close() {
       db.close();

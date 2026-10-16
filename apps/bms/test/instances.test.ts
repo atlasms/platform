@@ -64,7 +64,7 @@ async function harness(options: { permissions?: string[]; runner?: 'none' | 'bro
             kind: 'wait-event',
             config: {
               event: 'asset.approved',
-              correlate: '= true',
+              correlate: '= incoming.assetId = vars.assetId',
               output: { 'vars.verdict': '= incoming.verdict' },
             },
           },

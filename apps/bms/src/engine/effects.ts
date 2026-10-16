@@ -29,6 +29,17 @@ export interface TaskSpec {
   dueAt?: number;
 }
 
+/**
+ * A wait-event step's wait (EP-22.6): the event, and the values its `correlate` keys evaluated to
+ * when the step started waiting — what the router matches an event of that type against.
+ */
+export interface EventWait {
+  stepId: string;
+  event: string;
+  /** Payload path (dotted) → the value it must equal. */
+  match: Record<string, unknown>;
+}
+
 export type HistoryEvent =
   'entered' | 'awaiting' | 'completed' | 'failed' | 'compensated' | 'escalated';
 
@@ -49,8 +60,8 @@ export interface Effects {
     action: string,
   ): Promise<void>;
 
-  /** Wait for an external event addressed to this step. */
-  waitForEvent(stepId: string, timeoutMs?: number): Promise<Record<string, unknown>>;
+  /** Wait for an event, not one this instance asked for, that matches the step's keys. */
+  waitForEvent(wait: EventWait, timeoutMs?: number): Promise<Record<string, unknown>>;
 
   /** Run a published workflow as a child; resolves with its output vars. */
   runChild(

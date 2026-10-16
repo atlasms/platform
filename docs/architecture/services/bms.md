@@ -148,7 +148,9 @@ BPMN XML.
   `transcode.completed`/`failed`, `asset.ready`/`approved`/`rejected`, `restore.completed`,
   `schedule.sent-to-air`, etc. — to advance waiting instances. As built (§13d): the answers to the
   commands in `WORKFLOW_COMMANDS`, matched by correlation id (`transcode.completed`/`failed`);
-  the events a wait-event step waits on come with EP-22.6.
+  Notifications' `task.updated` (§13e); and the events a step may WAIT for, `WORKFLOW_EVENTS`
+  (`asset.ready`/`approved`/`rejected`), matched by keys (§13f). Emits `workflow.task.resolved`
+  when a review's verdict closes its task (§13f).
 
 See [Messaging §Workflow/scheduling](../04-messaging-and-data.md#workflow--scheduling--people).
 
@@ -460,6 +462,57 @@ other than by completing its task — a timeout, an escalation's outcome — is 
 
 Smoke: a workflow offers its human step to a role the smoke user holds through a group; the user
 finds it in the inbox, claims it, completes it — and the instance completes with nobody signalling it.
+
+## 13f. As built — EP-22.6, waiting for events, and the review step (decided 2026-10-16)
+
+**A step may wait for an event nobody sent BMS as an answer** — a wait-event step, or a review step
+waiting for MAM's verdict. No correlation id comes back with such an event, so the step is found by
+its KEYS:
+
+- **What may be waited for is closed** — `WORKFLOW_EVENTS` (`@atlas/contracts/workflow`):
+  `asset.ready`, `asset.approved`, `asset.rejected`. Publish refuses any other (`UNKNOWN_EVENT`): an
+  author may not make BMS consume, and copy into vars, whatever passes on the bus, and the router
+  keeps one durable per listed type — a type nobody consumes would strand its step.
+- **`correlate` is equality keys** — `incoming.<field> = <expr>`, joined with `and`, the `<expr>` not
+  reading `incoming` (`CORRELATE_SHAPE`), on fields the event has (`CORRELATE_FIELD`) —
+  `@atlas/contracts/workflow-correlate`, a subpath that loads in Temporal's sandbox. The workflow
+  evaluates each `<expr>` when the step starts waiting, and an activity (`awaitEvent`) records the
+  resulting `match` as a row of `event_awaits` under a derived correlation id the step then expects.
+- **The router** (`routeEvent`) reads the OPEN awaits of the event's type in its channel — narrowed by
+  the event's `assetId` to rows keyed on that asset or on none (an indexed column) — compares their
+  keys with the payload, signals every match, and answers each row once. A redelivery finds nothing
+  open. A key that evaluated to `null` matches nothing.
+
+**A review step** is a human step with a `reviewPointId` (publish holds it to `taskType: approve`,
+`REVIEW_TASK_TYPE`, and one step per point, `DUP_REVIEW_POINT`). Decided with the product owner:
+
+1. **MAM's verdict moves the workflow, not the task.** `createTask` records, in the task's
+   transaction, an event await per verdict (`asset.approved`, `asset.rejected`) keyed on the
+   instance's asset, under the TASK's id — so the verdict reaches the step as its task's outcome
+   (`{ outcome, by, taskId, assetId, reviewPointId?, reason?, expiresAt? }`; `= incoming.outcome`
+   maps it). The router then answers both verdict rows and the task's own await, and emits
+   `workflow.task.resolved` in the same transaction; Notifications closes the task with it (its
+   `task.updated` reaches BMS as a duplicate). Notifications refuses to complete a review task by
+   hand (409): a "done: approved" there would move the workflow past an asset MAM never approved.
+   An instance with no asset fails at the step, naming why.
+2. **A verdict naming the step's point, or naming none, resolves it**; one naming another point does
+   not. A verdict given straight from the asset editor still decides the asset, and MAM refuses a
+   second one — a strict match would strand the workflow.
+3. MAM carries the point on the verdict's event: `POST /assets/{id}/approve` and `/reject` take
+   `reviewPointId` (mam.md §4), and `asset.approved`/`asset.rejected` say it.
+
+Not yet: an event published before its step starts waiting is not seen (catch semantics) — a review
+step on an asset already approved waits; ending a waiting step other than by its event (a timeout)
+is EP-22.9's. Several review points on one asset meet MAM's lifecycle (`approved` cannot be approved
+again), so multi-point flows of real use are EP-24.7's.
+
+Evidence: `libs/contracts/test/workflow.test.ts` (the keys, the publish rules), `test/review.test.ts`
+(end to end through the in-process runner: keys, channel, asset, every waiting instance, a two-point
+review with a verdict at each, an unnamed verdict, no asset, an orphan), the store conformance case
+on sqlite and Postgres, `test/temporal.test.ts` on a real Temporal (a wait-event then a review
+resolved by a verdict), and smoke on kind: an instance waits for `asset.ready`, its review task is in
+the inbox naming its point, completing it by hand is refused, the approval in MAM at that point
+completes the instance with `approved` and closes the task.
 
 ## 14. Open questions / future
 

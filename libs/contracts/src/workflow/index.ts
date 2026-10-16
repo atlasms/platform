@@ -5,4 +5,6 @@
 export * from './types.ts';
 export { validateDefinition } from './validate.ts';
 export { WORKFLOW_COMMANDS, commandAnswers, type WorkflowCommand } from './commands.ts';
+export { WORKFLOW_EVENTS, REVIEW_VERDICTS } from './events.ts';
+export { correlationKeys, type CorrelationKey } from './correlate.ts';
 export { feelProblem, referencedVars, FEEL_ROOTS, FEEL_FUNCTIONS } from './feel.ts';

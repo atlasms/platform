@@ -10,7 +10,13 @@ import {
   withTransaction,
   type PgPool,
 } from '@atlas/data-pg';
-import type { CommandAwait, HistoryEntry, Instance } from './instance.ts';
+import {
+  assetKey,
+  type CommandAwait,
+  type EventAwait,
+  type HistoryEntry,
+  type Instance,
+} from './instance.ts';
 import type { WorkflowStore, WorkflowTx } from './store.ts';
 import { withState, type Workflow, type WorkflowVersion } from './workflow.ts';
 
@@ -80,6 +86,23 @@ export const pgMigrations: Migration[] = [
            data           jsonb NOT NULL
          );
          CREATE INDEX IF NOT EXISTS command_awaits_instance_idx ON command_awaits (channel_id, instance_id);`,
+  },
+  // EP-22.6: the steps waiting for an event, by its keys — the open ones of a type are what the
+  // router reads for every event of it, so they are indexed by type and asset, open only.
+  {
+    id: 'bms_event_awaits',
+    up: `CREATE TABLE IF NOT EXISTS event_awaits (
+           correlation_id text NOT NULL,
+           event_type     text NOT NULL,
+           channel_id     text NOT NULL,
+           instance_id    text NOT NULL,
+           asset_id       text,
+           answered_at    timestamptz,
+           data           jsonb NOT NULL,
+           PRIMARY KEY (correlation_id, event_type)
+         );
+         CREATE INDEX IF NOT EXISTS event_awaits_open_idx
+           ON event_awaits (channel_id, event_type, asset_id) WHERE answered_at IS NULL;`,
   },
 ];
 
@@ -189,6 +212,31 @@ export function pgWorkflowStore(pool: PgPool): WorkflowStore {
             );
             return result.rowCount === 1;
           },
+          async insertEventAwait(a) {
+            const result = await client.query(
+              `INSERT INTO event_awaits (correlation_id, event_type, channel_id, instance_id, asset_id, data)
+               VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (correlation_id, event_type) DO NOTHING`,
+              [
+                a.correlationId,
+                a.eventType,
+                a.channelId,
+                a.instanceId,
+                assetKey(a),
+                JSON.stringify(a),
+              ],
+            );
+            return result.rowCount === 1;
+          },
+          async answerEventAwaits(correlationId, answeredAt, answeredBy) {
+            const result = await client.query(
+              `UPDATE event_awaits
+                  SET answered_at = $1,
+                      data = data || jsonb_build_object('answeredAt', $2::text, 'answeredBy', $3::text)
+                WHERE correlation_id = $4 AND answered_at IS NULL`,
+              [answeredAt, answeredAt, answeredBy, correlationId],
+            );
+            return (result.rowCount ?? 0) > 0;
+          },
         };
         return fn(tx);
       });
@@ -271,6 +319,18 @@ export function pgWorkflowStore(pool: PgPool): WorkflowStore {
         [correlationId],
       );
       return rows[0]?.data;
+    },
+    async openEventAwaits(channelId, eventType, assetId) {
+      const { rows } = await pool.query<{ data: EventAwait }>(
+        assetId === undefined
+          ? `SELECT data FROM event_awaits
+              WHERE channel_id = $1 AND event_type = $2 AND answered_at IS NULL`
+          : `SELECT data FROM event_awaits
+              WHERE channel_id = $1 AND event_type = $2 AND answered_at IS NULL
+                AND (asset_id IS NULL OR asset_id = $3)`,
+        assetId === undefined ? [channelId, eventType] : [channelId, eventType, assetId],
+      );
+      return rows.map((r) => r.data);
     },
     async close() {
       // The pool is main.ts's to end.

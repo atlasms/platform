@@ -8,6 +8,8 @@ export interface RecordOptions {
   /** A person (a request) or BMS itself (an instance moving on its own). */
   actor: { kind: 'user' | 'service'; id: string };
   correlationId?: string;
+  /** The message that caused this one (follow()'s rule, EP-03.5). */
+  causationId?: string;
   headers?: Record<string, string>;
 }
 
@@ -29,6 +31,7 @@ export function outboxRecord(
     payload: payload as Record<string, unknown>,
     actor: options.actor,
     ...(options.correlationId !== undefined ? { correlationId: options.correlationId } : {}),
+    ...(options.causationId !== undefined ? { causationId: options.causationId } : {}),
   });
   return {
     id: envelope.messageId,

@@ -106,16 +106,29 @@ and `input` evaluated via FEEL; the interpreter then blocks on a signal correlat
 ```
 
 Runtime: activity emits `workflow.task.created` (→ Notifications) with `assignee`, `reviewPointId`,
-`dueAt = now + dueIn`; the interpreter waits for a `taskCompleted` signal (from
-`POST /tasks/{id}/complete`, or from a correlated `asset.approved`/`asset.rejected` when
-`taskType=approve`, closing the [review loop](../roadmap/15-review-lifecycle-implementation-plan.md#ws-g--bms-multi-point-review-step)).
-`dueIn`/`escalation` arm Temporal timers.
+`dueAt = now + dueIn`; the interpreter waits for the task's completion (`POST /tasks/{id}/complete`
+in Notifications → `task.updated`). **A step with a `reviewPointId` is a REVIEW step** (EP-22.6,
+decided 2026-10-16; [review loop](../roadmap/15-review-lifecycle-implementation-plan.md#ws-g--bms-multi-point-review-step)):
+its `taskType` is `approve`, and it is resolved by MAM's verdict on the instance's asset —
+`asset.approved`/`asset.rejected` naming that point, or naming none — not by its task, which
+Notifications refuses to complete by hand and closes when BMS says the verdict came
+(`workflow.task.resolved`). The step's `incoming` is `{ outcome: approved|rejected, by, taskId,
+assetId, reviewPointId?, reason?, expiresAt? }`, so `= incoming.outcome` maps either path. Each point
+in a flow is distinct, so MAM's verdict history says where each decision was made. As built: bms.md
+§13f. `dueIn`/`escalation` arm Temporal timers.
 
 ### 2.3 `wait-event` — Message/Signal Catch
 
 Blocks for an event **not** triggered by a prior command (e.g. an approval done elsewhere). BMS
 registers a correlation subscription `{event, correlateKey}` → `instanceId::stepId` (§9.2); the
 router signals when a matching event arrives. `timeout` (step-level) → BPMN boundary timer.
+
+As decided 2026-10-16 (EP-22.6): `event` is one of a CLOSED list (`WORKFLOW_EVENTS` in
+`@atlas/contracts/workflow` — `asset.ready`, `asset.approved`, `asset.rejected` to start), and
+`correlate` is equality KEYS — `incoming.<field> = <expr>`, joined with `and`, where `<expr>` does
+not read `incoming`. The workflow evaluates each `<expr>` when the step starts waiting; the keys are
+what the router matches. An event published BEFORE the step starts waiting is not seen — catch
+semantics, as BPMN's; a flow that might start after its event checks state first.
 
 ### 2.4 `timer` — Timer Event
 
@@ -210,8 +223,10 @@ required per-kind config, id patterns, `maxContains:1` on `start`.
 | Every FEEL expression compiles; referenced `vars`/paths are declared | error / warning |
 | `command.request.event` is a command a workflow may issue — `WORKFLOW_COMMANDS` (`UNKNOWN_COMMAND`, EP-22.4) | error |
 | `command.request.input` keys are fields of that command's payload, and its required fields are given (`COMMAND_INPUT`); a dotted key builds a nested field | error |
-| `command.await.event` answers the command (`AWAIT_EVENT`); `command.await.correlate` is refused until EP-22.6 — the answer is matched by correlation id (`CORRELATE_UNSUPPORTED`) | error |
-| `wait-event.event` is a known broker subject | warning |
+| `command.await.event` answers the command (`AWAIT_EVENT`); `command.await.correlate` is refused — the answer is matched by correlation id (`CORRELATE_UNSUPPORTED`) | error |
+| `wait-event.event` is an event a workflow may wait for — `WORKFLOW_EVENTS`, a closed list (`UNKNOWN_EVENT`, EP-22.6) | error |
+| `wait-event.correlate` is equality keys, `incoming.<field> = <expr>` joined with `and`, the other side not reading `incoming` (`CORRELATE_SHAPE`), on fields the event's payload has (`CORRELATE_FIELD`) | error |
+| A `human-task` with a `reviewPointId` is an approval (`REVIEW_TASK_TYPE`), and no two steps share a point (`DUP_REVIEW_POINT`) | error |
 | `sub-flow.workflowId` exists and is published | error |
 | `compensation` references an existing step | error |
 | Unreachable-after-terminate, unused `vars` | warning |
@@ -305,6 +320,11 @@ For events with no originating command, when a `wait-event`/approval step activa
 registers `{channelId, event, correlateKey}` → `instanceId::stepId` in a `correlation` table (or
 Redis). The router evaluates the step's `correlate` FEEL over each incoming event, finds the
 subscription, and signals. Subscriptions are removed when the step completes or times out.
+
+As built (EP-22.6, bms.md §13f): the table is `event_awaits` — the keys as evaluated (`match`), the
+asset among them as an indexed column — and the router never evaluates FEEL: it reads the open
+awaits of the event's type in its channel, narrowed to the event's asset, and compares keys. An
+await is answered at most once; a review step's two verdict rows are answered together.
 
 ### 9.3 Idempotency
 Command activities carry an idempotency key `{instanceId}:{stepId}:{attempt}`; services dedupe.

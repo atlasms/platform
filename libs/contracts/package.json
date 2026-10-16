@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./workflow": "./src/workflow/index.ts",
-    "./workflow-types": "./src/workflow/types.ts"
+    "./workflow-types": "./src/workflow/types.ts",
+    "./workflow-correlate": "./src/workflow/correlate.ts"
   },
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts",

@@ -137,7 +137,7 @@ paths:
       responses:
         '200': { description: Completed, content: { application/json: { schema: { $ref: '#/components/schemas/InboxTask' } } } }
         '403': { description: 'Not yours' }
-        '409': { description: 'Closed, or not yet claimed' }
+        '409': { description: "Closed, not yet claimed, or a review task — whose verdict is given in MAM, at its reviewPointId, and closes it (EP-22.6)" }
   /tasks/{id}/cancel:
     post:
       operationId: cancelTask
@@ -198,6 +198,7 @@ components:
         state: { type: string, enum: [open, forwarded, done, cancelled] }
         subjectRef: { $ref: '#/components/schemas/EntityRef' }
         workflowInstanceId: { $ref: '#/components/schemas/Ulid' }
+        reviewPointId: { type: string, description: "A workflow review step's task (EP-22.6): the point to name when giving the verdict in MAM (POST /assets/{id}/approve or /reject). The verdict closes it; it is never completed here." }
         dueAt: { type: string, format: date-time }
         title: { type: string }
         createdBy: { type: string }

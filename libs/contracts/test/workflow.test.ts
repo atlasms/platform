@@ -4,11 +4,16 @@ import assert from 'node:assert/strict';
 import { EVENT_TYPES, payloadShape } from '../src/index.ts';
 import {
   commandAnswers,
+  correlationKeys,
   feelProblem,
+  REVIEW_VERDICTS,
+  WORKFLOW_EVENTS,
   validateDefinition,
   WORKFLOW_COMMANDS,
   type CommandConfig,
   type BranchConfig,
+  type HumanTaskConfig,
+  type WaitEventConfig,
   type WorkflowDefinition,
 } from '../src/workflow/index.ts';
 
@@ -169,4 +174,77 @@ test('the awaited event must answer the command, and is matched by correlation i
   const codes = validateDefinition(def).issues.map((i) => i.code);
   assert.ok(codes.includes('AWAIT_EVENT'));
   assert.ok(codes.includes('CORRELATE_UNSUPPORTED'));
+});
+
+test('correlate is equality keys: each `incoming.<field> = <expr>`, joined with `and`', () => {
+  assert.deepEqual(correlationKeys('= incoming.assetId = vars.assetId'), {
+    keys: [{ field: 'assetId', expr: 'vars.assetId' }],
+  });
+  // Either side, nested fields, parentheses, a literal holding an `=`.
+  assert.deepEqual(correlationKeys('= (vars.a = incoming.x.y) and incoming.k = "p=q"'), {
+    keys: [
+      { field: 'x.y', expr: 'vars.a' },
+      { field: 'k', expr: '"p=q"' },
+    ],
+  });
+  for (const [expr, why] of [
+    ['= incoming.a != vars.a', /not an equality/],
+    ['= incoming.a = 1 or incoming.b = 2', /not an equality/],
+    ['= vars.a = vars.b', /no `incoming.<field>` side/],
+    ['= incoming.a = incoming.b', /may not read `incoming`/],
+    ['= incoming.a = 1 and incoming.a = 2', /keyed twice/],
+    ['= incoming.a > 1', /not an equality/],
+  ] as const) {
+    const res = correlationKeys(expr);
+    assert.ok('problem' in res, expr);
+    assert.match(res.problem, why, expr);
+  }
+});
+
+test('every event a workflow may wait for has a schema; a review verdict names who gave it', () => {
+  for (const e of WORKFLOW_EVENTS) assert.ok(EVENT_TYPES.includes(e), e);
+  for (const [e, v] of Object.entries(REVIEW_VERDICTS)) {
+    assert.ok(WORKFLOW_EVENTS.includes(e), e);
+    const shape = payloadShape(e);
+    assert.ok(shape?.properties.includes(v.by), `${e}.${v.by}`);
+    assert.ok(shape?.properties.includes('reviewPointId'), `${e}.reviewPointId`);
+  }
+});
+
+test('a wait-event step: an event from the closed list, keyed on fields the event has', () => {
+  const def = load('canonical-ingest-to-air.workflow.json');
+  const cfg = def.steps.find((s) => s.id === 's_wait_ready')!.config as WaitEventConfig;
+  const issues = (): [string, string | undefined][] =>
+    validateDefinition(def)
+      .issues.filter((i) => i.severity === 'error')
+      .map((i) => [i.code, i.path]);
+
+  cfg.event = 'permissions.changed';
+  assert.deepEqual(issues(), [['UNKNOWN_EVENT', '/steps/2/config/event']]);
+  cfg.event = 'asset.ready';
+  cfg.correlate = '= incoming.assetId != vars.assetId';
+  assert.deepEqual(issues(), [['CORRELATE_SHAPE', '/steps/2/config/correlate']]);
+  cfg.correlate = '= incoming.asset = vars.assetId';
+  const [only] = validateDefinition(def).issues.filter((i) => i.severity === 'error');
+  assert.equal(only?.code, 'CORRELATE_FIELD');
+  assert.match(only?.message ?? '', /asset\.ready has no field "asset"/);
+});
+
+test('a review point is an approval, and each one in a flow is its own', () => {
+  const def = load('canonical-ingest-to-air.workflow.json');
+  const review = def.steps.find((s) => s.id === 's_review')!;
+  (review.config as HumanTaskConfig).taskType = 'edit';
+  assert.deepEqual(
+    validateDefinition(def)
+      .issues.filter((i) => i.severity === 'error')
+      .map((i) => i.code),
+    ['REVIEW_TASK_TYPE'],
+  );
+  (review.config as HumanTaskConfig).taskType = 'approve';
+  // A second review step at the same point.
+  def.steps.push({ ...review, id: 's_review_2' });
+  def.transitions.push({ id: 't_r2', from: 's_wait_ready', to: 's_review_2' });
+  def.transitions.push({ id: 't_r2_out', from: 's_review_2', to: 's_gate' });
+  const dup = validateDefinition(def).issues.find((i) => i.code === 'DUP_REVIEW_POINT');
+  assert.equal(dup?.stepId, 's_review_2');
 });

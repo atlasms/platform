@@ -4,6 +4,7 @@ import {
   StepTimeout,
   type CommandRequest,
   type Effects,
+  type EventWait,
   type HistoryEvent,
   type TaskSpec,
 } from '../src/engine/effects.ts';
@@ -81,8 +82,10 @@ export class SimDriver implements Effects {
   async escalate(stepId: string, _to: unknown, action: string): Promise<void> {
     this.escalations.push({ stepId, action });
   }
-  async waitForEvent(stepId: string): Promise<Record<string, unknown>> {
-    return this.cfg.events?.[stepId] ?? {};
+  readonly eventWaits: EventWait[] = [];
+  async waitForEvent(wait: EventWait): Promise<Record<string, unknown>> {
+    this.eventWaits.push(wait);
+    return this.cfg.events?.[wait.stepId] ?? {};
   }
   async runChild(
     _stepId: string,

@@ -727,7 +727,7 @@ export class MamService {
     caller: Caller,
     id: string,
     action: LifecycleAction,
-    options: { expiresAt?: string; retainUntil?: string; reason?: string } = {},
+    options: TransitionOptions = {},
   ): Promise<Asset> {
     const asset = await this.onCurrent(() => this.transitionOnce(caller, id, action, options));
     return action === 'markReady' ? this.autoApprove(caller, asset) : asset;
@@ -785,7 +785,7 @@ export class MamService {
     caller: Caller,
     id: string,
     action: LifecycleAction,
-    options: { expiresAt?: string; retainUntil?: string; reason?: string },
+    options: TransitionOptions,
   ): Promise<Asset> {
     const existing = await this.fresh(caller, id);
 
@@ -800,6 +800,15 @@ export class MamService {
     // caught by schema validation anyway, but as an opaque 500 instead of a clear 422.
     if (action === 'reject' && !options.reason?.trim()) {
       throw new ValidationError('a rejection must state a reason');
+    }
+    // The workflow review step the verdict is given at (EP-22.6) — carried on the event, where BMS
+    // finds the step waiting for it. A verdict that names none is still a verdict.
+    const point = options.reviewPointId;
+    if (point !== undefined) {
+      if (action !== 'approve' && action !== 'reject')
+        throw new ValidationError('only a verdict names a review point');
+      if (typeof point !== 'string' || point.trim() === '' || point.length > 200)
+        throw new ValidationError('reviewPointId must be a non-empty string of at most 200');
     }
 
     const context = await this.contextFor(existing);
@@ -2678,7 +2687,7 @@ export class MamService {
     caller: Caller,
     eventType: string,
     asset: Asset,
-    options: { reason?: string; retainUntil?: string },
+    options: { reason?: string; retainUntil?: string; reviewPointId?: string },
   ): Record<string, unknown> {
     const at = asset.updatedAt;
     switch (eventType) {
@@ -2687,7 +2696,7 @@ export class MamService {
           assetId: asset.id,
           approver: caller.userId,
           approvedAt: at,
-          ...defined({ expiresAt: asset.expiresAt }),
+          ...defined({ expiresAt: asset.expiresAt, reviewPointId: options.reviewPointId }),
         };
       case 'asset.rejected':
         return {
@@ -2695,7 +2704,7 @@ export class MamService {
           reason: options.reason,
           rejectedBy: caller.userId,
           rejectedAt: at,
-          ...defined({ retainUntil: asset.retainUntil }),
+          ...defined({ retainUntil: asset.retainUntil, reviewPointId: options.reviewPointId }),
         };
       case 'asset.expired':
         // `expirySource` records where `expiresAt` came from — a per-asset value or the category
@@ -2705,6 +2714,15 @@ export class MamService {
         return { assetId: asset.id };
     }
   }
+}
+
+/** What a lifecycle transition's request may carry (`POST /assets/{id}/<verb>`). */
+export interface TransitionOptions {
+  expiresAt?: string;
+  retainUntil?: string;
+  reason?: string;
+  /** A verdict's workflow review point (EP-22.6). */
+  reviewPointId?: string;
 }
 
 /**

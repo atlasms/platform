@@ -187,7 +187,11 @@ test('human-task escalation fires when the task is slow', async () => {
 
 test('a later expression reads an earlier step through steps.<id>.output', async () => {
   const def = linear([
-    { id: 's_wait', kind: 'wait-event', config: { event: 'x', correlate: '= true' } },
+    {
+      id: 's_wait',
+      kind: 'wait-event',
+      config: { event: 'asset.ready', correlate: '= incoming.assetId = vars.assetId' },
+    },
     {
       id: 's_task',
       kind: 'human-task',
@@ -205,6 +209,12 @@ test('a later expression reads an earlier step through steps.<id>.output', async
     { userId: 'user-7' },
     'the expression is evaluated',
   );
+  // The wait's keys were evaluated before the event existed (EP-22.6).
+  assert.deepEqual(sim.eventWaits[0], {
+    stepId: 's_wait',
+    event: 'asset.ready',
+    match: { assetId: 'A1' },
+  });
 });
 
 test('a date timer waits until its date, and never a negative time', async () => {

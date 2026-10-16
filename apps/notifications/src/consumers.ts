@@ -8,6 +8,7 @@ import type { NotificationsService } from './service.ts';
 
 export const TASK_CREATED_PATTERN = 'atlas.*.workflow.task.created';
 export const ASSET_EXPIRED_PATTERN = 'atlas.*.asset.expired';
+export const TASK_RESOLVED_PATTERN = 'atlas.*.workflow.task.resolved';
 
 export interface ConsumerOptions {
   broker: Broker;
@@ -55,6 +56,11 @@ export function startConsumers(options: ConsumerOptions): Subscription[] {
     options.broker.subscribe(
       TASK_CREATED_PATTERN,
       handle((m) => options.service.consumeTaskCreated(m)),
+      retry,
+    ),
+    options.broker.subscribe(
+      TASK_RESOLVED_PATTERN,
+      handle((m) => options.service.consumeTaskResolved(m)),
       retry,
     ),
     options.broker.subscribe(

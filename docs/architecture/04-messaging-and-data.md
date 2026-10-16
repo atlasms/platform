@@ -169,7 +169,8 @@ Grouped by domain; payload keys abbreviated. Machine-readable **[JSON Schema pay
 | Event | Emitter | Key payload | Consumers |
 |-------|---------|-------------|-----------|
 | `workflow.step.requested` | BMS | instanceId, stepId, stepKind, target | target service, Logging |
-| `workflow.task.created` | BMS | taskId, assignee, assetId | Notifications |
+| `workflow.task.created` | BMS | taskId, assignee, assetId, reviewPointId | Notifications |
+| `workflow.task.resolved` | BMS | taskId, workflowInstanceId, outcome, by | Notifications |
 | `workflow.completed` | BMS | instanceId, outcome | Notifications, Logging |
 | `editor.render.requested` (cmd) | Studio/BFF | editProjectId, timeline, outputProfile | MTS |
 | `schedule.updated` | Scheduling | scheduleId, items | Integration (EPG), WebSocket |

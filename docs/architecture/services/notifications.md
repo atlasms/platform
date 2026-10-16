@@ -73,6 +73,7 @@ stateDiagram-v2
 
 - **Emits:** `message.sent`, `task.created`, `task.updated`, `notification.raised` — consumed by
   the [WebSocket service](websocket.md) for live delivery.
+- **Consumes:** `workflow.task.resolved` (BMS, EP-22.6) — a workflow's task closed by MAM's verdict.
 - **Consumes (to raise notifications):** many — `asset.approved`, `asset.rejected`,
   `workflow.task.created`, `transcode.failed`, `ingest.rejected`, `restore.completed`,
   `checksum.mismatch`, mentions, etc.
@@ -199,7 +200,7 @@ role, and finds the task in the user's inbox through the gateway with `partial: 
 | Assign by hand | `POST /tasks` | `task:assign` in the channel (Editor and above) — to a user, a group or a role |
 | Claim | `POST /tasks/{id}/claim` | someone in the group / holding the role it is offered to — **first claim wins** (409 after) |
 | Forward | `POST /tasks/{id}/forward` | its holder (assigned by name) — or anyone with `task:admin` (a reassignment) |
-| Complete | `POST /tasks/{id}/complete` | its holder, with an `outcome` |
+| Complete | `POST /tasks/{id}/complete` | its holder, with an `outcome` — never a REVIEW task (below) |
 | Cancel | `POST /tasks/{id}/cancel` | `task:admin` — and never a workflow's task, which its workflow ends |
 | Read one | `GET /tasks/{id}` | a participant, a holder of what it is offered to, or `task:admin`; anyone else a 404 |
 
@@ -216,6 +217,14 @@ role, and finds the task in the user's inbox through the gateway with `partial: 
 
 Completing a workflow's task moves its workflow (EP-25.8): BMS's completion router consumes
 `task.updated` and signals the waiting human step — bms.md §13e.
+
+**A review task** (EP-22.6, decided 2026-10-16) — a workflow's task with a `reviewPointId` — is
+closed by MAM's verdict, never completed here: `complete` is a 409 naming the point to give the
+verdict at (`POST /assets/{id}/approve` or `/reject` with `reviewPointId`). BMS hears the verdict and
+emits `workflow.task.resolved`; this service applies it — the task `done`, the verdict its outcome,
+its author `closedBy` and a participant, `task.updated` + `audit.recorded` (`task.resolved`) in one
+transaction, the seen-mark with them. A resolution for a task not here yet goes back to the broker
+(its creation rides another durable); one for a closed task is a duplicate. bms.md §13f.
 
 Not yet: a task's audit history (`task` entity) has no read rule in the log — choosing one is a log
 visibility change, reviewed with EP-25.2, which is when people first act on tasks. Live delivery is

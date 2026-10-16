@@ -70,7 +70,7 @@ test('ADR-0010 check 4: an instance survives the Temporal server and its worker 
           kind: 'wait-event',
           config: {
             event: 'asset.approved',
-            correlate: '= true',
+            correlate: '= incoming.assetId = vars.assetId',
             output: { 'vars.verdict': '= incoming.verdict' },
           },
         },

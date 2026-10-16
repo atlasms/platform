@@ -8,7 +8,8 @@
 //   the task's version, and the second is a 409.
 // - **Forward** and **complete** are the holder's — the user it is assigned to by name. `task:admin`
 //   may forward any task (reassign) and cancel one; a WORKFLOW's task is ended by its workflow,
-//   never cancelled by hand.
+//   never cancelled by hand. A workflow REVIEW task (a `reviewPointId`; EP-22.6) is not completed
+//   here at all: its verdict is given in MAM, and closes it.
 // - **Participants** — every user it was ever assigned to by name, who made it, claimed it or acted
 //   on it — read its history without `task:audit` (the log enforces that, from these very records).
 //
@@ -151,6 +152,12 @@ export class TaskActions {
   async complete(caller: ActingCaller, id: string, outcome?: string): Promise<Task> {
     const before = await this.open(caller, id);
     this.mustHold(caller, before);
+    // A review's verdict is MAM's, where `asset:approve` is checked (decided 2026-10-16): a "done,
+    // approved" here would move the workflow past an asset MAM never approved.
+    if (before.reviewPointId !== undefined)
+      throw new Conflict(
+        `task ${id} is a review: approve or reject the asset in MAM at review point "${before.reviewPointId}" — the verdict closes it`,
+      );
     const at = this.now().toISOString();
     return this.change(caller, before, 'completed', {
       state: 'done',

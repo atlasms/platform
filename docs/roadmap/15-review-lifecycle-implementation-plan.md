@@ -368,6 +368,13 @@ without manual chasing.
 **Exit G:** a preset flow with two review points drives an asset through both; verdict history shows both
 `reviewPointId`s.
 
+> **As built (EP-22.6, 2026-10-16):** G1 — a `human-task` with a `reviewPointId` is the review step;
+> MAM's verdict naming that point (or naming none) resolves it and closes its task; the task is never
+> completed by hand ([bms.md §13f](../architecture/services/bms.md)). The verdict events carry the
+> point, so the log records where each decision was made; `GET /assets/{id}/verdicts` is EP-24.4.
+> Two points on ONE asset meet MAM's lifecycle (an approved asset cannot be approved again) — the
+> exit's "drives an asset through both" is EP-24.7's. G2 is EP-22.10.
+
 ---
 
 ## WS-H — Studio (Angular) surfaces
