@@ -18,6 +18,7 @@ import { commandAnswers, WORKFLOW_COMMANDS } from '@atlas/contracts/workflow';
 import type { Broker, Message, Subscription } from '@atlas/messaging';
 import { ValidationError } from '@atlas/service-kit';
 import { InstanceNotRunning, type InstanceRunner } from './runner.ts';
+import { HUMAN_TASK } from './runtime.ts';
 import type { WorkflowStore } from './store.ts';
 
 export type RouteOutcome =
@@ -45,6 +46,11 @@ export class CompletionRouter {
     this.store = options.store;
     this.runner = options.runner;
     this.now = options.now ?? (() => new Date());
+  }
+
+  /** A task change — {@link routeTask}. */
+  async routeTask(msg: Message): Promise<RouteOutcome> {
+    return routeTask(this.store, this.runner, msg, this.now);
   }
 
   async route(msg: Message): Promise<RouteOutcome> {
@@ -82,6 +88,56 @@ export class CompletionRouter {
   }
 }
 
+/**
+ * A human step's completion (EP-25.8): Notifications' `task.updated` with `done`, for a task BMS
+ * made. Found by the TASK's id (the envelope's correlation is the person's request, not ours) —
+ * the await row `createTask` wrote. A claim or a forward is not a completion; a task nobody in BMS
+ * made (assigned by hand) has no await and is acknowledged untouched.
+ */
+export async function routeTask(
+  store: WorkflowStore,
+  runner: InstanceRunner,
+  msg: Message,
+  now: () => Date,
+): Promise<RouteOutcome> {
+  const shape = envelopeShapeErrors(msg.body);
+  if (!shape.valid) {
+    throw new ValidationError(`message ${msg.id} on ${msg.subject} is not an envelope`);
+  }
+  const envelope = msg.body as Envelope;
+  const payload = envelope.payload as {
+    id?: unknown;
+    state?: unknown;
+    outcome?: unknown;
+    by?: unknown;
+  };
+  if (payload.state !== 'done' || typeof payload.id !== 'string') return 'ignored';
+  const awaited = await store.commandAwait(payload.id);
+  if (!awaited || awaited.channelId !== envelope.channelId || awaited.command !== HUMAN_TASK)
+    return 'ignored';
+  if (awaited.answeredAt !== undefined) return 'duplicate';
+  let outcome: RouteOutcome = 'delivered';
+  try {
+    await runner.signal(awaited.instanceId, {
+      stepId: awaited.stepId,
+      correlationId: awaited.correlationId,
+      // What a human step's `output` maps from: `= incoming.outcome`.
+      payload: {
+        ...(typeof payload.outcome === 'string' ? { outcome: payload.outcome } : {}),
+        ...(typeof payload.by === 'string' ? { by: payload.by } : {}),
+        taskId: payload.id,
+      },
+    });
+  } catch (err) {
+    if (!(err instanceof InstanceNotRunning)) throw err;
+    outcome = 'orphaned';
+  }
+  const first = await store.transaction((tx) =>
+    tx.answerAwait(awaited.correlationId, now().toISOString(), msg.id),
+  );
+  return first ? outcome : 'duplicate';
+}
+
 function errorOf(payload: Record<string, unknown>): { code: string; message: string } {
   const error = payload['error'] as { code?: unknown; message?: unknown } | undefined;
   return {
@@ -98,10 +154,16 @@ export interface RouterSubscriptionOptions {
   onError?: (err: unknown, msg: Message) => void;
 }
 
-/** Every channel's answers to every command a workflow may issue: one durable per event type. */
+/** A human step's completion — Notifications' task changes (EP-25.8). */
+export const TASK_UPDATED_PATTERN = 'atlas.*.task.updated';
+
+/**
+ * Every channel's answers to every command a workflow may issue — one durable per event type — and
+ * the task changes that complete a human step.
+ */
 export function answerPatterns(): string[] {
   const { completes, fails } = commandAnswers();
-  return [...completes, ...fails].map((type) => `atlas.*.${type}`);
+  return [...[...completes, ...fails].map((type) => `atlas.*.${type}`), TASK_UPDATED_PATTERN];
 }
 
 export function startCompletionRouter(options: RouterSubscriptionOptions): Subscription[] {
@@ -110,7 +172,11 @@ export function startCompletionRouter(options: RouterSubscriptionOptions): Subsc
       pattern,
       async (msg: Message) => {
         try {
-          options.onOutcome?.(msg.subject, await options.router.route(msg));
+          const outcome =
+            pattern === TASK_UPDATED_PATTERN
+              ? await options.router.routeTask(msg)
+              : await options.router.route(msg);
+          options.onOutcome?.(msg.subject, outcome);
         } catch (err) {
           // Thrown to the broker: the runtime unreachable is retried; a message that is not an
           // envelope is dead-lettered where scripts/dlq.mjs shows it.

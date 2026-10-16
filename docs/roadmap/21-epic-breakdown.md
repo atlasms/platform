@@ -417,7 +417,7 @@ Source: [bms-plan](services/bms-plan.md) §2; [bms.md](../architecture/services/
 | 22.2 | ✅ Scaffold `bms` (`nx g service`) + the `WorkflowDefinition` store; the DSL validator in `@atlas/contracts/workflow`, the FEEL subset enforced, validated on publish (#510) | 5 |
 | 22.3 | ✅ Temporal in the cluster + the worker behind the `Effects` boundary with the pure interpreter — one instance per workflow; timers, retries and waits survive restarts; ADR-0010's four checks recorded: the worker needs glibc (BMS on `node:24-slim`), workflow code bundled at image build, state in our Postgres, and the crash test — both pods killed mid-timer, the instance finishes; a waiting instance survives the restore drill (#513, #515) | 8 |
 | 22.4 | ✅ Command/event adapters — a command step issues the target service's own command, records `workflow.step.requested`, awaits its completion event: a closed list of commands a workflow may issue (`WORKFLOW_COMMANDS`, refused at publish otherwise), a correlation id derived per issue, and a durable completion router; MTS answers a refused command with `transcode.failed` (bms.md §13d) | 5 |
-| 22.5 | Human-task step — `workflow.task.created` (user/role), waits on the correlated completion | 5 |
+| 22.5 | ✅ Human-task step — `workflow.task.created` (user/role), waits on the correlated completion: an await keyed by the derived task id, `task.updated` → `done` signals the step with its outcome (bms.md §13e) | 5 |
 | 22.6 | Manual-review step — `reviewPointId`, resolves on `asset.approved`/`rejected`, placeable at several points (review plan WS-G) | 3 |
 | 22.7 | Canonical ingest-to-air preset — ingest → transcode → catalogue → review → schedule, driven end to end (send-to-air stays EP-31's) | 5 |
 | 22.8 | ✅ Instance state API — `GET /instances/{id}` with step history (shipped with 22.3, #513/#515) | 3 |
@@ -476,7 +476,7 @@ Source: [notifications-plan](services/notifications-plan.md) §2; lift from [`re
 | 25.5 | Notification-type registry + templates (Tier 1) and the event → notification pipeline (`asset.approved`, `asset.expired`, `transcode.failed`, `alert.raised`, mentions) | 5 |
 | 25.6 | Per-user preferences — per type, opt in/out | 3 |
 | 25.7 | Live delivery on **per-user streams** (decided 2026-10-12: a message naming `recipientUserId` reaches only that user's connections — [websocket §5](../architecture/services/websocket.md#5-messaging)); a new eligibility rule, so its PR waits for the product owner's security review | 3 |
-| 25.8 | Task → BMS feedback — completing a task resolves the waiting workflow step | 3 |
+| 25.8 | ✅ Task → BMS feedback — completing a task resolves the waiting workflow step (BMS's completion router consumes `task.updated`; bms.md §13e) | 3 |
 | 25.9 | Studio inbox panel — tasks, messages, notifications, live | 5 |
 
 **Decided 2026-10-12:** 25.7 → per-user streams by identity match (security review on the PR).

@@ -47,7 +47,8 @@ export function inProcessRunner(runtime: BmsRuntime): InProcessRunner {
       waitForTask: take,
       waitForEvent: take,
       createTask: async (spec) => {
-        await runtime.createTask({ key: key(), spec });
+        const taskId = await runtime.createTask({ key: key(), spec });
+        inbox.expect(spec.stepId, taskId);
       },
       escalate: async () => undefined,
       runChild: async (stepId, workflowId, version, input) => {

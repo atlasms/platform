@@ -18,6 +18,7 @@ export {
   CompletionRouter,
   startCompletionRouter,
   answerPatterns,
+  TASK_UPDATED_PATTERN,
   type RouteOutcome,
 } from './router.ts';
 export { StepInbox, CommandFailed, type StepSignal } from './engine/inbox.ts';

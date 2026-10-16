@@ -1860,7 +1860,7 @@ test('smoke: EP-22.4 — a command step transcodes through MTS and MTS’s answe
   assert.match(refused.error, /COMMAND_REFUSED: unknown preset\(s\): no-such-preset/);
 });
 
-test('smoke: EP-25.2/25.3 — a task offered to a ROLE reaches whoever holds it, is claimed, completed and audited', async () => {
+test('smoke: EP-25.2/25.3/25.8 — a ROLE’s task reaches its holder, is claimed and completed, and its workflow moves on', async () => {
   // Read-time resolution on a live cluster (decided 2026-10-16): the smoke user is given the role
   // `viewer` through a group made here; a workflow offers its human step to the role; the user's
   // inbox — Notifications asking IAM over the signed principals route (ADR-0008, iam-read-keys) —
@@ -1961,12 +1961,15 @@ test('smoke: EP-25.2/25.3 — a task offered to a ROLE reaches whoever holds it,
   }
   assert.deepEqual(actions, ['task.created', 'task.claimed', 'task.completed']);
 
-  const signalled = await get(`/api/v1/instances/${instanceId}/signal`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ stepId: 's_review', payload: { outcome: 'done' } }),
-  });
-  assert.equal(signalled.status, 202, signalled.text);
+  // EP-25.8: completing the task moved its workflow — nobody signalled it.
+  const endBy = Date.now() + 60_000;
+  for (;;) {
+    const res = await get(`/api/v1/instances/${instanceId}`, { headers });
+    assert.equal(res.status, 200, res.text);
+    if (json(res).state === 'completed') break;
+    if (Date.now() > endBy) assert.fail(`the workflow never moved on: ${res.text}`);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
 });
 
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {

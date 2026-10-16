@@ -212,7 +212,8 @@ role, and finds the task in the user's inbox through the gateway with `partial: 
   none and is read as its first revision.
 - A role task cannot be claimed while IAM cannot say who holds the role (503); nothing is written.
 
-Completing a workflow's task does not yet move its workflow — that is EP-25.8.
+Completing a workflow's task moves its workflow (EP-25.8): BMS's completion router consumes
+`task.updated` and signals the waiting human step — bms.md §13e.
 
 Not yet: a task's audit history (`task` entity) has no read rule in the log — choosing one is a log
 visibility change, reviewed with EP-25.2, which is when people first act on tasks. Live delivery is

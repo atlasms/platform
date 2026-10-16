@@ -442,6 +442,25 @@ when it is newer than every BMS source file (always, in the image) and bundles f
 And an activity's refusal reached the workflow as Temporal's `ActivityFailure` ("Activity task
 failed"); the workflow unwraps it, so the history says what was refused.
 
+## 13e. As built — EP-22.5 / EP-25.8, the human step
+
+A human step creates its task — `workflow.task.created`, to a user or a ROLE (`assigneeKind`), with a
+task id DERIVED from the instance and the activity — and records an await row keyed by that id in the
+same transaction (`command_awaits`, `command: workflow.task.created`). Notifications materializes the
+task; a holder claims it and completes it there (notifications.md §13c). The completion router also
+consumes `task.updated` (`atlas.*.task.updated`): a `done` for a task BMS made signals the waiting
+step with `{ outcome, by, taskId }` — what a human step's `output` maps from (`= incoming.outcome`) —
+then marks the await answered once. A claim or a forward is not a completion; another channel's update
+and a task assigned by hand (no await) are ignored; a redelivery is a duplicate; an ended instance's
+is orphaned. The workflow takes only ITS task's completion (`StepInbox.expect` with the task id); a
+person's uncorrelated signal (`POST /instances/{id}/signal`) still completes the step, as before.
+
+A workflow's task is never cancelled by hand (Notifications refuses it); ending a waiting human step
+other than by completing its task — a timeout, an escalation's outcome — is EP-22.9's.
+
+Smoke: a workflow offers its human step to a role the smoke user holds through a group; the user
+finds it in the inbox, claims it, completes it — and the instance completes with nobody signalling it.
+
 ## 14. Open questions / future
 
 - **Decided:** Studio gets a **visual drag-and-drop designer** ([Foblex Flow](https://flow.foblex.com/))

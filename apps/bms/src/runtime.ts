@@ -18,6 +18,9 @@ import { afterHistory, isTerminal, type Instance } from './instance.ts';
 import { outboxRecord } from './record.ts';
 import type { WorkflowStore, WorkflowTx } from './store.ts';
 
+/** What a human step's await row records as its "command" — the event that asked for it. */
+export const HUMAN_TASK = 'workflow.task.created';
+
 /** BMS itself is the actor of what an instance does on its own. */
 const SELF = { actor: { kind: 'service' as const, id: 'bms' } };
 
@@ -121,14 +124,28 @@ export class BmsRuntime {
     return { correlationId };
   }
 
-  /** A human task: `workflow.task.created`, which Notifications materializes (EP-25.2). */
+  /**
+   * A human task: `workflow.task.created`, which Notifications materializes (EP-25.1), and an await
+   * row keyed by the task's id — the completion router finds the waiting step by it when the task
+   * is completed (`task.updated` → `done`; EP-25.8). The id is derived, so a retry names the same
+   * task, and it is returned so the workflow takes only THAT task's completion.
+   */
   async createTask(input: { key: string; spec: TaskSpec }): Promise<string> {
     const instance = await this.store.instance(input.spec.instanceId);
     if (!instance) throw new NotFound(`instance ${input.spec.instanceId}`);
     const taskId = derivedUlid(Date.parse(instance.startedAt), `task:${input.key}`);
+    const at = this.now().toISOString();
     await this.store.transaction(async (tx) => {
       if (!(await tx.markSeen(input.key))) return;
       const { spec } = input;
+      await tx.insertAwait({
+        correlationId: taskId,
+        channelId: instance.channelId,
+        instanceId: instance.id,
+        stepId: spec.stepId,
+        command: HUMAN_TASK,
+        issuedAt: at,
+      });
       await tx.enqueue(
         outboxRecord(
           'workflow.task.created',
