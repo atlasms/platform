@@ -7,7 +7,9 @@ import {
   goldenSignals,
   isTraceable,
   HealthRegistry,
+  INTERNAL_SIGNATURE_HEADER,
   Unauthorized,
+  verifyInternal,
   runWithContext,
   shouldLogAccess,
   PROBLEM_CONTENT_TYPE,
@@ -45,6 +47,15 @@ export interface IamAppOptions {
    * here would leave holes in the middle of traces.
    */
   tracer?: Tracer;
+  /**
+   * The keys a READER signs with (`iam-read-keys`, ADR-0008; EP-25.3): they open the read-only
+   * principals route and nothing else. Empty — the default — and that route refuses everyone.
+   */
+  readKeys?: readonly string[];
+  /** A refused internal request, with why — a misconfigured reader, or someone probing. */
+  onInternalRefused?: (reason: string, context: { correlationId: string; url: string }) => void;
+  /** The clock signatures are judged against. Injected for the suites. */
+  now?: () => Date;
 }
 
 interface Credentials {
@@ -231,6 +242,35 @@ export function buildIamApp(options: IamAppOptions): FastifyInstance {
     }
     // Always 204: telling a caller whether the token existed is an oracle.
     return reply.code(204).send();
+  });
+
+  // --- internal (ADR-0008) ---------------------------------------------------------------------------
+  //
+  // Who a user is as an addressee (EP-25.3): Notifications resolves a task offered to a group or a
+  // role when an inbox is read. Signed with a READ key that opens this route alone; the gateway never
+  // routes `/internal/`. Authority is the user named — the answer says only their groups and roles.
+
+  app.get<{ Params: { id: string } }>('/internal/v1/users/:id/principals', async (req, reply) => {
+    try {
+      const signature = req.headers[INTERNAL_SIGNATURE_HEADER];
+      const verdict = verifyInternal(
+        options.readKeys ?? [],
+        { method: 'GET', path: req.url, body: '' },
+        typeof signature === 'string' ? signature : undefined,
+        (options.now ?? (() => new Date()))(),
+      );
+      if (!verdict.ok) {
+        options.onInternalRefused?.(verdict.reason, {
+          correlationId: req.correlationId,
+          url: req.url,
+        });
+        throw new Unauthorized('not an internal request');
+      }
+      return reply.send(await service.principals(req.params.id));
+    } catch (err) {
+      const p = toProblem(err, req.correlationId);
+      return reply.code(p.status).type(PROBLEM_CONTENT_TYPE).send(p);
+    }
   });
 
   // --- administration (EP-10.4) ----------------------------------------------------------------------

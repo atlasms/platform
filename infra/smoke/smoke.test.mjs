@@ -1860,6 +1860,92 @@ test('smoke: EP-22.4 — a command step transcodes through MTS and MTS’s answe
   assert.match(refused.error, /COMMAND_REFUSED: unknown preset\(s\): no-such-preset/);
 });
 
+test('smoke: EP-25.3 — a task offered to a ROLE reaches whoever holds it, resolved when the inbox is read', async () => {
+  // Read-time resolution on a live cluster (decided 2026-10-16): the smoke user is given the role
+  // `viewer` through a group made here; a workflow offers its human step to the role; the user's
+  // inbox — Notifications asking IAM over the signed principals route (ADR-0008, iam-read-keys) —
+  // lists it, and says it is not partial.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const me = json(await get('/api/v1/users/me/effective-permissions', { headers })).subjectId;
+  const group = await get('/api/v1/groups', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ name: `smoke viewers ${Date.now().toString(36)}`, roleIds: ['viewer'] }),
+  });
+  assert.equal(group.status, 201, group.text);
+  const joined = await get(`/api/v1/groups/${json(group).id}/members`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ userId: me }),
+  });
+  assert.equal(joined.status, 204, joined.text);
+
+  const created = await get('/api/v1/workflows', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      name: `smoke role task ${Date.now()}`,
+      steps: [
+        { id: 's_start', kind: 'start' },
+        {
+          id: 's_review',
+          kind: 'human-task',
+          config: { taskType: 'review', assignee: { role: 'viewer' } },
+        },
+        { id: 's_end', kind: 'end' },
+      ],
+      transitions: [
+        { id: 't1', from: 's_start', to: 's_review' },
+        { id: 't2', from: 's_review', to: 's_end' },
+      ],
+    }),
+  });
+  assert.equal(created.status, 201, created.text);
+  const w = json(created);
+  const published = await get(`/api/v1/workflows/${w.id}/publish?revision=1`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(published.status, 200, published.text);
+  let started;
+  const startBy = Date.now() + 60_000;
+  for (;;) {
+    started = await get('/api/v1/instances', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workflowId: w.id }),
+    });
+    if (started.status !== 503 || Date.now() > startBy) break;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  assert.equal(started.status, 201, started.text);
+  const instanceId = json(started).id;
+
+  const deadline = Date.now() + 60_000;
+  let inbox;
+  let task;
+  for (;;) {
+    const res = await get('/api/v1/inbox', { headers });
+    assert.equal(res.status, 200, res.text);
+    inbox = json(res);
+    task = inbox.tasks.find((t) => t.workflowInstanceId === instanceId);
+    if (task) break;
+    if (Date.now() > deadline) assert.fail(`the role's task never reached the inbox: ${res.text}`);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.equal(inbox.partial, false, 'IAM answered: the roles were resolved');
+  assert.deepEqual([task.assignee, task.assigneeKind], ['viewer', 'role']);
+
+  const signalled = await get(`/api/v1/instances/${instanceId}/signal`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ stepId: 's_review', payload: { outcome: 'done' } }),
+  });
+  assert.equal(signalled.status, 202, signalled.text);
+});
+
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {
   // A workflow's lifecycle on a live cluster (decided 2026-10-13): a first publish makes it active
   // and puts it in the catalog every client loads; deactivating it is refused while an instance is

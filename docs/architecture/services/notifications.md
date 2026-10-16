@@ -169,9 +169,26 @@ user or a ROLE (the DSL's `assignee`), so `PrincipalKind` gained `role` and `wor
 says which (`assigneeKind`; absent = user, what BMS sent before). A task offered to a group or a role
 stays ONE row; whose inbox it is in is answered when an inbox is read — the caller's roles and groups
 from IAM, cached and dropped on `permissions.changed` / `group.membership.changed` — so a new holder
-sees an open task and someone who left stops seeing it; whoever claims it first owns it (25.2). As
-built here the inbox shows tasks offered to the caller BY NAME; resolving roles and groups needs a
-signed internal call to IAM (ADR-0008) and lands with EP-25.3 as its own reviewed change.
+sees an open task and someone who left stops seeing it; whoever claims it first owns it (25.2).
+
+## 13b. As built — EP-25.3, the inbox resolves roles and groups at read time
+
+`GET /inbox` asks IAM who the caller is as an addressee — `GET /internal/v1/users/{id}/principals`:
+their groups, and every role they hold directly or through a group — and lists the open tasks
+offered to the caller by name, to any of those groups, or to any of those roles, in the caller's
+channel. The call is signed (ADR-0008, amended) with **`iam-read-keys`**, a READ key IAM accepts on
+that route alone; it is never routed by the gateway. An unknown or disabled user is nobody (404 →
+their own name only).
+
+- **Cached** per user for 30 s, and **forgotten** on `permissions.changed` and
+  `group.membership.changed` for that user — a BROADCAST subscription, so every replica drops its
+  own copy at once; the TTL only bounds what a broker outage delays. Concurrent reads of one user
+  share one request, and an answer that left IAM before a change is not cached after it.
+- **IAM away is not a failed read**: the inbox holds what is offered by name and says `partial:
+  true`. Without `iam-read-keys` configured it is always so, and the service logs it at start.
+
+Smoke gives the smoke user the `viewer` role through a group, offers a workflow's human step to the
+role, and finds the task in the user's inbox through the gateway with `partial: false`.
 
 Not yet: a task's audit history (`task` entity) has no read rule in the log — choosing one is a log
 visibility change, reviewed with EP-25.2, which is when people first act on tasks. Live delivery is

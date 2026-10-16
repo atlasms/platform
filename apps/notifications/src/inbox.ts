@@ -44,4 +44,9 @@ export interface Inbox {
   tasks: Task[];
   notifications: Notification[];
   unreadCount: number;
+  /**
+   * True when the caller's groups and roles could not be resolved (IAM away, or not configured):
+   * the tasks are those offered to them BY NAME only, and the rest will appear on a later read.
+   */
+  partial: boolean;
 }

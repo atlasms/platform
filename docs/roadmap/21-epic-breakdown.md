@@ -471,7 +471,7 @@ Source: [notifications-plan](services/notifications-plan.md) §2; lift from [`re
 |----|-------|:---:|
 | 25.1 | ✅ Scaffold `notifications`, lifting the reference slice — tasks from `workflow.task.created`, re-review notifications from `asset.expired`, `GET /inbox`, on a store port (sqlite + Postgres); routed, deployed, in the chart and the drill (notifications.md §13a) | 3 |
 | 25.2 | Task entity + state machine — create/assign/forward/close; materialised from `workflow.task.created` | 5 |
-| 25.3 | Inbox + unread counts — `GET /inbox`, resolving the caller's roles and groups at read time (a signed internal IAM call, decided 2026-10-16) | 3 |
+| 25.3 | ✅ Inbox + unread counts — `GET /inbox`, resolving the caller's roles and groups at read time (a signed internal IAM call, `iam-read-keys`, decided 2026-10-16; notifications.md §13b) | 3 |
 | 25.4 | User and group messaging, permission-aware (a user messages only permitted peers/groups) | 5 |
 | 25.5 | Notification-type registry + templates (Tier 1) and the event → notification pipeline (`asset.approved`, `asset.expired`, `transcode.failed`, `alert.raised`, mentions) | 5 |
 | 25.6 | Per-user preferences — per type, opt in/out | 3 |

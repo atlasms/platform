@@ -64,6 +64,21 @@ RIM's code, its Postgres schema and now a key).
 - IAM service principals (option 3) are still the answer for a caller that is NOT part of the
   service it calls — a partner system, another service's workflow. This ADR does not cover them.
 
+## Amendment — a reader of IAM (EP-25.3, 2026-10-16)
+
+Notifications resolves a task offered to a group or a role when an inbox is READ (decided by the
+product owner, 2026-10-16), so it asks IAM who a user is as an addressee:
+`GET /internal/v1/users/{id}/principals` → their groups and every role they hold. The same shape as
+HSM's read key (ADR-0009): a SEPARATE Secret, **`iam-read-keys`**, mounted into IAM (verifier) and
+Notifications (signer) only, which IAM accepts on that route ALONE. A leaked key tells someone who
+holds which role and group; it mints no token, reads no policy, changes nothing. Authority is the
+user named; the answer is about that user only. Notifications caches it per user for 30 s and
+forgets it on `permissions.changed` / `group.membership.changed`.
+
+This is the "caller outside the service" case below for the second time (Scheduling → HSM was the
+first). Each has been a narrow READ with its own key, which keeps the blast radius small, but a third
+reader should bring option 3 — IAM service principals — back to the table rather than a third key.
+
 ## Revisit when
 
 - A caller outside the service needs internal access (→ option 3).

@@ -20,6 +20,7 @@ security:
 tags:
   - name: auth
   - name: admin
+  - name: internal
 paths:
   /auth/login:
     # Served at the ROOT, not under /api/v1: the gateway's public route is `/auth`, and the browser,
@@ -305,6 +306,37 @@ paths:
       responses:
         '200': { description: Holders, content: { application/json: { schema: { $ref: '#/components/schemas/RoleHolders' } } } }
         '404': { $ref: '#/components/responses/Error' }
+  /internal/v1/users/{id}/principals:
+    servers:
+      - url: http://iam:3000
+    get:
+      operationId: userPrincipals
+      tags: [internal]
+      summary: "Who a user is as an addressee: their groups, and every role they hold (signed; read-only)"
+      description: >-
+        For Notifications' inbox (EP-25.3): a task offered to a group or a role reaches a person who
+        is in the group or holds the role, resolved when the inbox is READ (decided 2026-10-16).
+        Roles are those assigned to the user directly and those their groups carry. Signed with a
+        READ key (`iam-read-keys`, ADR-0008) that opens this route and no other; never routed by the
+        gateway. An unknown or disabled user is a 404 — addressed as nobody.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The user's principals
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [userId, groups, roles, permVersion]
+                additionalProperties: false
+                properties:
+                  userId: { type: string }
+                  groups: { type: array, items: { type: string } }
+                  roles: { type: array, items: { type: string } }
+                  permVersion: { type: integer, minimum: 0 }
+        '401': { description: Not a signed internal request }
+        '404': { description: 'No such user, or disabled' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }

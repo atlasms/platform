@@ -105,7 +105,8 @@ test('the caller is whoever the gateway says, and nothing else', async () => {
     headers: { [INTERNAL_HEADERS.user]: 'user-1', [INTERNAL_HEADERS.channel]: 'ch12' },
   });
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.json(), { tasks: [], notifications: [], unreadCount: 0 });
+  // No principal source configured: what is offered by name only, and it says so.
+  assert.deepEqual(res.json(), { tasks: [], notifications: [], unreadCount: 0, partial: true });
   // A fast 200 is NOT logged by default — the golden signals already describe it (#245).
   assert.equal(logs.length, 0);
   await app.close();

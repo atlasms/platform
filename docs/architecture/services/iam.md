@@ -193,6 +193,14 @@ key rotation schedule; lockout/backoff thresholds; whether explicit-deny
   affected user, a role edit reaching every holder directly or through a group. The broker is not
   a readiness dependency: login keeps working while the events wait.
 
+## 13a. Internal: who a user is as an addressee (EP-25.3)
+
+`GET /internal/v1/users/{id}/principals` — a user's groups and every role they hold, directly or
+through a group — for Notifications, which resolves a task offered to a group or a role when an inbox
+is read (notifications.md §13b). Signed with **`iam-read-keys`** (ADR-0008, amended 2026-10-16), a
+READ key that opens this route and nothing else: no token is minted, no policy read, nothing changed.
+An unknown or disabled user is a 404. Never routed by the gateway.
+
 ## 14. Open questions / future
 
 - Explicit deny-rule semantics if a customer requires them ([FR-IAM-11](../../requirements/05-functional-requirements.md#iam)).

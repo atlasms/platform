@@ -24,10 +24,11 @@ paths:
       tags: [inbox]
       summary: The caller's inbox — open tasks offered to them and their newest notifications
       description: >-
-        Only ever the caller's own (any authenticated user; no permission). As built in EP-25.1, the
-        tasks are those assigned to the caller BY NAME; a task offered to a role or a group is held
-        and reaches its holders' inboxes when the inbox resolves them at read time (EP-25.3, decided
-        2026-10-16). Messages are EP-25.4.
+        Only ever the caller's own (any authenticated user; no permission). The open tasks offered to
+        the caller by name, to a group they are in, or to a role they hold — resolved when the inbox
+        is READ (EP-25.3, decided 2026-10-16), so a new holder sees an open task and someone who
+        left does not. IAM away is not a failed read: the tasks offered by name, and `partial`.
+        Messages are EP-25.4.
       responses:
         '200': { description: Inbox, content: { application/json: { schema: { $ref: '#/components/schemas/Inbox' } } } }
   /messages:
@@ -107,9 +108,10 @@ components:
         dueAt: { type: string, format: date-time }
     Inbox:
       type: object
-      required: [tasks, notifications, unreadCount]
+      required: [tasks, notifications, unreadCount, partial]
       additionalProperties: false
       properties:
+        partial: { type: boolean, description: 'True when the caller''s groups and roles could not be resolved: only the tasks offered to them by name are here.' }
         tasks: { type: array, items: { $ref: '#/components/schemas/InboxTask' }, description: 'Open tasks, oldest due first.' }
         notifications: { type: array, items: { $ref: '#/components/schemas/Notification' }, description: 'Newest first, at most 50.' }
         unreadCount: { type: integer, minimum: 0, description: 'Unread notifications, all of them.' }

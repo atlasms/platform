@@ -14,15 +14,18 @@ import {
   createLogger,
   createTracer,
   HealthRegistry,
+  internalKeys,
   loadConfig,
   MetricRegistry,
 } from '@atlas/service-kit';
 import {
   buildNotificationsApp,
+  iamPrincipals,
   NotificationsService,
   pgInboxStore,
   pgMigrations,
   startConsumers,
+  startPrincipalInvalidation,
 } from './index.ts';
 
 const config = loadConfig({
@@ -38,6 +41,9 @@ const config = loadConfig({
   // tables are not. Named after the service; every connection's search_path is pinned to it.
   pgSchema: { env: 'ATLAS_PG_SCHEMA', type: 'string', default: 'notifications' },
   natsUrl: { env: 'ATLAS_NATS_URL', type: 'string', default: 'nats://nats:4222' },
+  // The keys this service signs its question to IAM with (iam-read-keys; ADR-0008, EP-25.3): who a
+  // user is as an addressee. The first signs. Unset, the inbox holds tasks offered by name only.
+  iamReadKeys: { env: 'ATLAS_IAM_READ_KEYS', type: 'string', default: '' },
   relayIntervalMs: { env: 'ATLAS_RELAY_INTERVAL_MS', type: 'number', default: 250 },
   // EP-04.7 / ADR-0004. No endpoint means no export: spans are still created and `traceparent`
   // still propagates, so a site without a collector pays only the cost of an id.
@@ -106,7 +112,16 @@ const health = new HealthRegistry()
   });
 
 const store = pgInboxStore(pool);
-const service = new NotificationsService({ store });
+const readKey = internalKeys(config.iamReadKeys)[0];
+const principals =
+  readKey !== undefined ? iamPrincipals({ origin: config.iamOrigin, key: readKey }) : undefined;
+if (!principals) log.warn('no iam-read-keys: inboxes hold tasks offered by name only');
+const service = new NotificationsService({
+  store,
+  ...(principals ? { principals } : {}),
+  onPrincipalsUnavailable: (err, userId) =>
+    log.warn('principals unavailable; inbox partial', { userId, error: (err as Error).message }),
+});
 
 const app = await buildNotificationsApp({
   service,
@@ -143,6 +158,9 @@ async function startBroker(): Promise<void> {
     retryTimer = setTimeout(() => void startBroker(), 5_000);
     return;
   }
+
+  // EP-25.3: a user's grants or memberships changed — forget who they were as an addressee.
+  if (principals) startPrincipalInvalidation({ broker, principals });
 
   // EP-25.1: workflow tasks and lapsed approvals become inbox items.
   startConsumers({
