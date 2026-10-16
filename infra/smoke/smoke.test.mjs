@@ -203,6 +203,8 @@ test('smoke: every PROXIED upstream answers through the gateway before anything 
     ['hsm', '/api/v1/assets/01H00000000000000000000000/location'],
     // BMS (EP-22.2): the channel's workflow definitions.
     ['bms', '/api/v1/workflows?limit=1'],
+    // Notifications (EP-25.1): the caller's own inbox.
+    ['notifications', '/api/v1/inbox'],
   ];
   const budgetMs = Number(process.env.ATLAS_SMOKE_UPSTREAM_BUDGET_MS ?? 30_000);
 
@@ -1640,6 +1642,81 @@ test('smoke: EP-22.3 — an instance runs on Temporal: a durable timer, a wait, 
   assert.ok(done.history.some((h) => h.stepId === 's_settle' && h.event === 'completed'));
   // Its audit (`workflow-instance` started/completed) is in the log; reading it there waits on the
   // log's read rule for the entity type (a visibility change, held for review separately).
+});
+
+test('smoke: EP-25.1 — a workflow’s human step lands in its assignee’s inbox', async () => {
+  // BMS → Notifications on a live cluster: a published workflow's human step names the smoke user;
+  // BMS emits workflow.task.created, Notifications makes it a task (once, announced and audited),
+  // and the user's own inbox — GET /inbox through the gateway — lists it. The step is then signalled
+  // so the instance ends (task completion feeding back is EP-25.8).
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const me = json(await get('/api/v1/users/me/effective-permissions', { headers })).subjectId;
+  const created = await get('/api/v1/workflows', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      name: `smoke task ${Date.now()}`,
+      steps: [
+        { id: 's_start', kind: 'start' },
+        {
+          id: 's_review',
+          kind: 'human-task',
+          config: { taskType: 'review', assignee: { userId: me } },
+        },
+        { id: 's_end', kind: 'end' },
+      ],
+      transitions: [
+        { id: 't1', from: 's_start', to: 's_review' },
+        { id: 't2', from: 's_review', to: 's_end' },
+      ],
+    }),
+  });
+  assert.equal(created.status, 201, created.text);
+  const w = json(created);
+  const published = await get(`/api/v1/workflows/${w.id}/publish?revision=1`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(published.status, 200, published.text);
+  let started;
+  const startBy = Date.now() + 60_000;
+  for (;;) {
+    started = await get('/api/v1/instances', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workflowId: w.id }),
+    });
+    if (started.status !== 503 || Date.now() > startBy) break;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  assert.equal(started.status, 201, started.text);
+  const instanceId = json(started).id;
+
+  const deadline = Date.now() + 60_000;
+  let task;
+  for (;;) {
+    const res = await get('/api/v1/inbox', {
+      headers: { ...headers, 'cache-control': 'no-cache' },
+    });
+    assert.equal(res.status, 200, res.text);
+    task = json(res).tasks.find((t) => t.workflowInstanceId === instanceId);
+    if (task) break;
+    if (Date.now() > deadline) assert.fail(`the task never reached the inbox: ${res.text}`);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.deepEqual(
+    [task.assignee, task.assigneeKind, task.kind, task.state, task.createdBy],
+    [me, 'user', 'review', 'open', 'bms'],
+  );
+
+  const signalled = await get(`/api/v1/instances/${instanceId}/signal`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ stepId: 's_review', payload: { outcome: 'done' } }),
+  });
+  assert.equal(signalled.status, 202, signalled.text);
 });
 
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {

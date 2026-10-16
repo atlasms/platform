@@ -420,7 +420,7 @@ Source: [bms-plan](services/bms-plan.md) §2; [bms.md](../architecture/services/
 | 22.5 | Human-task step — `workflow.task.created` (user/role), waits on the correlated completion | 5 |
 | 22.6 | Manual-review step — `reviewPointId`, resolves on `asset.approved`/`rejected`, placeable at several points (review plan WS-G) | 3 |
 | 22.7 | Canonical ingest-to-air preset — ingest → transcode → catalogue → review → schedule, driven end to end (send-to-air stays EP-31's) | 5 |
-| 22.8 | Instance state API — `GET /instances/{id}` with step history | 3 |
+| 22.8 | ✅ Instance state API — `GET /instances/{id}` with step history (shipped with 22.3, #513/#515) | 3 |
 | 22.9 | Timeout / retry / compensation semantics; a step that keeps failing dead-letters | 5 |
 | 22.10 | Re-review re-entry — `asset.expired` opens a fresh manual-review task | 2 |
 | 22.11 | ✅ Workflow states `draft` / `active` / `inactive` / `archived` (deactivate and archive refused while instances run), the catalog every authenticated user loads at sign-in, `workflow.changed` broadcast to all; change logs under a dedicated `workflow:audit` (decided 2026-10-13, #516); the Administrator starter role is `*:*` (decided 2026-10-15) (#517, #519, #518) | 5 |
@@ -469,9 +469,9 @@ Source: [notifications-plan](services/notifications-plan.md) §2; lift from [`re
 
 | ID | Story | Est |
 |----|-------|:---:|
-| 25.1 | Scaffold `notifications`, lifting the reference slice | 3 |
+| 25.1 | ✅ Scaffold `notifications`, lifting the reference slice — tasks from `workflow.task.created`, re-review notifications from `asset.expired`, `GET /inbox`, on a store port (sqlite + Postgres); routed, deployed, in the chart and the drill (notifications.md §13a) | 3 |
 | 25.2 | Task entity + state machine — create/assign/forward/close; materialised from `workflow.task.created` | 5 |
-| 25.3 | Inbox + unread counts — `GET /inbox` | 3 |
+| 25.3 | Inbox + unread counts — `GET /inbox`, resolving the caller's roles and groups at read time (a signed internal IAM call, decided 2026-10-16) | 3 |
 | 25.4 | User and group messaging, permission-aware (a user messages only permitted peers/groups) | 5 |
 | 25.5 | Notification-type registry + templates (Tier 1) and the event → notification pipeline (`asset.approved`, `asset.expired`, `transcode.failed`, `alert.raised`, mentions) | 5 |
 | 25.6 | Per-user preferences — per type, opt in/out | 3 |
@@ -480,6 +480,7 @@ Source: [notifications-plan](services/notifications-plan.md) §2; lift from [`re
 | 25.9 | Studio inbox panel — tasks, messages, notifications, live | 5 |
 
 **Decided 2026-10-12:** 25.7 → per-user streams by identity match (security review on the PR).
+**Decided 2026-10-16:** a task offered to a role or a group is one row, resolved to people when an inbox is READ — not fanned out when it is made (`PrincipalKind` gains `role`).
 
 ### EP-26 — Media Editor v1 (refined 2026-10-11)
 

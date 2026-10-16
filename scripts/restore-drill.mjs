@@ -50,10 +50,21 @@ const SERVICES = [
   'mts',
   'hsm',
   'bms',
+  'notifications',
   // BMS's workflow runtime (ADR-0010): it writes Temporal's databases, so it stops with the rest.
   'temporal',
 ];
-const SCHEMAS = ['iam', 'mam', 'logging', 'scheduling', 'rim', 'mts', 'hsm', 'bms'];
+const SCHEMAS = [
+  'iam',
+  'mam',
+  'logging',
+  'scheduling',
+  'rim',
+  'mts',
+  'hsm',
+  'bms',
+  'notifications',
+];
 /**
  * Temporal's state is in databases of its own, beside `atlas` (ADR-0010) — a dump of `atlas` alone
  * would restore every definition and lose every running workflow.

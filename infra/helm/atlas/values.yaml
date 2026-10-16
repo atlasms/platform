@@ -43,6 +43,9 @@ images:
   nats:
     repository: nats
     tag: 2.12-alpine
+  notifications:
+    repository: atlas/notifications
+    tag: ""
   opensearch:
     repository: opensearchproject/opensearch
     tag: 2.19.3
@@ -83,6 +86,7 @@ replicas:
   logging: 1
   mam: 2
   mts: 1
+  notifications: 1
   rimRecorder: 2
   scheduling: 1
   websocket: 1
@@ -136,6 +140,12 @@ resources:
       memory: 128Mi
     limits:
       memory: 512Mi
+  notifications:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 384Mi
   opensearch:
     requests:
       cpu: 200m

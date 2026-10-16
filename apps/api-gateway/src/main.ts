@@ -34,6 +34,11 @@ const config = loadConfig({
     default: 'http://scheduling:3000',
   },
   bmsOrigin: { env: 'ATLAS_BMS_ORIGIN', type: 'string', default: 'http://bms:3000' },
+  notificationsOrigin: {
+    env: 'ATLAS_NOTIFICATIONS_ORIGIN',
+    type: 'string',
+    default: 'http://notifications:3000',
+  },
   jwksPath: { env: 'ATLAS_JWKS_PATH', type: 'string', default: '/.well-known/jwks.json' },
   // EP-08.3. api-gateway.md §11 makes these per-deployment configuration; the defaults live in
   // app.ts and are sized for a facility behind one NAT rather than for one browser.
@@ -75,6 +80,7 @@ const routes = productionRoutes({
   mts: config.mtsOrigin,
   hsm: config.hsmOrigin,
   bms: config.bmsOrigin,
+  notifications: config.notificationsOrigin,
   uploadBodyLimit: config.uploadBodyLimit,
 });
 
