@@ -462,4 +462,70 @@ if (!ADDRESS) {
       await running;
     }
   });
+
+  test('BMS on a real Temporal: a human step that times out takes its error path, and its task is cancelled', async () => {
+    const store = sqliteWorkflowStore();
+    const runtime = new BmsRuntime({ store });
+    const namespace = `bms-test-${ulid().toLowerCase()}`;
+    const temporal = await connectTemporal({ address, namespace, runtime });
+    const running = temporal.run();
+    const service = new BmsService({ store, runner: temporal.runner });
+    const outbox = new SqliteOutboxStore(store.db);
+    const caller = {
+      userId: 'user-1',
+      channelId: 'ch12',
+      policy: compile({
+        subjectId: 'user-1',
+        permVersion: 1,
+        rules: [{ id: 'r', permissions: ['workflow:admin', 'workflow:act'] }],
+        roles: [],
+        groups: [],
+      }),
+    };
+    try {
+      const w = await service.create(caller, {
+        name: 'Review in time',
+        steps: [
+          { id: 's_start', kind: 'start' },
+          {
+            id: 's_review',
+            kind: 'human-task',
+            timeout: 'PT2S',
+            onError: { transitionTo: 's_late' },
+            config: { taskType: 'review', assignee: { role: 'editor' } },
+          },
+          { id: 's_end', kind: 'end' },
+          { id: 's_late', kind: 'end', config: { status: 'late' } },
+        ],
+        transitions: [
+          { id: 't1', from: 's_start', to: 's_review' },
+          { id: 't2', from: 's_review', to: 's_end' },
+        ],
+      });
+      await service.publish(caller, w.id, 1);
+      const { id } = await service.startInstance(caller, { workflowId: w.id });
+      const deadline = Date.now() + 60_000;
+      let ended: Instance | undefined;
+      while (!ended) {
+        const i = await store.instance(id);
+        if (i?.state === 'completed' || i?.state === 'failed') ended = i;
+        else if (Date.now() > deadline) throw new Error(`never ended: ${JSON.stringify(i)}`);
+        else await new Promise((r) => setTimeout(r, 200));
+      }
+      assert.deepEqual([ended.state, ended.endStepId], ['completed', 's_late']);
+      const cancelled = (await outbox.listUnsent(1000))
+        .map((r) => r.message.body as Envelope)
+        .find((e) => e.type === 'workflow.task.resolved');
+      assert.deepEqual(
+        [
+          (cancelled?.payload as { state?: string }).state,
+          (cancelled?.payload as { reason?: string }).reason,
+        ],
+        ['cancelled', 'timeout'],
+      );
+    } finally {
+      await temporal.shutdown();
+      await running;
+    }
+  });
 }

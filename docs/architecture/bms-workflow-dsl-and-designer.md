@@ -229,6 +229,7 @@ required per-kind config, id patterns, `maxContains:1` on `start`.
 | `command.request.event` is a command a workflow may issue — `WORKFLOW_COMMANDS` (`UNKNOWN_COMMAND`, EP-22.4) | error |
 | `command.request.input` keys are fields of that command's payload, and its required fields are given (`COMMAND_INPUT`); a dotted key builds a nested field | error |
 | `command.await.event` answers the command (`AWAIT_EVENT`); `command.await.correlate` is refused — the answer is matched by correlation id (`CORRELATE_UNSUPPORTED`) | error |
+| `retry` only on a `command` step (`RETRY_NOT_COMMAND`, EP-22.9); an `onError.transitionTo` target and a `compensation` handler count as reachable | error |
 | `start.trigger.event` is an event a workflow may start on — `WORKFLOW_TRIGGERS`, a closed list (`UNKNOWN_TRIGGER`, EP-22.7) | error |
 | `wait-event.event` is an event a workflow may wait for — `WORKFLOW_EVENTS`, a closed list (`UNKNOWN_EVENT`, EP-22.6) | error |
 | `wait-event.correlate` is equality keys, `incoming.<field> = <expr>` joined with `and`, the other side not reading `incoming` (`CORRELATE_SHAPE`), on fields the event's payload has (`CORRELATE_FIELD`) | error |
@@ -432,6 +433,11 @@ Versioning so long-running instances replay on the code they started with.
 On unrecoverable failure, pop `compensations` in reverse and run each step's `compensation` handler
 (itself a `command`), then move the instance to `Failed`. `onError: "fail"` skips compensation;
 `onError: { transitionTo }` routes to an explicit error path instead.
+
+As built (EP-22.9, bms.md §13h): a WAITING step's timeout — a human step's, a wait-event's — is a
+failure that goes to its `onError` exactly as a command's exhausted retries do; `retry` is a
+command's only. A task left open by a timeout, or by the run failing, is cancelled; a run that ends
+`Failed` raises `alert.raised` (`workflow-failed`).
 
 ## 11. BPMN 2.0 converter (`libs/contracts/bpmn`)
 

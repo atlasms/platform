@@ -125,6 +125,11 @@ export const sqliteMigrations: Migration[] = [
          CREATE INDEX IF NOT EXISTS event_buffer_received_idx ON event_buffer (received_at);
          CREATE INDEX IF NOT EXISTS event_awaits_instance_idx ON event_awaits (instance_id);`,
   },
+  // EP-22.9: the failed runs an operator lists (`GET /instances?state=failed`).
+  {
+    id: 'bms_instances_state_idx',
+    up: `CREATE INDEX IF NOT EXISTS workflow_instances_state_idx ON workflow_instances (channel_id, state, id);`,
+  },
 ];
 
 /** The row's `state` column is the truth for the filter, so it is the truth on the record too. */
@@ -339,12 +344,16 @@ export function sqliteWorkflowStore(path = ':memory:'): WorkflowStore & { db: Db
         { data: string } | undefined;
       return row ? (JSON.parse(row.data) as Instance) : undefined;
     },
-    async instances(channelId, { workflowId, after, limit }) {
+    async instances(channelId, { workflowId, state, after, limit }) {
       const params: (string | number)[] = [channelId];
       let where = 'channel_id = ?';
       if (workflowId !== undefined) {
         where += ' AND workflow_id = ?';
         params.push(workflowId);
+      }
+      if (state !== undefined) {
+        where += ' AND state = ?';
+        params.push(state);
       }
       if (after !== undefined) {
         where += ' AND id < ?';

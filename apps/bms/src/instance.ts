@@ -6,6 +6,12 @@
 import type { HistoryEvent } from './engine/effects.ts';
 
 export type InstanceState = 'running' | 'waiting' | 'completed' | 'failed';
+export const INSTANCE_STATES: readonly InstanceState[] = [
+  'running',
+  'waiting',
+  'completed',
+  'failed',
+];
 
 export interface Instance {
   id: string;

@@ -2292,6 +2292,114 @@ test('smoke: EP-22.7 — the canonical preset, end to end: an upload starts it, 
   );
 });
 
+test('smoke: EP-22.9 — a human step out of time takes its error path and its task is cancelled; a run nothing catches is listed failed', async () => {
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const me = json(await get('/api/v1/users/me/effective-permissions', { headers })).subjectId;
+  const poll = async (fn, done, budgetMs, what) => {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const value = await fn();
+      if (done(value)) return value;
+      assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(value)}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+  const run = async (name, steps, transitions, vars) => {
+    const made = await get('/api/v1/workflows', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: `${name} ${Date.now()}`, steps, transitions }),
+    });
+    assert.equal(made.status, 201, made.text);
+    const w = json(made);
+    const published = await get(`/api/v1/workflows/${w.id}/publish?revision=1`, {
+      method: 'POST',
+      headers,
+    });
+    assert.equal(published.status, 200, published.text);
+    let started;
+    const startBy = Date.now() + 60_000;
+    for (;;) {
+      started = await get('/api/v1/instances', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ workflowId: w.id, ...(vars ? { vars } : {}) }),
+      });
+      if (started.status !== 503 || Date.now() > startBy) break;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    assert.equal(started.status, 201, started.text);
+    const id = json(started).id;
+    return poll(
+      () => get(`/api/v1/instances/${id}`, { headers }).then((r) => json(r)),
+      (i) => i.state === 'completed' || i.state === 'failed',
+      60_000,
+      `${name} never ended`,
+    );
+  };
+
+  // A review offered to the smoke user, with three seconds to be done: nobody does it.
+  const late = await run(
+    'smoke late review',
+    [
+      { id: 's_start', kind: 'start' },
+      {
+        id: 's_review',
+        kind: 'human-task',
+        timeout: 'PT3S',
+        onError: { transitionTo: 's_late' },
+        config: { taskType: 'review', assignee: { userId: me } },
+      },
+      { id: 's_end', kind: 'end' },
+      { id: 's_late', kind: 'end', config: { status: 'late' } },
+    ],
+    [
+      { id: 't1', from: 's_start', to: 's_review' },
+      { id: 't2', from: 's_review', to: 's_end' },
+    ],
+  );
+  assert.deepEqual([late.state, late.endStepId], ['completed', 's_late'], JSON.stringify(late));
+  // The task left the inbox: BMS cancelled it, and an inbox lists open tasks only.
+  const task = await poll(
+    async () =>
+      json(
+        await get('/api/v1/inbox', { headers: { ...headers, 'cache-control': 'no-cache' } }),
+      ).tasks.find((t) => t.workflowInstanceId === late.id) ?? 'gone',
+    (t) => t === 'gone',
+    30_000,
+    'the timed-out task is still in the inbox',
+  );
+  assert.equal(task, 'gone');
+
+  // A wait with no error path: the run fails, is alerted, and is in the operator's failed list.
+  const failed = await run(
+    'smoke lost wait',
+    [
+      { id: 's_start', kind: 'start' },
+      {
+        id: 's_ready',
+        kind: 'wait-event',
+        timeout: 'PT2S',
+        config: { event: 'asset.ready', correlate: '= incoming.assetId = vars.assetId' },
+      },
+      { id: 's_end', kind: 'end' },
+    ],
+    [
+      { id: 't1', from: 's_start', to: 's_ready' },
+      { id: 't2', from: 's_ready', to: 's_end' },
+    ],
+    { assetId: '01H00000000000000000000000' },
+  );
+  assert.equal(failed.state, 'failed', JSON.stringify(failed));
+  const listed = json(await get('/api/v1/instances?state=failed&limit=200', { headers }));
+  assert.ok(
+    listed.items.some((i) => i.id === failed.id),
+    'the failed run is in the operator list',
+  );
+});
+
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {
   // A workflow's lifecycle on a live cluster (decided 2026-10-13): a first publish makes it active
   // and puts it in the catalog every client loads; deactivating it is refused while an instance is

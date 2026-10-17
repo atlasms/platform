@@ -171,10 +171,11 @@ export class NotificationsService {
   }
 
   /**
-   * `workflow.task.resolved` (EP-22.6) → a workflow's task closed by something other than its
-   * completion here — today a review step's verdict in MAM. The task is `done` with the verdict as
-   * its outcome and the verdict's author as who closed it (a participant from now on), announced
-   * (`task.updated`, which BMS finds already answered) and audited in one transaction.
+   * `workflow.task.resolved` → a workflow's task closed by something other than its completion
+   * here. DONE (EP-22.6): a review step's verdict in MAM — the verdict its outcome, its author who
+   * closed it (a participant from now on). CANCELLED (EP-22.9): the step timed out, or its workflow
+   * failed while the task was open — closed by BMS, with why. Either is announced (`task.updated`,
+   * which BMS finds already answered) and audited in one transaction.
    *
    * A task not here YET is thrown to the broker: its `workflow.task.created` rides another durable
    * and may simply be behind. One already closed is a duplicate.
@@ -189,10 +190,11 @@ export class NotificationsService {
     if (!before) throw new NotFound(`task ${p.taskId} — not here yet`);
     if (before.channelId !== envelope.channelId) return 'skipped';
     if (isClosed(before)) return 'duplicate';
+    const state = p.state ?? 'done';
     const after: Task = {
       ...before,
-      state: 'done',
-      outcome: p.outcome,
+      state,
+      ...(state === 'done' && p.outcome !== undefined ? { outcome: p.outcome } : {}),
       closedBy: p.by ?? 'bms',
       closedAt: p.at,
       version: before.version + 1,
@@ -214,9 +216,9 @@ export class NotificationsService {
           after.channelId,
           {
             id: after.id,
-            state: 'done',
+            state,
             ...(p.by !== undefined ? { by: p.by } : {}),
-            outcome: p.outcome,
+            ...(after.outcome !== undefined ? { outcome: after.outcome } : {}),
             at: p.at,
           } satisfies EventPayloads['task.updated'],
           chain,
@@ -230,7 +232,7 @@ export class NotificationsService {
             entityType: 'task',
             entityId: after.id,
             revision: after.version,
-            action: 'task.resolved',
+            action: state === 'cancelled' ? 'task.cancelled' : 'task.resolved',
             origin: { service: 'notifications' },
             delta: delta({ ...before }, { ...after }),
           } satisfies EventPayloads['audit.recorded'],

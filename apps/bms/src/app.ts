@@ -14,6 +14,7 @@ import type { BmsService, Caller as ServiceCaller } from './service.ts';
 import { parseDraftInput, parseRevision, type WorkflowState } from './workflow.ts';
 
 const WORKFLOW_STATES: readonly WorkflowState[] = ['draft', 'active', 'inactive', 'archived'];
+import { INSTANCE_STATES, type InstanceState } from './instance.ts';
 import { parseSignal, parseStartInstance } from './instance-input.ts';
 import {
   accessRecord,
@@ -346,8 +347,12 @@ export async function buildBmsApp(options: BmsAppOptions): Promise<FastifyInstan
       const limit = req.query['limit'];
       if (limit !== undefined && !/^\d+$/.test(limit))
         throw new ValidationError('limit must be a positive integer');
+      const state = req.query['state'];
+      if (state !== undefined && !INSTANCE_STATES.includes(state as InstanceState))
+        throw new ValidationError(`state must be one of ${INSTANCE_STATES.join(', ')}`);
       return service.listInstances(caller, {
         ...(req.query['workflowId'] !== undefined ? { workflowId: req.query['workflowId'] } : {}),
+        ...(state !== undefined ? { state: state as InstanceState } : {}),
         ...(req.query['after'] !== undefined ? { after: req.query['after'] } : {}),
         ...(limit !== undefined ? { limit: Number(limit) } : {}),
       });

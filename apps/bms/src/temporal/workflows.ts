@@ -55,6 +55,9 @@ export async function atlasWorkflow(
   // with the workflow reaching the wait — and a command step takes only its own command's answer.
   const inbox = new StepInbox();
   setHandler(stepSignal, (signal) => inbox.put(signal));
+  // What each waiting step is waiting on, so a timeout or the instance's end can close it (EP-22.9).
+  const taskOf = new Map<string, string>();
+  const waitOf = new Map<string, string>();
 
   // Deterministic keys: the n-th activity of this instance is the n-th on every replay.
   let op = 0;
@@ -86,12 +89,24 @@ export async function atlasWorkflow(
         act.awaitEvent({ key: key(), instanceId, wait }),
       );
       inbox.expect(wait.stepId, correlationId);
+      waitOf.set(wait.stepId, correlationId);
       // An event published before the wait began, taken from BMS's buffer (EP-22.7).
       if (early !== undefined) inbox.put({ stepId: wait.stepId, correlationId, payload: early });
     },
     waitForEvent: take,
+    closeWait: async (stepId) => {
+      const correlationId = waitOf.get(stepId);
+      if (correlationId !== undefined)
+        await act.closeAwait({ instanceId, correlationId, task: false, reason: 'timeout' });
+    },
+    closeTask: async (stepId, reason) => {
+      const taskId = taskOf.get(stepId);
+      if (taskId !== undefined)
+        await act.closeAwait({ instanceId, correlationId: taskId, task: true, reason });
+    },
     createTask: async (spec) => {
       const { taskId, early } = await unwrapped(act.createTask({ key: key(), spec }));
+      taskOf.set(spec.stepId, taskId);
       // A review's verdict given before the step was reached (EP-22.7).
       if (early !== undefined)
         inbox.put({ stepId: spec.stepId, correlationId: taskId, payload: early });

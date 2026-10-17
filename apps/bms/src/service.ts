@@ -23,7 +23,7 @@ import {
 } from '@atlas/contracts/workflow';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, Forbidden, NotFound, Unavailable, ValidationError } from '@atlas/service-kit';
-import { isTerminal, type HistoryEntry, type Instance } from './instance.ts';
+import { isTerminal, type HistoryEntry, type Instance, type InstanceState } from './instance.ts';
 import { outboxRecord } from './record.ts';
 import type { InstanceRunner } from './runner.ts';
 import { instanceAudit } from './runtime.ts';
@@ -555,12 +555,13 @@ export class BmsService {
 
   async listInstances(
     caller: Caller,
-    options: { workflowId?: string; after?: string; limit?: number } = {},
+    options: { workflowId?: string; state?: InstanceState; after?: string; limit?: number } = {},
   ): Promise<{ items: Instance[]; nextCursor?: string }> {
     this.authorizeInstanceRead(caller);
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
     const items = await this.store.instances(caller.channelId, {
       ...(options.workflowId !== undefined ? { workflowId: options.workflowId } : {}),
+      ...(options.state !== undefined ? { state: options.state } : {}),
       ...(options.after !== undefined ? { after: options.after } : {}),
       limit,
     });

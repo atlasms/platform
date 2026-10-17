@@ -502,7 +502,7 @@ its KEYS:
    `reviewPointId` (mam.md §4), and `asset.approved`/`asset.rejected` say it.
 
 An event published before its step starts waiting is taken from the buffer since EP-22.7 (§13g);
-ending a waiting step other than by its event (a timeout) is EP-22.9's. Several review points on one asset meet MAM's lifecycle (`approved` cannot be approved
+ending a waiting step by its timeout is EP-22.9's (§13h). Several review points on one asset meet MAM's lifecycle (`approved` cannot be approved
 again), so multi-point flows of real use are EP-24.7's.
 
 Evidence: `libs/contracts/test/workflow.test.ts` (the keys, the publish rules), `test/review.test.ts`
@@ -557,6 +557,34 @@ used once, the preset approved and rejected), the buffer's conformance case on s
 the buffer), and smoke on kind: a real upload starts a published copy of the preset, MTS transcodes
 broadcast, the asset is made ready while that runs, and the approval ends the instance at `s_end_ok`
 with the broadcast rendition in its vars.
+
+## 13h. As built — EP-22.9, timeouts, error paths and failed runs (decided 2026-10-17)
+
+- **A waiting step's timeout goes to its `onError`** — a human step or a wait-event, like a command
+  that has exhausted its retries: `{ transitionTo }` takes the error path, `compensate` runs the
+  compensations in reverse, `fail` (the default) fails the run. Any failure of the step does the
+  same (a review step on an instance with no asset, say). **`retry` is a command's only**: publish
+  refuses it on any other kind (`RETRY_NOT_COMMAND`) — re-asking a person, or waiting again, is
+  the author's own loop. An error path and a compensation handler count as reachable for the
+  graph check, which called them unreachable until now.
+- **A task nobody is to work on is CANCELLED.** A human step that times out, and every task still
+  open when its run fails (another branch's failure, say), is closed by `closeAwait` in one
+  transaction: its awaits answered (`closed:<reason>`) so a late completion or verdict moves
+  nothing, and `workflow.task.resolved` with `state: cancelled` and `reason: timeout |
+  workflow-ended`, which Notifications applies (notifications.md §13c). Once only: a task completed
+  or resolved first stays as it ended, and nothing is cancelled. A wait-event that times out has
+  its wait closed the same way.
+- **A run nothing catches is raised to operations**: `finish` emits `alert.raised` (`source: bms`,
+  `kind: workflow-failed`, `warning`, the instance as `subjectRef`; read in the log under
+  `ops:read`) in the transaction of the failure, `atlas_bms_instances_failed_total` counts it, and
+  `GET /instances?state=failed` is the operator's list. No automatic restart.
+
+Evidence: `test/timeouts.test.ts` (a timed-out review taking its error path, its task cancelled and a
+late verdict and `done` both moving nothing; a timed-out wait failing the run, alerted, listed,
+its wait closed; a task cancelled when another branch fails the run; `RETRY_NOT_COMMAND`),
+`test/temporal.test.ts` on a real Temporal (a timeout inside the sandbox takes its error path and
+cancels the task), Notifications' test for the cancelled form, and smoke on kind: a review out of
+time ends at its error path and leaves the inbox; a lost wait fails and is in the failed list.
 
 ## 14. Open questions / future
 

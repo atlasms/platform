@@ -25,7 +25,7 @@ import type {
   WorkflowDefinition,
 } from '@atlas/contracts/workflow';
 import { correlationKeys } from '@atlas/contracts/workflow-correlate';
-import type { Effects, RunResult, StartContext } from './effects.ts';
+import { StepTimeout, type Effects, type RunResult, type StartContext } from './effects.ts';
 import { feelEval, type FeelContext } from './feel-eval.ts';
 
 export class WorkflowError extends Error {
@@ -64,6 +64,8 @@ export async function runWorkflow(
   let incoming: Record<string, unknown> = start.incoming ?? {};
   const steps: FeelContext['steps'] = {};
   const compensations: { stepId: string; comp: string }[] = [];
+  /** Human steps whose task is open in people's inboxes — cancelled if the instance fails. */
+  const openTasks = new Set<string>();
 
   const ctx = (): FeelContext => ({ vars, incoming, steps, instance: { id: start.instanceId } });
   const singleOut = (id: string): string | undefined => outEdges.get(id)?.[0]?.to;
@@ -84,6 +86,10 @@ export async function runWorkflow(
       vars,
     };
   } catch (e) {
+    // A task still open in someone's inbox belongs to a workflow that has ended (EP-22.9): close it
+    // as cancelled, so nobody works on it — before the compensations run, which may take a while.
+    for (const stepId of openTasks) await fx.closeTask(stepId, 'workflow-ended');
+    openTasks.clear();
     if (e instanceof WorkflowError && e.compensate) {
       for (const c of [...compensations].reverse()) {
         const handler = byId.get(c.comp);
@@ -131,7 +137,14 @@ export async function runWorkflow(
         return runCommand(step);
 
       case 'human-task':
-        await runHumanTask(step);
+        // A waiting step that fails — its timeout fired, its task could not be made — goes to its
+        // `onError` like any other step (EP-22.9); it does not retry (publish refuses `retry` here).
+        try {
+          await runHumanTask(step);
+        } catch (err) {
+          await fx.appendHistory(step.id, 'failed', (err as Error).message);
+          return onFailure(step, err);
+        }
         return { kind: 'next', next: singleOut(step.id) };
 
       case 'wait-event': {
@@ -145,7 +158,15 @@ export async function runWorkflow(
         for (const k of parsed.keys) match[k.field] = feelEval(k.expr, ctx());
         await fx.awaitEvent({ stepId: step.id, event: c.event, match });
         await fx.appendHistory(step.id, 'awaiting');
-        incoming = await fx.waitForEvent(step.id, toMs(step.timeout));
+        try {
+          incoming = await fx.waitForEvent(step.id, toMs(step.timeout));
+        } catch (err) {
+          // Timed out (EP-22.9): the wait is closed, so a late event moves nothing, and the step
+          // goes to its `onError`.
+          await fx.closeWait(step.id);
+          await fx.appendHistory(step.id, 'failed', (err as Error).message);
+          return onFailure(step, err);
+        }
         if (c.output) applyToVars(c.output);
         await done(step);
         return { kind: 'next', next: singleOut(step.id) };
@@ -249,20 +270,35 @@ export async function runWorkflow(
       ...(c.reviewPointId !== undefined ? { reviewPointId: c.reviewPointId } : {}),
       ...(due !== undefined ? { dueAt: fx.now() + due } : {}),
     });
+    openTasks.add(step.id);
     await fx.appendHistory(step.id, 'awaiting');
     const task = fx.waitForTask(step.id, toMs(step.timeout));
-    if (c.escalation) {
-      const after = toMs(c.escalation.after) ?? 0;
-      const winner = await Promise.race([
-        task.then(() => 'task' as const),
-        fx.sleep(after).then(() => 'escalate' as const),
-      ]);
-      if (winner === 'escalate') {
-        await fx.appendHistory(step.id, 'escalated');
-        await fx.escalate(step.id, c.escalation.to, c.escalation.action);
+    try {
+      if (c.escalation) {
+        const after = toMs(c.escalation.after) ?? 0;
+        const winner = await Promise.race([
+          task.then(
+            () => 'task' as const,
+            () => 'task' as const, // its failure is the `await task` below's
+          ),
+          fx.sleep(after).then(() => 'escalate' as const),
+        ]);
+        if (winner === 'escalate') {
+          await fx.appendHistory(step.id, 'escalated');
+          await fx.escalate(step.id, c.escalation.to, c.escalation.action);
+        }
       }
+      incoming = await task;
+    } catch (err) {
+      // The step timed out (EP-22.9): its task is cancelled — nobody is to work on it — and the
+      // step fails to its `onError`.
+      if (err instanceof StepTimeout) {
+        await fx.closeTask(step.id, 'timeout');
+        openTasks.delete(step.id);
+      }
+      throw err;
     }
-    incoming = await task;
+    openTasks.delete(step.id);
     if (c.output) applyToVars(c.output);
     await done(step);
   }

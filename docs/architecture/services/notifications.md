@@ -73,7 +73,8 @@ stateDiagram-v2
 
 - **Emits:** `message.sent`, `task.created`, `task.updated`, `notification.raised` — consumed by
   the [WebSocket service](websocket.md) for live delivery.
-- **Consumes:** `workflow.task.resolved` (BMS, EP-22.6) — a workflow's task closed by MAM's verdict.
+- **Consumes:** `workflow.task.resolved` (BMS) — a workflow's task closed by MAM's verdict (done,
+  EP-22.6) or by its workflow (cancelled: a timeout, or the run failed; EP-22.9).
 - **Consumes (to raise notifications):** many — `asset.approved`, `asset.rejected`,
   `workflow.task.created`, `transcode.failed`, `ingest.rejected`, `restore.completed`,
   `checksum.mismatch`, mentions, etc.
@@ -225,6 +226,11 @@ emits `workflow.task.resolved`; this service applies it — the task `done`, the
 its author `closedBy` and a participant, `task.updated` + `audit.recorded` (`task.resolved`) in one
 transaction, the seen-mark with them. A resolution for a task not here yet goes back to the broker
 (its creation rides another durable); one for a closed task is a duplicate. bms.md §13f.
+
+**A workflow task CANCELLED** (EP-22.9): `workflow.task.resolved` with `state: cancelled` and a
+`reason` (`timeout`, `workflow-ended`) — its step ran out of time, or its run failed while it was
+open — closes the task `cancelled` (`closedBy: bms`, no outcome), announced (`task.updated`
+cancelled) and audited `task.cancelled`. A task already closed is a duplicate. bms.md §13h.
 
 Not yet: a task's audit history (`task` entity) has no read rule in the log — choosing one is a log
 visibility change, reviewed with EP-25.2, which is when people first act on tasks. Live delivery is

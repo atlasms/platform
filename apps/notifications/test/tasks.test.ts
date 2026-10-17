@@ -324,3 +324,32 @@ test('a resolution for a task not here yet is thrown to the broker — its creat
   const h = await harness();
   await assert.rejects(h.resolve(ulid(), 'approved', 'rev-1'), /not here yet/);
 });
+
+test('a workflow task CANCELLED by BMS (EP-22.9): its step timed out — closed, audited, never completable after', async () => {
+  const h = await harness();
+  const id = await h.workflowTask('editor', 'role');
+  const envelope = buildEnvelope({
+    type: 'workflow.task.resolved',
+    channelId: CH,
+    payload: {
+      taskId: id,
+      workflowInstanceId: ulid(),
+      state: 'cancelled',
+      reason: 'timeout',
+      at: new Date().toISOString(),
+    },
+    actor: { kind: 'service', id: 'bms' },
+  });
+  const msg = { id: envelope.messageId, subject: 's', body: envelope };
+  assert.equal(await h.service.consumeTaskResolved(msg), 'applied');
+  const task = (await h.call('boss', 'GET', `/api/v1/tasks/${id}`)).json<Task>();
+  assert.deepEqual([task.state, task.outcome, task.closedBy], ['cancelled', undefined, 'bms']);
+  assert.equal((await h.call('ana', 'POST', `/api/v1/tasks/${id}/claim`)).statusCode, 409);
+  const audits = await h.audits(id);
+  assert.deepEqual(audits.at(-1)?.action, 'task.cancelled');
+  const updated = (await h.outbox.listUnsent(1000))
+    .map((r) => r.message.body as Envelope)
+    .filter((e) => e.type === 'task.updated')
+    .map((e) => (e.payload as { state: string }).state);
+  assert.deepEqual(updated, ['cancelled']);
+});

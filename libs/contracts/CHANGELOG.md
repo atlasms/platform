@@ -23,6 +23,13 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `workflow.task.resolved` gains `state` (`done` | `cancelled`; absent = done) and `reason` (EP-22.9):
+  BMS cancels a workflow's task when its step times out or its run fails. `outcome` is no longer
+  required — a cancellation has none. **Breaking** for a consumer that read `outcome` unconditionally.
+- `validateDefinition` refuses `retry` on a step that is not a command (`RETRY_NOT_COMMAND`), and
+  counts an `onError.transitionTo` target and a `compensation` handler as reachable — an error path
+  was called unreachable before.
+
 - `WORKFLOW_TRIGGERS` in `@atlas/contracts/workflow` (EP-22.7): the closed list of events that may
   start a workflow — `ingest.accepted`. `validateDefinition` refuses any other (`UNKNOWN_TRIGGER`).
   **Breaking** for a draft whose start triggers on another event: it no longer publishes.
