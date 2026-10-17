@@ -24,7 +24,11 @@ import {
 const presets = new URL('../../../docs/architecture/workflows/presets/', import.meta.url);
 const load = (name: string): WorkflowDefinition =>
   JSON.parse(readFileSync(new URL(name, presets), 'utf8')) as WorkflowDefinition;
-const PRESETS = ['canonical-ingest-to-air.workflow.json', 'simple-approval.workflow.json'];
+const PRESETS = [
+  'canonical-ingest-to-air.workflow.json',
+  'simple-approval.workflow.json',
+  're-review-on-expiry.workflow.json',
+];
 
 for (const name of PRESETS) {
   test(`the preset ${name} validates clean, inside the FEEL subset`, () => {

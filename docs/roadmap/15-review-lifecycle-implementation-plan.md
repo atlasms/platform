@@ -376,7 +376,7 @@ without manual chasing.
 > completed by hand ([bms.md §13f](../architecture/services/bms.md)). The verdict events carry the
 > point, so the log records where each decision was made; `GET /assets/{id}/verdicts` is EP-24.4.
 > Two points on ONE asset meet MAM's lifecycle (an approved asset cannot be approved again) — the
-> exit's "drives an asset through both" is EP-24.7's. G2 is EP-22.10.
+> exit's "drives an asset through both" is EP-24.7's. G2 is EP-22.10, built: `asset.expired` starts the `re-review-on-expiry` preset (bms.md §13i).
 
 ---
 

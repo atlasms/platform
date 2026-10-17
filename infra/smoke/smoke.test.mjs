@@ -2400,10 +2400,12 @@ test('smoke: EP-22.9 — a human step out of time takes its error path and its t
   );
 });
 
-test('smoke: EP-24.5 — a lapsed approval is swept to expired, audited, and its approver is told to review it again', async () => {
+test('smoke: EP-24.5/22.10 — a lapsed approval is swept to expired, its approver told, and a fresh review opens and re-approves it', async () => {
   // MAM's expiry sweep on a live cluster (review plan WS-D1, every 60 s): an asset approved to
   // expire in a few seconds becomes `expired` on the next tick, with `asset.expired` in its audit
   // history — and Notifications turns that into a re-review notification in the approver's inbox.
+  // EP-22.10: the re-review preset (a copy filtered to this asset) starts on `asset.expired`, offers
+  // a review at its own point, and the approval there makes the asset usable again.
   const token = await seedToken();
   if (!token) return;
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
@@ -2429,6 +2431,46 @@ test('smoke: EP-24.5 — a lapsed approval is swept to expired, audited, and its
   });
   assert.equal(created.status, 201, created.text);
   const assetId = json(created).id;
+  const me = json(await get('/api/v1/users/me/effective-permissions', { headers })).subjectId;
+  const preset = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../docs/architecture/workflows/presets/re-review-on-expiry.workflow.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  );
+  const made = await get('/api/v1/workflows', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      name: `smoke re-review ${Date.now()}`,
+      vars: preset.vars,
+      // Filtered to this asset, and offered to the smoke user (the preset offers it to `editor`, a
+      // role the smoke user does not hold).
+      steps: preset.steps.map((st) =>
+        st.kind === 'start'
+          ? {
+              ...st,
+              config: {
+                trigger: { ...st.config.trigger, filter: `= incoming.assetId = "${assetId}"` },
+              },
+            }
+          : st.kind === 'human-task'
+            ? { ...st, config: { ...st.config, assignee: { userId: me } } }
+            : st,
+      ),
+      transitions: preset.transitions,
+    }),
+  });
+  assert.equal(made.status, 201, made.text);
+  const reReview = json(made);
+  const published = await get(`/api/v1/workflows/${reReview.id}/publish?revision=1`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(published.status, 200, published.text);
   const enqueued = await get('/api/v1/jobs', {
     method: 'POST',
     headers,
@@ -2452,7 +2494,6 @@ test('smoke: EP-24.5 — a lapsed approval is swept to expired, audited, and its
     body: JSON.stringify({ expiresAt }),
   });
   assert.equal(approved.status, 200, approved.text);
-  const me = json(await get('/api/v1/users/me/effective-permissions', { headers })).subjectId;
   assert.equal(json(approved).approvedBy, me, 'the approver is on the asset');
 
   const expired = await poll(
@@ -2479,6 +2520,42 @@ test('smoke: EP-24.5 — a lapsed approval is swept to expired, audited, and its
     'the approver was never told to review it again',
   );
   assert.equal(note.type, 'asset.re-review-due');
+
+  // EP-22.10: the re-review the expiry opened.
+  const [instance] = await poll(
+    async () => json(await get(`/api/v1/instances?workflowId=${reReview.id}`, { headers })).items,
+    (items) => items.length > 0,
+    30_000,
+    'asset.expired never started the re-review',
+  );
+  assert.deepEqual([instance.assetId, instance.triggeredBy?.event], [assetId, 'asset.expired']);
+  const task = await poll(
+    async () =>
+      json(await get('/api/v1/inbox', { headers: fresh })).tasks.find(
+        (t) => t.workflowInstanceId === instance.id,
+      ),
+    (t) => t !== undefined,
+    30_000,
+    'the re-review task never reached the inbox',
+  );
+  assert.equal(task.reviewPointId, 're-review');
+  const again = await get(`/api/v1/assets/${assetId}/approve`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ expiresAt: '2099-01-01T00:00:00.000Z', reviewPointId: 're-review' }),
+  });
+  assert.equal(again.status, 200, `re-approval failed: ${again.text}`);
+  const ended = await poll(
+    () => get(`/api/v1/instances/${instance.id}`, { headers }).then((r) => json(r)),
+    (i) => i.state === 'completed' || i.state === 'failed',
+    30_000,
+    'the re-review never ended',
+  );
+  assert.deepEqual(
+    [ended.state, ended.endStepId],
+    ['completed', 's_end_yes'],
+    JSON.stringify(ended),
+  );
 });
 
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {
