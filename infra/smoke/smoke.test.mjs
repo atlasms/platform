@@ -2400,6 +2400,87 @@ test('smoke: EP-22.9 — a human step out of time takes its error path and its t
   );
 });
 
+test('smoke: EP-24.5 — a lapsed approval is swept to expired, audited, and its approver is told to review it again', async () => {
+  // MAM's expiry sweep on a live cluster (review plan WS-D1, every 60 s): an asset approved to
+  // expire in a few seconds becomes `expired` on the next tick, with `asset.expired` in its audit
+  // history — and Notifications turns that into a re-review notification in the approver's inbox.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const fresh = { ...headers, 'cache-control': 'no-cache' };
+  const poll = async (fn, done, budgetMs, what) => {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const value = await fn();
+      if (done(value)) return value;
+      assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(value)}`);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  };
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      title: 'Smoke expiry',
+      mediaType: 'video',
+      fileType: 'mp4',
+      categoryId: await categoryFor(token),
+    }),
+  });
+  assert.equal(created.status, 201, created.text);
+  const assetId = json(created).id;
+  const enqueued = await get('/api/v1/jobs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId, presetIds: ['proxy'], inputPath: 'samples/smoke.mp4' }),
+  });
+  assert.equal(enqueued.status, 202, enqueued.text);
+  await poll(
+    async () => json(await get(`/api/v1/assets/${assetId}`, { headers: fresh })),
+    (a) => a.hasRenditions === true,
+    60_000,
+    'the asset never got its rendition',
+  );
+  for (const step of ['process', 'ready']) {
+    const res = await get(`/api/v1/assets/${assetId}/${step}`, { method: 'POST', headers });
+    assert.equal(res.status, 200, `${step} failed: ${res.text}`);
+  }
+  const expiresAt = new Date(Date.now() + 3_000).toISOString();
+  const approved = await get(`/api/v1/assets/${assetId}/approve`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ expiresAt }),
+  });
+  assert.equal(approved.status, 200, approved.text);
+  const me = json(await get('/api/v1/users/me/effective-permissions', { headers })).subjectId;
+  assert.equal(json(approved).approvedBy, me, 'the approver is on the asset');
+
+  const expired = await poll(
+    async () => json(await get(`/api/v1/assets/${assetId}`, { headers: fresh })),
+    (a) => a.state === 'expired',
+    100_000,
+    'the sweep never expired the asset',
+  );
+  assert.equal(expired.expiresAt, expiresAt);
+  const history = await poll(
+    async () => json(await get(`/api/v1/history/asset/${assetId}`, { headers })),
+    (h) => h.revisions?.some((r) => r.action === 'asset.expired'),
+    30_000,
+    'the expiry never reached the audit history',
+  );
+  assert.deepEqual(history.revisions.at(-1).delta.state, { before: 'approved', after: 'expired' });
+  const note = await poll(
+    async () =>
+      json(await get('/api/v1/inbox', { headers: fresh })).notifications.find(
+        (n) => n.subjectRef?.entityId === assetId,
+      ),
+    (n) => n !== undefined,
+    30_000,
+    'the approver was never told to review it again',
+  );
+  assert.equal(note.type, 'asset.re-review-due');
+});
+
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {
   // A workflow's lifecycle on a live cluster (decided 2026-10-13): a first publish makes it active
   // and puts it in the catalog every client loads; deactivating it is refused while an instance is

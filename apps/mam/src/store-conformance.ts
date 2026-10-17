@@ -376,6 +376,45 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  test(`${name}: lapsed — approved and past expiresAt, every channel, longest-lapsed first, as times`, async () => {
+    // EP-24.5's sweep reads this. Text order would put an offset-bearing time in the wrong place.
+    await withFixture(async ({ store }) => {
+      const a = asset({
+        channelId: 'ch12',
+        state: 'approved',
+        expiresAt: '2026-08-05T12:00:40.000Z',
+      });
+      const b = asset({
+        channelId: 'ch99',
+        state: 'approved',
+        expiresAt: '2026-08-05T14:00:10+02:00',
+      });
+      const notYet = asset({
+        channelId: 'ch12',
+        state: 'approved',
+        expiresAt: '2026-08-06T00:00:00Z',
+      });
+      const forever = asset({ channelId: 'ch12', state: 'approved' });
+      const already = asset({
+        channelId: 'ch12',
+        state: 'expired',
+        expiresAt: '2026-08-01T00:00:00Z',
+      });
+      await store.transaction(async (tx) => {
+        for (const x of [a, b, notYet, forever, already]) await tx.put(x);
+      });
+      const now = '2026-08-05T12:01:00.000Z';
+      assert.deepEqual(
+        (await store.lapsed(now, 10)).map((x) => x.id),
+        [b.id, a.id],
+      );
+      assert.deepEqual(
+        (await store.lapsed(now, 1)).map((x) => x.id),
+        [b.id],
+      );
+    });
+  });
+
   test(`${name}: countByState counts the CHANNEL, not a page of it`, async () => {
     // The bug this replaces: Studio's dashboard paged the catalogue to a 1000-asset cap and
     // labelled the total "System State". A count derived from a page is a count of that page — it

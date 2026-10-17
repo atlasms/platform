@@ -97,7 +97,8 @@ each verdict is recorded and its history retained. Only a **currently-valid** `A
 (not `Expired`) is schedulable ([FR-SCH-3](../../requirements/05-functional-requirements.md#scheduling)).
 `expiresAt` defaults from the asset's category (nearest ancestor, [FR-TAX-7](../../requirements/05-functional-requirements.md#classification))
 and is overridable per asset; absent ⇒ permanent. An **internal scheduler** fires the
-`Approved → Expired` (at `expiresAt`) and `Rejected → Purged` (at `retainUntil`) transitions.
+`Approved → Expired` (at `expiresAt`) and `Rejected → Purged` (at `retainUntil`) transitions. As
+built, the expiry half (EP-24.5, §13z); the purge half is EP-24.6, owed by people.
 
 ## 4. Public API
 
@@ -323,6 +324,29 @@ createdBy RIM sent, and `asset.created` + the audit in one transaction with the 
 redelivery is a duplicate; an id that already exists in the same channel is a duplicate too; one in
 another channel is thrown to the broker, never overwritten. The original's FileRef row arrives by
 HSM's `file.placed` — a separate consumer — and the mirror retries a placement that beats the asset.
+
+## 13z. As built — EP-24.5, the expiry sweep
+
+The review plan's WS-D1, as designed: a **periodic sweep** in MAM (`ATLAS_MAM_EXPIRY_SWEEP_MS`,
+default 60 s) turns every approved asset whose `expiresAt` has passed `expired` — in EVERY channel,
+the longest-lapsed first, 100 at a time (a backlog drains over ticks; catch-up after an outage is the
+first tick, since the state lives in the row). `AssetStore.lapsed` compares `expiresAt` as a TIME
+(an offset-bearing value sorts wrongly as text), over a partial index of approved assets.
+
+Each asset is its own unit of work through the same commit as any transition — `asset.expired` and
+its `audit.recorded` in the transaction, MAM itself the actor — and a compare-and-set on its version
+that re-checks `hasLapsed` on the fresh row: a second sweep (the next tick, another replica) writes
+nothing, so the sweep needs no leader (WS-D3's "all instances sweeping", safe). `asset.expired`
+names `priorApprover` — the asset now records `approvedBy` (a person, or `mam` for an automatic
+approval, which names nobody) — and Notifications raises the re-review-due notification for them
+(notifications.md §13a). An expired asset is approved again by a person (`expired → approved`).
+Counted: `atlas_mam_assets_expired_total`. Not yet: the "expiring soon" reminders (WS-D2), and the
+purge sweep (EP-24.6, owed by people — it removes bytes through HSM).
+
+Evidence: `test/expiry.test.ts` (once, idempotent, the approver named, re-approval; across channels,
+longest-lapsed first, in batches, an offset read as a time), the store conformance case on sqlite and
+Postgres, and smoke on kind: an asset approved to expire in seconds is `expired` on the next tick,
+audited, and its approver finds a re-review notification in their inbox.
 
 ## 14. Open questions / future
 

@@ -60,6 +60,11 @@ export interface Asset {
    * approval (EP-28.2, FR-TAX-7); absent when the asset's own — `asset.expired` reports it.
    */
   expirySource?: 'asset' | 'category';
+  /**
+   * Who approved it last — a user id, or `mam` for an automatic approval (EP-28.7). What
+   * `asset.expired` names as `priorApprover` when the approval lapses (EP-24.5).
+   */
+  approvedBy?: string;
   /** Purge time for rejected media. */
   retainUntil?: string;
   /** A new media FILE means a new asset id; this chains the versions. */

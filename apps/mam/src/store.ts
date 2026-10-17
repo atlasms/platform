@@ -90,6 +90,13 @@ export interface AssetStore {
   countByState(channelId: string): Promise<Record<string, number>>;
 
   /**
+   * Approved assets whose `expiresAt` has passed, in EVERY channel, the longest-lapsed first
+   * (EP-24.5) — what the expiry sweep turns `expired`. A system read: the sweep is the platform's
+   * own, not any caller's, and it writes each asset through the same unit of work as a person.
+   */
+  lapsed(now: string, limit: number): Promise<Asset[]>;
+
+  /**
    * The extensible document for an asset, or `undefined` when it has none yet.
    *
    * A separate read from {@link get} rather than part of the asset: it is a document that can grow

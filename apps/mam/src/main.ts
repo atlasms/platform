@@ -56,6 +56,8 @@ const config = loadConfig({
   // already joined up the day one appears.
   otlpEndpoint: { env: 'ATLAS_OTLP_ENDPOINT', type: 'string', default: '' },
   traceSampleRatio: { env: 'ATLAS_TRACE_SAMPLE_RATIO', type: 'number', default: 1 },
+  // EP-24.5: how often lapsed approvals are swept to `expired` (review plan WS-D1, default 60 s).
+  expirySweepMs: { env: 'ATLAS_MAM_EXPIRY_SWEEP_MS', type: 'number', default: 60_000 },
 });
 
 const log = createLogger('mam');
@@ -247,6 +249,25 @@ async function startRelay(): Promise<void> {
 
 void startRelay();
 
+// EP-24.5: the expiry sweep. Every replica runs it — safe, since each asset is a compare-and-set
+// (WS-D3's "all instances sweeping" fallback); a batch at a time, so a backlog drains over ticks.
+const assetsExpired = metrics.counter({
+  name: 'atlas_mam_assets_expired_total',
+  help: 'Approved assets whose expiresAt passed, swept to expired — each needs a fresh review.',
+});
+const expirySweep = setInterval(() => {
+  service
+    .expireLapsed()
+    .then((n) => {
+      if (n > 0) {
+        assetsExpired.inc({}, n);
+        log.info('expired lapsed approvals', { count: n });
+      }
+    })
+    .catch((err: unknown) => log.warn('expiry sweep failed', { error: (err as Error).message }));
+}, config.expirySweepMs);
+expirySweep.unref();
+
 await app.listen({ port: config.port, host: config.host });
 log.info('mam listening', { port: config.port, host: config.host });
 
@@ -254,6 +275,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     log.info(`${signal} received, draining`);
     if (relayTimer) clearTimeout(relayTimer);
+    clearInterval(expirySweep);
     void app
       .close()
       // Flushed after Fastify closes so spans for in-flight requests make the final batch, and

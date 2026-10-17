@@ -278,6 +278,9 @@ UPDATE asset
 - **Catch-up is automatic:** after an outage the first sweep processes everything with a past due time
   — no lost timers, because state lives in the row, not in a queue delay.
 
+> **As built (EP-24.5):** D1's expiry half and D3's leaderless fallback — mam.md §13z. The purge
+> sweep is EP-24.6; D2 below is not built.
+
 ### Step D2 — "Expiring soon" reminders
 
 A third sweep emits a one-time reminder for assets entering a warning window
