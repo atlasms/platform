@@ -442,7 +442,7 @@ Foblex Flow); moddle alone does XML↔object.
 ### 11.1 Element mapping (DSL ⇄ BPMN)
 | DSL | BPMN element | Notes |
 |-----|--------------|-------|
-| `start` (+trigger) | `bpmn:startEvent` (+`bpmn:messageEventDefinition`) | trigger event → message ref |
+| `start` (+trigger) | `bpmn:startEvent` (+`bpmn:messageEventDefinition`) | trigger event → message ref; `trigger.output` → the start event's `atlas:Io` out-mappings, as every step's output (EP-22.7) |
 | `end` (terminate?) | `bpmn:endEvent` (+`bpmn:terminateEventDefinition`) | |
 | `command` | `bpmn:serviceTask` | request/await/input/output in `atlas:` ext |
 | `human-task` | `bpmn:userTask` | assignee/dueIn/escalation in `atlas:` ext |
