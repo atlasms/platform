@@ -1,0 +1,32 @@
+{
+  "id": "01J9ZKQ2M8XABCDEFGHJKMNPQT",
+  "channelId": "ch12",
+  "name": "Re-review on expiry",
+  "description": "Preset (EP-22.10, review plan WS-G2): an approval lapses (asset.expired) and a fresh review opens at its own point — approved again with a new expiry, or rejected. Closes the loop without chasing.",
+  "version": 1,
+  "status": "published",
+  "vars": [
+    { "name": "assetId", "type": "string" },
+    { "name": "priorApprover", "type": "string" },
+    { "name": "verdict", "type": "string" }
+  ],
+  "steps": [
+    { "id": "s_start", "kind": "start", "name": "Approval lapsed", "position": { "x": 0, "y": 0 },
+      "config": { "trigger": { "event": "asset.expired",
+                               "output": { "vars.assetId": "= incoming.assetId", "vars.priorApprover": "= incoming.priorApprover" } } } },
+    { "id": "s_review", "kind": "human-task", "name": "Review again", "position": { "x": 180, "y": 0 },
+      "config": { "taskType": "approve", "assignee": { "role": "editor" }, "reviewPointId": "re-review", "dueIn": "P2D",
+                  "output": { "vars.verdict": "= incoming.outcome" } } },
+    { "id": "s_gate", "kind": "branch", "name": "Approved again?", "position": { "x": 360, "y": 0 },
+      "config": { "default": "t_no" } },
+    { "id": "s_end_yes", "kind": "end", "name": "Usable again", "position": { "x": 540, "y": -60 }, "config": { "status": "approved" } },
+    { "id": "s_end_no", "kind": "end", "name": "Withdrawn", "position": { "x": 540, "y": 60 }, "config": { "status": "rejected" } }
+  ],
+  "transitions": [
+    { "id": "t1", "from": "s_start", "to": "s_review" },
+    { "id": "t2", "from": "s_review", "to": "s_gate" },
+    { "id": "t_yes", "from": "s_gate", "to": "s_end_yes", "name": "approved", "when": "= vars.verdict = \"approved\"" },
+    { "id": "t_no", "from": "s_gate", "to": "s_end_no", "name": "rejected", "isDefault": true }
+  ],
+  "metadata": { "createdBy": "system", "createdAt": "2026-10-18T10:00:00Z" }
+}

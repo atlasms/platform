@@ -516,8 +516,8 @@ completes the instance with `approved` and closes the task.
 ## 13g. As built — EP-22.7, triggers, the event buffer, and the canonical preset (decided 2026-10-17)
 
 **A start trigger starts workflows.** A start step's `trigger.event` is one of a CLOSED list —
-`WORKFLOW_TRIGGERS`, today `ingest.accepted` (publish refuses any other, `UNKNOWN_TRIGGER`;
-`asset.expired` joins with EP-22.10, `asset.approved` with EP-37). BMS keeps one durable per trigger
+`WORKFLOW_TRIGGERS` — `ingest.accepted`, and `asset.expired` since EP-22.10 (publish refuses any
+other, `UNKNOWN_TRIGGER`; `asset.approved` joins with EP-37). BMS keeps one durable per trigger
 (`src/trigger.ts`): each event starts every ACTIVE workflow of its channel whose start names it and
 whose `trigger.filter` (FEEL over `incoming`, the event's payload) is true — once per event, the
 instance id DERIVED from the message and the workflow, so a redelivery inserts nothing and asks the
@@ -585,6 +585,21 @@ its wait closed; a task cancelled when another branch fails the run; `RETRY_NOT_
 `test/temporal.test.ts` on a real Temporal (a timeout inside the sandbox takes its error path and
 cancels the task), Notifications' test for the cancelled form, and smoke on kind: a review out of
 time ends at its error path and leaves the inbox; a lost wait fails and is in the failed list.
+
+## 13i. As built — EP-22.10, re-review re-entry
+
+`asset.expired` is a trigger (review plan WS-G2): MAM's expiry sweep (EP-24.5, mam.md §13z) turns a
+lapsed approval `expired` and announces it, and the **re-review preset**
+(`re-review-on-expiry.workflow.json`) starts on it — its trigger maps the asset and the
+`priorApprover` into vars, offers a review to `editor` at its OWN point (`re-review`, so the verdict
+history says where the second decision was made), and ends `approved` (usable again — MAM approves
+an expired asset afresh, with a new expiry) or `rejected`. Notifications still tells the prior
+approver directly (`asset.re-review-due`); the preset is what makes it a task with an outcome.
+
+Evidence: `test/trigger.test.ts` (the preset started by `asset.expired`, its task at `re-review`,
+approved again), the preset validating clean, and smoke on kind (with EP-24.5's): an asset approved to
+expire in seconds is swept, its approver notified, the re-review opens in the inbox at `re-review`,
+and approving it there ends the instance at `s_end_yes`.
 
 ## 14. Open questions / future
 

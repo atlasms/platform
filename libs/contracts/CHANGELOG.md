@@ -23,6 +23,9 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `asset.expired` is in `WORKFLOW_TRIGGERS` (EP-22.10): a workflow may start on an approval lapsing —
+  the `re-review-on-expiry` preset does.
+
 - `workflow.task.resolved` gains `state` (`done` | `cancelled`; absent = done) and `reason` (EP-22.9):
   BMS cancels a workflow's task when its step times out or its run fails. `outcome` is no longer
   required — a cancellation has none. **Breaking** for a consumer that read `outcome` unconditionally.

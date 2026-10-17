@@ -343,3 +343,34 @@ test('the canonical preset: a rejection takes the rejected end', async () => {
   assert.equal(result.endStepId, 's_end_rej');
   assert.equal(result.status, 'rejected');
 });
+
+// --- EP-22.10: re-review re-entry ---------------------------------------------------------------
+
+test('re-review on expiry: asset.expired opens a fresh review at its own point; approved again, usable again', async () => {
+  const h = await harness();
+  await h.publish(presetInput('re-review-on-expiry.workflow.json'));
+  const assetId = ulid();
+  const expired = event('asset.expired', {
+    assetId,
+    expiredAt: new Date().toISOString(),
+    expirySource: 'category',
+    priorApprover: 'ana',
+  });
+  const [id] = (await h.triggers.handle(expired)).started;
+  assert.ok(id, 'the preset started on asset.expired');
+  const instance = await h.store.instance(id!);
+  assert.deepEqual([instance?.assetId, instance?.triggeredBy?.event], [assetId, 'asset.expired']);
+  const [task] = await h.sent('workflow.task.created');
+  assert.deepEqual(
+    [
+      (task!.payload as { reviewPointId?: string }).reviewPointId,
+      (task!.payload as { kind?: string }).kind,
+    ],
+    ['re-review', 'approve'],
+  );
+  // The re-review is given at its point (an expired asset is approved again in MAM).
+  assert.equal(await h.router.routeEvent(approved(assetId, 're-review')), 'delivered');
+  const result = await h.runner.settled(id!);
+  assert.deepEqual([result.endStepId, result.status], ['s_end_yes', 'approved']);
+  assert.equal(result.vars['priorApprover'], 'ana', 'the lapsed approver, mapped by the trigger');
+});

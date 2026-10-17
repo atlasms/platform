@@ -157,7 +157,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "event": { "type": "string", "description": "The event that starts an instance — one of WORKFLOW_TRIGGERS (EP-22.7): ingest.accepted. Every ACTIVE workflow of the event's channel whose start names it starts once per event; the event's payload is the start step's `incoming`." },
+            "event": { "type": "string", "description": "The event that starts an instance — one of WORKFLOW_TRIGGERS (EP-22.7): ingest.accepted, asset.expired (EP-22.10). Every ACTIVE workflow of the event's channel whose start names it starts once per event; the event's payload is the start step's `incoming`." },
             "filter": { "$ref": "#/$defs/Feel", "description": "FEEL over `incoming` (the event's payload): a start only when true." },
             "output": { "$ref": "#/$defs/DataMapping", "description": "Maps the triggering event into vars when the trigger starts the instance, e.g. { \"vars.assetId\": \"= incoming.assetId\" }. Not applied to a start through the API, which gives its vars itself." }
           }

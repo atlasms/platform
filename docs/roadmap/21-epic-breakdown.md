@@ -422,7 +422,7 @@ Source: [bms-plan](services/bms-plan.md) §2; [bms.md](../architecture/services/
 | 22.7 | ✅ Canonical ingest-to-air preset — ingest → transcode → catalogue → review → schedule, driven end to end (send-to-air stays EP-31's): start triggers (a closed `WORKFLOW_TRIGGERS`, `ingest.accepted`; every matching active workflow once per event, as BMS), and the event buffer — a step takes the earliest matching event since its instance started (decided 2026-10-17; bms.md §13g) | 5 |
 | 22.8 | ✅ Instance state API — `GET /instances/{id}` with step history (shipped with 22.3, #513/#515) | 3 |
 | 22.9 | ✅ Timeout / retry / compensation semantics; a step that keeps failing dead-letters: a waiting step's timeout goes to its `onError`, `retry` is a command's only; a task nobody is to work on is cancelled; a run nothing catches raises `alert.raised` and is listed by `?state=failed` (decided 2026-10-17; bms.md §13h) | 5 |
-| 22.10 | Re-review re-entry — `asset.expired` opens a fresh manual-review task | 2 |
+| 22.10 | ✅ Re-review re-entry — `asset.expired` opens a fresh manual-review task: a `WORKFLOW_TRIGGERS` entry and the `re-review-on-expiry` preset, its review at its own point (bms.md §13i) | 2 |
 | 22.11 | ✅ Workflow states `draft` / `active` / `inactive` / `archived` (deactivate and archive refused while instances run), the catalog every authenticated user loads at sign-in, `workflow.changed` broadcast to all; change logs under a dedicated `workflow:audit` (decided 2026-10-13, #516); the Administrator starter role is `*:*` (decided 2026-10-15) (#517, #519, #518) | 5 |
 
 **Decided 2026-10-12:** 22.1 → Temporal ([ADR-0010](../adr/0010-bms-durable-runtime.md)).
