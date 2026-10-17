@@ -245,6 +245,12 @@ export const pgPeopleMigration: Migration = {
        CREATE INDEX IF NOT EXISTS people_channel_idx ON people (channel_id);`,
 };
 
+/** EP-24.5: the expiry sweep reads approved assets only; a partial index keeps it off the rest. */
+export const pgApprovedMigration: Migration = {
+  id: 'mam_assets_approved_idx',
+  up: `CREATE INDEX IF NOT EXISTS assets_approved_idx ON assets (id) WHERE state = 'approved';`,
+};
+
 /** Everything MAM's database needs, in order. Applied at startup under an advisory lock. */
 export const mamMigrations: Migration[] = [
   outboxMigration,
@@ -263,6 +269,7 @@ export const mamMigrations: Migration[] = [
   pgTermsMigration,
   pgFacetsMigration,
   pgPeopleMigration,
+  pgApprovedMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
@@ -299,6 +306,18 @@ export function pgAssetStore(pool: PgPool): AssetStore {
       return rows.map((r) => r.data);
     },
 
+    async lapsed(now, limit) {
+      // As timestamps, not strings: an expiresAt given with an offset sorts wrongly as text.
+      const { rows } = await pool.query<{ data: Asset }>(
+        `SELECT data FROM assets
+          WHERE state = 'approved' AND data ? 'expiresAt'
+            AND (data->>'expiresAt')::timestamptz <= $1::timestamptz
+          ORDER BY (data->>'expiresAt')::timestamptz, id
+          LIMIT $2`,
+        [now, limit],
+      );
+      return rows.map((r) => r.data);
+    },
     async countByState(channelId) {
       // The `state` COLUMN, not `data->>'state'`. Both give the same numbers; only one of them is
       // an index-only scan of `assets_channel_idx (channel_id, state)`, and a counts endpoint that

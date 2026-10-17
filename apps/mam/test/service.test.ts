@@ -332,6 +332,7 @@ test('EP-19.2: the audit record carries the field-level before/after, at write t
   assert.deepEqual(audit.delta, {
     state: { before: 'ready', after: 'approved' },
     expiresAt: { after: '2027-01-01T00:00:00.000Z' },
+    approvedBy: { after: 'user-1' },
   });
 });
 

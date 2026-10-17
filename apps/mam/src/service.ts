@@ -114,6 +114,7 @@ import {
 import {
   canTransition,
   eventFor,
+  hasLapsed,
   type LifecycleAction,
   type LifecycleContext,
 } from './lifecycle.ts';
@@ -753,6 +754,7 @@ export class MamService {
         state: 'approved',
         version: existing.version + 1,
         updatedAt: this.now().toISOString(),
+        approvedBy: 'mam',
       };
       await this.snapshotExpiry(existing, updated);
       await this.commit(system, updated, existing, 'asset.approved', {
@@ -764,6 +766,45 @@ export class MamService {
       } satisfies EventPayloads['asset.approved']);
       return updated;
     });
+  }
+
+  /**
+   * EP-24.5, the expiry sweep (review plan WS-D1): every approved asset whose `expiresAt` has
+   * passed becomes `expired`, needing re-review — in every channel, the longest-lapsed first, a
+   * batch at a time. MAM itself is the actor; each asset is its own unit of work through the same
+   * commit as any transition (`asset.expired` and its `audit.recorded` in the transaction), and a
+   * compare-and-set on its version: a second sweep — another replica's, the next tick's — finds
+   * it no longer approved and writes nothing, so the sweep needs no leader. Catch-up after an
+   * outage is the first tick: the state lives in the row, not in a timer. Returns how many it
+   * expired.
+   */
+  async expireLapsed(limit = 100): Promise<number> {
+    const now = this.now();
+    let expired = 0;
+    for (const due of await this.options.store.lapsed(now.toISOString(), limit)) {
+      const done = await this.onCurrent(async () => {
+        const existing = await this.cachedAsset(due.id, true);
+        if (!existing || !hasLapsed(await this.contextFor(existing), now)) return false;
+        const updated: Asset = {
+          ...existing,
+          state: 'expired',
+          version: existing.version + 1,
+          updatedAt: this.now().toISOString(),
+        };
+        await this.commit(systemCaller(existing.channelId), updated, existing, 'asset.expired', {
+          assetId: existing.id,
+          expiredAt: existing.expiresAt ?? updated.updatedAt,
+          expirySource: existing.expirySource ?? 'asset',
+          // Whose approval lapsed — the person told it needs a fresh review; nobody for MAM's own.
+          ...(existing.approvedBy !== undefined && existing.approvedBy !== 'mam'
+            ? { priorApprover: existing.approvedBy }
+            : {}),
+        } satisfies EventPayloads['asset.expired']);
+        return true;
+      });
+      if (done) expired++;
+    }
+    return expired;
   }
 
   /**
@@ -824,7 +865,10 @@ export class MamService {
       updatedAt: this.now().toISOString(),
       ...defined({ expiresAt: options.expiresAt, retainUntil: options.retainUntil }),
     };
-    if (action === 'approve') await this.snapshotExpiry(existing, updated);
+    if (action === 'approve') {
+      await this.snapshotExpiry(existing, updated);
+      updated.approvedBy = caller.userId;
+    }
 
     const eventType = eventFor(action);
     if (eventType === undefined) {

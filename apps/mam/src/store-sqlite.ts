@@ -181,6 +181,12 @@ export const sqlitePeopleMigration: Migration = {
        CREATE INDEX IF NOT EXISTS people_channel_idx ON people (channel_id);`,
 };
 
+/** EP-24.5: the expiry sweep reads approved assets only; a partial index keeps it off the rest. */
+export const sqliteApprovedMigration: Migration = {
+  id: 'mam_assets_approved_idx',
+  up: `CREATE INDEX IF NOT EXISTS assets_approved_idx ON assets (id) WHERE state = 'approved';`,
+};
+
 export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
   const db = openDb(path);
   migrate(db, [
@@ -200,6 +206,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     sqliteTermsMigration,
     sqliteFacetsMigration,
     sqlitePeopleMigration,
+    sqliteApprovedMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
   const seen = new SqliteSeenStore(db);
@@ -549,6 +556,19 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
       return rows.map((r) => JSON.parse(r.data) as Asset);
     },
 
+    async lapsed(now, limit) {
+      // julianday() reads an offset; a text comparison would not.
+      const rows = db
+        .prepare(
+          `SELECT data FROM assets
+            WHERE state = 'approved' AND json_extract(data, '$.expiresAt') IS NOT NULL
+              AND julianday(json_extract(data, '$.expiresAt')) <= julianday(?)
+            ORDER BY julianday(json_extract(data, '$.expiresAt')), id
+            LIMIT ?`,
+        )
+        .all(now, limit) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as Asset);
+    },
     async countByState(channelId) {
       // The `state` COLUMN, not `json_extract(data, '$.state')`. Both would return the same
       // numbers; only one of them uses `assets_channel_idx (channel_id, state)`, and the whole

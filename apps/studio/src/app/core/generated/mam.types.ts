@@ -82,6 +82,8 @@ export interface Asset {
   expiresAt?: string;
   /** category when expiresAt is the category's defaultExpiry, snapshotted at approval (FR-TAX-7); absent when the asset's own. */
   expirySource?: 'asset' | 'category';
+  /** Who approved it last — a user id, or mam for an automatic approval. Named as priorApprover when the approval lapses (EP-24.5). */
+  approvedBy?: string;
   /** For rejected media: purge time (FR-APP-8). */
   retainUntil?: string;
   replacesId?: Ulid;
