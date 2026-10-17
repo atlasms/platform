@@ -2431,6 +2431,7 @@ test('smoke: EP-24.5/22.10 — a lapsed approval is swept to expired, its approv
   });
   assert.equal(created.status, 201, created.text);
   const assetId = json(created).id;
+  const me = json(await get('/api/v1/users/me/effective-permissions', { headers })).subjectId;
   const preset = JSON.parse(
     readFileSync(
       new URL(
@@ -2446,6 +2447,8 @@ test('smoke: EP-24.5/22.10 — a lapsed approval is swept to expired, its approv
     body: JSON.stringify({
       name: `smoke re-review ${Date.now()}`,
       vars: preset.vars,
+      // Filtered to this asset, and offered to the smoke user (the preset offers it to `editor`, a
+      // role the smoke user does not hold).
       steps: preset.steps.map((st) =>
         st.kind === 'start'
           ? {
@@ -2454,7 +2457,9 @@ test('smoke: EP-24.5/22.10 — a lapsed approval is swept to expired, its approv
                 trigger: { ...st.config.trigger, filter: `= incoming.assetId = "${assetId}"` },
               },
             }
-          : st,
+          : st.kind === 'human-task'
+            ? { ...st, config: { ...st.config, assignee: { userId: me } } }
+            : st,
       ),
       transitions: preset.transitions,
     }),
@@ -2489,7 +2494,6 @@ test('smoke: EP-24.5/22.10 — a lapsed approval is swept to expired, its approv
     body: JSON.stringify({ expiresAt }),
   });
   assert.equal(approved.status, 200, approved.text);
-  const me = json(await get('/api/v1/users/me/effective-permissions', { headers })).subjectId;
   assert.equal(json(approved).approvedBy, me, 'the approver is on the asset');
 
   const expired = await poll(
