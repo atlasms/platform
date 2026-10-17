@@ -19,7 +19,10 @@ export interface Instance {
   /** The steps it is waiting in — more than one inside a parallel split. */
   currentSteps: string[];
   startedAt: string;
+  /** A user, or `bms` when its trigger started it. */
   startedBy: string;
+  /** Its start step's trigger started it (EP-22.7): the event, and the message. */
+  triggeredBy?: { event: string; messageId: string };
   endedAt?: string;
   endStepId?: string;
   error?: string;
@@ -103,3 +106,23 @@ export interface EventAwait {
 /** The asset an await is keyed on — the column every asset event narrows by. */
 export const assetKey = (a: EventAwait): string | null =>
   typeof a.match['assetId'] === 'string' ? a.match['assetId'] : null;
+
+/**
+ * A waitable event as the router received it (EP-22.7, decided 2026-10-17), kept for a while so a
+ * step that starts waiting AFTER it was published still finds it — the earliest matching one since
+ * its instance started. Pruned after EVENT_BUFFER_DAYS.
+ */
+export interface BufferedEvent {
+  messageId: string;
+  channelId: string;
+  eventType: string;
+  assetId?: string;
+  /** The envelope's — what "since its instance started" compares. */
+  occurredAt: string;
+  correlationId?: string;
+  payload: Record<string, unknown>;
+  receivedAt: string;
+}
+
+/** How long a waitable event is kept for a step that has not started waiting yet. */
+export const EVENT_BUFFER_DAYS = 7;

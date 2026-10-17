@@ -23,6 +23,11 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `WORKFLOW_TRIGGERS` in `@atlas/contracts/workflow` (EP-22.7): the closed list of events that may
+  start a workflow — `ingest.accepted`. `validateDefinition` refuses any other (`UNKNOWN_TRIGGER`).
+  **Breaking** for a draft whose start triggers on another event: it no longer publishes.
+- `StartConfig.trigger.output` (the workflow-definition schema): maps the triggering event into vars.
+
 - `WORKFLOW_EVENTS` and `REVIEW_VERDICTS` in `@atlas/contracts/workflow` (EP-22.6): the closed list of
   events a wait-event step may wait for, and the two verdict events that resolve a review step.
 - `@atlas/contracts/workflow-correlate` (`correlationKeys`): a wait-event's `correlate` read as

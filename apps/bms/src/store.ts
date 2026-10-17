@@ -6,7 +6,13 @@
 // index; a published row is never updated — the adapters refuse it in the statement itself).
 
 import type { OutboxRecord } from '@atlas/messaging';
-import type { CommandAwait, EventAwait, HistoryEntry, Instance } from './instance.ts';
+import type {
+  BufferedEvent,
+  CommandAwait,
+  EventAwait,
+  HistoryEntry,
+  Instance,
+} from './instance.ts';
 import type { Workflow, WorkflowState, WorkflowVersion } from './workflow.ts';
 
 export interface WorkflowStore {
@@ -36,6 +42,22 @@ export interface WorkflowStore {
    * rest of the keys.
    */
   openEventAwaits(channelId: string, eventType: string, assetId?: string): Promise<EventAwait[]>;
+  /**
+   * Buffered events of one type in one channel that occurred at or after `since`, oldest first
+   * (EP-22.7). With `assetId`, only that asset's — and those that name no asset.
+   */
+  bufferedEvents(
+    channelId: string,
+    eventType: string,
+    since: string,
+    assetId?: string,
+  ): Promise<BufferedEvent[]>;
+  /** One buffered event, by its message id. */
+  bufferedEvent(messageId: string): Promise<BufferedEvent | undefined>;
+  /** Every event await under one correlation id, answered or not — a review's are two. */
+  eventAwaitsFor(correlationId: string): Promise<EventAwait[]>;
+  /** The message ids that already answered one of this instance's event awaits. */
+  eventsUsedBy(instanceId: string): Promise<string[]>;
   close(): Promise<void>;
 }
 
@@ -91,4 +113,8 @@ export interface WorkflowTx {
     answeredAt: string,
     answeredBy: string,
   ): Promise<boolean>;
+  /** Keep a waitable event (EP-22.7); `false` if it is already kept — a redelivery. */
+  bufferEvent(event: BufferedEvent): Promise<boolean>;
+  /** Forget events received before `before`; how many went. */
+  pruneEventBuffer(before: string): Promise<number>;
 }

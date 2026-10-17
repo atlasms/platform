@@ -25,7 +25,15 @@ import type {
   TaskSpec,
 } from './engine/effects.ts';
 import { derivedUlid } from './ids.ts';
-import { afterHistory, isTerminal, type Instance } from './instance.ts';
+import { answerWith, matches, signalPayload } from './event-match.ts';
+import {
+  afterHistory,
+  assetKey,
+  isTerminal,
+  type BufferedEvent,
+  type EventAwait,
+  type Instance,
+} from './instance.ts';
 import { outboxRecord } from './record.ts';
 import type { WorkflowStore, WorkflowTx } from './store.ts';
 
@@ -145,25 +153,79 @@ export class BmsRuntime {
     key: string;
     instanceId: string;
     wait: EventWait;
-  }): Promise<{ correlationId: string }> {
+  }): Promise<{ correlationId: string; early?: Record<string, unknown> }> {
     const { wait } = input;
     if (!WORKFLOW_EVENTS.includes(wait.event))
       throw new ValidationError(`"${wait.event}" is not an event a workflow may wait for`);
     const instance = await this.store.instance(input.instanceId);
     if (!instance) throw new NotFound(`instance ${input.instanceId}`);
     const correlationId = derivedUlid(Date.parse(instance.startedAt), `event:${input.key}`);
-    await this.store.transaction((tx) =>
-      tx.insertEventAwait({
-        correlationId,
-        eventType: wait.event,
-        channelId: instance.channelId,
-        instanceId: instance.id,
-        stepId: wait.stepId,
-        match: wait.match,
-        issuedAt: this.now().toISOString(),
-      }),
+    const awaited: EventAwait = {
+      correlationId,
+      eventType: wait.event,
+      channelId: instance.channelId,
+      instanceId: instance.id,
+      stepId: wait.stepId,
+      match: wait.match,
+      issuedAt: this.now().toISOString(),
+    };
+    await this.store.transaction((tx) => tx.insertEventAwait(awaited));
+    const early = await this.takeBuffered(instance, [awaited]);
+    return { correlationId, ...(early !== undefined ? { early } : {}) };
+  }
+
+  /**
+   * The event a step that has just started waiting takes from the buffer (EP-22.7, decided
+   * 2026-10-17): the EARLIEST one, since its instance started, that matches one of its awaits and
+   * has not already moved this instance — so a verdict that resolved one review point is not taken
+   * again by the next. Taken means answered, by the same once-only update the router uses: if the
+   * router got there first, its signal is on its way and nothing is returned here.
+   *
+   * Written before it is read (the await row) while the router writes the event before it reads
+   * the awaits: of the two, at least one sees the other.
+   *
+   * A retried activity whose await is already answered gets that answer back again — the step is
+   * still waiting for it, and the inbox takes one signal per correlation id.
+   */
+  private async takeBuffered(
+    instance: Instance,
+    awaits: EventAwait[],
+  ): Promise<Record<string, unknown> | undefined> {
+    const [first] = awaits;
+    if (!first) return undefined;
+    const answered = (await this.store.eventAwaitsFor(first.correlationId)).find(
+      (a) => a.answeredBy !== undefined,
     );
-    return { correlationId };
+    if (answered?.answeredBy !== undefined) {
+      const event = await this.store.bufferedEvent(answered.answeredBy);
+      return event ? signalPayload(answered, event.eventType, event.payload) : undefined;
+    }
+    const used = new Set(await this.store.eventsUsedBy(instance.id));
+    let best: { awaited: EventAwait; event: BufferedEvent } | undefined;
+    for (const awaited of awaits) {
+      const events = await this.store.bufferedEvents(
+        instance.channelId,
+        awaited.eventType,
+        instance.startedAt,
+        assetKey(awaited) ?? undefined,
+      );
+      const event = events.find((e) => !used.has(e.messageId) && matches(awaited, e.payload));
+      if (event && (!best || earlier(event, best.event))) best = { awaited, event };
+    }
+    if (!best) return undefined;
+    const { awaited, event } = best;
+    const took = await answerWith(
+      this.store,
+      awaited,
+      {
+        type: event.eventType,
+        messageId: event.messageId,
+        ...(event.correlationId !== undefined ? { correlationId: event.correlationId } : {}),
+        payload: event.payload,
+      },
+      this.now().toISOString(),
+    );
+    return took ? signalPayload(awaited, event.eventType, event.payload) : undefined;
   }
 
   /**
@@ -176,7 +238,10 @@ export class BmsRuntime {
    * transaction records an event await per verdict, keyed on the instance's asset, under the task's
    * id — so the verdict is delivered as that task's outcome, and the step needs no second wait.
    */
-  async createTask(input: { key: string; spec: TaskSpec }): Promise<string> {
+  async createTask(input: {
+    key: string;
+    spec: TaskSpec;
+  }): Promise<{ taskId: string; early?: Record<string, unknown> }> {
     const instance = await this.store.instance(input.spec.instanceId);
     if (!instance) throw new NotFound(`instance ${input.spec.instanceId}`);
     const { spec } = input;
@@ -186,6 +251,19 @@ export class BmsRuntime {
       );
     const taskId = derivedUlid(Date.parse(instance.startedAt), `task:${input.key}`);
     const at = this.now().toISOString();
+    const verdicts: EventAwait[] =
+      spec.reviewPointId === undefined
+        ? []
+        : Object.keys(REVIEW_VERDICTS).map((eventType) => ({
+            correlationId: taskId,
+            eventType,
+            channelId: instance.channelId,
+            instanceId: instance.id,
+            stepId: spec.stepId,
+            match: { assetId: instance.assetId },
+            reviewPointId: spec.reviewPointId!,
+            issuedAt: at,
+          }));
     await this.store.transaction(async (tx) => {
       if (!(await tx.markSeen(input.key))) return;
       await tx.insertAwait({
@@ -196,18 +274,7 @@ export class BmsRuntime {
         command: HUMAN_TASK,
         issuedAt: at,
       });
-      if (spec.reviewPointId !== undefined)
-        for (const eventType of Object.keys(REVIEW_VERDICTS))
-          await tx.insertEventAwait({
-            correlationId: taskId,
-            eventType,
-            channelId: instance.channelId,
-            instanceId: instance.id,
-            stepId: spec.stepId,
-            match: { assetId: instance.assetId },
-            reviewPointId: spec.reviewPointId,
-            issuedAt: at,
-          });
+      for (const verdict of verdicts) await tx.insertEventAwait(verdict);
       await tx.enqueue(
         outboxRecord(
           'workflow.task.created',
@@ -227,7 +294,10 @@ export class BmsRuntime {
         ),
       );
     });
-    return taskId;
+    // A verdict given before the review reached this step — at ready, by MAM itself for a category
+    // that needs no review, or by an editor during the transcode — resolves it now (EP-22.7).
+    const early = verdicts.length > 0 ? await this.takeBuffered(instance, verdicts) : undefined;
+    return { taskId, ...(early !== undefined ? { early } : {}) };
   }
 
   /**
@@ -345,5 +415,12 @@ export function instanceAudit(
       ),
     } satisfies EventPayloads['audit.recorded'],
     { actor, correlationId: after.id },
+  );
+}
+
+/** Oldest first; the message id breaks a tie, as the store orders them. */
+function earlier(a: BufferedEvent, b: BufferedEvent): boolean {
+  return (
+    a.occurredAt < b.occurredAt || (a.occurredAt === b.occurredAt && a.messageId < b.messageId)
   );
 }

@@ -15,6 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { y4m } from './media.mjs';
 
 const BASE = process.env.ATLAS_BASE_URL ?? 'http://localhost:30080';
 const TIMEOUT = Number(process.env.ATLAS_SMOKE_TIMEOUT_MS ?? 10_000);
@@ -1490,10 +1491,16 @@ test('smoke: EP-22.2 — a workflow is authored, refused while invalid, publishe
       'utf8',
     ),
   );
+  // Its trigger never fires (EP-22.7): the copy published here would otherwise start on every
+  // upload of the channel from now on — the EP-22.7 test runs one that does, on its own file only.
   const input = {
     name: `smoke ${Date.now()}`,
     vars: preset.vars,
-    steps: preset.steps,
+    steps: preset.steps.map((s) =>
+      s.kind === 'start'
+        ? { ...s, config: { trigger: { ...s.config.trigger, filter: '= false' } } }
+        : s,
+    ),
     transitions: preset.transitions,
   };
 
@@ -2129,6 +2136,160 @@ test('smoke: EP-22.6 — a wait-event moves on asset.ready; a review step is res
     'the verdict never closed the task',
   );
   assert.deepEqual([closed.outcome, closed.closedBy], ['approved', me]);
+});
+
+test('smoke: EP-22.7 — the canonical preset, end to end: an upload starts it, MTS transcodes, a ready taken from the buffer, the review approved', async () => {
+  // Phase 2's spine on a live cluster. The canonical preset is published (scoped by its trigger's
+  // filter to one file name); a video is UPLOADED; RIM's ingest.accepted starts the instance as BMS;
+  // its command step has MTS make the broadcast rendition from HSM's original; the asset is made
+  // ready by hand while that runs — before the workflow waits, so the wait takes it from BMS's
+  // buffer; the review is approved in MAM at its point, and the instance ends schedulable.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const fresh = { ...headers, 'cache-control': 'no-cache' };
+  const poll = async (fn, done, budgetMs, what) => {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const value = await fn();
+      if (done(value)) return value;
+      assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(value)}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+  const filename = `smoke-canonical-${Date.now()}.y4m`;
+  const preset = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../docs/architecture/workflows/presets/canonical-ingest-to-air.workflow.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  );
+  const steps = preset.steps.map((s) =>
+    s.kind === 'start'
+      ? {
+          ...s,
+          config: {
+            trigger: { ...s.config.trigger, filter: `= incoming.filename = "${filename}"` },
+          },
+        }
+      : s,
+  );
+  const made = await get('/api/v1/workflows', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      name: `smoke canonical ${Date.now()}`,
+      vars: preset.vars,
+      steps,
+      transitions: preset.transitions,
+    }),
+  });
+  assert.equal(made.status, 201, made.text);
+  const w = json(made);
+  const published = await get(`/api/v1/workflows/${w.id}/publish?revision=1`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(published.status, 200, published.text);
+
+  // The upload — a real video, so the broadcast transcode has a picture.
+  const clip = y4m(2);
+  const upload = json(
+    await get('/api/v1/uploads', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ filename, sizeBytes: clip.length }),
+    }),
+  );
+  for (let n = 1; n <= upload.partCount; n++) {
+    const part = clip.subarray((n - 1) * upload.partSizeBytes, n * upload.partSizeBytes);
+    const put = await get(`/api/v1/uploads/${upload.uploadId}/parts/${n}`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' },
+      body: part,
+    });
+    assert.equal(put.status, 204, put.text);
+  }
+  const completed = await get(`/api/v1/uploads/${upload.uploadId}/complete`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(completed.status, 202, completed.text);
+  const job = await poll(
+    async () => json(await get(`/api/v1/ingest/${json(completed).id}`, { headers })),
+    (j) => ['registered', 'rejected', 'quarantined'].includes(j.state),
+    90_000,
+    'the upload was never registered',
+  );
+  assert.equal(job.state, 'registered', JSON.stringify(job));
+  const assetId = job.assetId;
+
+  // ingest.accepted started the preset — as BMS, for this asset.
+  const started = await poll(
+    async () => json(await get(`/api/v1/instances?workflowId=${w.id}`, { headers })).items,
+    (items) => items.length > 0,
+    60_000,
+    'ingest.accepted never started the preset',
+  );
+  assert.equal(started.length, 1, 'once per event');
+  const [instance] = started;
+  assert.deepEqual(
+    [instance.startedBy, instance.triggeredBy?.event, instance.assetId],
+    ['bms', 'ingest.accepted', assetId],
+  );
+  const read = () => get(`/api/v1/instances/${instance.id}`, { headers }).then((r) => json(r));
+
+  // An editor makes the asset ready as soon as it can be — once MAM has its first renditions and it
+  // is categorised — which is while the broadcast transcode may still be running.
+  await poll(
+    async () => json(await get(`/api/v1/assets/${assetId}`, { headers: fresh })),
+    (a) => a.hasRenditions === true,
+    120_000,
+    'the asset never got its first renditions',
+  );
+  const patched = await get(`/api/v1/assets/${assetId}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ categoryId: await categoryFor(token) }),
+  });
+  assert.equal(patched.status, 200, patched.text);
+  for (const step of ['process', 'ready']) {
+    const res = await get(`/api/v1/assets/${assetId}/${step}`, { method: 'POST', headers });
+    assert.equal(res.status, 200, `${step} failed: ${res.text}`);
+  }
+
+  // The broadcast rendition came back to the workflow, and the ready reached its wait.
+  const atReview = await poll(
+    read,
+    (i) => i.currentSteps?.includes('s_review') || i.state === 'failed' || i.state === 'completed',
+    180_000,
+    'the instance never reached its review',
+  );
+  assert.deepEqual(atReview.currentSteps, ['s_review'], JSON.stringify(atReview));
+  const approved = await get(`/api/v1/assets/${assetId}/approve`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ expiresAt: '2099-01-01T00:00:00.000Z', reviewPointId: 'pre-schedule' }),
+  });
+  assert.equal(approved.status, 200, `approve failed: ${approved.text}`);
+  const ended = await poll(
+    read,
+    (i) => i.state === 'completed' || i.state === 'failed',
+    60_000,
+    'the verdict never ended the instance',
+  );
+  assert.deepEqual(
+    [ended.state, ended.endStepId, ended.vars?.verdict],
+    ['completed', 's_end_ok', 'approved'],
+    JSON.stringify(ended),
+  );
+  assert.ok(
+    ended.vars?.renditions?.some((r) => r.kind === 'broadcast'),
+    `no broadcast rendition in the instance's vars: ${JSON.stringify(ended.vars)}`,
+  );
 });
 
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {

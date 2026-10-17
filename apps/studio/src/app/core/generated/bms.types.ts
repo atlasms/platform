@@ -123,7 +123,10 @@ export interface WorkflowInstance {
   /** The steps it is waiting in. */
   currentSteps: string[];
   startedAt: string;
+  /** Who started it — a user, or `bms` when its trigger did. */
   startedBy: string;
+  /** Set when its start step's trigger started it (EP-22.7): the event and the message. */
+  triggeredBy?: { event: string; messageId: Ulid };
   endedAt?: string;
   endStepId?: string;
   error?: string;

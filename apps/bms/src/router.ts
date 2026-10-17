@@ -14,17 +14,11 @@
 // nothing twice. The signal goes FIRST: an update committed for a signal that never arrived
 // would strand the step until its timeout, while a signal sent twice is harmless.
 
-import { envelopeShapeErrors, type Envelope, type EventPayloads } from '@atlas/contracts';
-import {
-  commandAnswers,
-  REVIEW_VERDICTS,
-  WORKFLOW_COMMANDS,
-  WORKFLOW_EVENTS,
-} from '@atlas/contracts/workflow';
+import { envelopeShapeErrors, type Envelope } from '@atlas/contracts';
+import { commandAnswers, WORKFLOW_COMMANDS, WORKFLOW_EVENTS } from '@atlas/contracts/workflow';
 import type { Broker, Message, Subscription } from '@atlas/messaging';
 import { ValidationError } from '@atlas/service-kit';
-import type { EventAwait } from './instance.ts';
-import { outboxRecord } from './record.ts';
+import { answerWith, matches, signalPayload } from './event-match.ts';
 import { InstanceNotRunning, type InstanceRunner } from './runner.ts';
 import { HUMAN_TASK } from './runtime.ts';
 import type { WorkflowStore } from './store.ts';
@@ -153,9 +147,10 @@ export async function routeTask(
 
 /**
  * An event a step is waiting for (EP-22.6; bms.md §13f) — one of WORKFLOW_EVENTS, which nobody sent
- * BMS as an answer. The open awaits of its type in its channel (narrowed to its asset) are matched
- * by their keys, and every one that matches is signalled and then answered once; a redelivery finds
- * them answered and is ignored.
+ * BMS as an answer. It is first BUFFERED (EP-22.7, decided 2026-10-17), so a step that starts
+ * waiting only later still finds it (`BmsRuntime.awaitEvent`). Then the open awaits of its type in
+ * its channel (narrowed to its asset) are matched by their keys, and every one that matches is
+ * signalled and then answered once; a redelivery finds them answered and is ignored.
  *
  * A review step's verdict await is a little more than a key match (decided 2026-10-16): the verdict
  * must be on the instance's asset, and it resolves the step if it names that step's review point OR
@@ -178,71 +173,38 @@ export async function routeEvent(
   if (!WORKFLOW_EVENTS.includes(envelope.type)) return 'ignored';
   const payload = envelope.payload;
   const assetId = typeof payload['assetId'] === 'string' ? payload['assetId'] : undefined;
+  // Buffered BEFORE the awaits are read: a step registering its wait meanwhile either is among
+  // them or finds this row — never neither (bms.md §13g).
+  await store.transaction((tx) =>
+    tx.bufferEvent({
+      messageId: envelope.messageId,
+      channelId: envelope.channelId,
+      eventType: envelope.type,
+      ...(assetId !== undefined ? { assetId } : {}),
+      occurredAt: envelope.occurredAt,
+      ...(envelope.correlationId !== undefined ? { correlationId: envelope.correlationId } : {}),
+      payload,
+      receivedAt: now().toISOString(),
+    }),
+  );
   const open = await store.openEventAwaits(envelope.channelId, envelope.type, assetId);
   const matching = open.filter((a) => matches(a, payload));
   if (matching.length === 0) return 'ignored';
 
   const outcomes: RouteOutcome[] = [];
   for (const awaited of matching) {
-    const verdict =
-      awaited.reviewPointId !== undefined ? REVIEW_VERDICTS[envelope.type] : undefined;
-    const by = verdict !== undefined ? payload[verdict.by] : undefined;
-    const reviewPointId =
-      typeof payload['reviewPointId'] === 'string' ? payload['reviewPointId'] : undefined;
     let outcome: RouteOutcome = 'delivered';
     try {
       await runner.signal(awaited.instanceId, {
         stepId: awaited.stepId,
         correlationId: awaited.correlationId,
-        payload:
-          verdict !== undefined
-            ? {
-                outcome: verdict.outcome,
-                ...(typeof by === 'string' ? { by } : {}),
-                taskId: awaited.correlationId,
-                ...(assetId !== undefined ? { assetId } : {}),
-                ...(reviewPointId !== undefined ? { reviewPointId } : {}),
-                ...(typeof payload['reason'] === 'string' ? { reason: payload['reason'] } : {}),
-                ...(typeof payload['expiresAt'] === 'string'
-                  ? { expiresAt: payload['expiresAt'] }
-                  : {}),
-              }
-            : payload,
+        payload: signalPayload(awaited, envelope.type, payload),
       });
     } catch (err) {
       if (!(err instanceof InstanceNotRunning)) throw err; // the broker redelivers
       outcome = 'orphaned';
     }
-    const at = now().toISOString();
-    const first = await store.transaction(async (tx) => {
-      if (!(await tx.answerEventAwaits(awaited.correlationId, at, msg.id))) return false;
-      if (verdict === undefined) return true;
-      // The review's task: its await answered (Notifications' `done` for it is then a duplicate)
-      // and the task closed with the verdict — even for an instance that has ended, since the
-      // verdict was given all the same.
-      await tx.answerAwait(awaited.correlationId, at, msg.id);
-      await tx.enqueue(
-        outboxRecord(
-          'workflow.task.resolved',
-          awaited.channelId,
-          {
-            taskId: awaited.correlationId,
-            workflowInstanceId: awaited.instanceId,
-            outcome: verdict.outcome,
-            ...(typeof by === 'string' ? { by } : {}),
-            ...(assetId !== undefined ? { assetId } : {}),
-            ...(reviewPointId !== undefined ? { reviewPointId } : {}),
-            at,
-          } satisfies EventPayloads['workflow.task.resolved'],
-          {
-            actor: { kind: 'service', id: 'bms' },
-            correlationId: envelope.correlationId ?? envelope.messageId,
-            causationId: envelope.messageId,
-          },
-        ),
-      );
-      return true;
-    });
+    const first = await answerWith(store, awaited, envelope, now().toISOString());
     outcomes.push(first ? outcome : 'duplicate');
   }
   return outcomes.includes('delivered')
@@ -250,30 +212,6 @@ export async function routeEvent(
     : outcomes.includes('orphaned')
       ? 'orphaned'
       : 'duplicate';
-}
-
-/** Every key equal, and — for a review — the verdict naming this point or none. */
-function matches(awaited: EventAwait, payload: Record<string, unknown>): boolean {
-  for (const [path, value] of Object.entries(awaited.match))
-    if (!sameValue(valueAt(payload, path), value)) return false;
-  if (awaited.reviewPointId === undefined) return true;
-  const named = payload['reviewPointId'];
-  return named === undefined || named === awaited.reviewPointId;
-}
-
-function valueAt(payload: Record<string, unknown>, path: string): unknown {
-  let cur: unknown = payload;
-  for (const key of path.split('.')) {
-    if (typeof cur !== 'object' || cur === null) return undefined;
-    cur = (cur as Record<string, unknown>)[key];
-  }
-  return cur;
-}
-
-/** FEEL's `=` over JSON values — but a key that evaluated to null never matches anything. */
-function sameValue(a: unknown, b: unknown): boolean {
-  if (a === undefined || b === undefined || b === null) return false;
-  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function errorOf(payload: Record<string, unknown>): { code: string; message: string } {

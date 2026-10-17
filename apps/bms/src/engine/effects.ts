@@ -60,8 +60,14 @@ export interface Effects {
     action: string,
   ): Promise<void>;
 
-  /** Wait for an event, not one this instance asked for, that matches the step's keys. */
-  waitForEvent(wait: EventWait, timeoutMs?: number): Promise<Record<string, unknown>>;
+  /**
+   * Register the step's wait for an event, not one this instance asked for, that matches its keys
+   * — before its `awaiting` is recorded, as a command is issued and a task created before theirs,
+   * so a mirror that says `waiting` means the router can find it.
+   */
+  awaitEvent(wait: EventWait): Promise<void>;
+  /** Wait for that event; rejects with StepTimeout after `timeoutMs`. */
+  waitForEvent(stepId: string, timeoutMs?: number): Promise<Record<string, unknown>>;
 
   /** Run a published workflow as a child; resolves with its output vars. */
   runChild(
@@ -80,6 +86,11 @@ export interface StartContext {
   incoming?: Record<string, unknown>;
   /** Initial vars, over the definition's declared `initial`s. */
   vars?: Record<string, unknown>;
+  /**
+   * Its start step's trigger started it (EP-22.7): the start step maps `incoming` — the event —
+   * into vars by `trigger.output`. A start through the API gives its vars itself.
+   */
+  triggered?: boolean;
 }
 
 export interface RunResult {

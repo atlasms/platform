@@ -13,7 +13,7 @@
   ],
   "steps": [
     { "id": "s_start", "kind": "start", "name": "On ingest", "position": { "x": 0, "y": 0 },
-      "config": { "trigger": { "event": "ingest.accepted" } } },
+      "config": { "trigger": { "event": "ingest.accepted", "output": { "vars.assetId": "= incoming.assetId" } } } },
     { "id": "s_transcode", "kind": "command", "name": "Transcode", "position": { "x": 180, "y": 0 },
       "retry": { "maxAttempts": 3, "backoff": { "type": "exponential", "initial": "PT30S", "factor": 2, "max": "PT10M" } },
       "onError": "compensate",

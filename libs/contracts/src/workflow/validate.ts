@@ -1,11 +1,12 @@
 import { payloadShape, validateDomain } from '../registry.ts';
 import { WORKFLOW_COMMANDS } from './commands.ts';
 import { correlationKeys } from './correlate.ts';
-import { WORKFLOW_EVENTS } from './events.ts';
+import { WORKFLOW_EVENTS, WORKFLOW_TRIGGERS } from './events.ts';
 import { feelProblem, referencedVars } from './feel.ts';
 import type {
   CommandConfig,
   HumanTaskConfig,
+  StartConfig,
   ValidationIssue,
   ValidationResult,
   WaitEventConfig,
@@ -186,6 +187,17 @@ export function validateDefinition(def: unknown): ValidationResult {
         'CORRELATE_UNSUPPORTED',
         `step "${s.id}": a command's answer is matched by its correlation id; await.correlate is not supported`,
         { stepId: s.id, path: `/steps/${steps.indexOf(s)}/config/await/correlate` },
+      );
+  }
+
+  // A start's trigger (EP-22.7): an event from the closed list BMS starts workflows on.
+  for (const s of steps.filter((x) => x.kind === 'start')) {
+    const event = (s.config as StartConfig | undefined)?.trigger?.event;
+    if (event !== undefined && !WORKFLOW_TRIGGERS.includes(event))
+      error(
+        'UNKNOWN_TRIGGER',
+        `step "${s.id}" starts on "${event}", which is not an event a workflow may start on (${WORKFLOW_TRIGGERS.join(', ')})`,
+        { stepId: s.id, path: `/steps/${steps.indexOf(s)}/config/trigger/event` },
       );
   }
 

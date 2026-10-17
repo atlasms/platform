@@ -123,12 +123,13 @@ Blocks for an event **not** triggered by a prior command (e.g. an approval done 
 registers a correlation subscription `{event, correlateKey}` → `instanceId::stepId` (§9.2); the
 router signals when a matching event arrives. `timeout` (step-level) → BPMN boundary timer.
 
-As decided 2026-10-16 (EP-22.6): `event` is one of a CLOSED list (`WORKFLOW_EVENTS` in
+As decided 2026-10-16 (EP-22.6) and 2026-10-17 (EP-22.7): `event` is one of a CLOSED list (`WORKFLOW_EVENTS` in
 `@atlas/contracts/workflow` — `asset.ready`, `asset.approved`, `asset.rejected` to start), and
 `correlate` is equality KEYS — `incoming.<field> = <expr>`, joined with `and`, where `<expr>` does
 not read `incoming`. The workflow evaluates each `<expr>` when the step starts waiting; the keys are
-what the router matches. An event published BEFORE the step starts waiting is not seen — catch
-semantics, as BPMN's; a flow that might start after its event checks state first.
+what the router matches. An event published BEFORE the step starts waiting, but since its instance
+started, is taken from BMS's buffer (EP-22.7, kept 7 days) — the earliest that matches and has not
+already moved the instance; one from before the instance started is not (bms.md §13g).
 
 ### 2.4 `timer` — Timer Event
 
@@ -188,6 +189,10 @@ parse — and with it, `instance of` (outside the subset anyway) does not.
 
 ## 4. Variables & data flow
 
+- A start step's `trigger.output` (EP-22.7) maps the triggering event — the start step's `incoming`
+  — into vars when the trigger starts the instance (`{ "vars.assetId": "= incoming.assetId" }`); a
+  start through the API gives its vars itself and the mapping is not applied.
+
 - `vars[]` declares typed, named instance state with optional `initial`.
 - Data moves only through **`DataMapping`** (`{ "targetPath": "= feelExpr" }`): `command.request.input`
   (into the command payload), `*.output` (from a completion/task payload into `vars`), `sub-flow`
@@ -224,6 +229,7 @@ required per-kind config, id patterns, `maxContains:1` on `start`.
 | `command.request.event` is a command a workflow may issue — `WORKFLOW_COMMANDS` (`UNKNOWN_COMMAND`, EP-22.4) | error |
 | `command.request.input` keys are fields of that command's payload, and its required fields are given (`COMMAND_INPUT`); a dotted key builds a nested field | error |
 | `command.await.event` answers the command (`AWAIT_EVENT`); `command.await.correlate` is refused — the answer is matched by correlation id (`CORRELATE_UNSUPPORTED`) | error |
+| `start.trigger.event` is an event a workflow may start on — `WORKFLOW_TRIGGERS`, a closed list (`UNKNOWN_TRIGGER`, EP-22.7) | error |
 | `wait-event.event` is an event a workflow may wait for — `WORKFLOW_EVENTS`, a closed list (`UNKNOWN_EVENT`, EP-22.6) | error |
 | `wait-event.correlate` is equality keys, `incoming.<field> = <expr>` joined with `and`, the other side not reading `incoming` (`CORRELATE_SHAPE`), on fields the event's payload has (`CORRELATE_FIELD`) | error |
 | A `human-task` with a `reviewPointId` is an approval (`REVIEW_TASK_TYPE`), and no two steps share a point (`DUP_REVIEW_POINT`) | error |

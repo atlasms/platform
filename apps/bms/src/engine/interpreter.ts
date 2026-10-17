@@ -16,6 +16,7 @@ import type {
   EndConfig,
   HumanTaskConfig,
   ParallelConfig,
+  StartConfig,
   Step,
   SubFlowConfig,
   TimerConfig,
@@ -113,9 +114,12 @@ export async function runWorkflow(
   async function execStep(step: Step): Promise<ExecResult> {
     await fx.appendHistory(step.id, 'entered');
     switch (step.kind) {
-      case 'start':
+      case 'start': {
+        const output = (step.config as StartConfig | undefined)?.trigger?.output;
+        if (start.triggered === true && output) applyToVars(output);
         await done(step);
         return { kind: 'next', next: singleOut(step.id) };
+      }
 
       case 'end': {
         const c = (step.config ?? {}) as EndConfig;
@@ -139,11 +143,9 @@ export async function runWorkflow(
           throw new WorkflowError(step.id, false, new Error(`correlate — ${parsed.problem}`));
         const match: Record<string, unknown> = {};
         for (const k of parsed.keys) match[k.field] = feelEval(k.expr, ctx());
+        await fx.awaitEvent({ stepId: step.id, event: c.event, match });
         await fx.appendHistory(step.id, 'awaiting');
-        incoming = await fx.waitForEvent(
-          { stepId: step.id, event: c.event, match },
-          toMs(step.timeout),
-        );
+        incoming = await fx.waitForEvent(step.id, toMs(step.timeout));
         if (c.output) applyToVars(c.output);
         await done(step);
         return { kind: 'next', next: singleOut(step.id) };

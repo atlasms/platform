@@ -81,13 +81,20 @@ export async function atlasWorkflow(
     waitForTask: take,
     // The step's keys become an await row the router matches events by (EP-22.6); only an
     // event that matched them — or a person's signal — completes the step.
-    waitForEvent: async (wait, timeoutMs) => {
-      const { correlationId } = await unwrapped(act.awaitEvent({ key: key(), instanceId, wait }));
+    awaitEvent: async (wait) => {
+      const { correlationId, early } = await unwrapped(
+        act.awaitEvent({ key: key(), instanceId, wait }),
+      );
       inbox.expect(wait.stepId, correlationId);
-      return take(wait.stepId, timeoutMs);
+      // An event published before the wait began, taken from BMS's buffer (EP-22.7).
+      if (early !== undefined) inbox.put({ stepId: wait.stepId, correlationId, payload: early });
     },
+    waitForEvent: take,
     createTask: async (spec) => {
-      const taskId = await unwrapped(act.createTask({ key: key(), spec }));
+      const { taskId, early } = await unwrapped(act.createTask({ key: key(), spec }));
+      // A review's verdict given before the step was reached (EP-22.7).
+      if (early !== undefined)
+        inbox.put({ stepId: spec.stepId, correlationId: taskId, payload: early });
       // Only this task's completion completes the step (EP-25.8) — a person's signal still does.
       inbox.expect(spec.stepId, taskId);
     },

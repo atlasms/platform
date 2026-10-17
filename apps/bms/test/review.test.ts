@@ -221,7 +221,7 @@ test('a review step: the task names its point, and MAM’s verdict AT that point
   await h.waiting(id, 's_post-ingest');
 
   // A verdict at ANOTHER point, or on another asset, is not this step's.
-  assert.equal(await h.router.routeEvent(approved(assetId, 'pre-schedule')), 'ignored');
+  assert.equal(await h.router.routeEvent(approved(assetId, 'rights-check')), 'ignored');
   assert.equal(await h.router.routeEvent(approved(ulid(), 'post-ingest')), 'ignored');
 
   const verdict = approved(assetId, 'post-ingest');

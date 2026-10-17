@@ -14,6 +14,7 @@ import {
 } from '@atlas/data';
 import {
   assetKey,
+  type BufferedEvent,
   type CommandAwait,
   type EventAwait,
   type HistoryEntry,
@@ -105,6 +106,24 @@ export const sqliteMigrations: Migration[] = [
          );
          CREATE INDEX IF NOT EXISTS event_awaits_open_idx
            ON event_awaits (channel_id, event_type, asset_id) WHERE answered_at IS NULL;`,
+  },
+  // EP-22.7: the waitable events, kept a while for a step that starts waiting after them; and the
+  // index that says which events already moved an instance.
+  {
+    id: 'bms_event_buffer',
+    up: `CREATE TABLE IF NOT EXISTS event_buffer (
+           message_id  TEXT PRIMARY KEY,
+           channel_id  TEXT NOT NULL,
+           event_type  TEXT NOT NULL,
+           asset_id    TEXT,
+           occurred_at TEXT NOT NULL,
+           received_at TEXT NOT NULL,
+           data        TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS event_buffer_lookup_idx
+           ON event_buffer (channel_id, event_type, asset_id, occurred_at);
+         CREATE INDEX IF NOT EXISTS event_buffer_received_idx ON event_buffer (received_at);
+         CREATE INDEX IF NOT EXISTS event_awaits_instance_idx ON event_awaits (instance_id);`,
   },
 ];
 
@@ -250,6 +269,27 @@ export function sqliteWorkflowStore(path = ':memory:'): WorkflowStore & { db: Db
         .run(answeredAt, answeredAt, answeredBy, correlationId);
       return Number(result.changes) > 0;
     },
+    async bufferEvent(e) {
+      const result = db
+        .prepare(
+          `INSERT INTO event_buffer (message_id, channel_id, event_type, asset_id, occurred_at, received_at, data)
+           VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (message_id) DO NOTHING`,
+        )
+        .run(
+          e.messageId,
+          e.channelId,
+          e.eventType,
+          e.assetId ?? null,
+          e.occurredAt,
+          e.receivedAt,
+          JSON.stringify(e),
+        );
+      return Number(result.changes) === 1;
+    },
+    async pruneEventBuffer(before) {
+      const result = db.prepare('DELETE FROM event_buffer WHERE received_at < ?').run(before);
+      return Number(result.changes);
+    },
   };
 
   return {
@@ -327,6 +367,48 @@ export function sqliteWorkflowStore(path = ':memory:'): WorkflowStore & { db: Db
         .prepare('SELECT data FROM command_awaits WHERE correlation_id = ?')
         .get(correlationId) as { data: string } | undefined;
       return row ? (JSON.parse(row.data) as CommandAwait) : undefined;
+    },
+    async bufferedEvents(channelId, eventType, since, assetId) {
+      const rows = (
+        assetId === undefined
+          ? db
+              .prepare(
+                `SELECT data FROM event_buffer
+                  WHERE channel_id = ? AND event_type = ? AND occurred_at >= ?
+                  ORDER BY occurred_at, message_id`,
+              )
+              .all(channelId, eventType, since)
+          : db
+              .prepare(
+                `SELECT data FROM event_buffer
+                  WHERE channel_id = ? AND event_type = ? AND occurred_at >= ?
+                    AND (asset_id IS NULL OR asset_id = ?)
+                  ORDER BY occurred_at, message_id`,
+              )
+              .all(channelId, eventType, since, assetId)
+      ) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as BufferedEvent);
+    },
+    async bufferedEvent(messageId) {
+      const row = db
+        .prepare('SELECT data FROM event_buffer WHERE message_id = ?')
+        .get(messageId) as { data: string } | undefined;
+      return row ? (JSON.parse(row.data) as BufferedEvent) : undefined;
+    },
+    async eventAwaitsFor(correlationId) {
+      const rows = db
+        .prepare('SELECT data FROM event_awaits WHERE correlation_id = ? ORDER BY event_type')
+        .all(correlationId) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as EventAwait);
+    },
+    async eventsUsedBy(instanceId) {
+      const rows = db
+        .prepare(
+          `SELECT DISTINCT json_extract(data, '$.answeredBy') AS m FROM event_awaits
+            WHERE instance_id = ? AND answered_at IS NOT NULL`,
+        )
+        .all(instanceId) as { m: string | null }[];
+      return rows.flatMap((r) => (r.m !== null ? [r.m] : []));
     },
     async openEventAwaits(channelId, eventType, assetId) {
       const rows = (

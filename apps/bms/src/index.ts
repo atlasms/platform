@@ -13,7 +13,15 @@ export {
 export { BmsRuntime } from './runtime.ts';
 export { inProcessRunner, type InProcessRunner } from './runner-inprocess.ts';
 export { InstanceNotRunning, type InstanceRunner } from './runner.ts';
-export type { Instance, HistoryEntry, CommandAwait, EventAwait } from './instance.ts';
+export type {
+  Instance,
+  HistoryEntry,
+  CommandAwait,
+  EventAwait,
+  BufferedEvent,
+} from './instance.ts';
+export { EVENT_BUFFER_DAYS } from './instance.ts';
+export { TriggerStarter, triggerPatterns, type TriggerOutcome } from './trigger.ts';
 export {
   CompletionRouter,
   startCompletionRouter,

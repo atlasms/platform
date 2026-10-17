@@ -83,9 +83,11 @@ export class SimDriver implements Effects {
     this.escalations.push({ stepId, action });
   }
   readonly eventWaits: EventWait[] = [];
-  async waitForEvent(wait: EventWait): Promise<Record<string, unknown>> {
+  async awaitEvent(wait: EventWait): Promise<void> {
     this.eventWaits.push(wait);
-    return this.cfg.events?.[wait.stepId] ?? {};
+  }
+  async waitForEvent(stepId: string): Promise<Record<string, unknown>> {
+    return this.cfg.events?.[stepId] ?? {};
   }
   async runChild(
     _stepId: string,
