@@ -788,12 +788,16 @@ export interface WorkflowTaskCreatedPayload {
   reviewPointId?: string;
 }
 
-/** Emitted by BMS when something other than its completion in Notifications ends a workflow's task — today a review step's verdict in MAM (EP-22.6): the asset was approved or rejected, so the review task is done, with the verdict as its outcome. Consumed by Notifications, which closes the task. */
+/** Emitted by BMS when something other than its completion in Notifications ends a workflow's task: a review step's verdict in MAM (EP-22.6) closes it DONE with the verdict as its outcome; the step timing out, or its workflow failing while the task is open, closes it CANCELLED (EP-22.9). Consumed by Notifications, which closes the task. */
 export interface WorkflowTaskResolvedPayload {
   taskId: Ulid;
   workflowInstanceId: Ulid;
-  /** The verdict: "approved" or "rejected". */
-  outcome: string;
+  /** How the task ends. Absent means done — what BMS sent before EP-22.9. */
+  state?: 'done' | 'cancelled';
+  /** For a done task: the verdict, "approved" or "rejected". Absent on a cancellation. */
+  outcome?: string;
+  /** For a cancellation: why — `timeout` (the step's timeout fired) or `workflow-ended` (its workflow failed while the task was open). */
+  reason?: string;
   /** Who gave the verdict — a user id, or `mam` for an automatic approval. */
   by?: string;
   assetId?: Ulid;

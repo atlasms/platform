@@ -263,3 +263,27 @@ test('a start trigger is an event from the closed list, and every trigger has a 
   assert.equal(issue?.stepId, 's_start');
   assert.equal(issue?.path, '/steps/0/config/trigger/event');
 });
+
+test('an error path is reachable: onError.transitionTo and a compensation handler count (EP-22.9)', () => {
+  const def = load('simple-approval.workflow.json');
+  const task = def.steps.find((s) => s.id === 's_task')!;
+  task.onError = { transitionTo: 's_late' };
+  task.compensation = 's_undo';
+  def.steps.push(
+    { id: 's_late', kind: 'end', config: { status: 'late' } },
+    {
+      id: 's_undo',
+      kind: 'end',
+      config: {},
+    },
+  );
+  const codes = validateDefinition(def).issues.map((i) => i.code);
+  assert.ok(!codes.includes('UNREACHABLE_STEP'), codes.join(','));
+});
+
+test('retry is a command step’s only', () => {
+  const def = load('simple-approval.workflow.json');
+  def.steps.find((s) => s.id === 's_task')!.retry = { maxAttempts: 2 };
+  const issue = validateDefinition(def).issues.find((i) => i.code === 'RETRY_NOT_COMMAND');
+  assert.equal(issue?.stepId, 's_task');
+});

@@ -207,6 +207,7 @@ paths:
       summary: The channel's workflow instances, newest first (workflow:read, :act or :admin)
       parameters:
         - { name: workflowId, in: query, required: false, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: state, in: query, required: false, schema: { type: string, enum: [running, waiting, completed, failed] }, description: "Only instances in this state — `failed` is the operator's list of runs nothing caught (EP-22.9)." }
         - { name: after, in: query, required: false, schema: { $ref: '#/components/schemas/Ulid' }, description: The last id of the previous page. }
         - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:

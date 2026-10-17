@@ -12,6 +12,7 @@ import type {
   EventAwait,
   HistoryEntry,
   Instance,
+  InstanceState,
 } from './instance.ts';
 import type { Workflow, WorkflowState, WorkflowVersion } from './workflow.ts';
 
@@ -30,7 +31,7 @@ export interface WorkflowStore {
   /** One channel's instances, newest first (keyset on id descending). */
   instances(
     channelId: string,
-    options: { workflowId?: string; after?: string; limit: number },
+    options: { workflowId?: string; state?: InstanceState; after?: string; limit: number },
   ): Promise<Instance[]>;
   /** An instance's step history, in order. */
   history(instanceId: string): Promise<HistoryEntry[]>;

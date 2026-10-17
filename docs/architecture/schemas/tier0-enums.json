@@ -39,6 +39,7 @@
   "events/schedule.updated.payload.schema.json#/properties/state": "Schedule state machine with coded transitions; send-to-air is gated on it.",
   "events/schedule.validated.payload.schema.json#/properties/issues/items/properties/kind": "Each issue kind is a validator with its own rule.",
   "events/story.updated.payload.schema.json#/properties/status": "Newsroom story state machine with coded transitions.",
+  "events/workflow.task.resolved.payload.schema.json#/properties/state": "Notifications closes the task done (with the verdict) or cancelled — two state transitions, two notifications.",
   "events/task.updated.payload.schema.json#/properties/state": "Task lifecycle state machine; forwarded and cancelled have distinct notification behaviour.",
   "events/taxonomy.updated.payload.schema.json#/properties/kind": "The SET of vocabularies is code — each has its own table, index and UI. The TERMS are Tier 2.",
   "events/taxonomy.updated.payload.schema.json#/properties/action": "Each action drives a different search-index and cache update; merge and deprecate are not deletes.",

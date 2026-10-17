@@ -23,6 +23,8 @@ export function inProcessRunner(runtime: BmsRuntime): InProcessRunner {
     const { instanceId } = start;
     const inbox = new StepInbox();
     inboxes.set(instanceId, inbox);
+    const taskOf = new Map<string, string>();
+    const waitOf = new Map<string, string>();
     let op = 0;
     const key = (): string => `${instanceId}:${++op}`;
     let seq = 0;
@@ -49,11 +51,23 @@ export function inProcessRunner(runtime: BmsRuntime): InProcessRunner {
       awaitEvent: async (wait) => {
         const { correlationId, early } = await runtime.awaitEvent({ key: key(), instanceId, wait });
         inbox.expect(wait.stepId, correlationId);
+        waitOf.set(wait.stepId, correlationId);
         if (early !== undefined) inbox.put({ stepId: wait.stepId, correlationId, payload: early });
       },
       waitForEvent: take,
+      closeWait: async (stepId) => {
+        const correlationId = waitOf.get(stepId);
+        if (correlationId !== undefined)
+          await runtime.closeAwait({ instanceId, correlationId, task: false, reason: 'timeout' });
+      },
+      closeTask: async (stepId, reason) => {
+        const taskId = taskOf.get(stepId);
+        if (taskId !== undefined)
+          await runtime.closeAwait({ instanceId, correlationId: taskId, task: true, reason });
+      },
       createTask: async (spec) => {
         const { taskId, early } = await runtime.createTask({ key: key(), spec });
+        taskOf.set(spec.stepId, taskId);
         if (early !== undefined)
           inbox.put({ stepId: spec.stepId, correlationId: taskId, payload: early });
         inbox.expect(spec.stepId, taskId);

@@ -32,6 +32,9 @@ export function createActivities(runtime: BmsRuntime) {
     awaitEvent: settled((input: Parameters<BmsRuntime['awaitEvent']>[0]) =>
       runtime.awaitEvent(input),
     ),
+    closeAwait: settled((input: Parameters<BmsRuntime['closeAwait']>[0]) =>
+      runtime.closeAwait(input),
+    ),
     createTask: settled((input: Parameters<BmsRuntime['createTask']>[0]) =>
       runtime.createTask(input),
     ),

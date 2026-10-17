@@ -46,15 +46,19 @@ const SELF = { actor: { kind: 'service' as const, id: 'bms' } };
 export interface BmsRuntimeOptions {
   store: WorkflowStore;
   now?: () => Date;
+  /** An instance ended failed (EP-22.9) — main.ts counts it (`atlas_bms_instances_failed_total`). */
+  onFailed?: (instance: Instance) => void;
 }
 
 export class BmsRuntime {
   private readonly store: WorkflowStore;
   private readonly now: () => Date;
+  private readonly onFailed: (instance: Instance) => void;
 
   constructor(options: BmsRuntimeOptions) {
     this.store = options.store;
     this.now = options.now ?? (() => new Date());
+    this.onFailed = options.onFailed ?? (() => undefined);
   }
 
   /** A step event: one history row (by its sequence number) and the mirror moved along. */
@@ -301,6 +305,46 @@ export class BmsRuntime {
   }
 
   /**
+   * Close a step's await (EP-22.9): every event await under its correlation id, and — for a human
+   * step — its task's await, the task CANCELLED with why (`workflow.task.resolved`, which
+   * Notifications applies), all in one transaction. Once only: if the task was completed or
+   * resolved first, nothing is cancelled and nothing is emitted — the workflow has already moved
+   * past the step, and the task stays as it ended. A retry finds everything answered and writes
+   * nothing.
+   */
+  async closeAwait(input: {
+    instanceId: string;
+    correlationId: string;
+    task: boolean;
+    reason: 'timeout' | 'workflow-ended';
+  }): Promise<void> {
+    const instance = await this.store.instance(input.instanceId);
+    if (!instance) throw new NotFound(`instance ${input.instanceId}`);
+    const at = this.now().toISOString();
+    const closedBy = `closed:${input.reason}`;
+    await this.store.transaction(async (tx) => {
+      await tx.answerEventAwaits(input.correlationId, at, closedBy);
+      if (!input.task) return;
+      if (!(await tx.answerAwait(input.correlationId, at, closedBy))) return;
+      await tx.enqueue(
+        outboxRecord(
+          'workflow.task.resolved',
+          instance.channelId,
+          {
+            taskId: input.correlationId,
+            workflowInstanceId: instance.id,
+            state: 'cancelled',
+            reason: input.reason,
+            ...(instance.assetId !== undefined ? { assetId: instance.assetId } : {}),
+            at,
+          } satisfies EventPayloads['workflow.task.resolved'],
+          { ...SELF, correlationId: instance.id },
+        ),
+      );
+    });
+  }
+
+  /**
    * A sub-flow: the child's instance, named by a derived ULID so a retry names the same child, and
    * its definition — the published version asked for, or the latest.
    */
@@ -346,6 +390,9 @@ export class BmsRuntime {
 
   /** The end: the mirror's terminal state, `workflow.completed`, and the audit record. */
   async finish(input: { instanceId: string; result: RunResult }): Promise<void> {
+    const known = await this.store.instance(input.instanceId);
+    const workflow = known ? await this.store.get(known.workflowId) : undefined;
+    let failed: Instance | undefined;
     await this.store.transaction(async (tx) => {
       const before = await this.forUpdate(tx, input.instanceId);
       if (isTerminal(before.state)) return; // a retried finish
@@ -379,7 +426,33 @@ export class BmsRuntime {
         ),
       );
       await tx.enqueue(instanceAudit(after, 2, `workflow-instance.${result.state}`, before));
+      // A run nothing caught (EP-22.9, decided 2026-10-17): raised to operations, in the transaction
+      // of the failure, like RIM's recording holes — `GET /instances?state=failed` lists them all.
+      if (result.state === 'failed') {
+        failed = after;
+        await tx.enqueue(
+          outboxRecord(
+            'alert.raised',
+            after.channelId,
+            {
+              alertId: derivedUlid(Date.parse(after.startedAt), `failed:${after.id}`),
+              source: 'bms',
+              kind: 'workflow-failed',
+              severity: 'warning',
+              subjectRef: { entityType: 'workflowInstance', entityId: after.id },
+              message:
+                `workflow "${workflow?.name ?? after.workflowId}" (v${after.version}) failed: ${result.error ?? 'no reason given'}`.slice(
+                  0,
+                  1000,
+                ),
+              raisedAt: after.endedAt ?? this.now().toISOString(),
+            } satisfies EventPayloads['alert.raised'],
+            { ...SELF, correlationId: after.id },
+          ),
+        );
+      }
     });
+    if (failed) this.onFailed(failed);
   }
 
   private async forUpdate(tx: WorkflowTx, id: string): Promise<Instance> {

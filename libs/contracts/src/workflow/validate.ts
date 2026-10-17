@@ -73,12 +73,21 @@ export function validateDefinition(def: unknown): ValidationResult {
 
   const start = starts.length === 1 ? starts[0] : undefined;
   if (start) {
+    // A step is also reached by an error: its `onError.transitionTo` and its `compensation` handler
+    // run when it fails (EP-22.9) — an error path is not unreachable for having no transition in.
+    const byError = new Map<string, string[]>();
+    for (const s of steps) {
+      const to: string[] = [];
+      if (s.onError && typeof s.onError === 'object') to.push(s.onError.transitionTo);
+      if (s.compensation) to.push(s.compensation);
+      if (to.length > 0) byError.set(s.id, to);
+    }
     const seen = new Set<string>();
     const queue = [start.id];
     for (let n = queue.shift(); n !== undefined; n = queue.shift()) {
       if (seen.has(n)) continue;
       seen.add(n);
-      queue.push(...(outAdj.get(n) ?? []));
+      queue.push(...(outAdj.get(n) ?? []), ...(byError.get(n) ?? []));
     }
     for (const s of steps)
       if (!seen.has(s.id))
@@ -189,6 +198,16 @@ export function validateDefinition(def: unknown): ValidationResult {
         { stepId: s.id, path: `/steps/${steps.indexOf(s)}/config/await/correlate` },
       );
   }
+
+  // `retry` is a command's (EP-22.9, decided 2026-10-17): re-asking a person or re-waiting for an
+  // event is the author's own loop, and a waiting step's timeout goes to its `onError`.
+  for (const s of steps)
+    if (s.retry !== undefined && s.kind !== 'command')
+      error(
+        'RETRY_NOT_COMMAND',
+        `step "${s.id}" (${s.kind}) has a retry — only a command step retries; its timeout goes to onError`,
+        { stepId: s.id, path: `/steps/${steps.indexOf(s)}/retry` },
+      );
 
   // A start's trigger (EP-22.7): an event from the closed list BMS starts workflows on.
   for (const s of steps.filter((x) => x.kind === 'start')) {

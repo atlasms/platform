@@ -54,6 +54,11 @@ export interface Effects {
 
   createTask(spec: TaskSpec): Promise<void>;
   waitForTask(stepId: string, timeoutMs?: number): Promise<Record<string, unknown>>;
+  /**
+   * Close the step's open task as CANCELLED (EP-22.9) — its timeout fired, or the workflow ended
+   * while it was open — and its awaits with it, so a late completion or verdict moves nothing.
+   */
+  closeTask(stepId: string, reason: 'timeout' | 'workflow-ended'): Promise<void>;
   escalate(
     stepId: string,
     to: { userId?: string; role?: string } | undefined,
@@ -68,6 +73,8 @@ export interface Effects {
   awaitEvent(wait: EventWait): Promise<void>;
   /** Wait for that event; rejects with StepTimeout after `timeoutMs`. */
   waitForEvent(stepId: string, timeoutMs?: number): Promise<Record<string, unknown>>;
+  /** Close the step's wait (it timed out): an event arriving later answers nothing. */
+  closeWait(stepId: string): Promise<void>;
 
   /** Run a published workflow as a child; resolves with its output vars. */
   runChild(

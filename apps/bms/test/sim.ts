@@ -86,6 +86,13 @@ export class SimDriver implements Effects {
   async awaitEvent(wait: EventWait): Promise<void> {
     this.eventWaits.push(wait);
   }
+  readonly closed: { stepId: string; reason: string }[] = [];
+  async closeTask(stepId: string, reason: string): Promise<void> {
+    this.closed.push({ stepId, reason });
+  }
+  async closeWait(stepId: string): Promise<void> {
+    this.closed.push({ stepId, reason: 'wait' });
+  }
   async waitForEvent(stepId: string): Promise<Record<string, unknown>> {
     return this.cfg.events?.[stepId] ?? {};
   }

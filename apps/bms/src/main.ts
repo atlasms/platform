@@ -126,7 +126,12 @@ const health = new HealthRegistry()
 // instance from here; if it dies, the process exits and Kubernetes restarts it — an instance never
 // waits on a worker that is not polling.
 const store = pgWorkflowStore(pool);
-const runtime = new BmsRuntime({ store });
+// EP-22.9: a run nothing caught — each one also an `alert.raised`, and listed by `?state=failed`.
+const failedInstances = metrics.counter({
+  name: 'atlas_bms_instances_failed_total',
+  help: 'Workflow instances that ended failed — no error path took them; each alerted.',
+});
+const runtime = new BmsRuntime({ store, onFailed: () => failedInstances.inc({}, 1) });
 let temporal: TemporalRuntime | undefined;
 let temporalTimer: NodeJS.Timeout | undefined;
 
