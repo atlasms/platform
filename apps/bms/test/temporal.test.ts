@@ -18,8 +18,10 @@ import {
   BmsService,
   CompletionRouter,
   sqliteWorkflowStore,
+  TriggerStarter,
   type Instance,
 } from '../src/index.ts';
+import { presetInput } from '../src/store-conformance.ts';
 import { Client, Connection } from '@temporalio/client';
 import { connectTemporal } from '../src/temporal/runner.ts';
 
@@ -363,6 +365,98 @@ if (!ADDRESS) {
       assert.equal(await router.routeEvent(verdict), 'delivered');
       const done = await until(id, (i) => i?.state === 'completed');
       assert.equal(done.vars?.['verdict'], 'approved');
+    } finally {
+      await temporal.shutdown();
+      await running;
+    }
+  });
+
+  test('BMS on a real Temporal: the canonical preset, started by ingest.accepted, its ready taken from the buffer', async () => {
+    const store = sqliteWorkflowStore();
+    const runtime = new BmsRuntime({ store });
+    const namespace = `bms-test-${ulid().toLowerCase()}`;
+    const temporal = await connectTemporal({ address, namespace, runtime });
+    const running = temporal.run();
+    const service = new BmsService({ store, runner: temporal.runner });
+    const router = new CompletionRouter({ store, runner: temporal.runner });
+    const triggers = new TriggerStarter({ store, service, runner: temporal.runner });
+    const outbox = new SqliteOutboxStore(store.db);
+    const caller = {
+      userId: 'user-1',
+      channelId: 'ch12',
+      policy: compile({
+        subjectId: 'user-1',
+        permVersion: 1,
+        rules: [{ id: 'r', permissions: ['workflow:admin', 'workflow:act', 'asset:write'] }],
+        roles: [],
+        groups: [],
+      }),
+    };
+    const event = (type: string, payload: Record<string, unknown>, cause?: Envelope) => {
+      const e = buildEnvelope({
+        type,
+        channelId: 'ch12',
+        payload,
+        actor: { kind: 'service', id: 'x' },
+        ...(cause?.correlationId !== undefined ? { correlationId: cause.correlationId } : {}),
+      });
+      return { id: e.messageId, subject: subjectFor('ch12', type), body: e };
+    };
+    const until = async <T>(what: string, fn: () => Promise<T | undefined>): Promise<T> => {
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        const v = await fn();
+        if (v !== undefined) return v;
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    };
+    const sent = (type: string) =>
+      until(type, async () =>
+        (await outbox.listUnsent(1000))
+          .map((r) => r.message.body as Envelope)
+          .find((e) => e.type === type),
+      );
+    try {
+      const w = await service.create(caller, presetInput('canonical-ingest-to-air.workflow.json'));
+      await service.publish(caller, w.id, 1);
+      const assetId = ulid();
+      const [id] = (
+        await triggers.handle(
+          event('ingest.accepted', { assetId, checksum: { algorithm: 'sha256', value: 'ab' } }),
+        )
+      ).started;
+      assert.ok(id);
+      const command = await sent('transcode.job.create');
+      // Ready while the transcode runs: nobody waits yet, so it is buffered.
+      assert.equal(await router.routeEvent(event('asset.ready', { assetId })), 'ignored');
+      const done = event(
+        'transcode.completed',
+        {
+          assetId,
+          renditions: [
+            { kind: 'broadcast', path: 'b.mxf', checksum: { algorithm: 'sha256', value: 'ab' } },
+          ],
+        },
+        command,
+      );
+      assert.equal(await router.route(done), 'delivered');
+      await until('the review', async () =>
+        (await store.instance(id!))?.currentSteps.includes('s_review') ? true : undefined,
+      );
+      assert.equal(
+        await router.routeEvent(
+          event('asset.approved', { assetId, approver: 'rev-1', reviewPointId: 'pre-schedule' }),
+        ),
+        'delivered',
+      );
+      const ended = await until('the end', async () => {
+        const i = await store.instance(id!);
+        return i?.state === 'completed' ? i : undefined;
+      });
+      assert.equal(ended.endStepId, 's_end_ok');
+      assert.equal(ended.vars?.['verdict'], 'approved');
+      assert.equal(ended.startedBy, 'bms');
     } finally {
       await temporal.shutdown();
       await running;

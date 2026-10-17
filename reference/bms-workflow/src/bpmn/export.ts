@@ -22,7 +22,10 @@ export async function exportBpmn(def: WorkflowDefinition): Promise<string> {
     switch (s.kind) {
       case 'start': {
         const c = (s.config ?? {}) as StartConfig;
-        const values = c.trigger ? [A('Trigger', { event: c.trigger.event, filter: c.trigger.filter })] : [];
+        // trigger.output (EP-22.7) rides as the start event's out-mappings, as every step's output does.
+        const values = c.trigger
+          ? [A('Trigger', { event: c.trigger.event, filter: c.trigger.filter }), ...io(mappingsToIo('out', c.trigger.output))]
+          : [];
         el = m.create('bpmn:StartEvent', {
           id: s.id, name: s.name, extensionElements: ext(values),
           eventDefinitions: c.trigger ? [m.create('bpmn:MessageEventDefinition', {})] : undefined,

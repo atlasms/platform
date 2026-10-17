@@ -12,6 +12,14 @@ export const WORKFLOW_EVENTS: readonly string[] = [
 ];
 
 /**
+ * The events that may START a workflow (EP-22.7, decided 2026-10-17) — a start step's
+ * `trigger.event`. Closed for the same reasons: BMS keeps a durable consumer per type, and each one
+ * starts every matching ACTIVE workflow of its channel, as BMS, on the publisher's authority — so
+ * what can cause a start is a decision, not an author's. `asset.expired` joins with EP-22.10.
+ */
+export const WORKFLOW_TRIGGERS: readonly string[] = ['ingest.accepted'];
+
+/**
  * A review step's verdicts (EP-22.6, decided 2026-10-16): a human step with a `reviewPointId` is
  * resolved by MAM's verdict on the instance's asset, not by its task — and the event says which way.
  */

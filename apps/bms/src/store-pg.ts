@@ -12,6 +12,7 @@ import {
 } from '@atlas/data-pg';
 import {
   assetKey,
+  type BufferedEvent,
   type CommandAwait,
   type EventAwait,
   type HistoryEntry,
@@ -103,6 +104,24 @@ export const pgMigrations: Migration[] = [
          );
          CREATE INDEX IF NOT EXISTS event_awaits_open_idx
            ON event_awaits (channel_id, event_type, asset_id) WHERE answered_at IS NULL;`,
+  },
+  // EP-22.7: the waitable events, kept a while for a step that starts waiting after them; and the
+  // index that says which events already moved an instance.
+  {
+    id: 'bms_event_buffer',
+    up: `CREATE TABLE IF NOT EXISTS event_buffer (
+           message_id  text PRIMARY KEY,
+           channel_id  text NOT NULL,
+           event_type  text NOT NULL,
+           asset_id    text,
+           occurred_at timestamptz NOT NULL,
+           received_at timestamptz NOT NULL,
+           data        jsonb NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS event_buffer_lookup_idx
+           ON event_buffer (channel_id, event_type, asset_id, occurred_at);
+         CREATE INDEX IF NOT EXISTS event_buffer_received_idx ON event_buffer (received_at);
+         CREATE INDEX IF NOT EXISTS event_awaits_instance_idx ON event_awaits (instance_id);`,
   },
 ];
 
@@ -237,6 +256,28 @@ export function pgWorkflowStore(pool: PgPool): WorkflowStore {
             );
             return (result.rowCount ?? 0) > 0;
           },
+          async bufferEvent(e) {
+            const result = await client.query(
+              `INSERT INTO event_buffer (message_id, channel_id, event_type, asset_id, occurred_at, received_at, data)
+               VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (message_id) DO NOTHING`,
+              [
+                e.messageId,
+                e.channelId,
+                e.eventType,
+                e.assetId ?? null,
+                e.occurredAt,
+                e.receivedAt,
+                JSON.stringify(e),
+              ],
+            );
+            return result.rowCount === 1;
+          },
+          async pruneEventBuffer(before) {
+            const result = await client.query('DELETE FROM event_buffer WHERE received_at < $1', [
+              before,
+            ]);
+            return result.rowCount ?? 0;
+          },
         };
         return fn(tx);
       });
@@ -319,6 +360,44 @@ export function pgWorkflowStore(pool: PgPool): WorkflowStore {
         [correlationId],
       );
       return rows[0]?.data;
+    },
+    async bufferedEvents(channelId, eventType, since, assetId) {
+      const { rows } = await pool.query<{ data: BufferedEvent }>(
+        assetId === undefined
+          ? `SELECT data FROM event_buffer
+              WHERE channel_id = $1 AND event_type = $2 AND occurred_at >= $3
+              ORDER BY occurred_at, message_id`
+          : `SELECT data FROM event_buffer
+              WHERE channel_id = $1 AND event_type = $2 AND occurred_at >= $3
+                AND (asset_id IS NULL OR asset_id = $4)
+              ORDER BY occurred_at, message_id`,
+        assetId === undefined
+          ? [channelId, eventType, since]
+          : [channelId, eventType, since, assetId],
+      );
+      return rows.map((r) => r.data);
+    },
+    async bufferedEvent(messageId) {
+      const { rows } = await pool.query<{ data: BufferedEvent }>(
+        'SELECT data FROM event_buffer WHERE message_id = $1',
+        [messageId],
+      );
+      return rows[0]?.data;
+    },
+    async eventAwaitsFor(correlationId) {
+      const { rows } = await pool.query<{ data: EventAwait }>(
+        'SELECT data FROM event_awaits WHERE correlation_id = $1 ORDER BY event_type',
+        [correlationId],
+      );
+      return rows.map((r) => r.data);
+    },
+    async eventsUsedBy(instanceId) {
+      const { rows } = await pool.query<{ m: string | null }>(
+        `SELECT DISTINCT data->>'answeredBy' AS m FROM event_awaits
+          WHERE instance_id = $1 AND answered_at IS NOT NULL`,
+        [instanceId],
+      );
+      return rows.flatMap((r) => (r.m !== null ? [r.m] : []));
     },
     async openEventAwaits(channelId, eventType, assetId) {
       const { rows } = await pool.query<{ data: EventAwait }>(

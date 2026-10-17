@@ -501,9 +501,8 @@ its KEYS:
 3. MAM carries the point on the verdict's event: `POST /assets/{id}/approve` and `/reject` take
    `reviewPointId` (mam.md §4), and `asset.approved`/`asset.rejected` say it.
 
-Not yet: an event published before its step starts waiting is not seen (catch semantics) — a review
-step on an asset already approved waits; ending a waiting step other than by its event (a timeout)
-is EP-22.9's. Several review points on one asset meet MAM's lifecycle (`approved` cannot be approved
+An event published before its step starts waiting is taken from the buffer since EP-22.7 (§13g);
+ending a waiting step other than by its event (a timeout) is EP-22.9's. Several review points on one asset meet MAM's lifecycle (`approved` cannot be approved
 again), so multi-point flows of real use are EP-24.7's.
 
 Evidence: `libs/contracts/test/workflow.test.ts` (the keys, the publish rules), `test/review.test.ts`
@@ -513,6 +512,51 @@ on sqlite and Postgres, `test/temporal.test.ts` on a real Temporal (a wait-event
 resolved by a verdict), and smoke on kind: an instance waits for `asset.ready`, its review task is in
 the inbox naming its point, completing it by hand is refused, the approval in MAM at that point
 completes the instance with `approved` and closes the task.
+
+## 13g. As built — EP-22.7, triggers, the event buffer, and the canonical preset (decided 2026-10-17)
+
+**A start trigger starts workflows.** A start step's `trigger.event` is one of a CLOSED list —
+`WORKFLOW_TRIGGERS`, today `ingest.accepted` (publish refuses any other, `UNKNOWN_TRIGGER`;
+`asset.expired` joins with EP-22.10, `asset.approved` with EP-37). BMS keeps one durable per trigger
+(`src/trigger.ts`): each event starts every ACTIVE workflow of its channel whose start names it and
+whose `trigger.filter` (FEEL over `incoming`, the event's payload) is true — once per event, the
+instance id DERIVED from the message and the workflow, so a redelivery inserts nothing and asks the
+runtime again (which starts an id once). The instance runs as BMS (`startedBy: bms`,
+`triggeredBy: { event, messageId }`) on its publisher's authority (§13d), with the event as the start
+step's `incoming`; `trigger.output` maps it into vars (a start through the API gives its vars
+itself, so the mapping is the trigger's only); the event's `assetId` is the instance's. The header's
+lock is taken as for a person's start, so an instance is never started on a workflow deactivated
+meanwhile. The runtime away goes back to the broker: the row is written, the start is retried.
+
+**Waitable events are buffered** (decided with the product owner). The router keeps every
+`WORKFLOW_EVENTS` event it consumes in `event_buffer` (by type, channel and asset; pruned hourly
+after `EVENT_BUFFER_DAYS` = 7) BEFORE it reads the open awaits; a step registers its await BEFORE it
+reads the buffer — so of the two, at least one sees the other. A step that starts waiting — a
+wait-event, or a review step's verdict awaits — takes the EARLIEST matching event that occurred since
+ITS INSTANCE STARTED, answering the await by the same once-only update the router uses (whoever loses
+that update delivers nothing). An event moves an instance at most ONCE: one that already answered an
+await of the instance is not taken again, so a verdict that resolved one review point does not
+resolve the next. This is what makes the canonical preset hold in normal use — an editor marks the
+asset ready while the broadcast transcode runs; MAM approves at ready a category that needs no
+review — and it covers a review step reached after its verdict.
+
+**A wait-event registers before it records `awaiting`** (`Effects.awaitEvent`, then
+`waitForEvent`), as a command is issued and a task created before theirs: a mirror that says an
+instance waits in a step means the router can find it.
+
+**The canonical preset** (`canonical-ingest-to-air.workflow.json`) runs end to end: an upload's
+`ingest.accepted` starts it; it has MTS make the broadcast rendition from HSM's original; it waits for
+`asset.ready`; its review at `pre-schedule` is resolved by the approval in MAM; it ends at
+`s_end_ok` (`status: approved`) — schedulable, since Scheduling keeps its own record of MAM's
+approvals (EP-31) — or at `s_end_rej` on a rejection. Its escalation is recorded, not sent (EP-25).
+
+Evidence: `test/trigger.test.ts` (once per event and per workflow, the filter, another channel, an
+inactive workflow, the buffer since the start and not before, a verdict before the step, an event
+used once, the preset approved and rejected), the buffer's conformance case on sqlite and Postgres,
+`test/temporal.test.ts` on a real Temporal (the preset started by its trigger, its ready taken from
+the buffer), and smoke on kind: a real upload starts a published copy of the preset, MTS transcodes
+broadcast, the asset is made ready while that runs, and the approval ends the instance at `s_end_ok`
+with the broadcast rendition in its vars.
 
 ## 14. Open questions / future
 

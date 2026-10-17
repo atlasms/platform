@@ -275,8 +275,8 @@ export function workflowStoreConformance(name: string, harness: WorkflowStoreHar
         taskType: 'review',
         assignee: { role: 'editor' },
       };
-      const t1 = await runtime.createTask({ key: `${i.id}:2`, spec });
-      const t2 = await runtime.createTask({ key: `${i.id}:2`, spec });
+      const { taskId: t1 } = await runtime.createTask({ key: `${i.id}:2`, spec });
+      const { taskId: t2 } = await runtime.createTask({ key: `${i.id}:2`, spec });
       assert.equal(t1, t2, 'a retried task is the same task');
       const result = { state: 'completed' as const, vars: { ok: true } };
       await runtime.finish({ instanceId: i.id, result });
@@ -359,6 +359,50 @@ export function workflowStoreConformance(name: string, harness: WorkflowStoreHar
     });
   });
 
+  test(`[${name}] the event buffer: kept once, read since a time by type and asset, oldest first, pruned`, async () => {
+    await withFixture(async ({ store }) => {
+      const assetId = ulid();
+      const at = (s: number) => new Date(Date.UTC(2026, 9, 17, 10, 0, s)).toISOString();
+      const buffered = (
+        n: number,
+        over: { assetId?: string; type?: string; channelId?: string },
+      ) => ({
+        messageId: ulid(),
+        channelId: over.channelId ?? CH,
+        eventType: over.type ?? 'asset.ready',
+        ...(over.assetId !== undefined ? { assetId: over.assetId } : {}),
+        occurredAt: at(n),
+        payload: { n },
+        receivedAt: at(n),
+      });
+      const late = buffered(30, { assetId });
+      const early = buffered(10, { assetId });
+      const unkeyed = buffered(20, {});
+      const others = [
+        buffered(15, { assetId: ulid() }),
+        buffered(15, { assetId, type: 'asset.approved' }),
+        buffered(15, { assetId, channelId: 'ch99' }),
+        buffered(5, { assetId }), // before `since`
+      ];
+      for (const e of [late, early, unkeyed, ...others])
+        assert.equal(await store.transaction((tx) => tx.bufferEvent(e)), true);
+      assert.equal(await store.transaction((tx) => tx.bufferEvent(late)), false, 'a redelivery');
+
+      const read = await store.bufferedEvents(CH, 'asset.ready', at(8), assetId);
+      assert.deepEqual(
+        read.map((e) => e.payload['n']),
+        [10, 20, 30],
+        'this asset’s and the unkeyed, since the time, oldest first',
+      );
+      assert.equal((await store.bufferedEvent(early.messageId))?.payload['n'], 10);
+      assert.equal(await store.transaction((tx) => tx.pruneEventBuffer(at(16))), 5);
+      assert.deepEqual(
+        (await store.bufferedEvents(CH, 'asset.ready', at(0), assetId)).map((e) => e.payload['n']),
+        [20, 30],
+      );
+    });
+  });
+
   test(`[${name}] a step waiting for an event: its keys as a row, found by type and asset, answered once`, async () => {
     await withFixture(async ({ store, drain }) => {
       const runtime = new BmsRuntime({ store });
@@ -412,7 +456,7 @@ export function workflowStoreConformance(name: string, harness: WorkflowStoreHar
 
       // A review step's task: two verdict rows under the task's id, the point on each, answered
       // together; the task names the point.
-      const taskId = await runtime.createTask({
+      const { taskId } = await runtime.createTask({
         key: `${i.id}:4`,
         spec: {
           instanceId: i.id,

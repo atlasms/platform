@@ -8,11 +8,13 @@ import {
   feelProblem,
   REVIEW_VERDICTS,
   WORKFLOW_EVENTS,
+  WORKFLOW_TRIGGERS,
   validateDefinition,
   WORKFLOW_COMMANDS,
   type CommandConfig,
   type BranchConfig,
   type HumanTaskConfig,
+  type StartConfig,
   type WaitEventConfig,
   type WorkflowDefinition,
 } from '../src/workflow/index.ts';
@@ -146,13 +148,15 @@ test('a command step may not publish a fact, nor a command nobody consumes', () 
   assert.equal(issue?.stepId, 's_transcode');
   assert.equal(issue?.path, '/steps/1/config/request/event');
 
-  // The distribution preset names EP-37's publishing commands, which do not exist yet.
+  // The distribution preset names EP-37's publishing commands, which do not exist yet — and starts
+  // on `asset.approved`, which EP-37 makes a trigger with them.
   const later = validateDefinition(load('post-approval-distribution.workflow.json'));
   assert.deepEqual(
     later.issues.filter((i) => i.severity === 'error').map((i) => [i.code, i.stepId]),
     [
       ['UNKNOWN_COMMAND', 's_web'],
       ['UNKNOWN_COMMAND', 's_social'],
+      ['UNKNOWN_TRIGGER', 's_start'],
     ],
   );
 });
@@ -247,4 +251,15 @@ test('a review point is an approval, and each one in a flow is its own', () => {
   def.transitions.push({ id: 't_r2_out', from: 's_review_2', to: 's_gate' });
   const dup = validateDefinition(def).issues.find((i) => i.code === 'DUP_REVIEW_POINT');
   assert.equal(dup?.stepId, 's_review_2');
+});
+
+test('a start trigger is an event from the closed list, and every trigger has a schema', () => {
+  for (const e of WORKFLOW_TRIGGERS) assert.ok(EVENT_TYPES.includes(e), e);
+  const def = load('canonical-ingest-to-air.workflow.json');
+  const start = def.steps.find((s) => s.kind === 'start')!.config as StartConfig;
+  assert.deepEqual(start.trigger?.output, { 'vars.assetId': '= incoming.assetId' });
+  start.trigger = { event: 'asset.approved' };
+  const issue = validateDefinition(def).issues.find((i) => i.code === 'UNKNOWN_TRIGGER');
+  assert.equal(issue?.stepId, 's_start');
+  assert.equal(issue?.path, '/steps/0/config/trigger/event');
 });

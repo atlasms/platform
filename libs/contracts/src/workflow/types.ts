@@ -51,7 +51,7 @@ export interface Transition {
 }
 
 export interface StartConfig {
-  trigger?: { event?: string; filter?: Feel };
+  trigger?: { event?: string; filter?: Feel; output?: DataMapping };
 }
 export interface EndConfig {
   terminate?: boolean;

@@ -28,6 +28,8 @@ import {
   type InstanceRunner,
 } from './index.ts';
 import { CompletionRouter, startCompletionRouter } from './router.ts';
+import { EVENT_BUFFER_DAYS } from './instance.ts';
+import { TriggerStarter, triggerPatterns } from './trigger.ts';
 import { connectTemporal, type TemporalRuntime } from './temporal/runner.ts';
 
 const config = loadConfig({
@@ -231,6 +233,28 @@ async function startBroker(): Promise<void> {
       }),
   });
 
+  // EP-22.7: an event that starts workflows — every matching active one of its channel, once.
+  const triggers = new TriggerStarter({ store, service, runner });
+  for (const pattern of triggerPatterns())
+    broker.subscribe(
+      pattern,
+      async (msg) => {
+        try {
+          const outcome = await triggers.handle(msg);
+          if (outcome.started.length > 0 || outcome.filtered.length > 0)
+            log.info('trigger handled', { subject: msg.subject, ...outcome });
+        } catch (err) {
+          log.warn('trigger not handled', {
+            subject: msg.subject,
+            messageId: msg.id,
+            error: (err as Error).message,
+          });
+          throw err; // the broker redelivers: the runtime away, or the store
+        }
+      },
+      { maxAttempts: 10 },
+    );
+
   const relay = new OutboxRelay(outbox, broker);
   log.info('outbox relay started', { intervalMs: config.relayIntervalMs });
   const tick = async (): Promise<void> => {
@@ -249,6 +273,21 @@ async function startBroker(): Promise<void> {
 
 void startBroker();
 void startTemporal();
+
+// EP-22.7: the waitable events are kept EVENT_BUFFER_DAYS for a step that has not started waiting
+// yet; older ones are forgotten hourly. Any replica may prune — the DELETE is the same either way.
+const pruneTimer = setInterval(() => {
+  const before = new Date(Date.now() - EVENT_BUFFER_DAYS * 86_400_000).toISOString();
+  store
+    .transaction((tx) => tx.pruneEventBuffer(before))
+    .then((n) => {
+      if (n > 0) log.info('event buffer pruned', { count: n });
+    })
+    .catch((err: unknown) =>
+      log.warn('event buffer prune failed', { error: (err as Error).message }),
+    );
+}, 3_600_000);
+pruneTimer.unref();
 
 await app.listen({ port: config.port, host: config.host });
 log.info('bms listening', { port: config.port, host: config.host });

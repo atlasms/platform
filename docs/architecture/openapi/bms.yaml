@@ -382,7 +382,14 @@ components:
         state: { type: string, enum: [running, waiting, completed, failed], description: "As the mirror last recorded it; Temporal holds the instance (ADR-0010)." }
         currentSteps: { type: array, items: { type: string }, description: The steps it is waiting in. }
         startedAt: { type: string, format: date-time }
-        startedBy: { type: string }
+        startedBy: { type: string, description: "Who started it — a user, or `bms` when its trigger did." }
+        triggeredBy:
+          type: object
+          description: "Set when its start step's trigger started it (EP-22.7): the event and the message."
+          required: [event, messageId]
+          properties:
+            event: { type: string }
+            messageId: { $ref: '#/components/schemas/Ulid' }
         endedAt: { type: string, format: date-time }
         endStepId: { type: string }
         error: { type: string }

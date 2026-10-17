@@ -76,7 +76,8 @@ function nodeToStep(n: any, inDeg: Map<string, number>, outDeg: Map<string, numb
   switch (n.$type) {
     case 'bpmn:StartEvent': {
       const trig = findExt(n, 'Trigger');
-      return clean<Step>({ ...base, kind: 'start', config: trig ? { trigger: clean({ event: trig.event, filter: trig.filter }) } : {} });
+      const { outM } = ioMappings(n);
+      return clean<Step>({ ...base, kind: 'start', config: trig ? { trigger: clean({ event: trig.event, filter: trig.filter, output: nonEmpty(outM) }) } : {} });
     }
     case 'bpmn:EndEvent': {
       const end = findExt(n, 'End');

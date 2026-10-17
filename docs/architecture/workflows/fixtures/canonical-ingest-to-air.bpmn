@@ -20,6 +20,9 @@
     <bpmn:startEvent id="s_start" name="On ingest">
       <bpmn:extensionElements>
         <atlas:Trigger event="ingest.accepted"/>
+        <atlas:Io>
+          <atlas:Mapping direction="out" target="vars.assetId" source="= incoming.assetId"/>
+        </atlas:Io>
       </bpmn:extensionElements>
       <bpmn:messageEventDefinition id="med_start"/>
       <bpmn:outgoing>t1</bpmn:outgoing>
