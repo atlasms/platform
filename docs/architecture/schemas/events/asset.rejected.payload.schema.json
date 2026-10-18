@@ -11,6 +11,8 @@
     "reason": { "type": "string" },
     "rejectedBy": { "type": "string", "description": "User id who rejected (manual verdict)." },
     "rejectedAt": { "type": "string", "format": "date-time" },
+    "createdBy": { "type": "string", "description": "Who created the asset — told of a verdict on it (EP-25.5)." },
+    "categoryPath": { "type": "string", "description": "The asset's category path, resolved when the event was made — what a recipient's read access is checked against (EP-25.5)." },
     "retainUntil": { "type": "string", "format": "date-time", "description": "When the rejected media is purged if not replaced first (FR-APP-8). Absent = kept until manual/policy disposition." },
     "reviewPointId": { "type": "string", "description": "Optional id of the workflow review step that produced this verdict (FR-APP-5)." }
   }

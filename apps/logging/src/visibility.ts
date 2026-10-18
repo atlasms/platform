@@ -106,7 +106,8 @@ const IAM_DOMAINS: ReadonlySet<string> = new Set(['user', 'group', 'role', 'perm
 const GOVERNANCE: ReadonlySet<string> = new Set(['retention-policy']);
 // HSM's storage targets (ADR-0009) are the storage administrators', as a transcode profile is the
 // configuration administrators': under the default they read as `storage-target:read`, held by no one.
-const CONFIG_REGISTRIES: ReadonlySet<string> = new Set(['transcode-profile']);
+// EP-25.5: the notification-type registry is configuration too.
+const CONFIG_REGISTRIES: ReadonlySet<string> = new Set(['transcode-profile', 'notification-type']);
 const STORAGE_ADMINISTRATION: ReadonlySet<string> = new Set(['storage-target']);
 const INGEST_ADMINISTRATION: ReadonlySet<string> = new Set([
   'acceptance-rule-set',

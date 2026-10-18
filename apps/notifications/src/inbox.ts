@@ -65,7 +65,9 @@ export interface Notification {
   type: string;
   severity: Severity;
   subjectRef?: EntityRef;
+  /** The title in the channel's first locale (`en`); `titles` has every locale (EP-25.5). */
   title?: string;
+  titles?: Record<string, string>;
   read: boolean;
   createdAt: string;
 }

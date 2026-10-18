@@ -2598,6 +2598,85 @@ test('smoke: EP-25.4 — a message to a group is read by its members through the
   assert.equal(role.status, 422, role.text);
 });
 
+test('smoke: EP-25.5 — an approval tells the asset’s creator, titled as the channel’s registry says', async () => {
+  // The pipeline on a live cluster: the channel's `asset.approved` type is given a title (a CAS on
+  // the version read), the smoke user creates and approves an asset, and their inbox — the
+  // recipient re-checked against their own policy — holds the notification with that title.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const fresh = { ...headers, 'cache-control': 'no-cache' };
+  const poll = async (fn, done, budgetMs, what) => {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const value = await fn();
+      if (done(value)) return value;
+      assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(value)}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+  const types = json(await get('/api/v1/notification-types', { headers })).items;
+  const approvedType = types.find((t) => t.key === 'asset.approved');
+  assert.ok(approvedType, `no asset.approved type: ${JSON.stringify(types)}`);
+  const title = `Smoke approved ${Date.now()} by {{approver}}`;
+  const put = await get(
+    `/api/v1/notification-types/asset.approved?version=${approvedType.version}`,
+    {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ enabled: true, title: { en: title } }),
+    },
+  );
+  assert.equal(put.status, 200, put.text);
+  assert.equal(json(put).origin, 'channel');
+
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      title: 'Smoke notified',
+      mediaType: 'video',
+      fileType: 'mp4',
+      categoryId: await categoryFor(token),
+    }),
+  });
+  assert.equal(created.status, 201, created.text);
+  const assetId = json(created).id;
+  const enqueued = await get('/api/v1/jobs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId, presetIds: ['proxy'], inputPath: 'samples/smoke.mp4' }),
+  });
+  assert.equal(enqueued.status, 202, enqueued.text);
+  await poll(
+    async () => json(await get(`/api/v1/assets/${assetId}`, { headers: fresh })),
+    (a) => a.hasRenditions === true,
+    60_000,
+    'the asset never got its rendition',
+  );
+  for (const step of ['process', 'ready', 'approve']) {
+    const res = await get(`/api/v1/assets/${assetId}/${step}`, { method: 'POST', headers });
+    assert.equal(res.status, 200, `${step} failed: ${res.text}`);
+  }
+  const me = json(await get('/api/v1/users/me/effective-permissions', { headers })).subjectId;
+  const note = await poll(
+    async () =>
+      json(await get('/api/v1/inbox', { headers: fresh })).notifications.find(
+        (n) => n.type === 'asset.approved' && n.subjectRef?.entityId === assetId,
+      ),
+    (n) => n !== undefined,
+    30_000,
+    'the creator was never told',
+  );
+  assert.equal(note.title, title.replace('{{approver}}', me));
+  const marked = await get(`/api/v1/notifications/${note.id}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ read: true }),
+  });
+  assert.equal(marked.status, 204, marked.text);
+});
+
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {
   // A workflow's lifecycle on a live cluster (decided 2026-10-13): a first publish makes it active
   // and puts it in the catalog every client loads; deactivating it is refused while an instance is

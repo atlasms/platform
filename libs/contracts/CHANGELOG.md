@@ -23,6 +23,13 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `asset.approved`, `asset.rejected` and `asset.expired` carry `createdBy` and `categoryPath`, and
+  `transcode.failed` carries `requestedBy` (EP-25.5): who Notifications tells, and what that person
+  must be able to read to be told. **Breaking** in deployment order: those payloads are
+  `additionalProperties: false` and every consumer validates them, so a consumer still on the
+  previous contracts (Scheduling, logging, Notifications, BMS) refuses the new events until it is
+  upgraded — roll consumers out before MAM and MTS (found on a partly-upgraded kind cluster).
+
 - `asset.expired` is in `WORKFLOW_TRIGGERS` (EP-22.10): a workflow may start on an approval lapsing —
   the `re-review-on-expiry` preset does.
 

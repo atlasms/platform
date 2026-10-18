@@ -10,6 +10,8 @@
     "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
     "expiredAt": { "type": "string", "format": "date-time", "description": "The expiresAt that has now been reached." },
     "priorApprover": { "type": "string", "description": "User id whose approval just lapsed." },
+    "createdBy": { "type": "string", "description": "Who created the asset — told of a verdict on it (EP-25.5)." },
+    "categoryPath": { "type": "string", "description": "The asset's category path, resolved when the event was made — what a recipient's read access is checked against (EP-25.5)." },
     "expirySource": { "enum": ["asset", "category"], "description": "Whether expiresAt came from a per-asset override or the inherited category default (FR-TAX-7)." }
   }
 }

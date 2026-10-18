@@ -8,6 +8,7 @@ import { buildEnvelope, subjectFor, ulid, type Envelope } from '@atlas/contracts
 import { InMemoryBroker, OutboxRelay, type Message, type OutboxStore } from '@atlas/messaging';
 import { compile } from '@atlas/policy';
 import { fakePrincipals } from './principals.ts';
+import { NotificationPipeline } from './pipeline.ts';
 import { NotificationsService } from './service.ts';
 import { TaskActions } from './task-actions.ts';
 import type { InboxStore } from './store.ts';
@@ -38,6 +39,7 @@ export function inboxStoreConformance(name: string, harness: InboxStoreHarness):
   async function withFixture(
     fn: (f: {
       service: NotificationsService;
+      pipeline: NotificationPipeline;
       store: InboxStore;
       drain: () => Promise<Envelope[]>;
     }) => Promise<void>,
@@ -53,7 +55,17 @@ export function inboxStoreConformance(name: string, harness: InboxStoreHarness):
       return fresh;
     };
     try {
-      await fn({ service: new NotificationsService({ store }), store, drain });
+      // Every recipient may read everything: the re-check is the pipeline tests' business.
+      const pipeline = new NotificationPipeline({
+        store,
+        policyFor: (userId) =>
+          compile({
+            subjectId: userId,
+            permVersion: 1,
+            rules: [{ id: 'all', permissions: ['*:*'] }],
+          }),
+      });
+      await fn({ service: new NotificationsService({ store }), pipeline, store, drain });
     } finally {
       await cleanup?.();
       await store.close().catch(() => undefined);
@@ -198,6 +210,49 @@ export function inboxStoreConformance(name: string, harness: InboxStoreHarness):
     });
   });
 
+  test(`[${name}] a type override is a compare-and-set per channel; a notification is marked read by its own`, async () => {
+    await withFixture(async ({ store }) => {
+      const o = (version: number, channelId = CH) => ({
+        key: 'asset.rejected',
+        channelId,
+        severity: 'critical' as const,
+        version,
+        updatedBy: 'cat',
+        updatedAt: '2026-10-18T10:00:00.000Z',
+      });
+      assert.equal(await store.transaction((tx) => tx.putTypeOverride(o(1), 0)), true);
+      assert.equal(
+        await store.transaction((tx) => tx.putTypeOverride(o(1), 0)),
+        false,
+        'one first',
+      );
+      assert.equal(await store.transaction((tx) => tx.putTypeOverride(o(2), 1)), true);
+      assert.equal(await store.transaction((tx) => tx.putTypeOverride(o(3), 1)), false, 'stale');
+      assert.equal(await store.transaction((tx) => tx.putTypeOverride(o(1, 'ch99'), 0)), true);
+      assert.deepEqual(
+        (await store.typeOverrides(CH)).map((x) => [x.key, x.version]),
+        [['asset.rejected', 2]],
+      );
+
+      const id = ulid();
+      await store.transaction((tx) =>
+        tx.insertNotification({
+          id,
+          channelId: CH,
+          userId: 'ana',
+          type: 'asset.approved',
+          severity: 'info',
+          read: false,
+          createdAt: '2026-10-18T10:00:00.000Z',
+        }),
+      );
+      assert.equal(await store.transaction((tx) => tx.markRead(CH, 'ben', id, true)), false);
+      assert.equal(await store.transaction((tx) => tx.markRead(CH, 'ana', id, true)), true);
+      assert.equal(await store.unreadCount(CH, 'ana'), 0);
+      assert.equal((await store.notifications(CH, 'ana', 5))[0]?.read, true);
+    });
+  });
+
   test(`[${name}] open tasks come oldest-due first, undated last`, async () => {
     await withFixture(async ({ service }) => {
       const ids: string[] = [];
@@ -222,17 +277,17 @@ export function inboxStoreConformance(name: string, harness: InboxStoreHarness):
   });
 
   test(`[${name}] an expired approval tells its approver, once — and nobody when there was none`, async () => {
-    await withFixture(async ({ service, drain }) => {
+    await withFixture(async ({ service, pipeline, drain }) => {
       const assetId = ulid();
       const msg = event('asset.expired', {
         assetId,
         expiredAt: '2026-10-16T00:00:00.000Z',
         priorApprover: 'user-3',
       });
-      assert.equal(await service.consumeAssetExpired(msg), 'applied');
-      assert.equal(await service.consumeAssetExpired(msg), 'duplicate');
+      assert.equal(await pipeline.consumeAssetExpired(msg), 'applied');
+      assert.equal(await pipeline.consumeAssetExpired(msg), 'duplicate');
       assert.equal(
-        await service.consumeAssetExpired(
+        await pipeline.consumeAssetExpired(
           event('asset.expired', { assetId, expiredAt: '2026-10-16T00:00:00.000Z' }),
         ),
         'skipped',
@@ -283,7 +338,7 @@ export function inboxStoreConformance(name: string, harness: InboxStoreHarness):
   });
 
   test(`[${name}] what is not the event it claims is thrown to the broker, never skipped`, async () => {
-    await withFixture(async ({ service, store }) => {
+    await withFixture(async ({ service, pipeline, store }) => {
       await assert.rejects(
         service.consumeTaskCreated({ id: ulid(), subject: 's', body: { not: 'an envelope' } }),
         /not an envelope/,
@@ -293,7 +348,7 @@ export function inboxStoreConformance(name: string, harness: InboxStoreHarness):
         /taskId/,
       );
       await assert.rejects(
-        service.consumeAssetExpired(
+        pipeline.consumeAssetExpired(
           event('workflow.task.created', { taskId: ulid(), assignee: 'u' }),
         ),
         /not a asset.expired/,

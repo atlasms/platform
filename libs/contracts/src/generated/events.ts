@@ -166,6 +166,10 @@ export interface AssetApprovedPayload {
   /** true when MAM approved the asset itself because its category chain says reviewNeeded: false (EP-28.7) — no person reviewed it. Absent on a manual verdict. */
   automatic?: boolean;
   approvedAt?: string;
+  /** Who created the asset — told of a verdict on it (EP-25.5). */
+  createdBy?: string;
+  /** The asset's category path, resolved when the event was made — what a recipient's read access is checked against (EP-25.5). */
+  categoryPath?: string;
   /** When the media becomes unusable and requires re-review. Absent = permanent approval. Defaults from the asset's category (FR-TAX-7), overridable per asset. */
   expiresAt?: string;
   /** Optional id of the workflow review step that produced this verdict (FR-APP-5). */
@@ -204,6 +208,10 @@ export interface AssetExpiredPayload {
   expiredAt: string;
   /** User id whose approval just lapsed. */
   priorApprover?: string;
+  /** Who created the asset — told of a verdict on it (EP-25.5). */
+  createdBy?: string;
+  /** The asset's category path, resolved when the event was made — what a recipient's read access is checked against (EP-25.5). */
+  categoryPath?: string;
   /** Whether expiresAt came from a per-asset override or the inherited category default (FR-TAX-7). */
   expirySource?: 'asset' | 'category';
 }
@@ -220,6 +228,10 @@ export interface AssetRejectedPayload {
   /** User id who rejected (manual verdict). */
   rejectedBy?: string;
   rejectedAt?: string;
+  /** Who created the asset — told of a verdict on it (EP-25.5). */
+  createdBy?: string;
+  /** The asset's category path, resolved when the event was made — what a recipient's read access is checked against (EP-25.5). */
+  categoryPath?: string;
   /** When the rejected media is purged if not replaced first (FR-APP-8). Absent = kept until manual/policy disposition. */
   retainUntil?: string;
   /** Optional id of the workflow review step that produced this verdict (FR-APP-5). */
@@ -674,6 +686,8 @@ export interface TranscodeFailedPayload {
   assetId: Ulid;
   jobId?: Ulid;
   attempts?: number;
+  /** Who asked for the transcode — the job's creator: a user, or a service (bms, rim). Notifications tells a user that it failed (EP-25.5); a service is told nothing. */
+  requestedBy?: string;
   error: Error;
 }
 

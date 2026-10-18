@@ -104,6 +104,10 @@ defaults, and whether they are enabled for this channel.
 | **Field schemas** | field `type` renderers/validators | which fields exist per media type / category | MAM |
 | **Roles** | permission strings ([Authz §3](authorization-model.md#3-permissions)) | any number of roles bundling any grants | IAM |
 
+> **As built — notification types (EP-25.5):** the built-in types are code (`apps/notifications/src/notification-types.ts`);
+> a channel overrides the title per locale, severity, `enabled`, `defaultOn` and `mandatory` under
+> `config:admin` — notifications.md §13e.
+
 **Validation rule (normative).** Creating a registry entry SHALL fail if its `kind`/`handler` is not
 a Tier-0 value the running code declares. This is a one-line check against the descriptor registry
 and it is the entire safety property of Tier 1.

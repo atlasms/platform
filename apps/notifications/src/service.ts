@@ -5,7 +5,7 @@
 //   whoever it reaches: a group or a role is resolved to its people when an inbox is read (decided
 //   2026-10-16; the resolution itself is EP-25.3).
 // - `workflow.task.resolved` (BMS) → a workflow's task closed by MAM's verdict (EP-22.6).
-// - `asset.expired` (MAM) → a re-review-due NOTIFICATION for the person whose approval lapsed.
+// - Notifications from events — `asset.expired` and the rest — are the pipeline's (pipeline.ts).
 //
 // Each event is one unit of work: the seen-mark, the row, and what it announces — `task.created`
 // with its `audit.recorded`, or `notification.raised` — commit together (AGENTS.md §5.4), so a
@@ -15,14 +15,13 @@
 import {
   delta,
   envelopeShapeErrors,
-  ulid,
   validatePayload,
   type Envelope,
   type EventPayloads,
 } from '@atlas/contracts';
 import type { Message } from '@atlas/messaging';
 import { Conflict, NotFound, ValidationError } from '@atlas/service-kit';
-import { isClosed, type EntityRef, type Inbox, type Notification, type Task } from './inbox.ts';
+import { isClosed, type EntityRef, type Inbox, type Task } from './inbox.ts';
 import { outboxRecord } from './record.ts';
 import type { Principal, PrincipalSource } from './principals.ts';
 import type { InboxStore } from './store.ts';
@@ -86,6 +85,14 @@ export class NotificationsService {
       this.store.unreadCount(caller.channelId, caller.userId),
     ]);
     return { tasks, notifications, unreadCount, partial };
+  }
+
+  /** Mark one of the caller's notifications read (or unread) — theirs only; another's is not found. */
+  async markRead(caller: Caller, id: string, read: boolean): Promise<void> {
+    const done = await this.store.transaction((tx) =>
+      tx.markRead(caller.channelId, caller.userId, id, read),
+    );
+    if (!done) throw new NotFound(`notification ${id}`);
   }
 
   // --- consumers -------------------------------------------------------------------------------------
@@ -237,51 +244,6 @@ export class NotificationsService {
             delta: delta({ ...before }, { ...after }),
           } satisfies EventPayloads['audit.recorded'],
           chain,
-        ),
-      );
-    });
-    return outcome;
-  }
-
-  /** `asset.expired` → re-review due, for the person whose approval lapsed. */
-  async consumeAssetExpired(msg: Message): Promise<'applied' | 'duplicate' | 'skipped'> {
-    const envelope = this.envelopeOf<EventPayloads['asset.expired']>(msg, 'asset.expired');
-    const { assetId, priorApprover } = envelope.payload;
-    if (priorApprover === undefined) return 'skipped'; // nobody to tell
-    const notification: Notification = {
-      id: ulid(),
-      channelId: envelope.channelId,
-      userId: priorApprover,
-      type: 'asset.re-review-due',
-      severity: 'warning',
-      subjectRef: { entityType: 'asset', entityId: assetId },
-      title: 'An asset you approved has expired and needs a fresh review',
-      read: false,
-      createdAt: this.now().toISOString(),
-    };
-    let outcome: 'applied' | 'duplicate' = 'applied';
-    await this.store.transaction(async (tx) => {
-      if (!(await tx.markSeen(msg.id))) {
-        outcome = 'duplicate';
-        return;
-      }
-      await tx.insertNotification(notification);
-      await tx.enqueue(
-        outboxRecord(
-          'notification.raised',
-          notification.channelId,
-          {
-            id: notification.id,
-            userId: notification.userId,
-            type: notification.type,
-            severity: notification.severity,
-            ...(notification.subjectRef !== undefined
-              ? { subjectRef: notification.subjectRef }
-              : {}),
-            ...(notification.title !== undefined ? { title: notification.title } : {}),
-            createdAt: notification.createdAt,
-          } satisfies EventPayloads['notification.raised'],
-          this.chainOf(envelope),
         ),
       );
     });

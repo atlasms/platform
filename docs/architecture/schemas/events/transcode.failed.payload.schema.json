@@ -10,6 +10,7 @@
     "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
     "jobId": { "$ref": "../common.schema.json#/$defs/Ulid" },
     "attempts": { "type": "integer", "minimum": 1 },
+    "requestedBy": { "type": "string", "description": "Who asked for the transcode — the job's creator: a user, or a service (bms, rim). Notifications tells a user that it failed (EP-25.5); a service is told nothing." },
     "error": { "$ref": "../common.schema.json#/$defs/Error" }
   }
 }

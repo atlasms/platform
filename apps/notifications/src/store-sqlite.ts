@@ -13,6 +13,7 @@ import {
   type Migration,
 } from '@atlas/data';
 import { normalizeTask, type Message, type Notification, type Task } from './inbox.ts';
+import type { TypeOverride } from './notification-types.ts';
 import type { InboxStore, InboxTx } from './store.ts';
 
 export const sqliteMigrations: Migration[] = [
@@ -67,6 +68,17 @@ export const sqliteMigrations: Migration[] = [
          CREATE INDEX IF NOT EXISTS message_recipients_reader_idx
            ON message_recipients (channel_id, kind, recipient_id, message_id);`,
   },
+  // EP-25.5: a channel's overrides of the notification-type registry (the built-ins are code).
+  {
+    id: 'notifications_type_overrides',
+    up: `CREATE TABLE IF NOT EXISTS notification_type_overrides (
+           channel_id TEXT NOT NULL,
+           type_key   TEXT NOT NULL,
+           version    INTEGER NOT NULL,
+           data       TEXT NOT NULL,
+           PRIMARY KEY (channel_id, type_key)
+         );`,
+  },
 ];
 
 export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
@@ -116,6 +128,32 @@ export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
       db.prepare(
         'INSERT INTO notifications (id, channel_id, user_id, read, data) VALUES (?, ?, ?, ?, ?)',
       ).run(n.id, n.channelId, n.userId, n.read ? 1 : 0, JSON.stringify(n));
+    },
+    async putTypeOverride(o, ifVersion) {
+      const result =
+        ifVersion === 0
+          ? db
+              .prepare(
+                `INSERT INTO notification_type_overrides (channel_id, type_key, version, data)
+                 VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+              )
+              .run(o.channelId, o.key, o.version, JSON.stringify(o))
+          : db
+              .prepare(
+                `UPDATE notification_type_overrides SET version = ?, data = ?
+                  WHERE channel_id = ? AND type_key = ? AND version = ?`,
+              )
+              .run(o.version, JSON.stringify(o), o.channelId, o.key, ifVersion);
+      return Number(result.changes) === 1;
+    },
+    async markRead(channelId, userId, id, read) {
+      const result = db
+        .prepare(
+          `UPDATE notifications SET read = ?, data = json_set(data, '$.read', json(?))
+            WHERE id = ? AND channel_id = ? AND user_id = ?`,
+        )
+        .run(read ? 1 : 0, read ? 'true' : 'false', id, channelId, userId);
+      return Number(result.changes) === 1;
     },
     async insertMessage(m) {
       db.prepare('INSERT INTO messages (id, channel_id, sender, data) VALUES (?, ?, ?, ?)').run(
@@ -170,6 +208,12 @@ export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
         )
         .all(channelId, userId, limit) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as Notification);
+    },
+    async typeOverrides(channelId) {
+      const rows = db
+        .prepare('SELECT data FROM notification_type_overrides WHERE channel_id = ?')
+        .all(channelId) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as TypeOverride);
     },
     async messagesFor(channelId, reader, { after, limit }) {
       const params: (string | number)[] = [channelId, reader.userId, channelId, reader.userId];

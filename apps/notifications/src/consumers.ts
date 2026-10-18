@@ -3,16 +3,25 @@
 // it — never acknowledged and lost.
 
 import type { Broker, Message, Subscription } from '@atlas/messaging';
+import type { NotificationPipeline } from './pipeline.ts';
 import type { PrincipalSource } from './principals.ts';
 import type { NotificationsService } from './service.ts';
 
 export const TASK_CREATED_PATTERN = 'atlas.*.workflow.task.created';
 export const ASSET_EXPIRED_PATTERN = 'atlas.*.asset.expired';
 export const TASK_RESOLVED_PATTERN = 'atlas.*.workflow.task.resolved';
+/** The events the pipeline turns into notifications (EP-25.5) — one durable each. */
+export const NOTIFYING_PATTERNS = {
+  approved: 'atlas.*.asset.approved',
+  rejected: 'atlas.*.asset.rejected',
+  transcodeFailed: 'atlas.*.transcode.failed',
+  messageSent: 'atlas.*.message.sent',
+} as const;
 
 export interface ConsumerOptions {
   broker: Broker;
   service: NotificationsService;
+  pipeline: NotificationPipeline;
   maxAttempts?: number;
   onOutcome?: (subject: string, outcome: string) => void;
   onError?: (err: unknown, msg: Message) => void;
@@ -65,7 +74,27 @@ export function startConsumers(options: ConsumerOptions): Subscription[] {
     ),
     options.broker.subscribe(
       ASSET_EXPIRED_PATTERN,
-      handle((m) => options.service.consumeAssetExpired(m)),
+      handle((m) => options.pipeline.consumeAssetExpired(m)),
+      retry,
+    ),
+    options.broker.subscribe(
+      NOTIFYING_PATTERNS.approved,
+      handle((m) => options.pipeline.consumeAssetApproved(m)),
+      retry,
+    ),
+    options.broker.subscribe(
+      NOTIFYING_PATTERNS.rejected,
+      handle((m) => options.pipeline.consumeAssetRejected(m)),
+      retry,
+    ),
+    options.broker.subscribe(
+      NOTIFYING_PATTERNS.transcodeFailed,
+      handle((m) => options.pipeline.consumeTranscodeFailed(m)),
+      retry,
+    ),
+    options.broker.subscribe(
+      NOTIFYING_PATTERNS.messageSent,
+      handle((m) => options.pipeline.consumeMessageSent(m)),
       retry,
     ),
   ];
