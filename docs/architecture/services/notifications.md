@@ -68,7 +68,7 @@ stateDiagram-v2
 | `POST` | `/tasks/{id}/claim` · `/forward` · `/complete` · `/cancel` | Claim (first wins), hand on, complete with an outcome, cancel — §13c. ✅ EP-25.2 | the holder; `task:admin` to reassign or cancel |
 | `PATCH` | `/notifications/{id}` | Mark read/unread. ✅ EP-25.5 | self — another's is not found |
 | `GET` / `PUT` | `/notification-types` · `/{key}` | The notification-type registry as the channel has it — §13e. ✅ EP-25.5 | read: any caller; write: `config:admin` |
-| `GET/PUT` | `/preferences` | Per-user delivery preferences. | self |
+| `GET/PUT` | `/preferences` | The caller's notification preferences — per type on/off (§13f). ✅ EP-25.6 | self |
 
 ## 5. Messaging
 
@@ -303,7 +303,7 @@ check failing closed. One transaction per event: the seen-mark, each notificatio
 in every locale) and its `notification.raised`. A disabled type raises nothing.
 
 A person marks their own notification read or unread (`PATCH /notifications/{id}`); another's is not
-found. Not yet: preferences (EP-25.6), live delivery (EP-25.7).
+found. Preferences are §13f; live delivery is EP-25.7.
 
 Evidence: `test/pipeline.test.ts` (a verdict to the creator, once, in both locales; an automatic
 approval to nobody; the re-check — another category, no policy; a failed transcode to its requester
@@ -313,6 +313,26 @@ override's severity and title applied, a disabled type silent, audited; mark rea
 holders of `ops:read`, each reading it for themselves, a later holder seeing it), the store
 conformance cases on sqlite and Postgres, and smoke on kind (an approval tells its creator, titled as
 the channel's registry says; a failed workflow run's alert reaches an `ops:read` holder's inbox).
+
+## 13f. As built — EP-25.6, preferences (decided 2026-10-18)
+
+- **Per type, on or off.** Until a person chooses, a type is its `defaultOn` as their channel has it
+  (§13e); a type the channel marks `mandatory` is always on, and turning it off is REFUSED (422
+  `MANDATORY`) — never quietly kept. An unknown type is `UNKNOWN_TYPE`.
+- `GET /preferences` is the caller's own: every type with `on`, its `defaultOn`, `mandatory`, and
+  whether `on` is their own choice (`chosen`). `PUT /preferences?version=` replaces their choices
+  whole — a compare-and-set on the version read (0 for the first), so two tabs saving at once is one
+  write and a 409 — and is audited (`preference`, the delta of what they chose; no read rule in the
+  log, so it is nobody else's).
+- **Honoured where each notification is made**: one addressed to a person is not written when they
+  have the type off; a SHARED one (an alert, §13e) is written once and filtered when each reader
+  reads it — neither shown nor counted — so a reader who turns alerts back on sees them again.
+- Delivery channels (email/push) and digests are v2 (notifications-plan §1).
+
+Evidence: `test/preferences.test.ts` (defaults and mandatory types; off → not raised, the rest
+unchanged, CAS, audited, back on; mandatory and unknown refused with nothing written; a channel's
+`defaultOn: false` and an optional alert turned off by its reader — hidden and uncounted), the store
+conformance case on sqlite and Postgres, and smoke on kind.
 
 ## 14. Open questions / future
 

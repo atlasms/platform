@@ -42,6 +42,7 @@ import {
   type ResolvedType,
   type TypeOverride,
 } from './notification-types.ts';
+import { isOn } from './preferences.ts';
 import type { PrincipalSource } from './principals.ts';
 import { outboxRecord } from './record.ts';
 import type { InboxStore } from './store.ts';
@@ -74,7 +75,11 @@ export class NotificationPipeline {
     this.store = options.store;
     this.policyFor = options.policyFor;
     this.principals = options.principals;
-    this.wants = options.wants ?? (async (_c, _u, type) => type.mandatory || type.defaultOn);
+    // A person's own choice (EP-25.6): mandatory always; otherwise theirs, else the default.
+    this.wants =
+      options.wants ??
+      (async (channelId, userId, type) =>
+        isOn(type, await this.store.preferences(channelId, userId)));
     this.now = options.now ?? (() => new Date());
   }
 

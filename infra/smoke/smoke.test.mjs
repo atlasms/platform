@@ -2689,6 +2689,39 @@ test('smoke: EP-25.5 — an approval tells the asset’s creator, titled as the 
   assert.equal(marked.status, 204, marked.text);
 });
 
+test('smoke: EP-25.6 — preferences through the gateway: a mandatory type stays on, an optional one is turned off and back', async () => {
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const read = async () => json(await get('/api/v1/preferences', { headers }));
+  const first = await read();
+  assert.ok(first.items.some((i) => i.key === 'asset.re-review-due' && i.mandatory && i.on));
+  const refused = await get(`/api/v1/preferences?version=${first.version}`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ types: { 'asset.re-review-due': false } }),
+  });
+  assert.equal(refused.status, 422, refused.text);
+  const off = await get(`/api/v1/preferences?version=${first.version}`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ types: { 'message.mention': false } }),
+  });
+  assert.equal(off.status, 200, off.text);
+  const saved = json(off);
+  assert.deepEqual(
+    saved.items.find((i) => i.key === 'message.mention'),
+    { key: 'message.mention', on: false, defaultOn: true, mandatory: false, chosen: true },
+  );
+  const back = await get(`/api/v1/preferences?version=${saved.version}`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ types: {} }),
+  });
+  assert.equal(back.status, 200, back.text);
+  assert.equal(json(back).items.find((i) => i.key === 'message.mention').on, true);
+});
+
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {
   // A workflow's lifecycle on a live cluster (decided 2026-10-13): a first publish makes it active
   // and puts it in the catalog every client loads; deactivating it is refused while an instance is

@@ -23,6 +23,7 @@ import type { Message } from '@atlas/messaging';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, NotFound, ValidationError } from '@atlas/service-kit';
 import { ALERT_AUDIENCE } from './notification-types.ts';
+import { channelTypes, isOn } from './preferences.ts';
 import { isClosed, type EntityRef, type Inbox, type Task } from './inbox.ts';
 import { outboxRecord } from './record.ts';
 import type { Principal, PrincipalSource } from './principals.ts';
@@ -111,11 +112,30 @@ export class NotificationsService {
       this.store.sharedFor(caller.channelId, audiences, caller.userId, INBOX_NOTIFICATIONS),
       this.store.sharedUnread(caller.channelId, audiences, caller.userId),
     ]);
+    // A shared one — an alert — honours the reader's preference too (EP-25.6), unless it is
+    // mandatory in the channel: theirs are filtered when they were written, these when read.
+    const [types, prefs] = await Promise.all([
+      channelTypes(this.store, caller.channelId),
+      this.store.preferences(caller.channelId, caller.userId),
+    ]);
+    const typeOf = new Map(types.map((t) => [t.key, t]));
+    const wanted = (n: { type: string }) => {
+      const t = typeOf.get(n.type);
+      return t === undefined || isOn(t, prefs);
+    };
+    const visibleShared = shared.filter(wanted);
     // One list, newest first — ids are ULIDs, so by id is by time.
-    const notifications = [...own, ...shared]
+    const notifications = [...own, ...visibleShared]
       .sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
       .slice(0, INBOX_NOTIFICATIONS);
-    return { tasks, notifications, unreadCount: unread + sharedUnread, partial };
+    // The unread count of shared ones is the store's; one the reader turned off is not counted.
+    const hiddenUnread = shared.filter((n) => !n.read && !wanted(n)).length;
+    return {
+      tasks,
+      notifications,
+      unreadCount: unread + Math.max(0, sharedUnread - hiddenUnread),
+      partial,
+    };
   }
 
   /** Mark one of the caller's notifications read (or unread) — theirs only; another's is not found. */

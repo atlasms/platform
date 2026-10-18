@@ -292,6 +292,25 @@ export function inboxStoreConformance(name: string, harness: InboxStoreHarness):
     });
   });
 
+  test(`[${name}] preferences: one row per person per channel, a compare-and-set`, async () => {
+    await withFixture(async ({ store }) => {
+      const p = (version: number, on: boolean, channelId = CH) => ({
+        channelId,
+        userId: 'ana',
+        types: { 'asset.approved': on },
+        version,
+        updatedAt: '2026-10-18T10:00:00.000Z',
+      });
+      assert.equal(await store.preferences(CH, 'ana'), undefined);
+      assert.equal(await store.transaction((tx) => tx.putPreferences(p(1, false), 0)), true);
+      assert.equal(await store.transaction((tx) => tx.putPreferences(p(1, true), 0)), false);
+      assert.equal(await store.transaction((tx) => tx.putPreferences(p(2, true), 1)), true);
+      assert.equal(await store.transaction((tx) => tx.putPreferences(p(3, false), 1)), false);
+      assert.deepEqual((await store.preferences(CH, 'ana'))?.types, { 'asset.approved': true });
+      assert.equal(await store.preferences('ch99', 'ana'), undefined, 'per channel');
+    });
+  });
+
   test(`[${name}] open tasks come oldest-due first, undated last`, async () => {
     await withFixture(async ({ service }) => {
       const ids: string[] = [];
