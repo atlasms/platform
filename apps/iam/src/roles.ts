@@ -19,7 +19,11 @@ export const STARTER_ROLES: Role[] = [
     name: 'Viewer',
     // EP-28.5: reading the people register is part of reading the catalogue — a cast entry is a
     // person's name.
-    rules: [r('viewer-read', ['asset:read', 'schedule:read', 'taxonomy:read', 'people:read'])],
+    rules: [
+      r('viewer-read', ['asset:read', 'schedule:read', 'taxonomy:read', 'people:read']),
+      // EP-25.4 (decided 2026-10-18): anyone at work in the channel may message its people.
+      r('viewer-chat', ['message:send']),
+    ],
   },
   {
     id: 'editor',
@@ -31,7 +35,7 @@ export const STARTER_ROLES: Role[] = [
         fieldGroups: ['core', 'taxonomy', 'cast', 'shotlist'],
       },
       // EP-25.2 (decided 2026-10-16): an editor hands work to a person, a group or a role.
-      r('editor-flow', ['workflow:act', 'task:assign']),
+      r('editor-flow', ['workflow:act', 'task:assign', 'message:send']),
     ],
   },
   {
@@ -45,6 +49,7 @@ export const STARTER_ROLES: Role[] = [
     rules: [
       r('scheduler-read', ['asset:read', 'schedule:read', 'taxonomy:read']),
       r('scheduler-write', ['schedule:write']),
+      r('scheduler-chat', ['message:send']),
     ],
   },
   {
@@ -59,12 +64,13 @@ export const STARTER_ROLES: Role[] = [
       { ...r('lib-write', ['asset:write']), fieldGroups: ['files', 'rights'] },
       // EP-28.5: the people register is kept by whoever keeps the taxonomy.
       r('lib-restore', ['asset:restore', 'taxonomy:admin', 'people:read', 'people:admin']),
+      r('lib-chat', ['message:send']),
     ],
   },
   {
     id: 'ops',
     name: 'Ops',
-    rules: [r('ops', ['ops:read', 'logs:read', 'storage:admin'])],
+    rules: [r('ops', ['ops:read', 'logs:read', 'storage:admin', 'message:send'])],
   },
   {
     id: 'administrator',

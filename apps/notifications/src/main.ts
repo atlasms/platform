@@ -26,6 +26,7 @@ import {
   pgMigrations,
   startConsumers,
   startPrincipalInvalidation,
+  Messages,
   TaskActions,
 } from './index.ts';
 import { PolicyClient } from '@atlas/policy/client';
@@ -129,10 +130,20 @@ const service = new NotificationsService({
 
 const policies = new PolicyClient({ origin: config.iamOrigin, ttlMs: config.policyTtlMs });
 const tasks = new TaskActions({ store, ...(principals ? { principals } : {}) });
+const messages = new Messages({
+  store,
+  ...(principals ? { principals } : {}),
+  onPrincipalsUnavailable: (err, userId) =>
+    log.warn('principals unavailable: messages to groups left out', {
+      userId,
+      error: (err as Error).message,
+    }),
+});
 
 const app = await buildNotificationsApp({
   service,
   tasks,
+  messages,
   policyFor: (userId) => policies.policyFor(userId),
   health,
   metrics,

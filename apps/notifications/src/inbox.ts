@@ -80,3 +80,24 @@ export interface Inbox {
    */
   partial: boolean;
 }
+
+/** Who a chat message is addressed to (EP-25.4): a user, or a group — never a role. */
+export interface MessageRecipient {
+  kind: 'user' | 'group';
+  id: string;
+}
+
+/**
+ * A direct or group chat message (EP-25.4, decided 2026-10-18). Addressed to users and groups of
+ * the sender's channel; a GROUP's message is read by whoever is in the group WHEN IT IS READ — a
+ * chat room: a member who joins reads its history, one who leaves no longer does.
+ */
+export interface Message {
+  id: string;
+  channelId: string;
+  from: string;
+  to: MessageRecipient[];
+  body: string;
+  threadId?: string;
+  sentAt: string;
+}

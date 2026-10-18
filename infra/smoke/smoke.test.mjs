@@ -2558,6 +2558,46 @@ test('smoke: EP-24.5/22.10 — a lapsed approval is swept to expired, its approv
   );
 });
 
+test('smoke: EP-25.4 — a message to a group is read by its members through the gateway; a role is not a recipient', async () => {
+  // Notifications' messages on a live cluster: the smoke user makes a group, joins it, and messages
+  // it; their own read — the group resolved through IAM's signed principals route — lists it once.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const me = json(await get('/api/v1/users/me/effective-permissions', { headers })).subjectId;
+  const group = await get('/api/v1/groups', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ name: `smoke chat ${Date.now().toString(36)}` }),
+  });
+  assert.equal(group.status, 201, group.text);
+  const groupId = json(group).id;
+  const joined = await get(`/api/v1/groups/${groupId}/members`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ userId: me }),
+  });
+  assert.equal(joined.status, 204, joined.text);
+  const body = `smoke message ${Date.now()}`;
+  const sent = await get('/api/v1/messages', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ to: [{ kind: 'group', id: groupId }], body }),
+  });
+  assert.equal(sent.status, 201, sent.text);
+  const message = json(sent);
+  assert.deepEqual([message.from, message.to], [me, [{ kind: 'group', id: groupId }]]);
+  const page = json(await get('/api/v1/messages?limit=200', { headers }));
+  assert.equal(page.partial, false, 'IAM answered: the groups were resolved');
+  assert.equal(page.items.filter((m) => m.id === message.id).length, 1);
+  const role = await get('/api/v1/messages', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ to: [{ kind: 'role', id: 'viewer' }], body }),
+  });
+  assert.equal(role.status, 422, role.text);
+});
+
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {
   // A workflow's lifecycle on a live cluster (decided 2026-10-13): a first publish makes it active
   // and puts it in the catalog every client loads; deactivating it is refused while an instance is

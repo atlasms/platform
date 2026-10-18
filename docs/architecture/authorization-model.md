@@ -190,14 +190,18 @@ Ship these as defaults; operators clone and adjust ([FR-IAM-1](../requirements/0
 
 | Role | Grants (sketch) |
 |------|-----------------|
-| **Viewer** | `asset:read`, `schedule:read`, `taxonomy:read`, `people:read` |
+| **Viewer** | `asset:read`, `schedule:read`, `taxonomy:read`, `people:read`, `message:send` |
 | **Journalist / Editor** | Viewer + `asset:write` (`core`,`taxonomy`,`cast`,`shotlist`), `workflow:act`, `task:assign` |
 | **Approver** | Editor + `asset:approve` (scoped to a category subtree) |
 | **Scheduler** | Viewer + `schedule:write`; `schedule:send` usually a **separate** role (privileged, audited) |
-| **Librarian** | `asset:write` (`files`,`rights`), `asset:restore`, `taxonomy:admin`, `people:admin` |
-| **Ops** | `ops:read`, `logs:read`, `storage:admin` |
+| **Librarian** | `asset:write` (`files`,`rights`), `asset:restore`, `taxonomy:admin`, `people:admin`, `message:send` |
+| **Ops** | `ops:read`, `logs:read`, `storage:admin`, `message:send` |
 | **Administrator** | **every permission** — `*:*` (decided 2026-10-15): every action on every resource, including `logs:read` and `workflow:audit`, and any a later catalogue adds. Bounded, like every grant, by the scope of its assignment; never across tenants |
 
+> `message:send` (EP-25.4, decided 2026-10-18) lets a person message any user and any group of their
+> channel; every starter role a person works under carries it. An install whose roles predate it
+> adds it to them through IAM's admin API.
+>
 > Starter roles are seeded only where missing — an operator's edit is never overwritten — so an
 > install that already has an `administrator` role keeps the one it has. None in production predates
 > the `*:*` decision (2026-10-15); a dev cluster that does is updated through IAM's admin API

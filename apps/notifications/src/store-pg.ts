@@ -10,7 +10,7 @@ import {
   withTransaction,
   type PgPool,
 } from '@atlas/data-pg';
-import { normalizeTask, type Notification, type Task } from './inbox.ts';
+import { normalizeTask, type Message, type Notification, type Task } from './inbox.ts';
 import type { InboxStore, InboxTx } from './store.ts';
 
 export const pgMigrations: Migration[] = [
@@ -44,6 +44,26 @@ export const pgMigrations: Migration[] = [
   {
     id: 'notifications_task_version',
     up: `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;`,
+  },
+  // EP-25.4: chat messages, and the recipients a reader is found by (a group resolved when read).
+  {
+    id: 'notifications_messages',
+    up: `CREATE TABLE IF NOT EXISTS messages (
+           id         text PRIMARY KEY,
+           channel_id text NOT NULL,
+           sender     text NOT NULL,
+           data       jsonb NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS messages_sender_idx ON messages (channel_id, sender, id);
+         CREATE TABLE IF NOT EXISTS message_recipients (
+           message_id   text NOT NULL REFERENCES messages(id),
+           channel_id   text NOT NULL,
+           kind         text NOT NULL,
+           recipient_id text NOT NULL,
+           PRIMARY KEY (message_id, kind, recipient_id)
+         );
+         CREATE INDEX IF NOT EXISTS message_recipients_reader_idx
+           ON message_recipients (channel_id, kind, recipient_id, message_id);`,
   },
 ];
 
@@ -96,6 +116,18 @@ export function pgInboxStore(pool: PgPool): InboxStore {
               [n.id, n.channelId, n.userId, n.read, JSON.stringify(n)],
             );
           },
+          async insertMessage(m) {
+            await client.query(
+              'INSERT INTO messages (id, channel_id, sender, data) VALUES ($1, $2, $3, $4)',
+              [m.id, m.channelId, m.from, JSON.stringify(m)],
+            );
+            for (const r of m.to)
+              await client.query(
+                `INSERT INTO message_recipients (message_id, channel_id, kind, recipient_id)
+                 VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+                [m.id, m.channelId, r.kind, r.id],
+              );
+          },
           async enqueue(record) {
             await outbox.enqueue(client, record);
           },
@@ -135,6 +167,28 @@ export function pgInboxStore(pool: PgPool): InboxStore {
         `SELECT data FROM notifications WHERE channel_id = $1 AND user_id = $2
           ORDER BY id DESC LIMIT $3`,
         [channelId, userId, limit],
+      );
+      return rows.map((r) => r.data);
+    },
+    async messagesFor(channelId, reader, { after, limit }) {
+      const params: unknown[] = [channelId, reader.userId, reader.groups];
+      let keyset = '';
+      if (after !== undefined) {
+        params.push(after);
+        keyset = `AND m.id < $${params.length}`;
+      }
+      params.push(limit);
+      const { rows } = await pool.query<{ data: Message }>(
+        `SELECT m.data FROM messages m
+          WHERE m.channel_id = $1
+            AND (m.sender = $2
+                 OR m.id IN (SELECT message_id FROM message_recipients
+                              WHERE channel_id = $1
+                                AND ((kind = 'user' AND recipient_id = $2)
+                                     OR (kind = 'group' AND recipient_id = ANY($3::text[])))))
+            ${keyset}
+          ORDER BY m.id DESC LIMIT $${params.length}`,
+        params,
       );
       return rows.map((r) => r.data);
     },
