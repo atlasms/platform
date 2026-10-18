@@ -12,7 +12,13 @@ import {
   type Db,
   type Migration,
 } from '@atlas/data';
-import { normalizeTask, type Message, type Notification, type Task } from './inbox.ts';
+import {
+  normalizeTask,
+  type Message,
+  type Notification,
+  type SharedNotification,
+  type Task,
+} from './inbox.ts';
 import type { TypeOverride } from './notification-types.ts';
 import type { InboxStore, InboxTx } from './store.ts';
 
@@ -79,6 +85,26 @@ export const sqliteMigrations: Migration[] = [
            PRIMARY KEY (channel_id, type_key)
          );`,
   },
+  // EP-25.5: notifications for everyone holding a permission (an alert to ops:read), and each
+  // reader's read state of them.
+  {
+    id: 'notifications_shared',
+    up: `CREATE TABLE IF NOT EXISTS shared_notifications (
+           id         TEXT PRIMARY KEY,
+           channel_id TEXT NOT NULL,
+           permission TEXT NOT NULL,
+           data       TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS shared_notifications_audience_idx
+           ON shared_notifications (channel_id, permission, id);
+         CREATE TABLE IF NOT EXISTS shared_notification_reads (
+           notification_id TEXT NOT NULL REFERENCES shared_notifications(id),
+           channel_id      TEXT NOT NULL,
+           user_id         TEXT NOT NULL,
+           read            INTEGER NOT NULL,
+           PRIMARY KEY (notification_id, user_id)
+         );`,
+  },
 ];
 
 export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
@@ -128,6 +154,27 @@ export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
       db.prepare(
         'INSERT INTO notifications (id, channel_id, user_id, read, data) VALUES (?, ?, ?, ?, ?)',
       ).run(n.id, n.channelId, n.userId, n.read ? 1 : 0, JSON.stringify(n));
+    },
+    async insertShared(n) {
+      db.prepare(
+        'INSERT INTO shared_notifications (id, channel_id, permission, data) VALUES (?, ?, ?, ?)',
+      ).run(n.id, n.channelId, n.audience.permission, JSON.stringify(n));
+    },
+    async markSharedRead(channelId, userId, id, read, permissions) {
+      if (permissions.length === 0) return false;
+      const there = db
+        .prepare(
+          `SELECT 1 FROM shared_notifications WHERE id = ? AND channel_id = ?
+             AND permission IN (${permissions.map(() => '?').join(', ')})`,
+        )
+        .get(id, channelId, ...permissions);
+      if (!there) return false;
+      db.prepare(
+        `INSERT INTO shared_notification_reads (notification_id, channel_id, user_id, read)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (notification_id, user_id) DO UPDATE SET read = excluded.read`,
+      ).run(id, channelId, userId, read ? 1 : 0);
+      return true;
     },
     async putTypeOverride(o, ifVersion) {
       const result =
@@ -208,6 +255,33 @@ export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
         )
         .all(channelId, userId, limit) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as Notification);
+    },
+    async sharedFor(channelId, permissions, userId, limit) {
+      if (permissions.length === 0) return [];
+      const rows = db
+        .prepare(
+          `SELECT s.data, COALESCE(r.read, 0) AS read FROM shared_notifications s
+             LEFT JOIN shared_notification_reads r ON r.notification_id = s.id AND r.user_id = ?
+            WHERE s.channel_id = ? AND s.permission IN (${permissions.map(() => '?').join(', ')})
+            ORDER BY s.id DESC LIMIT ?`,
+        )
+        .all(userId, channelId, ...permissions, limit) as { data: string; read: number }[];
+      return rows.map((r) => {
+        const { audience: _audience, ...n } = JSON.parse(r.data) as SharedNotification;
+        return { ...n, userId, read: r.read === 1 };
+      });
+    },
+    async sharedUnread(channelId, permissions, userId) {
+      if (permissions.length === 0) return 0;
+      const row = db
+        .prepare(
+          `SELECT count(*) AS n FROM shared_notifications s
+             LEFT JOIN shared_notification_reads r ON r.notification_id = s.id AND r.user_id = ?
+            WHERE s.channel_id = ? AND s.permission IN (${permissions.map(() => '?').join(', ')})
+              AND COALESCE(r.read, 0) = 0`,
+        )
+        .get(userId, channelId, ...permissions) as { n: number };
+      return Number(row.n);
     },
     async typeOverrides(channelId) {
       const rows = db

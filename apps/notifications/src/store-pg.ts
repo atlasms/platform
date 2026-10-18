@@ -10,7 +10,13 @@ import {
   withTransaction,
   type PgPool,
 } from '@atlas/data-pg';
-import { normalizeTask, type Message, type Notification, type Task } from './inbox.ts';
+import {
+  normalizeTask,
+  type Message,
+  type Notification,
+  type SharedNotification,
+  type Task,
+} from './inbox.ts';
 import type { TypeOverride } from './notification-types.ts';
 import type { InboxStore, InboxTx } from './store.ts';
 
@@ -77,6 +83,26 @@ export const pgMigrations: Migration[] = [
            PRIMARY KEY (channel_id, type_key)
          );`,
   },
+  // EP-25.5: notifications for everyone holding a permission (an alert to ops:read), and each
+  // reader's read state of them.
+  {
+    id: 'notifications_shared',
+    up: `CREATE TABLE IF NOT EXISTS shared_notifications (
+           id         text PRIMARY KEY,
+           channel_id text NOT NULL,
+           permission text NOT NULL,
+           data       jsonb NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS shared_notifications_audience_idx
+           ON shared_notifications (channel_id, permission, id);
+         CREATE TABLE IF NOT EXISTS shared_notification_reads (
+           notification_id text NOT NULL REFERENCES shared_notifications(id),
+           channel_id      text NOT NULL,
+           user_id         text NOT NULL,
+           read            boolean NOT NULL,
+           PRIMARY KEY (notification_id, user_id)
+         );`,
+  },
 ];
 
 export function pgInboxStore(pool: PgPool): InboxStore {
@@ -127,6 +153,28 @@ export function pgInboxStore(pool: PgPool): InboxStore {
               'INSERT INTO notifications (id, channel_id, user_id, read, data) VALUES ($1, $2, $3, $4, $5)',
               [n.id, n.channelId, n.userId, n.read, JSON.stringify(n)],
             );
+          },
+          async insertShared(n) {
+            await client.query(
+              'INSERT INTO shared_notifications (id, channel_id, permission, data) VALUES ($1, $2, $3, $4)',
+              [n.id, n.channelId, n.audience.permission, JSON.stringify(n)],
+            );
+          },
+          async markSharedRead(channelId, userId, id, read, permissions) {
+            if (permissions.length === 0) return false;
+            const there = await client.query(
+              `SELECT 1 FROM shared_notifications
+                WHERE id = $1 AND channel_id = $2 AND permission = ANY($3::text[])`,
+              [id, channelId, permissions],
+            );
+            if (there.rowCount === 0) return false;
+            await client.query(
+              `INSERT INTO shared_notification_reads (notification_id, channel_id, user_id, read)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (notification_id, user_id) DO UPDATE SET read = excluded.read`,
+              [id, channelId, userId, read],
+            );
+            return true;
           },
           async putTypeOverride(o, ifVersion) {
             const result =
@@ -204,6 +252,30 @@ export function pgInboxStore(pool: PgPool): InboxStore {
         [channelId, userId, limit],
       );
       return rows.map((r) => r.data);
+    },
+    async sharedFor(channelId, permissions, userId, limit) {
+      if (permissions.length === 0) return [];
+      const { rows } = await pool.query<{ data: SharedNotification; read: boolean }>(
+        `SELECT s.data, COALESCE(r.read, false) AS read FROM shared_notifications s
+           LEFT JOIN shared_notification_reads r ON r.notification_id = s.id AND r.user_id = $1
+          WHERE s.channel_id = $2 AND s.permission = ANY($3::text[])
+          ORDER BY s.id DESC LIMIT $4`,
+        [userId, channelId, permissions, limit],
+      );
+      return rows.map((r) => {
+        const { audience: _audience, ...n } = r.data;
+        return { ...n, userId, read: r.read };
+      });
+    },
+    async sharedUnread(channelId, permissions, userId) {
+      if (permissions.length === 0) return 0;
+      const { rows } = await pool.query<{ n: string }>(
+        `SELECT count(*) AS n FROM shared_notifications s
+           LEFT JOIN shared_notification_reads r ON r.notification_id = s.id AND r.user_id = $1
+          WHERE s.channel_id = $2 AND s.permission = ANY($3::text[]) AND NOT COALESCE(r.read, false)`,
+        [userId, channelId, permissions],
+      );
+      return Number(rows[0]?.n ?? 0);
     },
     async typeOverrides(channelId) {
       const { rows } = await pool.query<{ data: TypeOverride }>(

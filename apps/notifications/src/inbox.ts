@@ -72,6 +72,15 @@ export interface Notification {
   createdAt: string;
 }
 
+/**
+ * A notification for everyone holding a PERMISSION in the channel (EP-25.5: an alert to the holders
+ * of `ops:read`) — one row, resolved to its readers when an inbox is read, as a role's task is; each
+ * reader's read state is their own.
+ */
+export interface SharedNotification extends Omit<Notification, 'userId' | 'read'> {
+  audience: { permission: string };
+}
+
 export interface Inbox {
   tasks: Task[];
   notifications: Notification[];

@@ -284,6 +284,14 @@ every caller's: it is what their preferences are about.
 | `asset.expired` | `asset.re-review-due` (mandatory) | whoever approved it last |
 | `transcode.failed` | `transcode.failed` | whoever asked for the transcode |
 | `message.sent` with `@<userId>` | `message.mention` | that person, if the message is theirs to read |
+| `alert.raised` | `alert` (mandatory; the alert's own severity) | everyone holding `ops:read` in the channel |
+
+**An alert is ONE shared notification** for its audience, `ops:read` — resolved when an inbox is
+read, as a role's task is (by the reader's own policy, from IAM): someone granted operations later
+sees it, someone who lost the grant does not. Each reader's read state is their own
+(`shared_notification_reads`); marking it read is theirs only, and someone outside the audience
+finds nothing. Holding `ops:read` is the read check — it is what the log reads alerts under. No
+`notification.raised` is emitted for it (that event names one user); live delivery is EP-25.7's.
 
 **Every recipient is re-checked** before anything is written: their own policy (IAM's, as for a
 request) must let them read the subject — the asset in its category, owned by its creator (MAM's
@@ -295,15 +303,16 @@ check failing closed. One transaction per event: the seen-mark, each notificatio
 in every locale) and its `notification.raised`. A disabled type raises nothing.
 
 A person marks their own notification read or unread (`PATCH /notifications/{id}`); another's is not
-found. Not yet: `alert.raised` to the holders of `ops:read` (the rest of EP-25.5), preferences
-(EP-25.6), live delivery (EP-25.7).
+found. Not yet: preferences (EP-25.6), live delivery (EP-25.7).
 
 Evidence: `test/pipeline.test.ts` (a verdict to the creator, once, in both locales; an automatic
 approval to nobody; the re-check — another category, no policy; a failed transcode to its requester
 and not to a service; a mention to readers by name and through a group, not to others nor oneself; the
 registry — read by anyone, written under `config:admin`, CAS, unknown types and slots refused, an
-override's severity and title applied, a disabled type silent, audited; mark read), the store
-conformance case on sqlite and Postgres, and smoke on kind.
+override's severity and title applied, a disabled type silent, audited; mark read; an alert to the
+holders of `ops:read`, each reading it for themselves, a later holder seeing it), the store
+conformance cases on sqlite and Postgres, and smoke on kind (an approval tells its creator, titled as
+the channel's registry says; a failed workflow run's alert reaches an `ops:read` holder's inbox).
 
 ## 14. Open questions / future
 

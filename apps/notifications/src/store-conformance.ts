@@ -253,6 +253,45 @@ export function inboxStoreConformance(name: string, harness: InboxStoreHarness):
     });
   });
 
+  test(`[${name}] a shared notification: one row, each reader's read state their own, only for its audience`, async () => {
+    await withFixture(async ({ store }) => {
+      const [older, newer] = [ulid(), ulid()].sort();
+      for (const id of [older!, newer!])
+        await store.transaction((tx) =>
+          tx.insertShared({
+            id,
+            channelId: CH,
+            type: 'alert',
+            severity: 'critical',
+            title: `alert ${id}`,
+            createdAt: '2026-10-18T10:00:00.000Z',
+            audience: { permission: 'ops:read' },
+          }),
+        );
+      const seen = await store.sharedFor(CH, ['ops:read'], 'ops1', 10);
+      assert.deepEqual(
+        seen.map((n) => [n.id, n.userId, n.read]),
+        [
+          [newer, 'ops1', false],
+          [older, 'ops1', false],
+        ],
+      );
+      assert.equal(
+        await store.transaction((tx) => tx.markSharedRead(CH, 'ops1', newer!, true, [])),
+        false,
+        'not their audience',
+      );
+      assert.equal(
+        await store.transaction((tx) => tx.markSharedRead(CH, 'ops1', newer!, true, ['ops:read'])),
+        true,
+      );
+      assert.equal(await store.sharedUnread(CH, ['ops:read'], 'ops1'), 1);
+      assert.equal(await store.sharedUnread(CH, ['ops:read'], 'ops2'), 2, 'their own state');
+      assert.deepEqual(await store.sharedFor(CH, [], 'ops1', 10), []);
+      assert.deepEqual(await store.sharedFor('ch99', ['ops:read'], 'ops1', 10), []);
+    });
+  });
+
   test(`[${name}] open tasks come oldest-due first, undated last`, async () => {
     await withFixture(async ({ service }) => {
       const ids: string[] = [];

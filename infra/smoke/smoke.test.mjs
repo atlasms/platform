@@ -2398,6 +2398,18 @@ test('smoke: EP-22.9 — a human step out of time takes its error path and its t
     listed.items.some((i) => i.id === failed.id),
     'the failed run is in the operator list',
   );
+  // EP-25.5: its alert reaches the holders of ops:read — the smoke user among them — as one
+  // notification resolved when the inbox is read.
+  const alert = await poll(
+    async () =>
+      json(
+        await get('/api/v1/inbox', { headers: { ...headers, 'cache-control': 'no-cache' } }),
+      ).notifications.find((n) => n.type === 'alert' && n.subjectRef?.entityId === failed.id),
+    (n) => n !== undefined,
+    30_000,
+    "the failed run's alert never reached the inbox",
+  );
+  assert.match(alert.title, /failed/);
 });
 
 test('smoke: EP-24.5/22.10 — a lapsed approval is swept to expired, its approver told, and a fresh review opens and re-approves it', async () => {

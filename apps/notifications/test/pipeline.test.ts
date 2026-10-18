@@ -191,6 +191,7 @@ test('the registry: every user reads the types; config:admin changes one — com
   assert.equal(list.statusCode, 200, list.body);
   const types = list.json<{ items: ResolvedType[] }>().items;
   assert.deepEqual(types.map((t) => t.key).sort(), [
+    'alert',
     'asset.approved',
     'asset.re-review-due',
     'asset.rejected',
@@ -267,4 +268,49 @@ test('a person marks their own notification read; another’s is not found', asy
   );
   const after = await h.service.inbox({ userId: 'ana', channelId: CH });
   assert.deepEqual([after.unreadCount, after.notifications[0]?.read], [0, true]);
+});
+
+test('an alert is ONE notification for the holders of ops:read — resolved when they read, each reading it for themselves', async () => {
+  const store = sqliteInboxStore();
+  const grants: Record<string, string[]> = { ops1: ['ops:read'], ops2: ['ops:read'], ana: [] };
+  const policyFor = (userId: string) => {
+    const permissions = grants[userId];
+    if (!permissions) return undefined;
+    return policy(userId, permissions.length > 0 ? [{ id: 'r', permissions }] : []);
+  };
+  const pipeline = new NotificationPipeline({ store, policyFor });
+  const service = new NotificationsService({ store, policyFor });
+  const alert = event('alert.raised', {
+    alertId: ulid(),
+    source: 'bms',
+    kind: 'workflow-failed',
+    severity: 'critical',
+    subjectRef: { entityType: 'workflowInstance', entityId: ulid() },
+    message: 'workflow "Ingest" failed',
+    raisedAt: new Date().toISOString(),
+  });
+  assert.equal(await pipeline.consumeAlertRaised(alert), 'applied');
+  assert.equal(await pipeline.consumeAlertRaised(alert), 'duplicate');
+
+  const inboxOf = (userId: string) => service.inbox({ userId, channelId: CH });
+  const first = await inboxOf('ops1');
+  const [n] = first.notifications;
+  assert.deepEqual(
+    [first.unreadCount, n?.type, n?.severity, n?.title],
+    [1, 'alert', 'critical', 'workflow "Ingest" failed'],
+  );
+  assert.equal((await inboxOf('ana')).notifications.length, 0, 'no ops:read, no alert');
+
+  // ops1 reads it; ops2 still has it unread.
+  await service.markRead({ userId: 'ops1', channelId: CH }, n!.id, true);
+  assert.equal((await inboxOf('ops1')).unreadCount, 0);
+  assert.equal((await inboxOf('ops2')).unreadCount, 1);
+  // Someone without ops:read cannot mark it, and finds nothing.
+  await assert.rejects(
+    service.markRead({ userId: 'ana', channelId: CH }, n!.id, true),
+    /notification/,
+  );
+  // Granted operations later: the alert is theirs now.
+  grants['ana'] = ['ops:read'];
+  assert.equal((await inboxOf('ana')).unreadCount, 1);
 });
