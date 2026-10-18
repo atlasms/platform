@@ -209,6 +209,8 @@ if (seedUser && seedPassword) {
           'task:assign',
           'task:admin',
           'task:audit',
+          // EP-25.4: send messages, so the smoke suite can.
+          'message:send',
         ],
         scope: { channelIds: [channelId] },
       },
