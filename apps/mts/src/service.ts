@@ -320,6 +320,7 @@ export class MtsService {
       await tx.enqueue(
         this.record(answer, envelope.channelId, 'transcode.failed', {
           assetId: envelope.payload.assetId,
+          ...(envelope.actor?.id !== undefined ? { requestedBy: envelope.actor.id } : {}),
           error: { code: 'COMMAND_REFUSED', message: why.message, retryable: false },
         } satisfies EventPayloads['transcode.failed']),
       );
@@ -747,6 +748,7 @@ export class MtsService {
             jobId: after.id,
             assetId: after.assetId,
             attempts: after.attempts,
+            requestedBy: after.createdBy,
             error: {
               code: refused ? 'TRANSCODE_REFUSED' : 'TRANSCODE_FAILED',
               message: reason,

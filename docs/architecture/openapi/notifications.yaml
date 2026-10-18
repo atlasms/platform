@@ -169,12 +169,46 @@ paths:
     patch:
       operationId: updateNotification
       tags: [notifications]
-      summary: Mark a notification read/dismissed
+      summary: Mark one of the caller's notifications read or unread (EP-25.5) — theirs only
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
-      requestBody: { content: { application/json: { schema: { type: object, properties: { read: { type: boolean } } } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [read], additionalProperties: false, properties: { read: { type: boolean } } } } } }
       responses:
-        '200': { description: Updated }
+        '204': { description: Marked }
+        '404': { description: "Not the caller's, or not there" }
+  /notification-types:
+    get:
+      operationId: listNotificationTypes
+      tags: [notifications]
+      summary: "Every notification type as it applies in the caller's channel (EP-25.5) — any authenticated caller"
+      responses:
+        '200': { description: The types, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/NotificationType' } } } } } } }
+  /notification-types/{key}:
+    put:
+      operationId: putNotificationType
+      tags: [notifications]
+      summary: "Change a type for the channel — config:admin; a compare-and-set on the override's version (0 for the first); audited"
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 0 }, description: "The override version read — 0 when the type is still the built-in." }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                severity: { type: string, enum: [info, warning, critical] }
+                enabled: { type: boolean }
+                defaultOn: { type: boolean, description: "On for a person until they say otherwise (EP-25.6)." }
+                mandatory: { type: boolean, description: "A person may not turn it off (EP-25.6)." }
+                title: { $ref: '#/components/schemas/Titles' }
+      responses:
+        '200': { description: The type as it now applies, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationType' } } } }
+        '403': { description: 'No config:admin' }
+        '409': { description: 'The override changed since it was read' }
+        '422': { description: "UNKNOWN_TYPE — no code raises it; or a title slot the type does not have" }
   /preferences:
     get: { operationId: getPreferences, tags: [preferences], summary: Get per-user delivery preferences, responses: { '200': { description: Preferences } } }
     put: { operationId: putPreferences, tags: [preferences], summary: Update delivery preferences, responses: { '200': { description: Saved } } }
@@ -253,9 +287,33 @@ components:
         type: { type: string, description: 'Notification-type key, e.g. asset.re-review-due.' }
         severity: { type: string, enum: [info, warning, critical] }
         subjectRef: { $ref: '#/components/schemas/EntityRef' }
-        title: { type: string }
+        title: { type: string, description: "In the channel's first locale (en)." }
+        titles: { $ref: '#/components/schemas/Titles' }
         read: { type: boolean }
         createdAt: { type: string, format: date-time }
+    Titles:
+      type: object
+      additionalProperties: false
+      description: "A title per locale; a template may use the type's {{slots}}."
+      properties:
+        en: { type: string }
+        ar: { type: string }
+    NotificationType:
+      type: object
+      required: [key, event, recipients, vars, severity, enabled, defaultOn, mandatory, title, origin, version]
+      additionalProperties: false
+      properties:
+        key: { type: string }
+        event: { type: string, description: The event that raises it. }
+        recipients: { type: string, description: Who it goes to — the routing in code. }
+        vars: { type: array, items: { type: string }, description: "The {{slots}} its titles may use." }
+        severity: { type: string, enum: [info, warning, critical] }
+        enabled: { type: boolean }
+        defaultOn: { type: boolean }
+        mandatory: { type: boolean }
+        title: { $ref: '#/components/schemas/Titles' }
+        origin: { type: string, enum: [built-in, channel] }
+        version: { type: integer, minimum: 0, description: "The channel override's version — 0 when there is none." }
     EntityRef:
       type: object
       required: [entityType, entityId]

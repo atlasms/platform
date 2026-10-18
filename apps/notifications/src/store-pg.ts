@@ -11,6 +11,7 @@ import {
   type PgPool,
 } from '@atlas/data-pg';
 import { normalizeTask, type Message, type Notification, type Task } from './inbox.ts';
+import type { TypeOverride } from './notification-types.ts';
 import type { InboxStore, InboxTx } from './store.ts';
 
 export const pgMigrations: Migration[] = [
@@ -65,6 +66,17 @@ export const pgMigrations: Migration[] = [
          CREATE INDEX IF NOT EXISTS message_recipients_reader_idx
            ON message_recipients (channel_id, kind, recipient_id, message_id);`,
   },
+  // EP-25.5: a channel's overrides of the notification-type registry (the built-ins are code).
+  {
+    id: 'notifications_type_overrides',
+    up: `CREATE TABLE IF NOT EXISTS notification_type_overrides (
+           channel_id text NOT NULL,
+           type_key   text NOT NULL,
+           version    integer NOT NULL,
+           data       jsonb NOT NULL,
+           PRIMARY KEY (channel_id, type_key)
+         );`,
+  },
 ];
 
 export function pgInboxStore(pool: PgPool): InboxStore {
@@ -115,6 +127,29 @@ export function pgInboxStore(pool: PgPool): InboxStore {
               'INSERT INTO notifications (id, channel_id, user_id, read, data) VALUES ($1, $2, $3, $4, $5)',
               [n.id, n.channelId, n.userId, n.read, JSON.stringify(n)],
             );
+          },
+          async putTypeOverride(o, ifVersion) {
+            const result =
+              ifVersion === 0
+                ? await client.query(
+                    `INSERT INTO notification_type_overrides (channel_id, type_key, version, data)
+                     VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+                    [o.channelId, o.key, o.version, JSON.stringify(o)],
+                  )
+                : await client.query(
+                    `UPDATE notification_type_overrides SET version = $1, data = $2
+                      WHERE channel_id = $3 AND type_key = $4 AND version = $5`,
+                    [o.version, JSON.stringify(o), o.channelId, o.key, ifVersion],
+                  );
+            return result.rowCount === 1;
+          },
+          async markRead(channelId, userId, id, read) {
+            const result = await client.query(
+              `UPDATE notifications SET read = $1, data = data || jsonb_build_object('read', $1::boolean)
+                WHERE id = $2 AND channel_id = $3 AND user_id = $4`,
+              [read, id, channelId, userId],
+            );
+            return result.rowCount === 1;
           },
           async insertMessage(m) {
             await client.query(
@@ -167,6 +202,13 @@ export function pgInboxStore(pool: PgPool): InboxStore {
         `SELECT data FROM notifications WHERE channel_id = $1 AND user_id = $2
           ORDER BY id DESC LIMIT $3`,
         [channelId, userId, limit],
+      );
+      return rows.map((r) => r.data);
+    },
+    async typeOverrides(channelId) {
+      const { rows } = await pool.query<{ data: TypeOverride }>(
+        'SELECT data FROM notification_type_overrides WHERE channel_id = $1',
+        [channelId],
       );
       return rows.map((r) => r.data);
     },

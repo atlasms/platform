@@ -763,6 +763,8 @@ export class MamService {
         approvedAt: updated.updatedAt,
         automatic: true,
         ...defined({ expiresAt: updated.expiresAt }),
+        createdBy: updated.createdBy,
+        ...defined({ categoryPath: (await this.scopeOf(updated)).categoryPath }),
       } satisfies EventPayloads['asset.approved']);
       return updated;
     });
@@ -795,6 +797,8 @@ export class MamService {
           assetId: existing.id,
           expiredAt: existing.expiresAt ?? updated.updatedAt,
           expirySource: existing.expirySource ?? 'asset',
+          createdBy: existing.createdBy,
+          ...defined({ categoryPath: (await this.scopeOf(existing)).categoryPath }),
           // Whose approval lapsed — the person told it needs a fresh review; nobody for MAM's own.
           ...(existing.approvedBy !== undefined && existing.approvedBy !== 'mam'
             ? { priorApprover: existing.approvedBy }
@@ -834,7 +838,8 @@ export class MamService {
     // sign an asset off for air.
     const permission =
       action === 'approve' || action === 'reject' ? 'asset:approve' : 'asset:write';
-    this.authorize(caller, permission, await this.scopeOf(existing));
+    const scope = await this.scopeOf(existing);
+    this.authorize(caller, permission, scope);
 
     // The contract makes `reason` required on asset.rejected, and it is right to. A rejection with
     // no stated cause leaves whoever has to fix the asset with nothing to act on — and it would be
@@ -883,7 +888,7 @@ export class MamService {
       updated,
       existing,
       eventType,
-      this.payloadFor(caller, eventType, updated, options),
+      this.payloadFor(caller, eventType, updated, { ...options, scope }),
     );
     return updated;
   }
@@ -2731,8 +2736,13 @@ export class MamService {
     caller: Caller,
     eventType: string,
     asset: Asset,
-    options: { reason?: string; retainUntil?: string; reviewPointId?: string },
+    options: { reason?: string; retainUntil?: string; reviewPointId?: string; scope?: AssetScope },
   ): Record<string, unknown> {
+    // Who to tell, and what they must be able to read to be told (EP-25.5).
+    const audience = {
+      createdBy: asset.createdBy,
+      ...defined({ categoryPath: options.scope?.categoryPath }),
+    };
     const at = asset.updatedAt;
     switch (eventType) {
       case 'asset.approved':
@@ -2741,6 +2751,7 @@ export class MamService {
           approver: caller.userId,
           approvedAt: at,
           ...defined({ expiresAt: asset.expiresAt, reviewPointId: options.reviewPointId }),
+          ...audience,
         };
       case 'asset.rejected':
         return {
@@ -2749,6 +2760,7 @@ export class MamService {
           rejectedBy: caller.userId,
           rejectedAt: at,
           ...defined({ retainUntil: asset.retainUntil, reviewPointId: options.reviewPointId }),
+          ...audience,
         };
       case 'asset.expired':
         // `expirySource` records where `expiresAt` came from — a per-asset value or the category

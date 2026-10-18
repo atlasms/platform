@@ -87,6 +87,9 @@ test('a lapsed approval is swept to expired once — its event names whose appro
       expiredAt: '2026-08-05T12:00:30.000Z',
       expirySource: 'asset',
       priorApprover: 'ana',
+      // EP-25.5: who to tell of it, and what they must be able to read.
+      createdBy: 'ana',
+      categoryPath: '/cat-1/',
     },
   ]);
   // An expired asset may be approved again — the re-review (lifecycle: expired → approved).

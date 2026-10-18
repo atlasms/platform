@@ -66,7 +66,8 @@ stateDiagram-v2
 | `POST` | `/tasks` | Assign a task by hand to a user, group or role. ✅ EP-25.2 | `task:assign` |
 | `GET` | `/tasks/{id}` | One task. ✅ EP-25.2 | a participant, a holder of what it is offered to, or `task:admin` |
 | `POST` | `/tasks/{id}/claim` · `/forward` · `/complete` · `/cancel` | Claim (first wins), hand on, complete with an outcome, cancel — §13c. ✅ EP-25.2 | the holder; `task:admin` to reassign or cancel |
-| `PATCH` | `/notifications/{id}` | Mark read/dismiss. | self |
+| `PATCH` | `/notifications/{id}` | Mark read/unread. ✅ EP-25.5 | self — another's is not found |
+| `GET` / `PUT` | `/notification-types` · `/{key}` | The notification-type registry as the channel has it — §13e. ✅ EP-25.5 | read: any caller; write: `config:admin` |
 | `GET/PUT` | `/preferences` | Per-user delivery preferences. | self |
 
 ## 5. Messaging
@@ -261,6 +262,48 @@ Evidence: `test/messages.test.ts` (a user and a group as recipients — sender, 
 it, nobody else, nor another channel; a joiner reads the history and a leaver does not; IAM away is
 `partial`; `message:send`, roles refused, bodies bounded; the audit without the body; paging), the
 store conformance case on sqlite and Postgres, and smoke on kind.
+
+## 13e. As built — EP-25.5, the notification-type registry and the pipeline (decided 2026-10-18)
+
+**The registry** (configuration §2.2, Tier 1). Code defines the TYPES — the event that raises each,
+who it goes to and what they must be able to read, and the `{{slots}}` its titles may use — so a type
+no code raises cannot be configured (`UNKNOWN_TYPE`). An operator changes, per channel, what is
+theirs: the title per locale (en, ar), the severity, `enabled`, `defaultOn` and `mandatory` (the last
+two are what preferences honour, EP-25.6) — `PUT /notification-types/{key}?version=` under
+`config:admin`, a compare-and-set on the override's version (0 for the first), audited as
+`notification-type` (the log reads it under `config:admin`, as a transcode profile's). A title may
+use only the type's slots (422); a slot left empty renders as nothing. `GET /notification-types` is
+every caller's: it is what their preferences are about.
+
+**The pipeline** (`src/pipeline.ts`), routed as the product owner decided:
+
+| Event | Type | To |
+|---|---|---|
+| `asset.approved` (not an automatic one) | `asset.approved` | the asset's creator |
+| `asset.rejected` | `asset.rejected` | the asset's creator |
+| `asset.expired` | `asset.re-review-due` (mandatory) | whoever approved it last |
+| `transcode.failed` | `transcode.failed` | whoever asked for the transcode |
+| `message.sent` with `@<userId>` | `message.mention` | that person, if the message is theirs to read |
+
+**Every recipient is re-checked** before anything is written: their own policy (IAM's, as for a
+request) must let them read the subject — the asset in its category, owned by its creator (MAM's
+verdict and expiry events now carry `createdBy` and `categoryPath`), or the message (to them by name,
+or to a group they are in now). Someone with no policy — a service id, a user since disabled — is
+told nothing; so is a reader narrowed to other categories. `transcode.failed` carries `requestedBy`
+but not the category (MTS does not know it), so a category-narrowed requester is not told — the strict
+check failing closed. One transaction per event: the seen-mark, each notification (its title rendered
+in every locale) and its `notification.raised`. A disabled type raises nothing.
+
+A person marks their own notification read or unread (`PATCH /notifications/{id}`); another's is not
+found. Not yet: `alert.raised` to the holders of `ops:read` (the rest of EP-25.5), preferences
+(EP-25.6), live delivery (EP-25.7).
+
+Evidence: `test/pipeline.test.ts` (a verdict to the creator, once, in both locales; an automatic
+approval to nobody; the re-check — another category, no policy; a failed transcode to its requester
+and not to a service; a mention to readers by name and through a group, not to others nor oneself; the
+registry — read by anyone, written under `config:admin`, CAS, unknown types and slots refused, an
+override's severity and title applied, a disabled type silent, audited; mark read), the store
+conformance case on sqlite and Postgres, and smoke on kind.
 
 ## 14. Open questions / future
 

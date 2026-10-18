@@ -16,6 +16,7 @@ export {
   TASK_CREATED_PATTERN,
   ASSET_EXPIRED_PATTERN,
   TASK_RESOLVED_PATTERN,
+  NOTIFYING_PATTERNS,
   PERMISSIONS_CHANGED_PATTERN,
   MEMBERSHIP_CHANGED_PATTERN,
 } from './consumers.ts';
@@ -26,6 +27,16 @@ export {
   type PrincipalSource,
 } from './principals.ts';
 export type { Inbox, Message, MessageRecipient, Notification, Task, TaskState } from './inbox.ts';
+export { NotificationPipeline, type PipelineOptions, type RaiseOutcome } from './pipeline.ts';
+export {
+  BUILT_IN_TYPES,
+  LOCALES,
+  render,
+  resolveType,
+  type BuiltInType,
+  type ResolvedType,
+  type TypeOverride,
+} from './notification-types.ts';
 export {
   Messages,
   parseNewMessage,

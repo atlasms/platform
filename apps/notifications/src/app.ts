@@ -29,6 +29,7 @@ import {
 } from '@atlas/service-kit';
 import type { EffectivePolicy } from '@atlas/policy';
 import { parseNewMessage, type Messages } from './messages.ts';
+import type { NotificationPipeline } from './pipeline.ts';
 import type { NotificationsService } from './service.ts';
 import {
   parseAssignee,
@@ -55,6 +56,8 @@ export interface NotificationsAppOptions {
   tasks?: TaskActions;
   /** Chat messages (EP-25.4). Omitted, those routes answer 503. */
   messages?: Messages;
+  /** The notification-type registry (EP-25.5). Omitted, those routes answer 503. */
+  pipeline?: NotificationPipeline;
   /** The caller's compiled policy, from IAM — task actions are authorized with it. */
   policyFor?: (
     userId: string,
@@ -311,6 +314,38 @@ export async function buildNotificationsApp(
       ...(after !== undefined ? { after } : {}),
       ...(limit !== undefined ? { limit: Number(limit) } : {}),
     });
+  });
+
+  // --- notification types (EP-25.5) and a notification's read state -----------------------------
+  const pipeline = (): NotificationPipeline => {
+    if (!options.pipeline) throw new Unavailable('notification types are not configured');
+    return options.pipeline;
+  };
+  // Every authenticated caller reads the channel's types — what their preferences are about.
+  app.get('/api/v1/notification-types', async (req) => {
+    return { items: await pipeline().types(callerOf(req.headers).channelId) };
+  });
+  app.put<{ Params: { key: string }; Querystring: Record<string, string | undefined> }>(
+    '/api/v1/notification-types/:key',
+    async (req) => {
+      const version = req.query['version'];
+      if (version === undefined || !/^\d+$/.test(version))
+        throw new ValidationError('version (the override you read, 0 for the first) is required');
+      return await pipeline().putType(
+        await acting(req),
+        req.params.key,
+        Number(version),
+        objectBody(req),
+      );
+    },
+  );
+  app.patch<Id>('/api/v1/notifications/:id', async (req, reply) => {
+    const caller = callerOf(req.headers);
+    if (!options.service) throw new Unavailable('the inbox store is not configured');
+    const read = objectBody(req)['read'];
+    if (typeof read !== 'boolean') throw new ValidationError('read must be true or false');
+    await options.service.markRead(caller, req.params.id, read);
+    return reply.code(204).send();
   });
 
   // The caller's own inbox (notifications.yaml getInbox): any authenticated caller, never anyone

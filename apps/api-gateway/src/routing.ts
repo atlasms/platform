@@ -160,6 +160,8 @@ export function productionRoutes(o: ProductionOrigins): RoutingTable {
       '/api/v1/tasks',
       '/api/v1/messages',
       '/api/v1/notifications',
+      // EP-25.5: the notification-type registry.
+      '/api/v1/notification-types',
       '/api/v1/preferences',
     ]),
   ];

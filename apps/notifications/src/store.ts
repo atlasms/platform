@@ -7,6 +7,7 @@
 
 import type { OutboxRecord } from '@atlas/messaging';
 import type { Message, Notification, PrincipalKind, Task } from './inbox.ts';
+import type { TypeOverride } from './notification-types.ts';
 
 export interface InboxStore {
   transaction<T>(fn: (tx: InboxTx) => Promise<T>): Promise<T>;
@@ -30,6 +31,8 @@ export interface InboxStore {
     reader: { userId: string; groups: string[] },
     options: { after?: string; limit: number },
   ): Promise<Message[]>;
+  /** A channel's notification-type overrides (EP-25.5). */
+  typeOverrides(channelId: string): Promise<TypeOverride[]>;
   close(): Promise<void>;
 }
 
@@ -42,6 +45,13 @@ export interface InboxTx {
    */
   updateTask(task: Task, ifVersion: number): Promise<boolean>;
   insertNotification(notification: Notification): Promise<void>;
+  /**
+   * Write a type's override: an insert when `ifVersion` is 0, otherwise only over that version —
+   * `false` means someone wrote it in between, and nothing was written.
+   */
+  putTypeOverride(override: TypeOverride, ifVersion: number): Promise<boolean>;
+  /** Mark one of a person's notifications read; `false` if it is not theirs (or not there). */
+  markRead(channelId: string, userId: string, id: string, read: boolean): Promise<boolean>;
   /** A sent message and one row per recipient — the index a reader is found by. */
   insertMessage(message: Message): Promise<void>;
   enqueue(record: OutboxRecord): Promise<void>;

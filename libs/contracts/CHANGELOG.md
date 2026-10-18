@@ -23,6 +23,10 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `asset.approved`, `asset.rejected` and `asset.expired` carry `createdBy` and `categoryPath`, and
+  `transcode.failed` carries `requestedBy` (EP-25.5): who Notifications tells, and what that person
+  must be able to read to be told.
+
 - `asset.expired` is in `WORKFLOW_TRIGGERS` (EP-22.10): a workflow may start on an approval lapsing —
   the `re-review-on-expiry` preset does.
 

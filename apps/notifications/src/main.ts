@@ -27,6 +27,7 @@ import {
   startConsumers,
   startPrincipalInvalidation,
   Messages,
+  NotificationPipeline,
   TaskActions,
 } from './index.ts';
 import { PolicyClient } from '@atlas/policy/client';
@@ -130,6 +131,12 @@ const service = new NotificationsService({
 
 const policies = new PolicyClient({ origin: config.iamOrigin, ttlMs: config.policyTtlMs });
 const tasks = new TaskActions({ store, ...(principals ? { principals } : {}) });
+// EP-25.5: every recipient re-checked against their own policy, from IAM, before they are told.
+const pipeline = new NotificationPipeline({
+  store,
+  policyFor: (userId) => policies.policyFor(userId),
+  ...(principals ? { principals } : {}),
+});
 const messages = new Messages({
   store,
   ...(principals ? { principals } : {}),
@@ -144,6 +151,7 @@ const app = await buildNotificationsApp({
   service,
   tasks,
   messages,
+  pipeline,
   policyFor: (userId) => policies.policyFor(userId),
   health,
   metrics,
@@ -186,6 +194,7 @@ async function startBroker(): Promise<void> {
   startConsumers({
     broker,
     service,
+    pipeline,
     onOutcome: (subject, outcome) => log.info('event consumed', { subject, outcome }),
     onError: (err, msg) =>
       log.warn('event refused', {
