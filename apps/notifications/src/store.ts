@@ -6,7 +6,7 @@
 // with what it wrote (EP-03.3), so a redelivered event writes nothing twice.
 
 import type { OutboxRecord } from '@atlas/messaging';
-import type { Message, Notification, PrincipalKind, Task } from './inbox.ts';
+import type { Message, Notification, PrincipalKind, SharedNotification, Task } from './inbox.ts';
 import type { TypeOverride } from './notification-types.ts';
 
 export interface InboxStore {
@@ -31,6 +31,18 @@ export interface InboxStore {
     reader: { userId: string; groups: string[] },
     options: { after?: string; limit: number },
   ): Promise<Message[]>;
+  /**
+   * The shared notifications of a channel addressed to any of these permissions, newest first, as
+   * this reader sees them — `userId` the reader, `read` their own read state (EP-25.5).
+   */
+  sharedFor(
+    channelId: string,
+    permissions: string[],
+    userId: string,
+    limit: number,
+  ): Promise<Notification[]>;
+  /** How many of those this reader has not read. */
+  sharedUnread(channelId: string, permissions: string[], userId: string): Promise<number>;
   /** A channel's notification-type overrides (EP-25.5). */
   typeOverrides(channelId: string): Promise<TypeOverride[]>;
   close(): Promise<void>;
@@ -50,6 +62,19 @@ export interface InboxTx {
    * `false` means someone wrote it in between, and nothing was written.
    */
   putTypeOverride(override: TypeOverride, ifVersion: number): Promise<boolean>;
+  /** A notification for everyone holding a permission. */
+  insertShared(notification: SharedNotification): Promise<void>;
+  /**
+   * A reader's read state of a shared notification — `false` if there is none addressed to one of
+   * `permissions` (theirs to hold) in the channel.
+   */
+  markSharedRead(
+    channelId: string,
+    userId: string,
+    id: string,
+    read: boolean,
+    permissions: string[],
+  ): Promise<boolean>;
   /** Mark one of a person's notifications read; `false` if it is not theirs (or not there). */
   markRead(channelId: string, userId: string, id: string, read: boolean): Promise<boolean>;
   /** A sent message and one row per recipient — the index a reader is found by. */

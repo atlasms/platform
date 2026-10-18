@@ -20,7 +20,9 @@ import {
   type EventPayloads,
 } from '@atlas/contracts';
 import type { Message } from '@atlas/messaging';
+import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, NotFound, ValidationError } from '@atlas/service-kit';
+import { ALERT_AUDIENCE } from './notification-types.ts';
 import { isClosed, type EntityRef, type Inbox, type Task } from './inbox.ts';
 import { outboxRecord } from './record.ts';
 import type { Principal, PrincipalSource } from './principals.ts';
@@ -41,8 +43,18 @@ export interface NotificationsOptions {
   principals?: PrincipalSource;
   /** Why an inbox was partial — IAM away. Never a reason to fail the read. */
   onPrincipalsUnavailable?: (err: unknown, userId: string) => void;
+  /**
+   * The reader's policy, from IAM — which shared notifications are theirs (an alert to `ops:read`
+   * holders; EP-25.5). Omitted, an inbox holds none of them.
+   */
+  policyFor?: (
+    userId: string,
+  ) => Promise<EffectivePolicy | undefined> | EffectivePolicy | undefined;
   now?: () => Date;
 }
+
+/** The permissions a shared notification may be addressed to — today, operations'. */
+const SHARED_AUDIENCES = [ALERT_AUDIENCE];
 
 const INBOX_TASKS = 100;
 const INBOX_NOTIFICATIONS = 50;
@@ -51,13 +63,25 @@ export class NotificationsService {
   private readonly store: InboxStore;
   private readonly principals: PrincipalSource | undefined;
   private readonly onPrincipalsUnavailable: NotificationsOptions['onPrincipalsUnavailable'];
+  private readonly policyFor: NotificationsOptions['policyFor'];
   private readonly now: () => Date;
 
   constructor(options: NotificationsOptions) {
     this.store = options.store;
     this.principals = options.principals;
     this.onPrincipalsUnavailable = options.onPrincipalsUnavailable;
+    this.policyFor = options.policyFor;
     this.now = options.now ?? (() => new Date());
+  }
+
+  /** The audiences of shared notifications this reader belongs to NOW — by their own policy. */
+  private async audiencesOf(caller: Caller): Promise<string[]> {
+    if (!this.policyFor) return [];
+    const policy = await this.policyFor(caller.userId);
+    if (!policy) return [];
+    return SHARED_AUDIENCES.filter(
+      (p) => canEnforce(policy, p, { channelId: caller.channelId }).allowed,
+    );
   }
 
   // --- the inbox -----------------------------------------------------------------------------------
@@ -79,18 +103,29 @@ export class NotificationsService {
         this.onPrincipalsUnavailable?.(err, caller.userId);
       }
     }
-    const [tasks, notifications, unreadCount] = await Promise.all([
+    const audiences = await this.audiencesOf(caller);
+    const [tasks, own, unread, shared, sharedUnread] = await Promise.all([
       this.store.openTasks(caller.channelId, principals, INBOX_TASKS),
       this.store.notifications(caller.channelId, caller.userId, INBOX_NOTIFICATIONS),
       this.store.unreadCount(caller.channelId, caller.userId),
+      this.store.sharedFor(caller.channelId, audiences, caller.userId, INBOX_NOTIFICATIONS),
+      this.store.sharedUnread(caller.channelId, audiences, caller.userId),
     ]);
-    return { tasks, notifications, unreadCount, partial };
+    // One list, newest first — ids are ULIDs, so by id is by time.
+    const notifications = [...own, ...shared]
+      .sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+      .slice(0, INBOX_NOTIFICATIONS);
+    return { tasks, notifications, unreadCount: unread + sharedUnread, partial };
   }
 
   /** Mark one of the caller's notifications read (or unread) — theirs only; another's is not found. */
   async markRead(caller: Caller, id: string, read: boolean): Promise<void> {
-    const done = await this.store.transaction((tx) =>
-      tx.markRead(caller.channelId, caller.userId, id, read),
+    const audiences = await this.audiencesOf(caller);
+    const done = await this.store.transaction(
+      async (tx) =>
+        (await tx.markRead(caller.channelId, caller.userId, id, read)) ||
+        // A shared one — an alert — is marked for this reader only, and only if it is theirs.
+        tx.markSharedRead(caller.channelId, caller.userId, id, read, audiences),
     );
     if (!done) throw new NotFound(`notification ${id}`);
   }

@@ -211,6 +211,8 @@ if (seedUser && seedPassword) {
           'task:audit',
           // EP-25.4: send messages, so the smoke suite can.
           'message:send',
+          // EP-25.5: operations' alerts reach the smoke user's inbox.
+          'ops:read',
         ],
         scope: { channelIds: [channelId] },
       },

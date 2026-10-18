@@ -16,6 +16,7 @@ export const NOTIFYING_PATTERNS = {
   rejected: 'atlas.*.asset.rejected',
   transcodeFailed: 'atlas.*.transcode.failed',
   messageSent: 'atlas.*.message.sent',
+  alertRaised: 'atlas.*.alert.raised',
 } as const;
 
 export interface ConsumerOptions {
@@ -90,6 +91,11 @@ export function startConsumers(options: ConsumerOptions): Subscription[] {
     options.broker.subscribe(
       NOTIFYING_PATTERNS.transcodeFailed,
       handle((m) => options.pipeline.consumeTranscodeFailed(m)),
+      retry,
+    ),
+    options.broker.subscribe(
+      NOTIFYING_PATTERNS.alertRaised,
+      handle((m) => options.pipeline.consumeAlertRaised(m)),
       retry,
     ),
     options.broker.subscribe(

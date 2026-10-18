@@ -122,14 +122,16 @@ const readKey = internalKeys(config.iamReadKeys)[0];
 const principals =
   readKey !== undefined ? iamPrincipals({ origin: config.iamOrigin, key: readKey }) : undefined;
 if (!principals) log.warn('no iam-read-keys: inboxes hold tasks offered by name only');
+const policies = new PolicyClient({ origin: config.iamOrigin, ttlMs: config.policyTtlMs });
 const service = new NotificationsService({
   store,
+  // EP-25.5: an alert reaches whoever holds ops:read — by their own policy, when they read.
+  policyFor: (userId) => policies.policyFor(userId),
   ...(principals ? { principals } : {}),
   onPrincipalsUnavailable: (err, userId) =>
     log.warn('principals unavailable; inbox partial', { userId, error: (err as Error).message }),
 });
 
-const policies = new PolicyClient({ origin: config.iamOrigin, ttlMs: config.policyTtlMs });
 const tasks = new TaskActions({ store, ...(principals ? { principals } : {}) });
 // EP-25.5: every recipient re-checked against their own policy, from IAM, before they are told.
 const pipeline = new NotificationPipeline({

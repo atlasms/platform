@@ -33,6 +33,7 @@ import { Conflict, Forbidden, ValidationError } from '@atlas/service-kit';
 import { delta } from '@atlas/contracts';
 import type { Notification } from './inbox.ts';
 import {
+  ALERT_AUDIENCE,
   BUILT_IN_TYPES,
   LOCALES,
   parseOverride,
@@ -211,6 +212,40 @@ export class NotificationPipeline {
       { permission: 'asset:read', resource: { channelId: e.channelId, type: 'asset' } },
       { error: p.error.message },
     );
+  }
+
+  /**
+   * `alert.raised` → ONE notification for everyone who holds `ops:read` in the channel, resolved to
+   * its readers when an inbox is read (decided 2026-10-18), as a role's task is: someone granted
+   * operations later sees the alert, someone who lost it does not. Holding `ops:read` is the read
+   * check — it is the permission the log reads alerts under. Its severity is the alert's own.
+   */
+  async consumeAlertRaised(msg: BrokerMessage): Promise<RaiseOutcome> {
+    const e = this.envelopeOf<EventPayloads['alert.raised']>(msg, 'alert.raised');
+    const p = e.payload;
+    const type = await this.type(e.channelId, 'alert');
+    if (!type?.enabled) return 'skipped';
+    const vars = { message: p.message, source: p.source, kind: p.kind };
+    const titles = Object.fromEntries(LOCALES.map((l) => [l, render(type.title[l], vars)]));
+    let outcome: RaiseOutcome = 'applied';
+    await this.store.transaction(async (tx) => {
+      if (!(await tx.markSeen(msg.id))) {
+        outcome = 'duplicate';
+        return;
+      }
+      await tx.insertShared({
+        id: ulid(),
+        channelId: e.channelId,
+        type: 'alert',
+        severity: p.severity,
+        ...(p.subjectRef !== undefined ? { subjectRef: p.subjectRef } : {}),
+        title: titles['en']!,
+        titles,
+        createdAt: this.now().toISOString(),
+        audience: { permission: ALERT_AUDIENCE },
+      });
+    });
+    return outcome;
   }
 
   /** `@<userId>` in a message → that person, when the message is theirs to read. */

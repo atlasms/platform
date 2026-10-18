@@ -17,6 +17,9 @@ export const LOCALES = ['en', 'ar'] as const;
 export type Locale = (typeof LOCALES)[number];
 export type Titles = Record<Locale, string>;
 
+/** Who the `alert` type is for — operations' permission (authorization-model §9). */
+export const ALERT_AUDIENCE = 'ops:read';
+
 /** A type as code defines it: the event that raises it and the defaults a channel starts from. */
 export interface BuiltInType {
   key: string;
@@ -84,6 +87,18 @@ export const BUILT_IN_TYPES: Readonly<Record<string, BuiltInType>> = {
     defaultOn: true,
     mandatory: false,
     title: { en: 'A transcode you asked for failed: {{error}}', ar: 'فشل تحويل طلبته: {{error}}' },
+  },
+  alert: {
+    key: 'alert',
+    event: 'alert.raised',
+    recipients: 'everyone who holds ops:read in the channel, resolved when the inbox is read',
+    vars: ['message', 'source', 'kind'],
+    // An alert carries its own severity; this is the one the registry shows for the type.
+    severity: 'warning',
+    enabled: true,
+    defaultOn: true,
+    mandatory: true,
+    title: { en: '{{message}}', ar: '{{message}}' },
   },
   'message.mention': {
     key: 'message.mention',
