@@ -25,7 +25,15 @@ export {
   type Principal,
   type PrincipalSource,
 } from './principals.ts';
-export type { Inbox, Notification, Task, TaskState } from './inbox.ts';
+export type { Inbox, Message, MessageRecipient, Notification, Task, TaskState } from './inbox.ts';
+export {
+  Messages,
+  parseNewMessage,
+  MAX_BODY,
+  MAX_RECIPIENTS,
+  type MessagesOptions,
+  type NewMessage,
+} from './messages.ts';
 export {
   TaskActions,
   parseAssignee,

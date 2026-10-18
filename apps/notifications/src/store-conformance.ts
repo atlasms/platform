@@ -153,6 +153,51 @@ export function inboxStoreConformance(name: string, harness: InboxStoreHarness):
     });
   });
 
+  test(`[${name}] messages: a reader's own, by name and through their groups, newest first, channel-scoped`, async () => {
+    await withFixture(async ({ store }) => {
+      const msg = (
+        id: string,
+        from: string,
+        to: { kind: 'user' | 'group'; id: string }[],
+        channelId = 'ch12',
+      ) => ({
+        id,
+        channelId,
+        from,
+        to,
+        body: `body of ${id}`,
+        sentAt: '2026-10-18T10:00:00.000Z',
+      });
+      // Ids in sending order — ulid() within one millisecond is not monotonic.
+      const [ia, ib, ic, id] = [ulid(), ulid(), ulid(), ulid()].sort();
+      const a = msg(ia!, 'ana', [{ kind: 'user', id: 'ben' }]);
+      const b = msg(ib!, 'cat', [{ kind: 'group', id: 'g-desk' }]);
+      const c = msg(ic!, 'cat', [
+        { kind: 'group', id: 'g-other' },
+        { kind: 'user', id: 'ben' },
+      ]);
+      const elsewhere = msg(id!, 'ana', [{ kind: 'user', id: 'ben' }], 'ch99');
+      await store.transaction(async (tx) => {
+        for (const m of [a, b, c, elsewhere]) await tx.insertMessage(m);
+      });
+      const ids = async (userId: string, groups: string[], after?: string) =>
+        (
+          await store.messagesFor(
+            'ch12',
+            { userId, groups },
+            { ...(after !== undefined ? { after } : {}), limit: 10 },
+          )
+        ).map((m) => m.id);
+      assert.deepEqual(await ids('ben', []), [c.id, a.id], 'by name, newest first, this channel');
+      assert.deepEqual(await ids('dan', ['g-desk']), [b.id], 'through a group');
+      assert.deepEqual(await ids('cat', []), [c.id, b.id], 'what they sent');
+      assert.deepEqual(await ids('ben', ['g-desk', 'g-other'], c.id), [b.id, a.id], 'keyset');
+      assert.deepEqual(await ids('eve', []), []);
+      const [read] = await store.messagesFor('ch12', { userId: 'ben', groups: [] }, { limit: 1 });
+      assert.deepEqual(read, c, 'the message as sent');
+    });
+  });
+
   test(`[${name}] open tasks come oldest-due first, undated last`, async () => {
     await withFixture(async ({ service }) => {
       const ids: string[] = [];

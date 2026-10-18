@@ -62,7 +62,7 @@ stateDiagram-v2
 | Method | Path | Purpose | Authz |
 |--------|------|---------|-------|
 | `GET` | `/inbox` | Unified inbox — open tasks offered to the caller by name, group or role (resolved at read time), and notifications. ✅ EP-25.1/25.3 | self |
-| `GET/POST` | `/messages` | List/send direct or group messages. EP-25.4 | `message:send` (to be added to the catalogue with 25.4) |
+| `GET/POST` | `/messages` | List the caller's messages / send a direct or group message — §13d. ✅ EP-25.4 | `message:send` to send; reading is the caller's own |
 | `POST` | `/tasks` | Assign a task by hand to a user, group or role. ✅ EP-25.2 | `task:assign` |
 | `GET` | `/tasks/{id}` | One task. ✅ EP-25.2 | a participant, a holder of what it is offered to, or `task:admin` |
 | `POST` | `/tasks/{id}/claim` · `/forward` · `/complete` · `/cancel` | Claim (first wins), hand on, complete with an outcome, cancel — §13c. ✅ EP-25.2 | the holder; `task:admin` to reassign or cancel |
@@ -235,6 +235,32 @@ cancelled) and audited `task.cancelled`. A task already closed is a duplicate. b
 Not yet: a task's audit history (`task` entity) has no read rule in the log — choosing one is a log
 visibility change, reviewed with EP-25.2, which is when people first act on tasks. Live delivery is
 EP-25.7; until then `task.created`/`notification.raised` reach the log, not a socket.
+
+## 13d. As built — EP-25.4, messages (decided 2026-10-18)
+
+- **Who may message whom.** With `message:send` in the channel — every starter role a person works
+  under carries it (authorization-model §9) — a person may message ANY user and ANY group of their
+  channel, a member of it or not. A ROLE is not addressable for chat (422): it is a set of
+  permissions, not people one talks to. The channel is the boundary: a message is a row of the
+  sender's channel and is read only in it, so an id that names nobody here reaches nobody — no
+  lookup of recipients is made, and none could leak whether an id exists.
+- **Who reads a group's message: its members WHEN IT IS READ** — a chat room: a member who joins
+  reads its history, one who leaves no longer does. Resolved as a role's task is (§13b): the
+  reader's groups come from IAM at read time, cached and forgotten on a membership change; IAM
+  away, `GET /messages` holds what is the reader's by name — sent by or to them — and says
+  `partial: true`.
+- **Sending is one transaction** (`POST /messages`, `{ to: [{ kind, id }], body, threadId? }`, at
+  most 50 recipients and 4000 characters): the message, a row per recipient (the index a reader is
+  found by), `message.sent`, and `audit.recorded` whose delta is the METADATA — who wrote to whom,
+  when, in which thread — never the body (§10). Neither the log's `message` entries nor its
+  history have a read rule today (`message:read` exists nowhere), so content stays with its
+  participants; live delivery is EP-25.7.
+- `GET /messages` is the caller's own (no parameter names a user): newest first, keyset on id.
+
+Evidence: `test/messages.test.ts` (a user and a group as recipients — sender, user and members read
+it, nobody else, nor another channel; a joiner reads the history and a leaver does not; IAM away is
+`partial`; `message:send`, roles refused, bodies bounded; the audit without the body; paging), the
+store conformance case on sqlite and Postgres, and smoke on kind.
 
 ## 14. Open questions / future
 

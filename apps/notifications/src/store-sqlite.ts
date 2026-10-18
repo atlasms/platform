@@ -12,7 +12,7 @@ import {
   type Db,
   type Migration,
 } from '@atlas/data';
-import { normalizeTask, type Notification, type Task } from './inbox.ts';
+import { normalizeTask, type Message, type Notification, type Task } from './inbox.ts';
 import type { InboxStore, InboxTx } from './store.ts';
 
 export const sqliteMigrations: Migration[] = [
@@ -46,6 +46,26 @@ export const sqliteMigrations: Migration[] = [
   {
     id: 'notifications_task_version',
     up: `ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`,
+  },
+  // EP-25.4: chat messages, and the recipients a reader is found by (a group resolved when read).
+  {
+    id: 'notifications_messages',
+    up: `CREATE TABLE IF NOT EXISTS messages (
+           id         TEXT PRIMARY KEY,
+           channel_id TEXT NOT NULL,
+           sender     TEXT NOT NULL,
+           data       TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS messages_sender_idx ON messages (channel_id, sender, id);
+         CREATE TABLE IF NOT EXISTS message_recipients (
+           message_id   TEXT NOT NULL REFERENCES messages(id),
+           channel_id   TEXT NOT NULL,
+           kind         TEXT NOT NULL,
+           recipient_id TEXT NOT NULL,
+           PRIMARY KEY (message_id, kind, recipient_id)
+         );
+         CREATE INDEX IF NOT EXISTS message_recipients_reader_idx
+           ON message_recipients (channel_id, kind, recipient_id, message_id);`,
   },
 ];
 
@@ -97,6 +117,19 @@ export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
         'INSERT INTO notifications (id, channel_id, user_id, read, data) VALUES (?, ?, ?, ?, ?)',
       ).run(n.id, n.channelId, n.userId, n.read ? 1 : 0, JSON.stringify(n));
     },
+    async insertMessage(m) {
+      db.prepare('INSERT INTO messages (id, channel_id, sender, data) VALUES (?, ?, ?, ?)').run(
+        m.id,
+        m.channelId,
+        m.from,
+        JSON.stringify(m),
+      );
+      const add = db.prepare(
+        `INSERT INTO message_recipients (message_id, channel_id, kind, recipient_id)
+         VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+      );
+      for (const r of m.to) add.run(m.id, m.channelId, r.kind, r.id);
+    },
     async enqueue(record) {
       outbox.enqueue(record);
     },
@@ -137,6 +170,31 @@ export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
         )
         .all(channelId, userId, limit) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as Notification);
+    },
+    async messagesFor(channelId, reader, { after, limit }) {
+      const params: (string | number)[] = [channelId, reader.userId, channelId, reader.userId];
+      const groups = reader.groups.map(() => '?').join(', ');
+      params.push(...reader.groups);
+      let keyset = '';
+      if (after !== undefined) {
+        keyset = 'AND m.id < ?';
+        params.push(after);
+      }
+      params.push(limit);
+      const rows = db
+        .prepare(
+          `SELECT m.data FROM messages m
+            WHERE m.channel_id = ?
+              AND (m.sender = ?
+                   OR m.id IN (SELECT message_id FROM message_recipients
+                                WHERE channel_id = ?
+                                  AND ((kind = 'user' AND recipient_id = ?)
+                                       ${groups ? `OR (kind = 'group' AND recipient_id IN (${groups}))` : ''})))
+              ${keyset}
+            ORDER BY m.id DESC LIMIT ?`,
+        )
+        .all(...params) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as Message);
     },
     async unreadCount(channelId, userId) {
       const row = db

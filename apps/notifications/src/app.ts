@@ -28,6 +28,7 @@ import {
   type Tracer,
 } from '@atlas/service-kit';
 import type { EffectivePolicy } from '@atlas/policy';
+import { parseNewMessage, type Messages } from './messages.ts';
 import type { NotificationsService } from './service.ts';
 import {
   parseAssignee,
@@ -52,6 +53,8 @@ export interface NotificationsAppOptions {
   service?: NotificationsService;
   /** What people do with tasks (EP-25.2). Omitted, those routes answer 503. */
   tasks?: TaskActions;
+  /** Chat messages (EP-25.4). Omitted, those routes answer 503. */
+  messages?: Messages;
   /** The caller's compiled policy, from IAM — task actions are authorized with it. */
   policyFor?: (
     userId: string,
@@ -242,7 +245,7 @@ export async function buildNotificationsApp(
 
   const acting = async (req: FastifyRequest): Promise<ActingCaller> => {
     const caller = callerOf(req.headers);
-    if (!options.tasks || !options.policyFor) throw new Unavailable('tasks are not configured');
+    if (!options.policyFor) throw new Unavailable('authorization is not configured');
     const policy = await options.policyFor(caller.userId);
     if (!policy) throw new Unauthorized('no policy for subject');
     return { ...caller, policy, correlationId: req.correlationId };
@@ -284,6 +287,30 @@ export async function buildNotificationsApp(
   });
   app.post<Id>('/api/v1/tasks/:id/cancel', async (req) => {
     return await tasks().cancel(await acting(req), req.params.id);
+  });
+
+  // --- messages (EP-25.4) ------------------------------------------------------------------------
+  const messages = (): Messages => {
+    if (!options.messages) throw new Unavailable('messages are not configured');
+    return options.messages;
+  };
+  app.post('/api/v1/messages', async (req, reply) => {
+    const caller = await acting(req);
+    return reply.code(201).send(await messages().send(caller, parseNewMessage(objectBody(req))));
+  });
+  // The caller's own messages — there is no parameter that names a user.
+  app.get<{ Querystring: Record<string, string | undefined> }>('/api/v1/messages', async (req) => {
+    const caller = callerOf(req.headers);
+    const after = req.query['after'];
+    if (after !== undefined && !isUlid(after))
+      throw new ValidationError('after must be a message id');
+    const limit = req.query['limit'];
+    if (limit !== undefined && !/^\d+$/.test(limit))
+      throw new ValidationError('limit must be a positive integer');
+    return await messages().list(caller, {
+      ...(after !== undefined ? { after } : {}),
+      ...(limit !== undefined ? { limit: Number(limit) } : {}),
+    });
   });
 
   // The caller's own inbox (notifications.yaml getInbox): any authenticated caller, never anyone

@@ -6,7 +6,7 @@
 // with what it wrote (EP-03.3), so a redelivered event writes nothing twice.
 
 import type { OutboxRecord } from '@atlas/messaging';
-import type { Notification, PrincipalKind, Task } from './inbox.ts';
+import type { Message, Notification, PrincipalKind, Task } from './inbox.ts';
 
 export interface InboxStore {
   transaction<T>(fn: (tx: InboxTx) => Promise<T>): Promise<T>;
@@ -20,6 +20,16 @@ export interface InboxStore {
   /** A person's notifications in a channel, newest first. */
   notifications(channelId: string, userId: string, limit: number): Promise<Notification[]>;
   unreadCount(channelId: string, userId: string): Promise<number>;
+  /**
+   * A person's messages in a channel, newest first (EP-25.4): what they sent, what was sent to them
+   * by name, and what was sent to any of `groups` — the groups they are in NOW (resolved by the
+   * caller at read time). Keyset on the message id, descending.
+   */
+  messagesFor(
+    channelId: string,
+    reader: { userId: string; groups: string[] },
+    options: { after?: string; limit: number },
+  ): Promise<Message[]>;
   close(): Promise<void>;
 }
 
@@ -32,6 +42,8 @@ export interface InboxTx {
    */
   updateTask(task: Task, ifVersion: number): Promise<boolean>;
   insertNotification(notification: Notification): Promise<void>;
+  /** A sent message and one row per recipient — the index a reader is found by. */
+  insertMessage(message: Message): Promise<void>;
   enqueue(record: OutboxRecord): Promise<void>;
   /** The consumer's dedup mark, in the transaction of its writes (EP-03.3). */
   markSeen(messageId: string): Promise<boolean>;
