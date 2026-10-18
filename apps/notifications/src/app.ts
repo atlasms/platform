@@ -30,6 +30,7 @@ import {
 import type { EffectivePolicy } from '@atlas/policy';
 import { parseNewMessage, type Messages } from './messages.ts';
 import type { NotificationPipeline } from './pipeline.ts';
+import type { PreferencesService } from './preferences.ts';
 import type { NotificationsService } from './service.ts';
 import {
   parseAssignee,
@@ -58,6 +59,8 @@ export interface NotificationsAppOptions {
   messages?: Messages;
   /** The notification-type registry (EP-25.5). Omitted, those routes answer 503. */
   pipeline?: NotificationPipeline;
+  /** A person's notification preferences (EP-25.6). Omitted, those routes answer 503. */
+  preferences?: PreferencesService;
   /** The caller's compiled policy, from IAM — task actions are authorized with it. */
   policyFor?: (
     userId: string,
@@ -347,6 +350,30 @@ export async function buildNotificationsApp(
     await options.service.markRead(caller, req.params.id, read);
     return reply.code(204).send();
   });
+
+  // --- preferences (EP-25.6): the caller's own, no parameter names a user ---------------------------
+  const preferences = (): PreferencesService => {
+    if (!options.preferences) throw new Unavailable('preferences are not configured');
+    return options.preferences;
+  };
+  app.get('/api/v1/preferences', async (req) => {
+    return await preferences().get(callerOf(req.headers));
+  });
+  app.put<{ Querystring: Record<string, string | undefined> }>(
+    '/api/v1/preferences',
+    async (req) => {
+      const version = req.query['version'];
+      if (version === undefined || !/^\d+$/.test(version))
+        throw new ValidationError(
+          'version (the preferences you read, 0 for the first) is required',
+        );
+      return await preferences().put(
+        { ...callerOf(req.headers), correlationId: req.correlationId },
+        Number(version),
+        objectBody(req),
+      );
+    },
+  );
 
   // The caller's own inbox (notifications.yaml getInbox): any authenticated caller, never anyone
   // else's — there is no parameter that names a user.

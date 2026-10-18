@@ -18,6 +18,7 @@ import {
   type Task,
 } from './inbox.ts';
 import type { TypeOverride } from './notification-types.ts';
+import type { Preferences } from './preferences.ts';
 import type { InboxStore, InboxTx } from './store.ts';
 
 export const pgMigrations: Migration[] = [
@@ -103,6 +104,17 @@ export const pgMigrations: Migration[] = [
            PRIMARY KEY (notification_id, user_id)
          );`,
   },
+  // EP-25.6: a person's notification preferences — one row per person per channel.
+  {
+    id: 'notifications_preferences',
+    up: `CREATE TABLE IF NOT EXISTS preferences (
+           channel_id text NOT NULL,
+           user_id    text NOT NULL,
+           version    integer NOT NULL,
+           data       jsonb NOT NULL,
+           PRIMARY KEY (channel_id, user_id)
+         );`,
+  },
 ];
 
 export function pgInboxStore(pool: PgPool): InboxStore {
@@ -153,6 +165,21 @@ export function pgInboxStore(pool: PgPool): InboxStore {
               'INSERT INTO notifications (id, channel_id, user_id, read, data) VALUES ($1, $2, $3, $4, $5)',
               [n.id, n.channelId, n.userId, n.read, JSON.stringify(n)],
             );
+          },
+          async putPreferences(p, ifVersion) {
+            const result =
+              ifVersion === 0
+                ? await client.query(
+                    `INSERT INTO preferences (channel_id, user_id, version, data) VALUES ($1, $2, $3, $4)
+                     ON CONFLICT DO NOTHING`,
+                    [p.channelId, p.userId, p.version, JSON.stringify(p)],
+                  )
+                : await client.query(
+                    `UPDATE preferences SET version = $1, data = $2
+                      WHERE channel_id = $3 AND user_id = $4 AND version = $5`,
+                    [p.version, JSON.stringify(p), p.channelId, p.userId, ifVersion],
+                  );
+            return result.rowCount === 1;
           },
           async insertShared(n) {
             await client.query(
@@ -252,6 +279,13 @@ export function pgInboxStore(pool: PgPool): InboxStore {
         [channelId, userId, limit],
       );
       return rows.map((r) => r.data);
+    },
+    async preferences(channelId, userId) {
+      const { rows } = await pool.query<{ data: Preferences }>(
+        'SELECT data FROM preferences WHERE channel_id = $1 AND user_id = $2',
+        [channelId, userId],
+      );
+      return rows[0]?.data;
     },
     async sharedFor(channelId, permissions, userId, limit) {
       if (permissions.length === 0) return [];

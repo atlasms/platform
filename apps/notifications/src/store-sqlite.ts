@@ -20,6 +20,7 @@ import {
   type Task,
 } from './inbox.ts';
 import type { TypeOverride } from './notification-types.ts';
+import type { Preferences } from './preferences.ts';
 import type { InboxStore, InboxTx } from './store.ts';
 
 export const sqliteMigrations: Migration[] = [
@@ -105,6 +106,17 @@ export const sqliteMigrations: Migration[] = [
            PRIMARY KEY (notification_id, user_id)
          );`,
   },
+  // EP-25.6: a person's notification preferences — one row per person per channel.
+  {
+    id: 'notifications_preferences',
+    up: `CREATE TABLE IF NOT EXISTS preferences (
+           channel_id TEXT NOT NULL,
+           user_id    TEXT NOT NULL,
+           version    INTEGER NOT NULL,
+           data       TEXT NOT NULL,
+           PRIMARY KEY (channel_id, user_id)
+         );`,
+  },
 ];
 
 export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
@@ -154,6 +166,23 @@ export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
       db.prepare(
         'INSERT INTO notifications (id, channel_id, user_id, read, data) VALUES (?, ?, ?, ?, ?)',
       ).run(n.id, n.channelId, n.userId, n.read ? 1 : 0, JSON.stringify(n));
+    },
+    async putPreferences(p, ifVersion) {
+      const result =
+        ifVersion === 0
+          ? db
+              .prepare(
+                `INSERT INTO preferences (channel_id, user_id, version, data) VALUES (?, ?, ?, ?)
+                 ON CONFLICT DO NOTHING`,
+              )
+              .run(p.channelId, p.userId, p.version, JSON.stringify(p))
+          : db
+              .prepare(
+                `UPDATE preferences SET version = ?, data = ?
+                  WHERE channel_id = ? AND user_id = ? AND version = ?`,
+              )
+              .run(p.version, JSON.stringify(p), p.channelId, p.userId, ifVersion);
+      return Number(result.changes) === 1;
     },
     async insertShared(n) {
       db.prepare(
@@ -255,6 +284,12 @@ export function sqliteInboxStore(path = ':memory:'): InboxStore & { db: Db } {
         )
         .all(channelId, userId, limit) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as Notification);
+    },
+    async preferences(channelId, userId) {
+      const row = db
+        .prepare('SELECT data FROM preferences WHERE channel_id = ? AND user_id = ?')
+        .get(channelId, userId) as { data: string } | undefined;
+      return row ? (JSON.parse(row.data) as Preferences) : undefined;
     },
     async sharedFor(channelId, permissions, userId, limit) {
       if (permissions.length === 0) return [];

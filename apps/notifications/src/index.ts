@@ -29,6 +29,13 @@ export {
 export type { Inbox, Message, MessageRecipient, Notification, Task, TaskState } from './inbox.ts';
 export { NotificationPipeline, type PipelineOptions, type RaiseOutcome } from './pipeline.ts';
 export {
+  PreferencesService,
+  channelTypes,
+  isOn,
+  type PreferenceView,
+  type Preferences,
+} from './preferences.ts';
+export {
   BUILT_IN_TYPES,
   LOCALES,
   render,

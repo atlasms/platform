@@ -28,6 +28,7 @@ import {
   startPrincipalInvalidation,
   Messages,
   NotificationPipeline,
+  PreferencesService,
   TaskActions,
 } from './index.ts';
 import { PolicyClient } from '@atlas/policy/client';
@@ -154,6 +155,7 @@ const app = await buildNotificationsApp({
   tasks,
   messages,
   pipeline,
+  preferences: new PreferencesService({ store }),
   policyFor: (userId) => policies.policyFor(userId),
   health,
   metrics,

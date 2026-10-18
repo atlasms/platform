@@ -8,6 +8,7 @@
 import type { OutboxRecord } from '@atlas/messaging';
 import type { Message, Notification, PrincipalKind, SharedNotification, Task } from './inbox.ts';
 import type { TypeOverride } from './notification-types.ts';
+import type { Preferences } from './preferences.ts';
 
 export interface InboxStore {
   transaction<T>(fn: (tx: InboxTx) => Promise<T>): Promise<T>;
@@ -43,6 +44,8 @@ export interface InboxStore {
   ): Promise<Notification[]>;
   /** How many of those this reader has not read. */
   sharedUnread(channelId: string, permissions: string[], userId: string): Promise<number>;
+  /** A person's notification preferences in a channel (EP-25.6), if they have chosen any. */
+  preferences(channelId: string, userId: string): Promise<Preferences | undefined>;
   /** A channel's notification-type overrides (EP-25.5). */
   typeOverrides(channelId: string): Promise<TypeOverride[]>;
   close(): Promise<void>;
@@ -62,6 +65,8 @@ export interface InboxTx {
    * `false` means someone wrote it in between, and nothing was written.
    */
   putTypeOverride(override: TypeOverride, ifVersion: number): Promise<boolean>;
+  /** Replace a person's preferences: an insert when `ifVersion` is 0, else only over that version. */
+  putPreferences(preferences: Preferences, ifVersion: number): Promise<boolean>;
   /** A notification for everyone holding a permission. */
   insertShared(notification: SharedNotification): Promise<void>;
   /**

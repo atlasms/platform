@@ -210,8 +210,32 @@ paths:
         '409': { description: 'The override changed since it was read' }
         '422': { description: "UNKNOWN_TYPE — no code raises it; or a title slot the type does not have" }
   /preferences:
-    get: { operationId: getPreferences, tags: [preferences], summary: Get per-user delivery preferences, responses: { '200': { description: Preferences } } }
-    put: { operationId: putPreferences, tags: [preferences], summary: Update delivery preferences, responses: { '200': { description: Saved } } }
+    get:
+      operationId: getPreferences
+      tags: [preferences]
+      summary: "The caller's notification preferences — every type, on or off, and why (EP-25.6)"
+      responses:
+        '200': { description: Preferences, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
+    put:
+      operationId: putPreferences
+      tags: [preferences]
+      summary: "Replace the caller's choices — a compare-and-set on the version read (0 for the first); a mandatory type cannot be turned off"
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 0 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [types]
+              additionalProperties: false
+              properties:
+                types: { type: object, additionalProperties: { type: boolean }, description: "Type key → on. A type not named is its default." }
+      responses:
+        '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
+        '409': { description: 'Changed since they were read' }
+        '422': { description: "UNKNOWN_TYPE, or MANDATORY — a type the channel requires cannot be turned off" }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
@@ -291,6 +315,24 @@ components:
         titles: { $ref: '#/components/schemas/Titles' }
         read: { type: boolean }
         createdAt: { type: string, format: date-time }
+    Preferences:
+      type: object
+      required: [items, version]
+      additionalProperties: false
+      properties:
+        version: { type: integer, minimum: 0 }
+        items:
+          type: array
+          items:
+            type: object
+            required: [key, on, defaultOn, mandatory, chosen]
+            additionalProperties: false
+            properties:
+              key: { type: string }
+              on: { type: boolean }
+              defaultOn: { type: boolean }
+              mandatory: { type: boolean }
+              chosen: { type: boolean, description: "Their own choice rather than the default." }
     Titles:
       type: object
       additionalProperties: false
