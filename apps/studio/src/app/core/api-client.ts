@@ -71,6 +71,8 @@ export function urlOf<O extends Operation>(base: string, op: O, ...args: CallArg
 /** A described request, waiting for the caller to say what comes back. */
 export interface Call {
   as<T>(): Observable<T>;
+  /** The body as the text it is — a document that is not JSON (a BPMN file, EP-23.8). */
+  asText(): Observable<string>;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -86,14 +88,15 @@ export class ApiClient {
     for (const [key, value] of Object.entries(options?.query ?? {})) {
       if (value !== undefined) params = params.set(key, value);
     }
+    const request = {
+      params,
+      ...(options?.body !== undefined ? { body: options.body } : {}),
+      ...(options?.headers !== undefined ? { headers: options.headers } : {}),
+      ...(options?.context !== undefined ? { context: options.context } : {}),
+    };
     return {
-      as: <T>() =>
-        this.http.request<T>(op.method, url, {
-          params,
-          ...(options?.body !== undefined ? { body: options.body } : {}),
-          ...(options?.headers !== undefined ? { headers: options.headers } : {}),
-          ...(options?.context !== undefined ? { context: options.context } : {}),
-        }),
+      as: <T>() => this.http.request<T>(op.method, url, request),
+      asText: () => this.http.request(op.method, url, { ...request, responseType: 'text' }),
     };
   }
 }

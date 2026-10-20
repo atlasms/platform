@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { API_BASE_URL } from './api.ts';
 import { ApiClient, urlOf } from './api-client.ts';
 import { skipAuth, SKIP_AUTH } from './auth.service.ts';
+import { BmsOperations } from './generated/bms.operations.ts';
 import { IamOperations } from './generated/iam.operations.ts';
 import { MamOperations } from './generated/mam.operations.ts';
 
@@ -87,6 +88,32 @@ describe('ApiClient', () => {
     expect(req.request.body).toEqual({ username: 'u', password: 'p' });
     expect(req.request.context.get(SKIP_AUTH)).toBe(true);
     req.flush({});
+    http.verify();
+  });
+
+  it('asText() reads a document that is not JSON as the text it is — and sends one with its type', () => {
+    const { api, http } = setup();
+    let text: string | undefined;
+    api
+      .call(BmsOperations.exportWorkflow, { params: { id: 'w1' } })
+      .asText()
+      .subscribe((t) => (text = t));
+    const req = http.expectOne('/gateway/api/v1/workflows/w1/export');
+    expect(req.request.responseType).toBe('text');
+    req.flush('<bpmn:definitions/>');
+    expect(text).toBe('<bpmn:definitions/>');
+
+    api
+      .call(BmsOperations.importWorkflow, {
+        body: '<bpmn:definitions/>',
+        headers: { 'content-type': 'application/xml' },
+      })
+      .as<unknown>()
+      .subscribe();
+    const sent = http.expectOne('/gateway/api/v1/workflows/import');
+    expect(sent.request.body).toBe('<bpmn:definitions/>');
+    expect(sent.request.headers.get('content-type')).toBe('application/xml');
+    sent.flush({});
     http.verify();
   });
 

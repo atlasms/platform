@@ -553,6 +553,10 @@ is deep-equal after canonicalization (id/order-normalized) — a CI gate on ever
   flows, a sequence flow without both ends. A file that is not BPMN is `MALFORMED_XML`. A service
   task without `atlas:command` IMPORTS — mapping is not judging; the validator then says what it
   lacks, and publish gates it.
+- **Over the wire (EP-23.8):** BMS's `POST /workflows/import` makes a file a NEW workflow's draft and
+  `GET /workflows/{id}/export` writes a version out (bms.md §4); a refusal is the platform's 422
+  problem with the converter's report as `details`. Studio's **Workflows** panel lists the
+  channel's workflows, imports a file (`workflow:admin`) and downloads an export (any reader).
 
 ### 11.5 Example (excerpt)
 ```xml

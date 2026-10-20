@@ -49,6 +49,11 @@ export const routes: Routes = [
         loadComponent: () => import('./panels/ingest-panel.ts').then((m) => m.IngestPanel),
       },
       {
+        path: 'workflows',
+        canMatch: [requirePermission(['workflow:read', 'workflow:admin'])],
+        loadComponent: () => import('./panels/workflows-panel.ts').then((m) => m.WorkflowsPanel),
+      },
+      {
         // The caller's own inbox (EP-25.9): the session the parent requires is all it needs.
         path: 'inbox',
         loadComponent: () => import('./panels/inbox-panel.ts').then((m) => m.InboxPanel),

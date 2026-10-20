@@ -98,9 +98,10 @@ export const PANELS: readonly PanelDefinition[] = [
     id: 'workflows',
     titleKey: 'workbench.panels.workflows',
     icon: '⇄',
-    permission: 'workflow:read',
+    // The channel's workflows and BPMN in/out (EP-23.8): a reader exports, an admin also imports.
+    permission: ['workflow:read', 'workflow:admin'],
     route: '/workflows',
-    available: false,
+    available: true,
   },
   {
     id: 'taxonomy',

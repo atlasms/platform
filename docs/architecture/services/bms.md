@@ -132,8 +132,8 @@ BPMN XML.
 | `GET` | `/workflows/palette` | Step kinds + their config schemas (drives the designer palette + property panels). ✅ EP-23.1: each config schema self-contained (every `$ref` inlined from `workflow-definition.schema.json`), and `choices` — the closed lists (triggers, commands with the authority each requires, waitable events) publish holds a definition to. | `workflow:admin` |
 | `POST` | `/workflows/{id}/validate` | Validate a draft graph without publishing (live designer feedback). | `workflow:admin` |
 | `POST` | `/workflows/{id}/publish` | Validate + publish a new immutable definition version. | `workflow:admin` |
-| `GET` | `/workflows/{id}/export?format=bpmn` | Export the definition as **BPMN 2.0** XML (with DI layout). | `workflow:admin` |
-| `POST` | `/workflows/import` | Import a **BPMN 2.0** file → a draft definition (validated). | `workflow:admin` |
+| `GET` | `/workflows/{id}/export?format=bpmn` | Export the definition as **BPMN 2.0** XML (with DI layout). ✅ EP-23.8: `?version=`, else the open draft, else the latest published. Read, not admin: it is the definition `GET /workflows/{id}` already shows, in another notation. | `workflow:read` or `:admin` |
+| `POST` | `/workflows/import` | Import a **BPMN 2.0** file → a draft definition (validated). ✅ EP-23.8: a NEW workflow (new id, the caller's channel — never the file's), its draft held to the designer's shape bounds and judged at publish like any draft; outside the subset → 422 `VALIDATION` with `details` (`ImportFailureDetails`: `UNSUPPORTED_BPMN` naming each construct, or `MALFORMED_XML`). Body `application/xml` or `text/xml`. | `workflow:admin` |
 | `GET` | `/instances`, `/instances/{id}` | Running flow state + position. | `workflow:read` |
 | `POST` | `/instances/{id}/signal` | External signal (e.g. human task done). | service/`workflow:act` |
 | `POST` | `/tasks/{id}/complete` | Complete a human-in-the-loop step. | task assignee |

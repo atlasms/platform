@@ -440,7 +440,7 @@ Source: [bms-plan](services/bms-plan.md) §2 steps 6–8 and "Designer & format 
 | 23.5 | Palette + property panels generated from the step kinds' config schemas | 5 |
 | 23.6 | FEEL expression editor for conditions, over the **restricted subset** decided 2026-10-12 ([DSL §3](../architecture/bms-workflow-dsl-and-designer.md#3-expression-language--feel)) | 5 |
 | 23.7 | Publish/version flow — draft → published, a published version immutable | 3 |
-| 23.8 | Import/export BPMN from Studio | 2 |
+| 23.8 | ✅ Import/export BPMN from Studio: BMS `POST /workflows/import` + `GET /workflows/{id}/export` over the 23.2 converter, and Studio's Workflows panel (list, import, export) | 2 |
 | 23.9 | Live-instance overlay — the canvas coloured by a running instance's step history (FR-BMS-6) | 3 |
 
 **Decided 2026-10-12:** 23.3 → Foblex Flow; 23.6 → a restricted FEEL subset.

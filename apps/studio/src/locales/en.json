@@ -778,5 +778,24 @@
     "claimTaken": "Someone else claimed this task first.",
     "completeRefused": "This task can no longer be completed — it was closed or moved.",
     "preferencesMoved": "Your preferences were changed elsewhere; they have been read again."
+  },
+  "workflowsPanel": {
+    "import": "Import BPMN…",
+    "export": "Export BPMN",
+    "more": "Load more",
+    "none": "No workflows yet.",
+    "draft": "draft",
+    "imported": "Imported as a new draft:",
+    "unsupported": "The file uses BPMN that Atlas workflows do not support — nothing was imported:",
+    "malformed": "That file is not a BPMN 2.0 document.",
+    "importError": "The file could not be imported.",
+    "exportError": "The workflow could not be exported.",
+    "loadError": "Workflows could not be loaded.",
+    "state": {
+      "draft": "Draft",
+      "active": "Active",
+      "inactive": "Inactive",
+      "archived": "Archived"
+    }
   }
 }
