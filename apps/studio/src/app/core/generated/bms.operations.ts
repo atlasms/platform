@@ -21,7 +21,7 @@ export const BmsOperations = {
   deactivateWorkflow: { method: 'POST', path: '/api/v1/workflows/{id}/deactivate', params: ['id'] },
   /** Retire a workflow for good — kept for its history, never active again (workflow:admin). REFUSED while any instance of it is still running or waiting. */
   archiveWorkflow: { method: 'POST', path: '/api/v1/workflows/{id}/archive', params: ['id'] },
-  /** Step kinds + their config schemas (drives the designer palette, FR-BMS-8; EP-23.1) */
+  /** Step kinds + their config schemas (drives the designer palette, FR-BMS-8; EP-23.1) — workflow:admin */
   getPalette: { method: 'GET', path: '/api/v1/workflows/palette', params: [] },
   /** Import a BPMN 2.0 file to a draft definition, validated (FR-BMS-10; EP-23.8) */
   importWorkflow: { method: 'POST', path: '/api/v1/workflows/import', params: [] },

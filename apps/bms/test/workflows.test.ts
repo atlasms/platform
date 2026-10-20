@@ -267,3 +267,21 @@ test('the wire refuses what cannot be a graph, and a write without ?revision=', 
   assert.equal(stale.statusCode, 409);
   await app.close();
 });
+
+test('the palette (EP-23.1): every step kind with a self-contained config schema, for whoever authors workflows', async () => {
+  const { app, as } = await harness();
+  const res = await app.inject({ method: 'GET', url: '/api/v1/workflows/palette', headers: as() });
+  assert.equal(res.statusCode, 200, res.body);
+  const entries = res.json<{ kind: string; configSchema: object; choices?: object }[]>();
+  assert.equal(entries.length, 9);
+  assert.ok(!res.body.includes('$ref'));
+  assert.ok(entries.find((e) => e.kind === 'command')?.choices, 'the commands a step may issue');
+  // A reader does not author: the palette is the designer's.
+  const reader = await harness(['workflow:read']);
+  const refused = await reader.app.inject({
+    method: 'GET',
+    url: '/api/v1/workflows/palette',
+    headers: reader.as(),
+  });
+  assert.equal(refused.statusCode, 403);
+});

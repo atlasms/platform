@@ -324,6 +324,11 @@ export async function buildBmsApp(options: BmsAppOptions): Promise<FastifyInstan
     ),
   );
 
+  // The designer's palette (EP-23.1) — a static path, matched before `/workflows/:id`.
+  app.get('/api/v1/workflows/palette', (req, reply) =>
+    handle(req, reply, 200, async (caller) => service.palette(caller)),
+  );
+
   app.post<{ Params: P }>('/api/v1/workflows/:id/validate', (req, reply) =>
     handle(req, reply, 200, (caller) =>
       service.validate(

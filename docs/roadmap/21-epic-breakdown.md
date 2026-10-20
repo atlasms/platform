@@ -433,7 +433,7 @@ Source: [bms-plan](services/bms-plan.md) §2 steps 6–8 and "Designer & format 
 
 | ID | Story | Est |
 |----|-------|:---:|
-| 23.1 | Palette endpoint (`GET /workflows/palette`: step kinds + config schemas) and `POST /workflows/{id}/validate` (reachability, unbound refs, edge types) | 3 |
+| 23.1 | ✅ Palette endpoint (`GET /workflows/palette`: step kinds + config schemas) and `POST /workflows/{id}/validate` (reachability, unbound refs, edge types): config schemas self-contained, `choices` from the closed lists; validate since 22.2 (DSL §5) | 3 |
 | 23.2 | Lossless DSL ⇄ BPMN 2.0 converter in `contracts` (`bpmn-moddle` + `atlas:` extension elements + DI layout), round-trip tested | 8 |
 | 23.3 | ✅ Decision: the canvas is **Foblex Flow**, as D8 had it (confirmed 2026-10-12) | 2 |
 | 23.4 | Studio canvas — nodes and edges edited thin over the definition | 8 |

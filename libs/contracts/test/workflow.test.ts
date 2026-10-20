@@ -9,6 +9,7 @@ import {
   REVIEW_VERDICTS,
   WORKFLOW_EVENTS,
   WORKFLOW_TRIGGERS,
+  palette,
   validateDefinition,
   WORKFLOW_COMMANDS,
   type CommandConfig,
@@ -290,4 +291,43 @@ test('retry is a command step’s only', () => {
   def.steps.find((s) => s.id === 's_task')!.retry = { maxAttempts: 2 };
   const issue = validateDefinition(def).issues.find((i) => i.code === 'RETRY_NOT_COMMAND');
   assert.equal(issue?.stepId, 's_task');
+});
+
+test('the palette: every step kind, a self-contained config schema each, and the closed lists', async () => {
+  // ajv is CJS; typed here as the registry types it (src/registry.ts).
+  const { default: Ajv2020 } = await import('ajv/dist/2020.js');
+  const Ajv = Ajv2020 as unknown as new (opts: object) => {
+    compile(schema: object): ((v: unknown) => boolean) & { errors?: unknown };
+  };
+  const entries = palette();
+  const kinds = [
+    'start',
+    'end',
+    'command',
+    'human-task',
+    'wait-event',
+    'timer',
+    'branch',
+    'parallel',
+    'sub-flow',
+  ];
+  assert.deepEqual(entries.map((e) => e.kind).sort(), [...kinds].sort());
+  assert.ok(!JSON.stringify(entries).includes('$ref'), 'no $ref left to resolve');
+  const of = (kind: string) => entries.find((e) => e.kind === kind)!;
+  assert.deepEqual(of('start').choices, { triggers: [...WORKFLOW_TRIGGERS] });
+  assert.deepEqual(of('wait-event').choices, { events: [...WORKFLOW_EVENTS] });
+  assert.deepEqual(
+    (of('command').choices?.['commands'] as { event: string }[]).map((c) => c.event),
+    Object.keys(WORKFLOW_COMMANDS),
+  );
+  // Each preset step's config is valid against its kind's schema — the schema the designer edits by.
+  const ajv = new Ajv({ strict: false, allErrors: true });
+  for (const name of PRESETS)
+    for (const step of load(name).steps) {
+      const validate = ajv.compile(of(step.kind).configSchema);
+      assert.ok(
+        validate(step.config ?? {}),
+        `${name} ${step.id}: ${JSON.stringify(validate.errors)}`,
+      );
+    }
 });

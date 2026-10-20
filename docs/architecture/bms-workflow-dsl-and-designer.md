@@ -207,6 +207,14 @@ parse — and with it, `instance of` (outside the subset anyway) does not.
 The canvas renders the palette from this and generates **property forms from `configSchema`**
 (§12.3), so adding a kind is: new `$def` + interpreter handler + BPMN mapping — **no canvas code**.
 
+
+**As built (EP-23.1):** `palette()` in `@atlas/contracts/workflow` builds it from
+`workflows/palette.json` (display metadata) and `workflow-definition.schema.json` (the config
+`$def`s, every `$ref` — local and `common.schema.json`'s — inlined, so a property panel needs no
+resolver), adding `choices` from the closed lists: `start` → `triggers`, `command` → `commands`
+(`event`, `target`, `completes`, `fails`, `requires`), `wait-event` → `events`. A contracts test
+validates every preset step's config against its kind's resolved schema. Container images copy
+`docs/architecture/workflows` for it.
 ## 6. Validation
 
 Run on `POST /workflows/{id}/validate` (live, non-blocking feedback) and again inside `publish`

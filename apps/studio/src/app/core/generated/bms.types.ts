@@ -159,11 +159,11 @@ export interface PaletteEntry {
   /** the BPMN element this maps to */
   bpmn?: string;
   waits?: 'no' | 'yes' | 'if-await' | 'at-join' | 'on-trigger';
-  /** inlined JSON Schema for this kind config (a $def of workflow-definition.schema.json) */
-  configSchema?: Record<string, unknown>;
-  /** alternative to configSchema: a JSON-pointer/URI to the $def */
-  configSchemaRef?: string;
+  /** The kind's config as a self-contained JSON Schema — its $def in workflow-definition.schema.json with every $ref inlined (EP-23.1). */
+  configSchema: Record<string, unknown>;
   hint?: string;
+  /** The closed lists the kind's property panel offers — publish holds a definition to the same lists: start → triggers, command → commands (target, answers, the authority each requires), wait-event → events. */
+  choices?: Record<string, unknown>;
 }
 
 /** One diagnostic. Anchored to a step or a transition (never both). */

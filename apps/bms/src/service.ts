@@ -13,8 +13,10 @@
 import { createHash } from 'node:crypto';
 import { delta, isUlid, ulid, type EventPayloads } from '@atlas/contracts';
 import {
+  palette,
   validateDefinition,
   WORKFLOW_COMMANDS,
+  type PaletteEntry,
   type CommandConfig,
   type SubFlowConfig,
   type ValidationIssue,
@@ -269,6 +271,15 @@ export class BmsService {
    * Validate without saving — the body's graph, or with none the stored draft. The same rules
    * publish applies, so the designer's live feedback and the gate never disagree.
    */
+  /**
+   * The designer's palette (EP-23.1): every step kind with its config schema, self-contained, and
+   * the closed lists its property panel may offer — for whoever authors workflows.
+   */
+  palette(caller: Caller): PaletteEntry[] {
+    this.authorizeAdmin(caller);
+    return palette();
+  }
+
   async validate(caller: Caller, id: string, input?: DraftInput): Promise<ValidationResult> {
     this.authorizeAdmin(caller);
     const workflow = await this.header(caller, id);
