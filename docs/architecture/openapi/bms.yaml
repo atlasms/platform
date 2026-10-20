@@ -108,9 +108,10 @@ paths:
     get:
       operationId: getPalette
       tags: [workflows]
-      summary: Step kinds + their config schemas (drives the designer palette, FR-BMS-8; EP-23.1)
+      summary: Step kinds + their config schemas (drives the designer palette, FR-BMS-8; EP-23.1) — workflow:admin
       responses:
         '200': { description: Palette, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/PaletteEntry' } } } } }
+        '403': { $ref: '#/components/responses/Error' }
   /workflows/import:
     post:
       operationId: importWorkflow
@@ -404,7 +405,7 @@ components:
         nextCursor: { $ref: '#/components/schemas/Ulid' }
     PaletteEntry:
       type: object
-      required: [kind, label]
+      required: [kind, label, configSchema]
       description: 'One draggable step kind for the designer palette (see workflows/palette.json).'
       properties:
         kind: { type: string, enum: [start, end, command, human-task, wait-event, timer, branch, parallel, sub-flow] }
@@ -413,9 +414,9 @@ components:
         category: { type: string, enum: [events, activities, gateways] }
         bpmn: { type: string, description: 'the BPMN element this maps to' }
         waits: { type: string, enum: [no, yes, if-await, at-join, on-trigger] }
-        configSchema: { type: object, description: 'inlined JSON Schema for this kind config (a $def of workflow-definition.schema.json)' }
-        configSchemaRef: { type: string, description: 'alternative to configSchema: a JSON-pointer/URI to the $def' }
+        configSchema: { type: object, description: 'The kind''s config as a self-contained JSON Schema — its $def in workflow-definition.schema.json with every $ref inlined (EP-23.1).' }
         hint: { type: string }
+        choices: { type: object, description: "The closed lists the kind's property panel offers — publish holds a definition to the same lists: start → triggers, command → commands (target, answers, the authority each requires), wait-event → events." }
     ValidationIssue:
       type: object
       required: [severity, code, message]

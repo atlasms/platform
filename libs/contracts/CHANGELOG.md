@@ -23,6 +23,10 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `palette()` in `@atlas/contracts/workflow` (EP-23.1): the designer's palette — one entry per step
+  kind with its config schema resolved self-contained and the closed lists its panel may offer.
+  Reads `docs/architecture/workflows/palette.json` at runtime (images now copy that directory).
+
 - `asset.approved`, `asset.rejected` and `asset.expired` carry `createdBy` and `categoryPath`, and
   `transcode.failed` carries `requestedBy` (EP-25.5): who Notifications tells, and what that person
   must be able to read to be told. **Breaking** in deployment order: those payloads are

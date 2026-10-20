@@ -2722,6 +2722,24 @@ test('smoke: EP-25.6 — preferences through the gateway: a mandatory type stays
   assert.equal(json(back).items.find((i) => i.key === 'message.mention').on, true);
 });
 
+test('smoke: EP-23.1 — the designer’s palette through the gateway: every kind, self-contained, from the image’s own files', async () => {
+  // The palette reads docs/architecture/workflows from BMS's image: this is what proves the image
+  // carries it.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}` };
+  const res = await get('/api/v1/workflows/palette', { headers });
+  assert.equal(res.status, 200, res.text);
+  const entries = json(res);
+  assert.equal(entries.length, 9);
+  assert.ok(!res.text.includes('$ref'), 'every config schema self-contained');
+  assert.ok(
+    entries
+      .find((e) => e.kind === 'command')
+      .choices.commands.some((c) => c.event === 'transcode.job.create'),
+  );
+});
+
 test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation waits for its instances', async () => {
   // A workflow's lifecycle on a live cluster (decided 2026-10-13): a first publish makes it active
   // and puts it in the catalog every client loads; deactivating it is refused while an instance is

@@ -17,6 +17,8 @@ coverage
 # against. The Dockerfile copies that one directory explicitly.
 docs/**
 !docs/architecture/schemas/**
+# The workflow designer's palette, read at runtime by BMS (EP-23.1).
+!docs/architecture/workflows/**
 
 spikes
 reference

@@ -75,6 +75,8 @@ COPY libs ./libs
 COPY apps/${SERVICE} ./apps/${SERVICE}
 # Schemas are loaded and compiled at runtime by @atlas/contracts: executable input, not docs.
 COPY docs/architecture/schemas ./docs/architecture/schemas
+# The workflow designer's palette (EP-23.1): BMS serves it from docs/architecture/workflows.
+COPY docs/architecture/workflows ./docs/architecture/workflows
 
 # A service with a build-time step runs it here, once — today BMS, whose Temporal workflow code is
 # bundled into apps/bms/dist so the worker never runs webpack in a pod (ADR-0010 evidence 2; a

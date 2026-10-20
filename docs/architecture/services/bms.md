@@ -129,7 +129,7 @@ BPMN XML.
 | Method | Path | Purpose | Authz |
 |--------|------|---------|-------|
 | `GET/POST/PATCH` | `/workflows` | Definition CRUD (authoring) — the designer reads/writes this. | `workflow:admin` |
-| `GET` | `/workflows/palette` | Step kinds + their config schemas (drives the designer palette + property panels). | `workflow:admin` |
+| `GET` | `/workflows/palette` | Step kinds + their config schemas (drives the designer palette + property panels). ✅ EP-23.1: each config schema self-contained (every `$ref` inlined from `workflow-definition.schema.json`), and `choices` — the closed lists (triggers, commands with the authority each requires, waitable events) publish holds a definition to. | `workflow:admin` |
 | `POST` | `/workflows/{id}/validate` | Validate a draft graph without publishing (live designer feedback). | `workflow:admin` |
 | `POST` | `/workflows/{id}/publish` | Validate + publish a new immutable definition version. | `workflow:admin` |
 | `GET` | `/workflows/{id}/export?format=bpmn` | Export the definition as **BPMN 2.0** XML (with DI layout). | `workflow:admin` |
