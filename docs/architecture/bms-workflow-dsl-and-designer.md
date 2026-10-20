@@ -463,15 +463,16 @@ Foblex Flow); moddle alone does XML↔object.
 | `wait-event` | `bpmn:intermediateCatchEvent` + message/signal def | |
 | `timer` | `bpmn:*` timer event (`bpmn:timerEventDefinition`) | duration/date/cron |
 | `branch` | `bpmn:exclusiveGateway` | `default` → gateway `default` attr |
-| `parallel` | `bpmn:parallelGateway` | split/join by degree |
+| `parallel` | `bpmn:parallelGateway` | split/join as `gatewayDirection` (`Diverging`/`Converging`); a file that leaves it unspecified is read by degree |
 | `sub-flow` | `bpmn:callActivity` (`calledElement`) | version in `atlas:` ext |
 | `transition` | `bpmn:sequenceFlow` | `when` → `bpmn:conditionExpression` (feel) |
 | `position` | `bpmndi:BPMNShape` bounds / `BPMNEdge` waypoints | see §11.3 |
 
 **ID rule (NCName safety).** BPMN/XML `id` attributes must be valid `NCName`s — they **cannot start
 with a digit**, so a raw ULID (`01J9…`) is an *illegal* BPMN id. The converter therefore prefixes on
-export — process id `wf_{ulid}`; step/transition ids already start with a letter (`s_*`, `t*`) and pass
-through — and strips the prefix on import. (Verified: the golden fixture round-trips through
+export — process id `wf_{ulid}`, and any step/transition id that starts with a digit (the presets'
+`s_*`/`t*` start with a letter and pass through; a ULID the designer mints does not) — and strips the
+prefix on import. (Verified: the golden fixture round-trips through
 `bpmn-moddle` with **zero warnings** only after this prefixing.) The real ULID remains the canonical
 id in the DSL and in `workflow_version`.
 
@@ -510,11 +511,48 @@ tools stay lossless**.
 `bpmndi:BPMNEdge` with `di:waypoint`s (default straight source→target, overridable). Import reads
 bounds back into `position`.
 
+**As built (EP-23.2):** sizes are events 36×36, tasks 100×80, gateways 50×50. `position.x` is the
+shape's LEFT edge and `position.y + 18` its vertical CENTRE, so steps of every kind placed on one
+`y` line up on their centres (the golden fixture's layout); import inverts it from the bounds it
+reads, whatever their size. An edge leaves its source's right side and enters its target's left —
+straight on a shared centre line, one elbow half-way across otherwise. The DSL keeps no bend points,
+so "overridable" is not built: an edge is drawn from where its ends are. A step with no `position`
+(a definition written by an API client) is placed by its distance from the start (180 px columns,
+120 px lanes); a file with no DI imports with no positions rather than invented ones.
+
 ### 11.4 Import validation & round-trip guarantee
 Import parses via moddle, maps recognized elements, reads `atlas:` ext; **unsupported BPMN
 constructs** (e.g. event sub-processes, complex/inclusive gateways not in our subset) produce a
 `422` listing them rather than silently dropping. **Contract test:** `dsl → toBPMN → fromBPMN → dsl`
 is deep-equal after canonicalization (id/order-normalized) — a CI gate on every DSL change (§14).
+
+**As built (EP-23.2)** — `@atlas/contracts/bpmn` (`exportBpmn(def)`, `importBpmn(xml, { channelId })`,
+`ImportFailure`), lifted from `reference/bms-workflow/src/bpmn`:
+
+- **Node, not the browser.** The `atlas:` descriptor is read from
+  `docs/architecture/workflows/atlas.moddle.json` (the single source, as the schemas are), so the
+  converter runs where BMS runs; Studio imports and exports through BMS's `/workflows/import` and
+  `/workflows/{id}/export` (EP-23.8). A subpath, so bpmn-moddle loads only where it is used.
+- **What the file carries** is the graph, its layout, `description` (`bpmn:documentation`) and
+  `scope` (`atlas:Scope`). What is the RECORD's — `channelId`, `version`, `status`, `metadata` — is
+  not written: an import is a new draft (version 1) in the caller's channel, never the file's.
+- **Lossless, now for every field the schema holds.** The reference dropped `timeout` and
+  `compensation`, wrote `onError`/`retry` for command steps only, stringified var `initial`s and
+  turned an absent sub-flow version into `latest`. The lift writes the step policy for every kind
+  (`atlas:Retry`, `atlas:Timeout`, `atlas:OnError` with `compensation`), a form as `atlas:Form`
+  (JSON), a non-string `initial` as JSON (read back by the var's declared type) and a var's
+  `description`. The round-trip test holds all four presets, positions included, and a definition
+  that uses every one of those fields.
+- **Every id is an NCName**: an id starting with a digit — a ULID, which the designer mints — is
+  written `wf_<id>`, and so is one already starting `wf_`, so reading strips exactly what writing
+  added (a bijection, tested).
+- **Refused, element by element** (`UNSUPPORTED_BPMN`): any flow node outside the eight (inclusive
+  gateways, boundary events, sub-processes, script tasks…), an event definition a node cannot carry
+  (a timer START, an error end), a catch event without exactly one message or timer, loops and
+  multi-instance, lanes, a second process, a collaboration of more than one pool or with message
+  flows, a sequence flow without both ends. A file that is not BPMN is `MALFORMED_XML`. A service
+  task without `atlas:command` IMPORTS — mapping is not judging; the validator then says what it
+  lacks, and publish gates it.
 
 ### 11.5 Example (excerpt)
 ```xml

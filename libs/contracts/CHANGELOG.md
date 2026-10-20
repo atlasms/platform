@@ -23,6 +23,16 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- **`@atlas/contracts/bpmn`** (EP-23.2): `exportBpmn(def)` and `importBpmn(xml, { channelId })` —
+  the workflow DSL to and from BPMN 2.0 with diagram interchange, lifted from
+  `reference/bms-workflow` and made lossless for every field the schema holds (step timeouts, error
+  paths and compensation on every kind, forms, scope, typed var initials, positions).
+  `ImportFailure` (`UNSUPPORTED_BPMN` listing each element, `MALFORMED_XML`); the DI helpers
+  (`boundsOf`, `positionOf`, `waypoints`, `placeSteps`). Depends on `bpmn-moddle`; a subpath, so
+  nothing else loads it.
+- The `atlas:` BPMN descriptor (`docs/architecture/workflows/atlas.moddle.json`) gains `Timeout`,
+  `Form`, `Scope` and `Var.description` — additive: every file the previous descriptor read, this
+  one reads the same.
 - `palette()` in `@atlas/contracts/workflow` (EP-23.1): the designer's palette — one entry per step
   kind with its config schema resolved self-contained and the closed lists its panel may offer.
   Reads `docs/architecture/workflows/palette.json` at runtime (images now copy that directory).

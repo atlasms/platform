@@ -116,7 +116,31 @@
       "properties": [
         { "name": "name", "isAttr": true, "type": "String" },
         { "name": "type", "isAttr": true, "type": "String" },
-        { "name": "initial", "isAttr": true, "type": "String" }
+        { "name": "initial", "isAttr": true, "type": "String" },
+        { "name": "description", "isAttr": true, "type": "String" }
+      ]
+    },
+    {
+      "name": "Timeout",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "after", "isAttr": true, "type": "String" }
+      ]
+    },
+    {
+      "name": "Form",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "json", "isAttr": true, "type": "String" }
+      ]
+    },
+    {
+      "name": "Scope",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "categoryId", "isAttr": true, "type": "String" },
+        { "name": "mediaType", "isAttr": true, "type": "String" },
+        { "name": "usage", "isAttr": true, "type": "String" }
       ]
     }
   ]
