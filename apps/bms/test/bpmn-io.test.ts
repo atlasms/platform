@@ -104,7 +104,10 @@ test('a modeler’s file imports — the golden fixture, positions read from its
   });
   assert.equal(res.statusCode, 201, res.body);
   const view = res.json<View>();
-  assert.ok(view.draft.steps.every((s) => s.position), 'every step placed');
+  assert.ok(
+    view.draft.steps.every((s) => s.position),
+    'every step placed',
+  );
   assert.deepEqual(sorted(view.draft.steps), sorted(canonical.steps));
   await app.close();
 });
