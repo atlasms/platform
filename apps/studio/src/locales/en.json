@@ -796,6 +796,43 @@
       "active": "Active",
       "inactive": "Inactive",
       "archived": "Archived"
+    },
+    "newName": "New workflow name",
+    "create": "Create",
+    "createError": "The workflow could not be created."
+  },
+  "workflowEditor": {
+    "save": "Save draft",
+    "revert": "Revert",
+    "readOnly": "Read-only",
+    "palette": "Steps",
+    "remove": "Remove selected",
+    "stepName": "Step name",
+    "issues": "Issues",
+    "validating": "Checking…",
+    "noIssues": "No issues.",
+    "saved": "Draft saved.",
+    "moved": "Someone else saved this workflow; it has been read again.",
+    "saveError": "The draft could not be saved.",
+    "loadError": "The workflow could not be loaded.",
+    "paletteError": "The step palette could not be loaded.",
+    "refused": {
+      "self": "A step cannot lead to itself.",
+      "duplicate": "Those two steps are already connected.",
+      "into-start": "Nothing leads into a start.",
+      "out-of-end": "Nothing leaves an end.",
+      "unknown-step": "That step no longer exists."
+    },
+    "kind": {
+      "start": "Start",
+      "end": "End",
+      "command": "Service action",
+      "human-task": "Human task",
+      "wait-event": "Wait for event",
+      "timer": "Timer",
+      "branch": "Branch",
+      "parallel": "Parallel",
+      "sub-flow": "Sub-flow"
     }
   }
 }

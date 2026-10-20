@@ -17,3 +17,13 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
 });
+
+// jsdom implements no `ResizeObserver`, and Foblex Flow (the workflow designer's canvas, EP-23.4)
+// constructs one for every node and connector — without it the designer's spec throws before its
+// first assertion. Nothing here measures layout, so an observer that never fires is the honest
+// stand-in; a browser has the real one.
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+};
