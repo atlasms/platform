@@ -1,6 +1,14 @@
 import { Injectable, inject } from '@angular/core';
 import { ApiClient } from './api-client.ts';
-import type { Catalog, Workflow, WorkflowPage } from './generated/bms.types.ts';
+import type {
+  Catalog,
+  DraftInput,
+  PaletteEntry,
+  ValidationResult,
+  Workflow,
+  WorkflowDefinition,
+  WorkflowPage,
+} from './generated/bms.types.ts';
 import { BmsOperations as ops } from './generated/bms.operations.ts';
 
 /**
@@ -20,6 +28,42 @@ export class WorkflowsService {
   /** The channel's workflows, newest first (`workflow:read` or `:admin`). */
   list(options: { after?: string; limit?: number } = {}) {
     return this.api.call(ops.listWorkflows, { query: { ...options } }).as<WorkflowPage>();
+  }
+
+  /** A workflow: its header, its open draft and its published versions. */
+  get(id: string) {
+    return this.api.call(ops.getWorkflow, { params: { id } }).as<Workflow>();
+  }
+
+  /** One version's definition — what the designer shows when no draft is open. */
+  version(id: string, version: number) {
+    return this.api
+      .call(ops.getWorkflowVersion, { params: { id, version: String(version) } })
+      .as<WorkflowDefinition>();
+  }
+
+  /** A new workflow; its draft is version 1 (`workflow:admin`). */
+  create(input: DraftInput) {
+    return this.api.call(ops.createWorkflow, { body: input }).as<Workflow>();
+  }
+
+  /** The whole graph as the designer holds it — a compare-and-set on the revision read (409). */
+  saveDraft(id: string, revision: number, input: DraftInput) {
+    return this.api
+      .call(ops.saveDraft, { params: { id }, query: { revision }, body: input })
+      .as<Workflow>();
+  }
+
+  /** The graph judged by the rules publish applies, without saving it. */
+  validate(id: string, input: DraftInput) {
+    return this.api
+      .call(ops.validateWorkflow, { params: { id }, body: input })
+      .as<ValidationResult>();
+  }
+
+  /** The step kinds a designer offers (`workflow:admin`, EP-23.1). */
+  palette() {
+    return this.api.call(ops.getPalette).as<PaletteEntry[]>();
   }
 
   /**

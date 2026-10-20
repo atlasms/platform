@@ -608,6 +608,33 @@ WorkflowDesignerComponent
 - Debounced (~400 ms) `POST /validate` → paint error/warn markers on nodes/edges; **Publish**
   disabled while any `error`.
 
+**As built (EP-23.4)** — `apps/studio/src/app/editors/workflow-editor.ts`, an editor tab
+(`workflow:<id>`) opened from the Workflows panel, over `workflow-graph.ts` (the reference's
+projection and edit operations, typed by `@atlas/contracts/workflow-types`):
+
+- **The definition is the one signal; Foblex Flow 19 renders it** in its classic (app-owned)
+  mode — every gesture (`fCreateConnection`, `fMoveNodes`, `fSelectionChange`, `fDeleteSelected`)
+  is a pure operation returning a new definition. Each step has one OUT connector (`out:<id>`,
+  none on an end) and one IN (`in:<id>`, none on a start), so a connection maps back to a
+  transition exactly.
+- **Adding** is a palette button (the kinds `GET /workflows/palette` serves, labels localized),
+  placed one column right of the rest; dragging a palette item onto the canvas is not built.
+  Configuration is 23.5, a condition's FEEL 23.6.
+- **Refused at once** — what the canvas can know for certain: an edge into a start, out of an end,
+  onto itself, or twice. Everything else is the validator's, asked 400 ms after the last edit
+  (only the latest run paints).
+- **Removing** a selection takes every edge that touched it; a branch whose default edge went
+  keeps no dangling `default`.
+- **Positions**: every canvas node is one row (36 px) tall, so `position` — the BPMN layout's left
+  edge and centre line (§11.3) — is also the node's top-left, and a diagram looks the same in
+  Studio and in a BPMN tool.
+- **Save** is the whole graph over the revision read; a 409 reads the workflow again (never a
+  retry). With no draft open the latest published version is shown and saving opens the next.
+  Read-only without `workflow:admin` or once archived. Publish is 23.7.
+- **Theme**: only Foblex's canvas and connection styles, their `--ff-*` properties set from
+  Studio's tokens (`editors/flow-theme.scss`), loaded with the designer's lazy chunk — not in
+  every user's first load.
+
 ### 12.3 Property forms from JSON Schema
 Property panels are generated from each kind's `configSchema` (e.g. `@ngx-formly` with a
 JSON-Schema preset, or a small custom renderer). FEEL fields get a FEEL input with client-side

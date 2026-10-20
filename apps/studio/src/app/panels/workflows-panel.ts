@@ -17,6 +17,8 @@ import { PermissionService } from '../core/permission.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { WebSocketService } from '../core/websocket.service.ts';
 import { WorkflowsService } from '../core/workflows.service.ts';
+import { newDraft } from '../editors/workflow-graph.ts';
+import { EditorStore } from '../workbench/editor.store.ts';
 
 /** One construct BMS refused in an imported file (bms.yaml `ImportFailureDetails`). */
 interface Refused {
@@ -61,6 +63,18 @@ export function fileNameOf(name: string): string {
     <h2 class="panel-title">{{ locale.t('workbench.panels.workflows') }}</h2>
 
     @if (canAdmin()) {
+      <form class="create" (submit)="create($event)">
+        <input
+          name="name"
+          [attr.aria-label]="locale.t('workflowsPanel.newName')"
+          [placeholder]="locale.t('workflowsPanel.newName')"
+          [value]="newName()"
+          (input)="newName.set($any($event.target).value)"
+        />
+        <button type="submit" [disabled]="busy() || newName().trim() === ''">
+          {{ locale.t('workflowsPanel.create') }}
+        </button>
+      </form>
       <label class="import">
         <input
           type="file"
@@ -103,7 +117,7 @@ export function fileNameOf(name: string): string {
     <ul class="items">
       @for (w of items(); track w.id) {
         <li>
-          <span class="title">{{ w.name }}</span>
+          <button type="button" class="title" (click)="open(w)">{{ w.name }}</button>
           <span class="meta">
             {{ locale.t('workflowsPanel.state.' + w.state) }}
             @if (w.latestVersion > 0) {
@@ -170,6 +184,26 @@ export function fileNameOf(name: string): string {
       padding: var(--space-1) 0;
       border-block-end: 1px solid var(--color-border);
     }
+    .create {
+      display: flex;
+      gap: var(--space-1);
+      margin-block-end: var(--space-2);
+    }
+    .create input {
+      flex: 1;
+      min-inline-size: 0;
+      padding: var(--space-1) var(--space-2);
+      color: inherit;
+      background: var(--color-bg-hover);
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      font: inherit;
+    }
+    .items .title {
+      padding: 0;
+      background: none;
+      text-align: start;
+    }
     .title {
       overflow: hidden;
       text-overflow: ellipsis;
@@ -214,6 +248,7 @@ export class WorkflowsPanel implements OnInit {
   private readonly permissions = inject(PermissionService);
   private readonly session = inject(SessionStore);
   private readonly ws = inject(WebSocketService);
+  private readonly editors = inject(EditorStore);
   private readonly destroyRef = inject(DestroyRef);
   protected readonly locale = inject(LocaleService);
 
@@ -227,6 +262,7 @@ export class WorkflowsPanel implements OnInit {
   protected readonly error = signal<string | null>(null);
   protected readonly refused = signal<Refused[]>([]);
   protected readonly notice = signal<string | null>(null);
+  protected readonly newName = signal('');
 
   /** UX only — BMS enforces `workflow:admin` on an import. */
   protected readonly canAdmin = computed(() => {
@@ -298,6 +334,33 @@ export class WorkflowsPanel implements OnInit {
         } else if (details?.code === 'MALFORMED_XML') {
           this.error.set(this.locale.t('workflowsPanel.malformed'));
         } else this.error.set(reasonOf(err) ?? this.locale.t('workflowsPanel.importError'));
+      },
+    });
+  }
+
+  /** The workflow in the designer (EP-23.4) — one tab per workflow. */
+  protected open(w: { id: string; name: string }): void {
+    this.editors.open({ type: 'workflow', resourceId: w.id, title: w.name, icon: '⇄' });
+  }
+
+  /** A new workflow: a draft holding a start and nothing else, opened in the designer. */
+  protected create(event: Event): void {
+    event.preventDefault();
+    const name = this.newName().trim();
+    if (name === '' || this.busy()) return;
+    this.busy.set(true);
+    this.error.set(null);
+    this.refused.set([]);
+    this.api.create(newDraft(name, this.locale.t('workflowEditor.kind.start'))).subscribe({
+      next: (w) => {
+        this.busy.set(false);
+        this.newName.set('');
+        this.refresh();
+        this.open(w);
+      },
+      error: (err: unknown) => {
+        this.busy.set(false);
+        this.error.set(reasonOf(err) ?? this.locale.t('workflowsPanel.createError'));
       },
     });
   }

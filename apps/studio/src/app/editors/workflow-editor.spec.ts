@@ -1,0 +1,299 @@
+import { HttpErrorResponse } from '@angular/common/http';
+import { TestBed } from '@angular/core/testing';
+import { Subject } from 'rxjs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ValidationIssue, WorkflowDefinition } from '@atlas/contracts/workflow-types';
+import type {
+  DraftInput,
+  PaletteEntry,
+  ValidationResult,
+  Workflow,
+} from '../core/generated/bms.types.ts';
+import { LocaleService } from '../core/locale.service.ts';
+import { SessionStore } from '../core/session.store.ts';
+import { WorkflowsService } from '../core/workflows.service.ts';
+import { EditorStore } from '../workbench/editor.store.ts';
+import { VALIDATE_DEBOUNCE_MS, WorkflowEditor } from './workflow-editor.ts';
+import { inOf, outOf } from './workflow-graph.ts';
+
+const definition = (): WorkflowDefinition => ({
+  id: '01K00000000000000000000WF1',
+  channelId: 'ch12',
+  name: 'Review gate',
+  version: 2,
+  status: 'draft',
+  steps: [
+    { id: 's_start', kind: 'start', name: 'Start', position: { x: 0, y: 0 }, config: {} },
+    {
+      id: 's_review',
+      kind: 'human-task',
+      name: 'Review',
+      position: { x: 180, y: 0 },
+      config: { taskType: 'approve', assignee: { role: 'librarian' } },
+    },
+    { id: 's_end', kind: 'end', name: 'Done', position: { x: 360, y: 0 }, config: {} },
+  ],
+  transitions: [
+    { id: 't1', from: 's_start', to: 's_review' },
+    { id: 't2', from: 's_review', to: 's_end' },
+  ],
+});
+
+const workflow = (overrides: Partial<Workflow> = {}): Workflow => ({
+  id: '01K00000000000000000000WF1',
+  channelId: 'ch12',
+  state: 'active',
+  name: 'Review gate',
+  revision: 4,
+  latestVersion: 1,
+  draftVersion: 2,
+  draft: definition(),
+  versions: [],
+  createdBy: 'u1',
+  createdAt: '2026-10-20T09:00:00.000Z',
+  updatedAt: '2026-10-20T09:00:00.000Z',
+  ...overrides,
+});
+
+const PALETTE: PaletteEntry[] = (['command', 'human-task', 'branch', 'end'] as const).map(
+  (kind) => ({ kind, label: kind, configSchema: {} }) as PaletteEntry,
+);
+
+class FakeWorkflows {
+  readonly gets: Subject<Workflow>[] = [];
+  readonly versions: Array<{ version: number; result: Subject<WorkflowDefinition> }> = [];
+  readonly palettes: Subject<PaletteEntry[]>[] = [];
+  readonly validations: Array<{ input: DraftInput; result: Subject<ValidationResult> }> = [];
+  readonly saves: Array<{ revision: number; input: DraftInput; result: Subject<Workflow> }> = [];
+  get(_id: string) {
+    const s = new Subject<Workflow>();
+    this.gets.push(s);
+    return s;
+  }
+  version(_id: string, version: number) {
+    const result = new Subject<WorkflowDefinition>();
+    this.versions.push({ version, result });
+    return result;
+  }
+  palette() {
+    const s = new Subject<PaletteEntry[]>();
+    this.palettes.push(s);
+    return s;
+  }
+  validate(_id: string, input: DraftInput) {
+    const result = new Subject<ValidationResult>();
+    this.validations.push({ input, result });
+    return result;
+  }
+  saveDraft(_id: string, revision: number, input: DraftInput) {
+    const result = new Subject<Workflow>();
+    this.saves.push({ revision, input, result });
+    return result;
+  }
+}
+
+class FakeLocale {
+  locale = () => 'en';
+  loading = () => false;
+  t(key: string): string {
+    return key;
+  }
+  setLocale(_locale: 'en' | 'ar'): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+interface Internal {
+  add(kind: string): void;
+  onConnect(e: { sourceId: string; targetId: string | undefined }): void;
+  onMove(e: { nodes: { id: string; position: { x: number; y: number } }[] }): void;
+  onSelect(e: { nodeIds: string[]; groupIds: string[]; connectionIds: string[] }): void;
+  removeSelected(): void;
+  rename(id: string, name: string): void;
+  save(): void;
+  revert(): void;
+  def: () => WorkflowDefinition | null;
+  dirty: () => boolean;
+  canEdit: () => boolean;
+  error: () => string | null;
+  issues: () => ValidationIssue[];
+}
+
+function setup(permissions = ['workflow:admin']) {
+  localStorage.clear();
+  const fake = new FakeWorkflows();
+  TestBed.configureTestingModule({
+    providers: [
+      EditorStore,
+      { provide: WorkflowsService, useValue: fake },
+      { provide: LocaleService, useClass: FakeLocale },
+    ],
+  });
+  TestBed.inject(SessionStore).signIn({
+    userId: 'u1',
+    channelId: 'ch12',
+    policy: { subjectId: 'u1', permVersion: 1, rules: [{ id: 'r', permissions }] },
+  });
+  const editors = TestBed.inject(EditorStore);
+  editors.open({ type: 'workflow', resourceId: workflow().id, title: 'Review gate' });
+  const tabId = `workflow:${workflow().id}`;
+  const fixture = TestBed.createComponent(WorkflowEditor);
+  fixture.componentRef.setInput('workflowId', workflow().id);
+  fixture.componentRef.setInput('tabId', tabId);
+  fixture.detectChanges();
+  const load = (w: Workflow = workflow()) => {
+    fake.gets.at(-1)?.next(w);
+    fake.palettes.at(-1)?.next(PALETTE);
+    fixture.detectChanges();
+  };
+  return {
+    fixture,
+    root: fixture.nativeElement as HTMLElement,
+    component: fixture.componentInstance as unknown as Internal,
+    fake,
+    load,
+    editors,
+    tabId,
+  };
+}
+
+const tabOf = (t: ReturnType<typeof setup>) =>
+  t.editors
+    .layout()
+    .groups.flatMap((g) => g.tabs)
+    .find((x) => x.id === t.tabId);
+
+describe('WorkflowEditor', () => {
+  beforeEach(() => {
+    TestBed.resetTestingModule();
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('shows the open draft as steps and connector-to-connector edges, and asks BMS to judge it', () => {
+    const t = setup();
+    t.load();
+    const steps = [...t.root.querySelectorAll('.step .label')].map((n) => n.textContent);
+    expect(steps).toEqual(['Start', 'Review', 'Done']);
+    expect(t.root.querySelectorAll('f-connection').length).toBe(2);
+    expect(t.root.querySelector('.step[data-kind="start"] .port.in')).toBeNull();
+    expect(t.root.querySelector('.step[data-kind="end"] .port.out')).toBeNull();
+    vi.advanceTimersByTime(0);
+    expect(t.fake.validations.length).toBe(1);
+    expect(t.component.dirty()).toBe(false);
+  });
+
+  it('with no open draft it shows the latest published version', () => {
+    const t = setup();
+    const { draft: _d, draftVersion: _v, ...published } = workflow();
+    t.load(published as Workflow);
+    expect(t.fake.versions[0]?.version).toBe(1);
+    t.fake.versions[0]?.result.next(definition());
+    t.fixture.detectChanges();
+    expect(t.root.querySelectorAll('.step').length).toBe(3);
+  });
+
+  it('a palette step is added right of the rest; a connection out → in becomes a transition', () => {
+    const t = setup();
+    t.load();
+    t.component.add('command');
+    const added = t.component.def()!.steps.at(-1)!;
+    expect(added).toMatchObject({ id: 's_command_1', kind: 'command', position: { x: 540, y: 0 } });
+    t.component.onConnect({ sourceId: outOf('s_review'), targetId: inOf('s_command_1') });
+    expect(t.component.def()!.transitions.at(-1)).toEqual({
+      id: 't3',
+      from: 's_review',
+      to: 's_command_1',
+    });
+    expect(t.component.dirty()).toBe(true);
+    t.fixture.detectChanges();
+    expect(tabOf(t)?.dirty).toBe(true);
+  });
+
+  it('a connection the canvas knows is wrong is refused with the reason, and changes nothing', () => {
+    const t = setup();
+    t.load();
+    t.component.onConnect({ sourceId: outOf('s_review'), targetId: inOf('s_review') });
+    expect(t.component.error()).toBe('workflowEditor.refused.self');
+    t.component.onConnect({ sourceId: outOf('s_start'), targetId: undefined }); // dropped nowhere
+    expect(t.component.def()!.transitions.length).toBe(2);
+    expect(t.component.dirty()).toBe(false);
+  });
+
+  it('dragging writes positions back; removing the selection takes its edges', () => {
+    const t = setup();
+    t.load();
+    t.component.onMove({ nodes: [{ id: 's_end', position: { x: 400, y: 80 } }] });
+    expect(t.component.def()!.steps[2]!.position).toEqual({ x: 400, y: 80 });
+    t.component.onSelect({ nodeIds: ['s_review'], groupIds: [], connectionIds: [] });
+    t.component.removeSelected();
+    expect(t.component.def()!.steps.map((s) => s.id)).toEqual(['s_start', 's_end']);
+    expect(t.component.def()!.transitions).toEqual([]);
+  });
+
+  it('validation waits for the edits to settle, and only the last run paints', () => {
+    const t = setup();
+    t.load();
+    vi.advanceTimersByTime(0);
+    t.component.rename('s_review', 'R');
+    t.component.rename('s_review', 'Re');
+    vi.advanceTimersByTime(VALIDATE_DEBOUNCE_MS - 1);
+    expect(t.fake.validations.length).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(t.fake.validations.length).toBe(2);
+    expect(t.fake.validations[1]?.input.steps[1]).toMatchObject({ name: 'Re' });
+    const issue: ValidationIssue = {
+      severity: 'error',
+      code: 'NO_PATH_TO_END',
+      message: 'no path',
+      stepId: 's_review',
+    };
+    t.fake.validations[0]?.result.next({ valid: true, issues: [] }); // stale — ignored
+    t.fake.validations[1]?.result.next({ valid: false, issues: [issue] });
+    t.fixture.detectChanges();
+    expect(t.component.issues()).toEqual([issue]);
+    expect(t.root.querySelector('.step[data-marker="error"] .label')?.textContent).toBe('Re');
+    expect(t.root.querySelector('.issues li code')?.textContent).toBe('NO_PATH_TO_END');
+  });
+
+  it('save sends the whole graph over the revision read; a 409 reads the workflow again', () => {
+    const t = setup();
+    t.load();
+    t.component.rename('s_review', 'Checked');
+    t.component.save();
+    expect(t.fake.saves[0]?.revision).toBe(4);
+    expect(t.fake.saves[0]?.input).toMatchObject({ name: 'Review gate' });
+    expect(t.fake.saves[0]?.input.steps.map((s) => s['name'])).toEqual([
+      'Start',
+      'Checked',
+      'Done',
+    ]);
+    const saved = definition();
+    saved.steps[1]!.name = 'Checked';
+    t.fake.saves[0]?.result.next(workflow({ revision: 5, draft: saved }));
+    expect(t.component.dirty()).toBe(false);
+
+    t.component.rename('s_review', 'Again');
+    t.component.save();
+    t.fake.saves[1]?.result.error(new HttpErrorResponse({ status: 409 }));
+    expect(t.component.error()).toBe('workflowEditor.moved');
+    expect(t.fake.gets.length).toBe(2);
+  });
+
+  it('without workflow:admin — or once archived — the canvas is read-only', () => {
+    const reader = setup(['workflow:read']);
+    reader.load();
+    expect(reader.component.canEdit()).toBe(false);
+    expect(reader.root.querySelector('.palette')).toBeNull();
+    reader.component.add('command');
+    reader.component.onConnect({ sourceId: outOf('s_start'), targetId: inOf('s_end') });
+    expect(reader.component.def()!.steps.length).toBe(3);
+    expect(reader.component.def()!.transitions.length).toBe(2);
+    expect(reader.fake.palettes.length).toBe(0); // the palette is an admin's (EP-23.1)
+
+    TestBed.resetTestingModule();
+    const archived = setup();
+    archived.load(workflow({ state: 'archived' }));
+    expect(archived.component.canEdit()).toBe(false);
+  });
+});

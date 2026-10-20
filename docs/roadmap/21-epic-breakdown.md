@@ -436,7 +436,7 @@ Source: [bms-plan](services/bms-plan.md) §2 steps 6–8 and "Designer & format 
 | 23.1 | ✅ Palette endpoint (`GET /workflows/palette`: step kinds + config schemas) and `POST /workflows/{id}/validate` (reachability, unbound refs, edge types): config schemas self-contained, `choices` from the closed lists; validate since 22.2 (DSL §5) | 3 |
 | 23.2 | ✅ Lossless DSL ⇄ BPMN 2.0 converter in `contracts` (`bpmn-moddle` + `atlas:` extension elements + DI layout), round-trip tested: `@atlas/contracts/bpmn`, every schema field and the layout round-trip, out-of-subset refused per element (DSL §11) | 8 |
 | 23.3 | ✅ Decision: the canvas is **Foblex Flow**, as D8 had it (confirmed 2026-10-12) | 2 |
-| 23.4 | Studio canvas — nodes and edges edited thin over the definition | 8 |
+| 23.4 | ✅ Studio canvas — nodes and edges edited thin over the definition: Foblex Flow over the definition signal, palette add, connect/move/remove, debounced validation markers, CAS save (DSL §12.2) | 8 |
 | 23.5 | Palette + property panels generated from the step kinds' config schemas | 5 |
 | 23.6 | FEEL expression editor for conditions, over the **restricted subset** decided 2026-10-12 ([DSL §3](../architecture/bms-workflow-dsl-and-designer.md#3-expression-language--feel)) | 5 |
 | 23.7 | Publish/version flow — draft → published, a published version immutable | 3 |

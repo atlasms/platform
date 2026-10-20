@@ -2,11 +2,17 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Workflow, WorkflowPage, WorkflowSummary } from '../core/generated/bms.types.ts';
+import type {
+  DraftInput,
+  Workflow,
+  WorkflowPage,
+  WorkflowSummary,
+} from '../core/generated/bms.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { WebSocketService } from '../core/websocket.service.ts';
 import { WorkflowsService } from '../core/workflows.service.ts';
+import { EditorStore } from '../workbench/editor.store.ts';
 import { WorkflowsPanel, fileNameOf } from './workflows-panel.ts';
 
 const summary = (overrides: Partial<WorkflowSummary> = {}): WorkflowSummary => ({
@@ -26,6 +32,12 @@ class FakeWorkflows {
   }> = [];
   readonly imports: Array<{ xml: string; result: Subject<Workflow> }> = [];
   readonly exports: Array<{ id: string; result: Subject<string> }> = [];
+  readonly creates: Array<{ input: DraftInput; result: Subject<Workflow> }> = [];
+  create(input: DraftInput) {
+    const result = new Subject<Workflow>();
+    this.creates.push({ input, result });
+    return result;
+  }
   list(options: { after?: string; limit?: number } = {}) {
     const result = new Subject<WorkflowPage>();
     this.lists.push({ options, result });
@@ -63,6 +75,9 @@ interface Internal {
   notice: () => string | null;
   refused: () => { elementId?: string; elementType: string; reason?: string }[];
   items: () => WorkflowSummary[];
+  open(w: { id: string; name: string }): void;
+  create(event: Event): void;
+  newName: { set(v: string): void };
 }
 
 function setup(permissions = ['workflow:admin']) {
@@ -74,6 +89,7 @@ function setup(permissions = ['workflow:admin']) {
       { provide: WorkflowsService, useValue: fake },
       { provide: LocaleService, useClass: FakeLocale },
       { provide: WebSocketService, useValue: ws },
+      EditorStore,
     ],
   });
   TestBed.inject(SessionStore).signIn({
@@ -98,6 +114,7 @@ function setup(permissions = ['workflow:admin']) {
     ws,
     page,
     downloads,
+    editors: TestBed.inject(EditorStore),
   };
 }
 
@@ -144,7 +161,7 @@ describe('WorkflowsPanel', () => {
     const reader = setup(['workflow:read']);
     reader.page([summary()]);
     expect(reader.root.querySelector('input[type=file]')).toBeNull();
-    expect(reader.root.querySelector('.items button')?.textContent?.trim()).toBe(
+    expect(reader.root.querySelector('.items button:not(.title)')?.textContent?.trim()).toBe(
       'workflowsPanel.export',
     );
   });
@@ -200,6 +217,48 @@ describe('WorkflowsPanel', () => {
     expect(t.downloads).toEqual([
       { filename: 'Ingest-to-air.bpmn', text: '<bpmn:definitions/>', type: 'application/xml' },
     ]);
+  });
+
+  it('a workflow opens in the designer — one tab per workflow', () => {
+    const t = setup(['workflow:read']);
+    const w = summary();
+    t.page([w]);
+    (t.root.querySelector('.items .title') as HTMLButtonElement).click();
+    (t.root.querySelector('.items .title') as HTMLButtonElement).click();
+    const tabs = t.editors.layout().groups.flatMap((g) => g.tabs);
+    expect(tabs.map((x) => x.id)).toEqual([`workflow:${w.id}`]);
+    expect(tabs[0]?.title).toBe(w.name);
+  });
+
+  it('an admin creates a workflow — a start and nothing else — and it opens in the designer', () => {
+    const t = setup();
+    t.page([]);
+    t.component.newName.set('  Proxy only  ');
+    t.component.create(new Event('submit'));
+    expect(t.fake.creates[0]?.input).toEqual({
+      name: 'Proxy only',
+      steps: [
+        {
+          id: 's_start',
+          kind: 'start',
+          name: 'workflowEditor.kind.start',
+          position: { x: 0, y: 0 },
+          config: {},
+        },
+      ],
+      transitions: [],
+    });
+    t.fake.creates[0]?.result.next({ ...summary({ id: 'new1', name: 'Proxy only' }) } as Workflow);
+    expect(
+      t.editors
+        .layout()
+        .groups.flatMap((g) => g.tabs)
+        .map((x) => x.id),
+    ).toEqual(['workflow:new1']);
+    expect(t.fake.lists.length).toBe(2);
+    TestBed.resetTestingModule();
+    const reader = setup(['workflow:read']);
+    expect(reader.root.querySelector('form.create')).toBeNull();
   });
 });
 

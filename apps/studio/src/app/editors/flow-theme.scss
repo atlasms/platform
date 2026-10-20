@@ -1,0 +1,58 @@
+/* Foblex Flow's styles for the workflow designer's canvas (EP-23.4), on Studio's tokens.
+ *
+ * The library draws its internals — connection paths, the drag-to-connect preview — and reads their
+ * look from `--ff-*` custom properties, out of reach of component CSS. Only the two domains the
+ * designer draws with are included: the canvas and its connections (no markers — direction is the
+ * ports', out on the right, in on the left). The designer's nodes and ports are its own CSS
+ * (workflow-editor.ts). Foblex's token layers are
+ * NOT included: every `--ff-*` property those two domains read is defined below from Studio's
+ * tokens (styles.scss), so the canvas follows the light/dark palette and an explicit `data-theme`
+ * like every other surface — and this sheet stays within a component's style budget, where
+ * `theme-all` with its palettes is ~42 kB.
+ *
+ * Loaded by `FlowTheme` (flow-theme.ts) with the designer's lazy chunk, not with every user's
+ * first load. If a Foblex upgrade makes the canvas read a property not listed here, it renders
+ * with that property unset — check its domains' `var(--ff-…)` against this list on upgrade.
+ */
+@use '@foblex/flow/styles' as flow;
+
+@include flow.flow-canvas();
+@include flow.connection();
+
+:root {
+  --ff-flow-background-color: var(--color-bg);
+  --ff-flow-text-color: var(--color-fg);
+  --ff-flow-font-family: inherit;
+  --ff-flow-font-size: 0.8125rem;
+  --ff-canvas-background-color: var(--color-bg);
+
+  --ff-connection-color: var(--color-fg-muted);
+  --ff-connection-hover-color: var(--color-accent);
+  --ff-connection-selected-color: var(--color-accent);
+  --ff-connection-width: 2px;
+  --ff-connection-hit-width: 14px;
+  --ff-snap-connection-color: var(--color-accent);
+  --ff-connection-content-background-color: var(--color-bg);
+  --ff-connection-content-border-color: var(--color-border);
+  --ff-connection-content-border-color-selected: var(--color-accent);
+  --ff-connection-content-border-radius: var(--radius-md);
+  --ff-connection-content-color: var(--color-fg-muted);
+  --ff-connection-content-font-size: 0.6875rem;
+  --ff-connection-content-padding-x: var(--space-1);
+  --ff-connection-content-padding-y: 0;
+  --ff-connection-drag-handle-fill: var(--color-bg);
+  --ff-connection-drag-handle-stroke: var(--color-accent);
+  --ff-waypoint-fill: var(--color-bg);
+  --ff-waypoint-stroke: var(--color-accent);
+  --ff-waypoint-candidate-fill: var(--color-accent-bg);
+  --ff-waypoint-candidate-stroke: var(--color-accent);
+}
+
+/* A connection a validation run marked (workflow-editor.ts). The path is the library's, and it
+ * binds an inline `stroke` for gradients — which a plain rule loses to; hence !important. */
+f-connection.marker-error .f-connection-path {
+  stroke: var(--color-danger) !important;
+}
+f-connection.marker-warning .f-connection-path {
+  stroke: var(--color-warning) !important;
+}
