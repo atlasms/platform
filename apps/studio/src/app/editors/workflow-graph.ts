@@ -29,6 +29,8 @@ export interface GraphNode {
   /** The connector an edge ARRIVES at — absent on a start, which nothing enters. */
   target?: string;
   marker?: Marker;
+  /** Where a live instance is (EP-23.9) — only while the overlay is on. */
+  status?: string;
 }
 
 export interface GraphEdge {
@@ -62,6 +64,7 @@ export const NODE_HEIGHT = 36;
 export function toGraph(
   def: WorkflowDefinition,
   issues: readonly ValidationIssue[] = [],
+  statuses: Readonly<Record<string, string>> = {},
 ): GraphView {
   const worst = (id: string, key: 'stepId' | 'transitionId'): Marker | undefined => {
     const mine = issues.filter((i) => i[key] === id);
@@ -83,6 +86,7 @@ export function toGraph(
       ...(s.kind !== 'end' ? { source: outOf(s.id) } : {}),
       ...(s.kind !== 'start' ? { target: inOf(s.id) } : {}),
       ...(marker ? { marker } : {}),
+      ...(statuses[s.id] ? { status: statuses[s.id] } : {}),
     };
   });
   const edges = def.transitions.map((t): GraphEdge => {

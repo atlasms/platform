@@ -6,14 +6,18 @@ import type { ValidationIssue, WorkflowDefinition } from '@atlas/contracts/workf
 import type {
   DraftInput,
   PaletteEntry,
+  InstancePage,
   PublishResult,
   ValidationResult,
   Workflow,
+  WorkflowInstance,
 } from '../core/generated/bms.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { SessionStore } from '../core/session.store.ts';
+import { WebSocketService } from '../core/websocket.service.ts';
 import { WorkflowsService } from '../core/workflows.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
+import { OVERLAY_REFRESH_MS } from './instance-overlay.model.ts';
 import { VALIDATE_DEBOUNCE_MS, WorkflowEditor } from './workflow-editor.ts';
 import { inOf, outOf } from './workflow-graph.ts';
 
@@ -68,6 +72,23 @@ const HUMAN_TASK_SCHEMA = {
     dueIn: { type: 'string', 'x-atlas-type': 'duration' },
   },
 };
+const run = (overrides: Partial<WorkflowInstance> = {}): WorkflowInstance => ({
+  id: '01K00000000000000000000RUN',
+  channelId: 'ch12',
+  workflowId: '01K00000000000000000000WF1',
+  version: 1,
+  state: 'waiting',
+  currentSteps: ['s_review'],
+  startedAt: '2026-10-20T10:00:00.000Z',
+  startedBy: 'bms',
+  history: [
+    { seq: 1, stepId: 's_start', event: 'entered', at: '2026-10-20T10:00:01.000Z' },
+    { seq: 2, stepId: 's_start', event: 'completed', at: '2026-10-20T10:00:02.000Z' },
+    { seq: 3, stepId: 's_review', event: 'entered', at: '2026-10-20T10:00:03.000Z' },
+  ],
+  ...overrides,
+});
+
 const PALETTE: PaletteEntry[] = (['command', 'human-task', 'branch', 'end'] as const).map(
   (kind) =>
     ({
@@ -84,6 +105,18 @@ class FakeWorkflows {
   readonly validations: Array<{ input: DraftInput; result: Subject<ValidationResult> }> = [];
   readonly saves: Array<{ revision: number; input: DraftInput; result: Subject<Workflow> }> = [];
   readonly publishes: Array<{ revision: number; result: Subject<PublishResult> }> = [];
+  readonly instanceLists: Subject<InstancePage>[] = [];
+  readonly instanceReads: Array<{ id: string; result: Subject<WorkflowInstance> }> = [];
+  instances(_workflowId: string) {
+    const s = new Subject<InstancePage>();
+    this.instanceLists.push(s);
+    return s;
+  }
+  instance(id: string) {
+    const result = new Subject<WorkflowInstance>();
+    this.instanceReads.push({ id, result });
+    return result;
+  }
   readonly moves: Array<{ action: string; revision: number; result: Subject<Workflow> }> = [];
   publish(_id: string, revision: number) {
     const result = new Subject<PublishResult>();
@@ -149,6 +182,8 @@ interface Internal {
   archive(): void;
   canPublish: () => boolean;
   notice: () => string | null;
+  watch(id: string): void;
+  overlay: () => WorkflowInstance | null;
   save(): void;
   revert(): void;
   def: () => WorkflowDefinition | null;
@@ -161,11 +196,21 @@ interface Internal {
 function setup(permissions = ['workflow:admin']) {
   localStorage.clear();
   const fake = new FakeWorkflows();
+  const ws = {
+    events$: new Subject<{ subject: string; payload: unknown }>(),
+    resync$: new Subject<string>(),
+    subscribed: [] as string[],
+    subscribe(pattern: string) {
+      this.subscribed.push(pattern);
+      return Promise.resolve(true);
+    },
+  };
   TestBed.configureTestingModule({
     providers: [
       EditorStore,
       { provide: WorkflowsService, useValue: fake },
       { provide: LocaleService, useClass: FakeLocale },
+      { provide: WebSocketService, useValue: ws },
     ],
   });
   TestBed.inject(SessionStore).signIn({
@@ -193,6 +238,7 @@ function setup(permissions = ['workflow:admin']) {
     load,
     editors,
     tabId,
+    ws,
   };
 }
 
@@ -501,5 +547,75 @@ describe('WorkflowEditor', () => {
     expect(t.root.textContent).toContain('workflowEditor.confirmArchive');
     t.component.archive();
     expect(t.fake.moves[0]?.action).toBe('archive');
+  });
+
+  it('an instance is painted on the version it is pinned to — read-only, each step by its status', () => {
+    const t = setup();
+    t.load();
+    expect(t.ws.subscribed).toContain('atlas.ch12.workflow.>');
+    t.fake.instanceLists[0]?.next({ items: [run()] });
+    t.fixture.detectChanges();
+    expect(t.root.querySelectorAll('select.instances option').length).toBe(2);
+
+    t.component.watch(run().id);
+    t.fake.instanceReads[0]?.result.next(run());
+    expect(t.fake.versions.at(-1)?.version).toBe(1); // the pinned version, not the draft
+    t.fake.versions.at(-1)?.result.next(definition());
+    t.fixture.detectChanges();
+    const status = (label: string) =>
+      [...t.root.querySelectorAll('.step')]
+        .find((n) => n.querySelector('.label')?.textContent === label)
+        ?.getAttribute('data-status');
+    expect(status('Start')).toBe('done');
+    expect(status('Review')).toBe('waiting');
+    expect(status('Done')).toBeNull(); // not reached
+    expect(t.component.canEdit()).toBe(false);
+    t.component.add('command');
+    expect(t.component.def()!.steps.length).toBe(3);
+    const history = [...t.root.querySelectorAll('.history li')].map((li) =>
+      li.textContent?.replace(/\s+/g, ' ').trim(),
+    );
+    expect(history[0]).toBe('10:00:01 Start — workflowEditor.event.entered');
+  });
+
+  it('a live run is followed: re-read on a timer and on an event naming it, until it ends', () => {
+    const t = setup();
+    t.load();
+    t.component.watch(run().id);
+    t.fake.instanceReads[0]?.result.next(run());
+    t.fake.versions.at(-1)?.result.next(definition());
+    vi.advanceTimersByTime(OVERLAY_REFRESH_MS);
+    expect(t.fake.instanceReads.length).toBe(2);
+    t.ws.events$.next({
+      subject: 'atlas.ch12.workflow.completed',
+      payload: { type: 'workflow.completed', payload: { instanceId: run().id } },
+    });
+    expect(t.fake.instanceReads.length).toBe(3);
+    t.ws.events$.next({
+      subject: 'atlas.ch12.workflow.completed',
+      payload: { type: 'workflow.completed', payload: { instanceId: 'another' } },
+    });
+    expect(t.fake.instanceReads.length).toBe(3); // another run's event is not this one's
+    t.fake.instanceReads[2]?.result.next(
+      run({ state: 'completed', currentSteps: [], endedAt: '2026-10-20T10:05:00.000Z' }),
+    );
+    vi.advanceTimersByTime(OVERLAY_REFRESH_MS * 3);
+    expect(t.fake.instanceReads.length).toBe(3); // ended: no longer followed
+    expect(t.component.overlay()?.state).toBe('completed');
+  });
+
+  it('leaving the overlay is back to designing the draft', () => {
+    const t = setup();
+    t.load();
+    t.component.watch(run().id);
+    t.fake.instanceReads[0]?.result.next(run());
+    t.fake.versions.at(-1)?.result.next(definition());
+    t.component.watch('');
+    t.fake.gets.at(-1)?.next(workflow());
+    t.fake.palettes.at(-1)?.next([]);
+    expect(t.component.overlay()).toBeNull();
+    expect(t.component.canEdit()).toBe(true);
+    vi.advanceTimersByTime(OVERLAY_REFRESH_MS * 2);
+    expect(t.fake.instanceReads.length).toBe(1); // the timer went with the overlay
   });
 });

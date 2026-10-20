@@ -857,7 +857,27 @@
       "archive": "Archived."
     },
     "running": "Refused while instances are running:",
-    "moveError": "The workflow's state could not be changed."
+    "moveError": "The workflow's state could not be changed.",
+    "instances": "Instance",
+    "design": "— designing —",
+    "run": "Run",
+    "following": "following live",
+    "startedBy": "started by",
+    "runError": "The instance could not be read.",
+    "instanceState": {
+      "running": "running",
+      "waiting": "waiting",
+      "completed": "completed",
+      "failed": "failed"
+    },
+    "event": {
+      "entered": "entered",
+      "awaiting": "waiting",
+      "completed": "completed",
+      "failed": "failed",
+      "compensated": "compensated",
+      "escalated": "escalated"
+    }
   },
   "schemaForm": {
     "key": "target",

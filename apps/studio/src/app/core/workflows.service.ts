@@ -3,11 +3,13 @@ import { ApiClient } from './api-client.ts';
 import type {
   Catalog,
   DraftInput,
+  InstancePage,
   PaletteEntry,
   PublishResult,
   ValidationResult,
   Workflow,
   WorkflowDefinition,
+  WorkflowInstance,
   WorkflowPage,
 } from './generated/bms.types.ts';
 import { BmsOperations as ops } from './generated/bms.operations.ts';
@@ -82,6 +84,16 @@ export class WorkflowsService {
           ? ops.deactivateWorkflow
           : ops.archiveWorkflow;
     return this.api.call(op, { params: { id }, query: { revision } }).as<Workflow>();
+  }
+
+  /** A workflow's instances, newest first (`workflow:read`, `:act` or `:admin`). */
+  instances(workflowId: string, limit = 20) {
+    return this.api.call(ops.listInstances, { query: { workflowId, limit } }).as<InstancePage>();
+  }
+
+  /** One instance with its step history (FR-BMS-6) — what the overlay paints. */
+  instance(id: string) {
+    return this.api.call(ops.getInstance, { params: { id } }).as<WorkflowInstance>();
   }
 
   /** The step kinds a designer offers (`workflow:admin`, EP-23.1). */
