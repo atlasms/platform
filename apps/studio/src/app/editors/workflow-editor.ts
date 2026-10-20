@@ -43,6 +43,7 @@ import {
   stepOfConnector,
   toGraph,
 } from './workflow-graph.ts';
+import { FeelInput } from './feel-input.ts';
 import { SchemaField } from './schema-field.ts';
 
 /** How long the designer waits after an edit before asking BMS to judge the graph (DSL §12.2). */
@@ -71,7 +72,7 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
 @Component({
   selector: 'atlas-workflow-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FFlowModule, FlowTheme, SchemaField],
+  imports: [FFlowModule, FlowTheme, SchemaField, FeelInput],
   template: `
     <atlas-flow-theme />
     @if (workflow(); as w) {
@@ -209,6 +210,7 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
                 [value]="s.config ?? {}"
                 [choices]="entry.choices"
                 [readOnly]="!canEdit()"
+                [vars]="varNames()"
                 (valueChange)="configure(s.id, $event)"
               />
             } @else if (!canEdit() && s.config) {
@@ -226,16 +228,16 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
               />
             </label>
             @if (fromBranch(e.from)) {
-              <label>
-                {{ locale.t('workflowEditor.when') }}
-                <input
-                  class="feel"
-                  placeholder="= …"
+              <div class="when">
+                <span>{{ locale.t('workflowEditor.when') }}</span>
+                <atlas-feel-input
                   [value]="e.when ?? ''"
-                  [disabled]="!canEdit()"
-                  (input)="editEdge(e.id, { when: $any($event.target).value })"
+                  [readOnly]="!canEdit()"
+                  [vars]="varNames()"
+                  [ariaLabel]="locale.t('workflowEditor.when')"
+                  (valueChange)="editEdge(e.id, { when: $event })"
                 />
-              </label>
+              </div>
               <label class="check">
                 <input
                   type="checkbox"
@@ -407,6 +409,12 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
       gap: var(--space-1);
       margin-block-end: var(--space-1);
     }
+    .side .when {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-1);
+      margin-block-end: var(--space-1);
+    }
     .side label.check {
       flex-direction: row;
       align-items: center;
@@ -498,6 +506,8 @@ export class WorkflowEditor implements OnInit {
     const ids = this.selectedSteps();
     return ids.length === 1 ? this.def()?.steps.find((s) => s.id === ids[0]) : undefined;
   });
+  /** The declared vars, offered and checked by every FEEL field (EP-23.6). */
+  protected readonly varNames = computed(() => (this.def()?.vars ?? []).map((v) => v.name));
   /** One edge selected, and no step: its own panel. */
   protected readonly selectedEdge = computed(() => {
     const ids = this.selectedEdges();

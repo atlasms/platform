@@ -8,6 +8,7 @@ import {
   signal,
 } from '@angular/core';
 import { LocaleService } from '../core/locale.service.ts';
+import { FeelInput } from './feel-input.ts';
 import {
   entriesOf,
   fieldKind,
@@ -26,13 +27,14 @@ import {
  * every edit flows out as the field's WHOLE new value (`valueChange`), so the parent replaces
  * rather than patches and the definition stays one immutable signal.
  *
- * FEEL fields are a monospace input for now — the expression editor with parse hints is 23.6.
+ * FEEL fields — and a data mapping's values — are the FEEL editor (`atlas-feel-input`, EP-23.6).
  */
 let fieldCount = 0;
 
 @Component({
   selector: 'atlas-schema-field',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [FeelInput],
   template: `
     @switch (kind()) {
       @case ('object') {
@@ -59,6 +61,7 @@ let fieldCount = 0;
               [choices]="choices()"
               [readOnly]="readOnly()"
               [depth]="depth() + 1"
+              [vars]="vars()"
               (valueChange)="setChild(p.key, $event)"
             />
           }
@@ -81,15 +84,15 @@ let fieldCount = 0;
                 [attr.aria-label]="label() + ' — ' + locale.t('schemaForm.key')"
                 (change)="rename(row[0], $any($event.target).value)"
               />
-              <input
-                class="feel"
+              <atlas-feel-input
                 [value]="row[1]"
-                [disabled]="readOnly()"
-                [attr.aria-label]="label() + ' ' + row[0]"
-                (input)="setChild(row[0], $any($event.target).value, true)"
+                [readOnly]="readOnly()"
+                [vars]="vars()"
+                [ariaLabel]="label() + ' ' + row[0]"
+                (valueChange)="setChild(row[0], $event, true)"
               />
               @if (!readOnly()) {
-                <button type="button" class="link" (click)="setChild(row[0], undefined)">
+                <button type="button" class="link remove" (click)="setChild(row[0], undefined)">
                   {{ locale.t('schemaForm.remove') }}
                 </button>
               }
@@ -156,6 +159,15 @@ let fieldCount = 0;
                 (input)="emitVersion($any($event.target).value)"
               />
             }
+            @case ('feel') {
+              <atlas-feel-input
+                [inputId]="id"
+                [value]="text()"
+                [readOnly]="readOnly()"
+                [vars]="vars()"
+                (valueChange)="emit($event)"
+              />
+            }
             @case ('json') {
               <textarea
                 [id]="id"
@@ -169,7 +181,6 @@ let fieldCount = 0;
             @default {
               <input
                 [id]="id"
-                [class.feel]="kind() === 'feel'"
                 [value]="value() ?? ''"
                 [disabled]="readOnly()"
                 [placeholder]="placeholder()"
@@ -271,6 +282,8 @@ export class SchemaField {
   readonly choices = input<Record<string, unknown> | undefined>(undefined);
   readonly readOnly = input(false);
   readonly depth = input(0);
+  /** The workflow's declared var names, for every FEEL field below (EP-23.6). */
+  readonly vars = input<readonly string[]>([]);
   /** The field's whole new value — `undefined` when it was emptied. */
   readonly valueChange = output<unknown>();
 
@@ -290,6 +303,10 @@ export class SchemaField {
   protected readonly description = computed(() => {
     const d = this.schema()['description'];
     return typeof d === 'string' ? d : null;
+  });
+  protected readonly text = computed(() => {
+    const v = this.value();
+    return typeof v === 'string' ? v : '';
   });
   protected readonly json = computed(() =>
     this.value() === undefined ? '' : JSON.stringify(this.value(), null, 2),

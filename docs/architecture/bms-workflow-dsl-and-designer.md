@@ -187,6 +187,17 @@ list is a decision recorded here, not a library upgrade. The roots are declared 
 reads a bare `instance` as the start of `instance of`, so without that the `instance` root would not
 parse — and with it, `instance of` (outside the subset anyway) does not.
 
+**The editor (EP-23.6, as built).** Studio's `atlas-feel-input` is every FEEL field in the designer
+— a config field the palette marks `x-atlas-type: feel`, every data-mapping value, a branch edge's
+`when`. It judges the expression AS IT IS TYPED with the same checker publish runs:
+`@atlas/contracts/workflow-feel` is the subset checker on its own subpath (feelin's parser, no file
+system), so the browser and BMS cannot disagree, and it works offline (§12.5). Three states: a
+parse error or a construct outside the subset (publish's own words, `aria-invalid`), a `vars.<name>`
+the workflow does not declare (a warning — publish's `UNBOUND_VAR`), or clean. *Insert…* offers the
+subset by name — the four roots, the workflow's declared vars, the allowed functions — at the caret,
+beginning an empty field with `= `. A verdict is a hint, never a block: a draft saves whatever it
+holds. The parser costs the designer's lazy chunk ~55 kB gzipped; nobody else loads it.
+
 ## 4. Variables & data flow
 
 - A start step's `trigger.output` (EP-22.7) maps the triggering event — the start step's `incoming`
@@ -653,7 +664,7 @@ component reads them all.
   select shows it, and publish is what refuses it.
 - Fields: an object's properties (each its own field, nested ones grouped, required ones
   marked), a data mapping (rows of target → FEEL: add, rename in place, remove), an enum or a
-  closed list (a select), FEEL (a monospace input — the expression editor is 23.6), a duration, text,
+  closed list (a select), FEEL (the expression editor, §3), a duration, text,
   a number, a boolean, a sub-flow version (a whole number or `latest`), and JSON for anything else
   (a human task's `form`), so nothing the schema allows is out of reach.
 - Every edit emits the field's WHOLE new value up the tree; the designer replaces the step's

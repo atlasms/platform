@@ -845,5 +845,10 @@
     "addRow": "Add a mapping",
     "badVersion": "A version is a whole number, or latest.",
     "badJson": "Not valid JSON — not applied."
+  },
+  "feel": {
+    "ok": "Within the workflow expression subset.",
+    "undeclared": "Not a declared var:",
+    "insert": "Insert…"
   }
 }
