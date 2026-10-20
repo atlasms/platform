@@ -837,7 +837,27 @@
     "config": "Configuration",
     "edgeName": "Edge name",
     "when": "Condition (FEEL)",
-    "isDefault": "Default — taken when no condition holds"
+    "isDefault": "Default — taken when no condition holds",
+    "versions": "Version",
+    "latest": "latest",
+    "publish": "Publish",
+    "saveAndPublish": "Save and publish",
+    "publishBlocked": "Fix the errors first — publish would refuse them.",
+    "published": "Published",
+    "warnings": "warnings",
+    "publishInvalid": "Publish refused: the draft has errors, marked on the canvas.",
+    "publishError": "The draft could not be published.",
+    "deactivate": "Deactivate",
+    "activate": "Activate",
+    "archive": "Archive…",
+    "confirmArchive": "Archive for good — click again",
+    "done": {
+      "activate": "Active again.",
+      "deactivate": "Inactive — no new instances.",
+      "archive": "Archived."
+    },
+    "running": "Refused while instances are running:",
+    "moveError": "The workflow's state could not be changed."
   },
   "schemaForm": {
     "key": "target",

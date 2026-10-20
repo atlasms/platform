@@ -6,6 +6,7 @@ import type { ValidationIssue, WorkflowDefinition } from '@atlas/contracts/workf
 import type {
   DraftInput,
   PaletteEntry,
+  PublishResult,
   ValidationResult,
   Workflow,
 } from '../core/generated/bms.types.ts';
@@ -82,6 +83,18 @@ class FakeWorkflows {
   readonly palettes: Subject<PaletteEntry[]>[] = [];
   readonly validations: Array<{ input: DraftInput; result: Subject<ValidationResult> }> = [];
   readonly saves: Array<{ revision: number; input: DraftInput; result: Subject<Workflow> }> = [];
+  readonly publishes: Array<{ revision: number; result: Subject<PublishResult> }> = [];
+  readonly moves: Array<{ action: string; revision: number; result: Subject<Workflow> }> = [];
+  publish(_id: string, revision: number) {
+    const result = new Subject<PublishResult>();
+    this.publishes.push({ revision, result });
+    return result;
+  }
+  transition(_id: string, action: string, revision: number) {
+    const result = new Subject<Workflow>();
+    this.moves.push({ action, revision, result });
+    return result;
+  }
   get(_id: string) {
     const s = new Subject<Workflow>();
     this.gets.push(s);
@@ -130,6 +143,12 @@ interface Internal {
   configure(id: string, config: unknown): void;
   editEdge(id: string, patch: { name?: string; when?: string }): void;
   makeDefault(id: string, on: boolean): void;
+  publish(): void;
+  view(choice: string): void;
+  move(action: 'activate' | 'deactivate' | 'archive'): void;
+  archive(): void;
+  canPublish: () => boolean;
+  notice: () => string | null;
   save(): void;
   revert(): void;
   def: () => WorkflowDefinition | null;
@@ -374,5 +393,113 @@ describe('WorkflowEditor', () => {
       taskType: 'approve',
       assignee: { role: 'librarian' },
     });
+  });
+
+  it('publish waits for a clean judgement, then publishes over the revision read', () => {
+    const t = setup();
+    t.load();
+    expect(t.component.canPublish()).toBe(false); // BMS is still judging
+    vi.advanceTimersByTime(0);
+    t.fake.validations[0]?.result.next({
+      valid: false,
+      issues: [{ severity: 'error', code: 'E', message: 'e', stepId: 's_review' }],
+    });
+    expect(t.component.canPublish()).toBe(false); // it found an error
+    t.component.rename('s_review', 'Fixed');
+    vi.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+    t.fake.validations[1]?.result.next({ valid: true, issues: [] });
+    expect(t.component.canPublish()).toBe(true);
+
+    // Unsaved edits are saved first; the publish goes over the revision that save returned.
+    t.component.publish();
+    expect(t.fake.saves.length).toBe(1);
+    const saved = definition();
+    saved.steps[1]!.name = 'Fixed';
+    t.fake.saves[0]?.result.next(workflow({ revision: 5, draft: saved }));
+    expect(t.fake.publishes[0]?.revision).toBe(5);
+    t.fake.publishes[0]?.result.next({
+      workflowId: workflow().id,
+      state: 'active',
+      version: 2,
+      publishedAt: '2026-10-20T10:00:00.000Z',
+      revision: 6,
+      warnings: [{ severity: 'warning', code: 'GAP', message: 'w' }],
+    });
+    expect(t.component.notice()).toBe('workflowEditor.published v2 · 1 workflowEditor.warnings');
+    expect(t.fake.gets.length).toBe(2); // read again: the draft is a version now
+  });
+
+  it('a publish BMS refuses paints its issues where they belong', () => {
+    const t = setup();
+    t.load();
+    vi.advanceTimersByTime(0);
+    t.fake.validations[0]?.result.next({ valid: true, issues: [] });
+    t.component.publish();
+    const issue: ValidationIssue = {
+      severity: 'error',
+      code: 'UNKNOWN_COMMAND',
+      message: 'not a command',
+      stepId: 's_review',
+    };
+    t.fake.publishes[0]?.result.error(
+      new HttpErrorResponse({
+        status: 422,
+        error: { code: 'VALIDATION', details: { issues: [issue] } },
+      }),
+    );
+    t.fixture.detectChanges();
+    expect(t.component.error()).toBe('workflowEditor.publishInvalid');
+    expect(t.component.issues()).toEqual([issue]);
+    expect(t.root.querySelector('.step[data-marker="error"] .label')?.textContent).toBe('Review');
+  });
+
+  it('a published version is shown read-only; back to the draft is editable again', () => {
+    const t = setup();
+    t.load(
+      workflow({
+        versions: [{ version: 1, publishedAt: '2026-10-19T08:00:00.000Z', publishedBy: 'u2' }],
+      }),
+    );
+    const options = [...t.root.querySelectorAll('select.versions option')].map((o) =>
+      o.textContent?.trim(),
+    );
+    expect(options).toEqual(['workflowsPanel.draft v2', 'v1 · 2026-10-19 · u2']);
+    t.component.view('1');
+    expect(t.fake.versions.at(-1)?.version).toBe(1);
+    const v1 = definition();
+    v1.steps = v1.steps.slice(0, 2);
+    t.fake.versions.at(-1)?.result.next(v1);
+    expect(t.component.canEdit()).toBe(false);
+    expect(t.component.def()!.steps.length).toBe(2);
+    t.component.add('command');
+    expect(t.component.def()!.steps.length).toBe(2); // a published version is immutable
+    t.component.view('current');
+    t.fake.gets.at(-1)?.next(workflow());
+    expect(t.component.canEdit()).toBe(true);
+  });
+
+  it('lifecycle: deactivate over the revision; refused while instances run, with the count', () => {
+    const t = setup();
+    t.load();
+    t.component.move('deactivate');
+    expect(t.fake.moves[0]).toMatchObject({ action: 'deactivate', revision: 4 });
+    t.fake.moves[0]?.result.error(
+      new HttpErrorResponse({ status: 409, error: { code: 'CONFLICT', details: { running: 3 } } }),
+    );
+    expect(t.component.error()).toBe('workflowEditor.running 3');
+    t.component.move('deactivate');
+    t.fake.moves[1]?.result.next(workflow({ state: 'inactive', revision: 5 }));
+    expect(t.component.notice()).toBe('workflowEditor.done.deactivate');
+  });
+
+  it('archiving is final, so it takes a second click', () => {
+    const t = setup();
+    t.load();
+    t.component.archive();
+    expect(t.fake.moves.length).toBe(0);
+    t.fixture.detectChanges();
+    expect(t.root.textContent).toContain('workflowEditor.confirmArchive');
+    t.component.archive();
+    expect(t.fake.moves[0]?.action).toBe('archive');
   });
 });

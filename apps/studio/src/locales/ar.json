@@ -837,7 +837,27 @@
     "config": "الإعدادات",
     "edgeName": "اسم الوصلة",
     "when": "الشرط (FEEL)",
-    "isDefault": "افتراضي — يُسلك حين لا يتحقق أي شرط"
+    "isDefault": "افتراضي — يُسلك حين لا يتحقق أي شرط",
+    "versions": "الإصدار",
+    "latest": "الأحدث",
+    "publish": "نشر",
+    "saveAndPublish": "حفظ ثم نشر",
+    "publishBlocked": "أصلح الأخطاء أولًا — سيرفضها النشر.",
+    "published": "نُشر",
+    "warnings": "تحذيرات",
+    "publishInvalid": "رُفض النشر: في المسودة أخطاء مُعلَّمة على اللوحة.",
+    "publishError": "تعذّر نشر المسودة.",
+    "deactivate": "إيقاف",
+    "activate": "تفعيل",
+    "archive": "أرشفة…",
+    "confirmArchive": "أرشفة نهائية — انقر مجددًا",
+    "done": {
+      "activate": "نشط مجددًا.",
+      "deactivate": "غير نشط — لا مثيلات جديدة.",
+      "archive": "أُرشف."
+    },
+    "running": "مرفوض ما دامت مثيلات قيد التشغيل:",
+    "moveError": "تعذّر تغيير حالة مسار العمل."
   },
   "schemaForm": {
     "key": "الهدف",
