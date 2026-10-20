@@ -23,9 +23,10 @@ export interface PanelDefinition {
   /**
    * Seeing the panel at all requires this — or, given a list, ANY of it: a container whose views
    * need different grants (Admin: people under `user:admin`, the transcode profiles under
-   * `config:*`) is revealed by each of them. Views inside gate themselves further.
+   * `config:*`) is revealed by each of them. Views inside gate themselves further. `null`: every
+   * signed-in user has it — the Inbox is the caller's own (EP-25.9).
    */
-  readonly permission: string | readonly string[];
+  readonly permission: string | readonly string[] | null;
   readonly route: string;
   readonly available: boolean;
 }
@@ -87,9 +88,11 @@ export const PANELS: readonly PanelDefinition[] = [
     id: 'inbox',
     titleKey: 'workbench.panels.inbox',
     icon: '✉',
-    permission: 'task:read',
+    // Everyone's own tasks, notifications, messages and preferences (EP-25.9): Notifications
+    // serves the caller's and nobody else's, so no permission reveals it.
+    permission: null,
     route: '/inbox',
-    available: false,
+    available: true,
   },
   {
     id: 'workflows',
