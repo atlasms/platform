@@ -23,6 +23,7 @@ import {
   type ValidationResult,
   type WorkflowDefinition,
 } from '@atlas/contracts/workflow';
+import { exportBpmn, importBpmn, ImportFailure } from '@atlas/contracts/bpmn';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, Forbidden, NotFound, Unavailable, ValidationError } from '@atlas/service-kit';
 import { isTerminal, type HistoryEntry, type Instance, type InstanceState } from './instance.ts';
@@ -32,6 +33,7 @@ import { instanceAudit } from './runtime.ts';
 import type { WorkflowStore } from './store.ts';
 import {
   definitionOf,
+  parseDraftInput,
   type DraftInput,
   type Workflow,
   type WorkflowState,
@@ -221,6 +223,47 @@ export class BmsService {
       );
     });
     return { ...workflow, draft: draft.definition, versions: [] };
+  }
+
+  /**
+   * A BPMN 2.0 file becomes a NEW workflow's draft (FR-BMS-10, EP-23.8; DSL doc §11): the file's
+   * graph, layout, description and scope, in the caller's channel under a new id — never the
+   * file's channel or id, and never a published version. The draft is held to the same shape
+   * bounds as one the designer saves, and is judged by the validator like any draft: an import
+   * maps, publish gates. Constructs outside the subset are a 422 naming each one (`details`).
+   */
+  async importBpmn(caller: Caller, xml: string): Promise<WorkflowView> {
+    this.authorizeAdmin(caller);
+    let def: WorkflowDefinition;
+    try {
+      def = await importBpmn(xml, { channelId: caller.channelId });
+    } catch (err) {
+      if (!(err instanceof ImportFailure)) throw err;
+      throw new ValidationError(err.message, { code: err.code, unsupported: err.unsupported });
+    }
+    const { name, description, scope, vars, steps, transitions } = def;
+    return this.create(
+      caller,
+      parseDraftInput({ name, description, scope, vars, steps, transitions }),
+    );
+  }
+
+  /**
+   * A version as BPMN 2.0 with DI (FR-BMS-10, EP-23.8): the one named, else the open draft, else
+   * the latest published — what the designer would show. Read under the same rule as the
+   * definition itself.
+   */
+  async exportBpmn(
+    caller: Caller,
+    id: string,
+    version?: number,
+  ): Promise<{ xml: string; version: number }> {
+    this.authorizeRead(caller);
+    const workflow = await this.header(caller, id);
+    const v = version ?? workflow.draftVersion ?? workflow.latestVersion;
+    const row = v > 0 ? await this.store.version(id, v) : undefined;
+    if (!row) throw new NotFound(`workflow ${id} version ${v}`);
+    return { xml: await exportBpmn(row.definition), version: row.version };
   }
 
   /**

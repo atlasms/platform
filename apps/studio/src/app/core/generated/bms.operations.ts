@@ -23,7 +23,7 @@ export const BmsOperations = {
   archiveWorkflow: { method: 'POST', path: '/api/v1/workflows/{id}/archive', params: ['id'] },
   /** Step kinds + their config schemas (drives the designer palette, FR-BMS-8; EP-23.1) — workflow:admin */
   getPalette: { method: 'GET', path: '/api/v1/workflows/palette', params: [] },
-  /** Import a BPMN 2.0 file to a draft definition, validated (FR-BMS-10; EP-23.8) */
+  /** A BPMN 2.0 file becomes a NEW workflow's draft (workflow:admin; FR-BMS-10, EP-23.8, DSL §11): its graph, layout, description and scope, in the caller's channel under a new id — never the file's. Not validated here: the draft is judged like any other, and publish gates it. */
   importWorkflow: { method: 'POST', path: '/api/v1/workflows/import', params: [] },
   /** A workflow — its header, its open draft (if any) and its published versions */
   getWorkflow: { method: 'GET', path: '/api/v1/workflows/{id}', params: ['id'] },
@@ -39,7 +39,7 @@ export const BmsOperations = {
     path: '/api/v1/workflows/{id}/versions/{version}',
     params: ['id', 'version'],
   },
-  /** Export the definition as BPMN 2.0 XML with DI layout (FR-BMS-10; EP-23.8) */
+  /** A version as BPMN 2.0 XML with DI layout (workflow:read or :admin; FR-BMS-10, EP-23.8, DSL §11) — the version named, else the open draft, else the latest published. */
   exportWorkflow: { method: 'GET', path: '/api/v1/workflows/{id}/export', params: ['id'] },
   /** The channel's workflow instances, newest first (workflow:read, :act or :admin) */
   listInstances: { method: 'GET', path: '/api/v1/instances', params: [] },

@@ -2839,6 +2839,79 @@ test('smoke: EP-22.11 — the catalog: an active workflow is in it, deactivation
   );
 });
 
+test('smoke: EP-23.8 — a workflow exported as BPMN through the gateway imports back as a new draft; a foreign construct is named', async () => {
+  // BMS's BPMN converter (EP-23.2) on a live cluster: the image carries bpmn-moddle and the atlas:
+  // descriptor from docs/, and the gateway relays the XML both ways untouched.
+  const token = await seedToken();
+  if (!token) return;
+  const auth = { authorization: `Bearer ${token}` };
+  const preset = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../docs/architecture/workflows/presets/canonical-ingest-to-air.workflow.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  );
+  // Never published — and its trigger would never fire if it were.
+  const input = {
+    name: `smoke bpmn ${Date.now()}`,
+    vars: preset.vars,
+    steps: preset.steps.map((s) =>
+      s.kind === 'start'
+        ? { ...s, config: { trigger: { ...s.config.trigger, filter: '= false' } } }
+        : s,
+    ),
+    transitions: preset.transitions,
+  };
+  const created = await get('/api/v1/workflows', {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  assert.equal(created.status, 201, created.text);
+  const w = json(created);
+
+  const exported = await get(`/api/v1/workflows/${w.id}/export`, { headers: auth });
+  assert.equal(exported.status, 200, exported.text);
+  assert.match(exported.headers.get('content-type') ?? '', /^application\/xml/);
+  assert.equal(
+    (exported.text.match(/<bpmndi:BPMNShape /g) ?? []).length,
+    input.steps.length,
+    'a DI shape per step',
+  );
+
+  const imported = await get('/api/v1/workflows/import', {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/xml' },
+    body: exported.text,
+  });
+  assert.equal(imported.status, 201, imported.text);
+  const copy = json(imported);
+  assert.notEqual(copy.id, w.id);
+  assert.equal(copy.name, input.name);
+  const layout = (steps) => steps.map((s) => `${s.id}@${s.position.x},${s.position.y}`).sort();
+  assert.deepEqual(
+    layout(copy.draft.steps),
+    layout(input.steps),
+    'the graph and its layout came back',
+  );
+
+  const refused = await get('/api/v1/workflows/import', {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/xml' },
+    body: '<?xml version="1.0"?><bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="d" targetNamespace="x"><bpmn:process id="p"><bpmn:inclusiveGateway id="ig"/></bpmn:process></bpmn:definitions>',
+  });
+  assert.equal(refused.status, 422, refused.text);
+  const problem = json(refused);
+  assert.equal(problem.details.code, 'UNSUPPORTED_BPMN');
+  assert.deepEqual(
+    problem.details.unsupported.map((u) => u.elementType),
+    ['bpmn:InclusiveGateway'],
+  );
+});
+
 test('smoke: EP-31 — a range copied onto another day: one audited write over the target version', async () => {
   // §3.7 on a live cluster: two days, a reel on the first, its first hour copied onto the second at
   // 20:00 by overwrite — the items re-timed with new ids, the target one version on, a stale

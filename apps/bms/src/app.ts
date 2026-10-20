@@ -107,6 +107,14 @@ export async function buildBmsApp(options: BmsAppOptions): Promise<FastifyInstan
     }
   });
 
+  // A BPMN file (EP-23.8) is the one body that is not JSON: taken as the text it is, and parsed by
+  // the converter, which says what is wrong with it.
+  app.addContentTypeParser(
+    ['application/xml', 'text/xml'],
+    { parseAs: 'string' },
+    (_req, body, done) => done(null, body),
+  );
+
   // --- correlation + tracing: issue or adopt, for every request including failures ---------------
   app.addHook('onRequest', (req, _reply, done) => {
     // A ULID, adopted only when the caller sent a well-formed one. Behind the gateway that caller
@@ -308,6 +316,34 @@ export async function buildBmsApp(options: BmsAppOptions): Promise<FastifyInstan
   app.post('/api/v1/workflows', (req, reply) =>
     handle(req, reply, 201, (caller) => service.create(caller, parseDraftInput(req.body))),
   );
+
+  // BPMN 2.0 in and out (FR-BMS-10, EP-23.8; DSL doc §11).
+  app.post('/api/v1/workflows/import', (req, reply) =>
+    handle(req, reply, 201, (caller) => {
+      if (typeof req.body !== 'string' || req.body.trim() === '')
+        throw new ValidationError('the body is a BPMN 2.0 document, sent as application/xml');
+      return service.importBpmn(caller, req.body);
+    }),
+  );
+
+  app.get<{ Params: P; Querystring: Q }>('/api/v1/workflows/:id/export', (req, reply) => {
+    // Set before the work: a failure's problem document replaces it (handle's catch).
+    reply.type('application/xml; charset=utf-8');
+    return handle(req, reply, 200, async (caller) => {
+      const format = req.query['format'];
+      if (format !== undefined && format !== 'bpmn')
+        throw new ValidationError('format must be bpmn');
+      const version = req.query['version'];
+      if (version !== undefined && !/^[1-9]\d*$/.test(version))
+        throw new ValidationError('version must be a positive integer');
+      const out = await service.exportBpmn(
+        caller,
+        req.params.id,
+        version === undefined ? undefined : Number(version),
+      );
+      return out.xml;
+    });
+  });
 
   app.get<{ Params: P }>('/api/v1/workflows/:id', (req, reply) =>
     handle(req, reply, 200, (caller) => service.get(caller, req.params.id)),

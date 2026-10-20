@@ -58,7 +58,17 @@ describe('routes', () => {
     expect(shell?.path).toBe('');
     expect(shell?.canMatch?.length).toBe(1);
     const children = shell?.children?.map((c) => c.path) ?? [];
-    expect(children).toEqual(['media', 'search', 'schedule', 'ingest', 'inbox', 'admin', '', '**']);
+    expect(children).toEqual([
+      'media',
+      'search',
+      'schedule',
+      'ingest',
+      'workflows',
+      'inbox',
+      'admin',
+      '',
+      '**',
+    ]);
     expect(routes.map((r) => r.path)).toEqual(['signin', '']);
   });
 

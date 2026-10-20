@@ -196,11 +196,11 @@ export interface PublishResult {
   warnings?: ValidationIssue[];
 }
 
-/** BPMN import rejected: constructs outside the Atlas subset are reported, never silently dropped. */
-export interface ImportError {
+/** The `details` of an import's 422 (a VALIDATION problem): constructs outside the Atlas subset are reported, never silently dropped. */
+export interface ImportFailureDetails {
+  /** MALFORMED_XML: not a BPMN 2.0 document at all (unsupported is empty). */
   code: 'UNSUPPORTED_BPMN' | 'MALFORMED_XML';
-  message: string;
-  unsupported?: { elementId?: string; elementType?: string; reason?: string }[];
+  unsupported: { elementId?: string; elementType?: string; reason?: string }[];
 }
 
 /** RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept: `code` is the machine key (a closed enum), `message` the text. `type` is https://atlas.example/problems/<code>, `title` constant per code, `detail` equals `message`, `instance` is urn:atlas:correlation:<correlationId>. */

@@ -63,7 +63,7 @@ Each Activity-Bar icon opens a container; views inside are collapsible sub-panel
 | **Schedule** | Channels, Calendar, Schedule items, Rights windows | Schedule editor |
 | **Newsroom** | Rundowns, Stories, Wires | Story / rundown editor |
 | **Inbox / Tasks** | Tasks, Notifications, Messages, Preferences — ✅ EP-25.9 (below) | Task / message view |
-| **Workflows** | Flow definitions, Running instances | Workflow **designer** (Foblex Flow) |
+| **Workflows** | Flow definitions, Running instances | Workflow **designer** (Foblex Flow). ✅ EP-23.8: the definitions list (state, published version, open draft), **Import BPMN…** (`workflow:admin`; each refused construct listed) and **Export BPMN** per row (a download named after the workflow) |
 | **People & Taxonomy** | People register, Categories, Subjects, Tags | Person / vocabulary editor |
 | **Feeds & Integration** | Inbound feeds, Outbound APIs, Connectors | Feed / connector editor |
 | **Admin** | Users, Groups, Roles/Rules, Transcode profiles, Categories, Vocabularies, People, Field schemas, Theme — each view revealed by its own permission, the panel by any of them. An inline rule granted from a user, group or role editor can be narrowed to **category subtrees** (`scope.categoryPaths`, picked from the channel's live tree; none chosen = the whole channel) | Admin editors |
