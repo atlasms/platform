@@ -44,6 +44,7 @@ import {
   fileKey,
   type FileRef,
 } from './file.ts';
+import type { Verdict, VerdictKind } from './verdict.ts';
 import type { AssetCache, CacheFamilies, CacheFamily } from './cache.ts';
 import { StaleWrite, type AssetStore, type AssetTx, type ExtendedValues } from './store.ts';
 import {
@@ -757,15 +758,25 @@ export class MamService {
         approvedBy: 'mam',
       };
       await this.snapshotExpiry(existing, updated);
-      await this.commit(system, updated, existing, 'asset.approved', {
-        assetId: updated.id,
-        approver: 'mam',
-        approvedAt: updated.updatedAt,
-        automatic: true,
-        ...defined({ expiresAt: updated.expiresAt }),
-        createdBy: updated.createdBy,
-        ...defined({ categoryPath: (await this.scopeOf(updated)).categoryPath }),
-      } satisfies EventPayloads['asset.approved']);
+      const verdict = verdictOf(updated, 'approved', 'mam', { automatic: true });
+      await this.commitWith(
+        system,
+        updated,
+        existing,
+        {
+          type: 'asset.approved',
+          payload: {
+            assetId: updated.id,
+            approver: 'mam',
+            approvedAt: updated.updatedAt,
+            automatic: true,
+            ...defined({ expiresAt: updated.expiresAt }),
+            createdBy: updated.createdBy,
+            ...defined({ categoryPath: (await this.scopeOf(updated)).categoryPath }),
+          } satisfies EventPayloads['asset.approved'],
+        },
+        (tx) => tx.appendVerdict(verdict),
+      );
       return updated;
     });
   }
@@ -883,14 +894,35 @@ export class MamService {
       return updated;
     }
 
-    await this.commit(
+    // A verdict is RETAINED (EP-24.4): its row commits with the transition, its event and its
+    // audit record, or none of them does.
+    const verdict =
+      action === 'approve' || action === 'reject'
+        ? verdictOf(updated, action === 'approve' ? 'approved' : 'rejected', caller.userId, {
+            ...defined({ reason: options.reason?.trim(), reviewPointId: point }),
+          })
+        : undefined;
+    await this.commitWith(
       caller,
       updated,
       existing,
-      eventType,
-      this.payloadFor(caller, eventType, updated, { ...options, scope }),
+      {
+        type: eventType,
+        payload: this.payloadFor(caller, eventType, updated, { ...options, scope }),
+      },
+      verdict ? (tx) => tx.appendVerdict(verdict) : undefined,
     );
     return updated;
+  }
+
+  /**
+   * An asset's verdicts, newest first (EP-24.4; FR-APP-5) — every approval and rejection it was
+   * given, by whom, when, at which review point and why, kept after the asset has moved on (and
+   * after it is purged, EP-24.6). Read under the same rule as the asset: the history is about it.
+   */
+  async verdicts(caller: Caller, assetId: string): Promise<Verdict[]> {
+    await this.get(caller, assetId); // authorizes `asset:read`; another channel's asset is not found
+    return this.options.store.verdictsOf(assetId);
   }
 
   /** Attach renditions — normally driven by `transcode.completed` from MTS. */
@@ -2877,4 +2909,28 @@ function live(all: readonly Category[]): Category[] {
 
 function trimmedLabels(labels: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(labels).map(([k, v]) => [k, v.trim()]));
+}
+
+/**
+ * The verdict a transition gives, from the asset AS IT NOW STANDS — so an approval records the
+ * expiry it actually snapshotted (its own or the category's), and a rejection its retention.
+ */
+function verdictOf(
+  asset: Asset,
+  verdict: VerdictKind,
+  decidedBy: string,
+  extra: Pick<Verdict, 'reason' | 'reviewPointId' | 'automatic'>,
+): Verdict {
+  return {
+    id: ulid(),
+    assetId: asset.id,
+    channelId: asset.channelId,
+    verdict,
+    decidedBy,
+    decidedAt: asset.updatedAt,
+    ...extra,
+    ...(verdict === 'approved'
+      ? defined({ expiresAt: asset.expiresAt, expirySource: asset.expirySource })
+      : defined({ retainUntil: asset.retainUntil })),
+  };
 }

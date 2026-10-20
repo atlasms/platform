@@ -152,11 +152,17 @@ paths:
     get:
       operationId: listVerdicts
       tags: [assets]
-      summary: Retained review-verdict history for an asset (scope asset:read)
+      summary: >-
+        Retained review-verdict history for an asset, newest first (scope asset:read; EP-24.4,
+        FR-APP-5) — every approval and rejection, manual or automatic, with who gave it, when, at
+        which review point and why. Never edited: the store refuses an update or a delete, and the
+        history outlives a purged asset.
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
       responses:
-        '200': { description: Verdict history }
+        '200': { description: Verdict history, content: { application/json: { schema: { $ref: '#/components/schemas/VerdictPage' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /search:
     get:
       operationId: simpleSearch
@@ -577,6 +583,28 @@ components:
         order between them. Any other value is ignored.
   schemas:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    Verdict:
+      type: object
+      required: [id, assetId, channelId, verdict, decidedBy, decidedAt]
+      description: One review verdict, as it was given (EP-24.4) — retained, never edited.
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        assetId: { $ref: '#/components/schemas/Ulid' }
+        channelId: { type: string }
+        verdict: { type: string, enum: [approved, rejected] }
+        decidedBy: { type: string, description: "The user who gave it — `mam` for an automatic approval." }
+        decidedAt: { type: string, format: date-time }
+        reason: { type: string, description: "A rejection's reason." }
+        reviewPointId: { type: string, description: The workflow review step it was given at (EP-22.6). }
+        expiresAt: { type: string, format: date-time, description: The expiry the approval snapshotted. }
+        expirySource: { type: string, enum: [asset, category] }
+        retainUntil: { type: string, format: date-time, description: Until when the rejected media is kept. }
+        automatic: { type: boolean, description: "True when no person gave it: the category chain needs no review (EP-28.7)." }
+    VerdictPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Verdict' } }
     FileRef:
       type: object
       description: One of an asset's files, as MAM mirrors it from HSM/MTS (data-model.md §1.5; file.schema.json). A file belongs to exactly one asset; unique per (asset, kind, variant).

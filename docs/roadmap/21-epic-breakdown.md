@@ -454,7 +454,7 @@ Source: [review-lifecycle plan](15-review-lifecycle-implementation-plan.md) WS-A
 | 24.1 | ✅ Manual approve/reject verdicts on the MAM lifecycle, `asset:approve`, audited (EP-17) | 3 |
 | 24.2 | ✅ Category-inherited expiry, snapshotted at approval (FR-TAX-7, FR-APP-7) (#414) | 3 |
 | 24.3 | ✅ Auto-approve where the category chain says `reviewNeeded: false` (#418) | 2 |
-| 24.4 | Retained verdict history — `GET /assets/{id}/verdicts` (WS-C) | 3 |
+| 24.4 | ✅ Retained verdict history — `GET /assets/{id}/verdicts` (WS-C): `review_verdicts`, written with the transition, append-only by trigger, manual and automatic (mam.md §13y) | 3 |
 | 24.5 | ✅ Expiry scheduler — an approved asset past `expiresAt` becomes `expired` with `asset.expired`, needing re-review (WS-D): a leaderless, idempotent sweep in MAM every 60 s; `asset.expired` names the `priorApprover` (mam.md §13z) | 5 |
 | 24.6 | Rejected-retention purge — past `retainUntil`, the asset is purged and its files released through HSM (touches HSM deletion) ◆ | 5 |
 | 24.7 | Review points at several workflow positions (with EP-22.6) | 3 |

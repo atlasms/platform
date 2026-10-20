@@ -433,6 +433,19 @@ test('EP-28.7: reviewNeeded: false approves on ready — by MAM, audited, with t
     [approved.payload['approver'], approved.payload['automatic'], approved.actor],
     ['mam', true, { kind: 'service', id: 'mam' }],
   );
+  // EP-24.4: the automatic approval is in the retained history like any other — by MAM, marked so.
+  const [verdict, ...more] = await h.service.verdicts(h.caller(), auto.id);
+  assert.deepEqual(more, []);
+  assert.deepEqual(
+    [
+      verdict?.verdict,
+      verdict?.decidedBy,
+      verdict?.automatic,
+      verdict?.expiresAt,
+      verdict?.expirySource,
+    ],
+    ['approved', 'mam', true, '2027-10-10T09:00:00.000Z', 'category'],
+  );
 
   // Where the chain says review (the department, here once the series inherits again), it stays ready.
   const s2 = await h.service.category(h.caller(), series.id);

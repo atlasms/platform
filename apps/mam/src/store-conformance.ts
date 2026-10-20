@@ -10,6 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Asset } from './asset.ts';
+import type { Verdict } from './verdict.ts';
 import type { Category } from './category.ts';
 import {
   CategoryPathTaken,
@@ -31,6 +32,11 @@ export interface StoreFixture {
   store: AssetStore;
   /** Rows sitting in the outbox, unsent. Proves the event committed — or didn't. */
   unsentCount: () => Promise<number>;
+  /**
+   * Run raw SQL on the store's own database — for the cases that must prove the DATABASE refuses
+   * something (an edit to the verdict history), not merely that this code never asks.
+   */
+  raw: (sql: string) => Promise<void>;
   cleanup: () => Promise<void>;
 }
 
@@ -1160,6 +1166,89 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
       const a = asset();
       await store.transaction(async (tx) => tx.put(a));
       assert.ok(await store.get(a.id));
+    });
+  });
+
+  // --- EP-24.4: the retained verdict history ------------------------------------------------
+
+  const verdict = (assetId: string, n: number, overrides: Partial<Verdict> = {}): Verdict => ({
+    id: `V${n.toString().padStart(25, '0')}`,
+    assetId,
+    channelId: 'ch12',
+    verdict: 'approved',
+    decidedBy: 'user-1',
+    decidedAt: `2026-03-0${n}T10:00:00.000Z`,
+    ...overrides,
+  });
+
+  test(`${name}: verdicts are kept, newest first — and only the asset's own`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      const b = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(a);
+        await tx.put(b);
+        await tx.appendVerdict(verdict(a.id, 1, { verdict: 'rejected', reason: 'audio drops' }));
+        await tx.appendVerdict(verdict(a.id, 3, { reviewPointId: 're-review' }));
+        await tx.appendVerdict(verdict(a.id, 2));
+        await tx.appendVerdict(verdict(b.id, 4));
+      });
+      const history = await store.verdictsOf(a.id);
+      assert.deepEqual(
+        history.map((v) => v.id),
+        [verdict(a.id, 3).id, verdict(a.id, 2).id, verdict(a.id, 1).id],
+      );
+      assert.deepEqual(
+        history[2],
+        verdict(a.id, 1, { verdict: 'rejected', reason: 'audio drops' }),
+      );
+      assert.deepEqual(await store.verdictsOf('nobody'), []);
+    });
+  });
+
+  test(`${name}: two verdicts in one millisecond are ordered by their ULIDs`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      const at = '2026-03-01T10:00:00.000Z';
+      await store.transaction(async (tx) => {
+        await tx.put(a);
+        await tx.appendVerdict(verdict(a.id, 1, { decidedAt: at }));
+        await tx.appendVerdict(verdict(a.id, 2, { decidedAt: at }));
+      });
+      assert.deepEqual(
+        (await store.verdictsOf(a.id)).map((v) => v.id),
+        [verdict(a.id, 2).id, verdict(a.id, 1).id],
+      );
+    });
+  });
+
+  test(`${name}: DANGER — the verdict history is append-only BY THE DATABASE`, async () => {
+    // FR-APP-5: the history is the audit of who signed what off. Code that never updates it is not
+    // enough — the table itself refuses, so no migration, script or future bug can rewrite it.
+    await withFixture(async ({ store, raw }) => {
+      const a = asset();
+      await store.transaction(async (tx) => {
+        await tx.put(a);
+        await tx.appendVerdict(verdict(a.id, 1));
+      });
+      await assert.rejects(raw(`UPDATE review_verdicts SET asset_id = 'other'`), /append-only/);
+      await assert.rejects(raw(`DELETE FROM review_verdicts`), /append-only/);
+      assert.equal((await store.verdictsOf(a.id)).length, 1);
+    });
+  });
+
+  test(`${name}: DANGER — a rollback drops the verdict with the transition`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      await assert.rejects(
+        store.transaction(async (tx) => {
+          await tx.put(a);
+          await tx.appendVerdict(verdict(a.id, 1));
+          throw new Error('boom');
+        }),
+        /boom/,
+      );
+      assert.deepEqual(await store.verdictsOf(a.id), []);
     });
   });
 }
