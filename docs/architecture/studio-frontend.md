@@ -62,7 +62,7 @@ Each Activity-Bar icon opens a container; views inside are collapsible sub-panel
 | **Ingest / Import** | Ingest queue, Watchers, Quarantine, Upload | Ingest-item editor |
 | **Schedule** | Channels, Calendar, Schedule items, Rights windows | Schedule editor |
 | **Newsroom** | Rundowns, Stories, Wires | Story / rundown editor |
-| **Inbox / Tasks** | Tasks (assigned/created), Messages, Sent | Task / message view |
+| **Inbox / Tasks** | Tasks, Notifications, Messages, Preferences — ✅ EP-25.9 (below) | Task / message view |
 | **Workflows** | Flow definitions, Running instances | Workflow **designer** (Foblex Flow) |
 | **People & Taxonomy** | People register, Categories, Subjects, Tags | Person / vocabulary editor |
 | **Feeds & Integration** | Inbound feeds, Outbound APIs, Connectors | Feed / connector editor |
@@ -251,3 +251,24 @@ sequenceDiagram
 
 ---
 _Related: [Brief §4.6 Studio](../01-technical-brief.md#46-studio) · [FR Studio](../requirements/05-functional-requirements.md#studio) · [FR Audit/History/Diff](../requirements/05-functional-requirements.md#audit) · [Logging & Analytics](services/logging-analytics.md) · [WebSocket](services/websocket.md) · [BMS designer](bms-workflow-dsl-and-designer.md#12-studio-canvas-angular--foblex-flow)._
+
+## As built — the Inbox panel (EP-25.9)
+
+The caller's OWN inbox, so **no permission reveals it** — the one panel whose definition says
+`permission: null` (every signed-in user), and whose route needs only the workbench's session. Four
+views over Notifications ([notifications.md §13a–§13f](services/notifications.md)):
+
+- **Tasks** — open tasks offered to the caller, by name or through a group or role. A group's or
+  role's task offers **Claim** (first claim wins; a 409 says someone else took it). A task the caller
+  holds offers its outcomes (an approval: approve / reject; anything else: done). A **review task**
+  (a `reviewPointId`) offers no outcome at all — its verdict is MAM's, at that point — and opens the
+  asset instead.
+- **Notifications** — newest first, titled in the reader's locale (`titles`), unread counted on the
+  tab; opening one marks it read and opens its asset.
+- **Messages** — the caller's, newest first; compose to user ids and `#group` ids.
+- **Preferences** — a switch per type; a mandatory type's is disabled; Save sends the whole set over
+  the version read, and a 409 (another tab saved) re-reads rather than retries.
+
+Live delivery to a person is EP-25.7 (held for its security review), so the panel re-reads every 30 s
+while visible and whenever the socket resyncs. `notifications.yaml` is in the generated `SPECS`.
+

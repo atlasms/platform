@@ -724,5 +724,59 @@
     "imageRef": "Image reference (optional)",
     "minimal": "A person is a name and an optional image — nothing else is kept.",
     "none": "No people yet."
+  },
+  "inboxPanel": {
+    "view": {
+      "tasks": "Tasks",
+      "notifications": "Notifications",
+      "messages": "Messages",
+      "preferences": "Preferences"
+    },
+    "unread": "unread",
+    "partial": "Your groups and roles could not be resolved just now — only what is addressed to you by name is shown.",
+    "noTasks": "No open tasks.",
+    "noNotifications": "No notifications.",
+    "noMessages": "No messages.",
+    "kind": {
+      "approve": "Approval",
+      "edit": "Edit",
+      "review": "Review",
+      "generic": "Task"
+    },
+    "offeredTo": {
+      "group": "Offered to group",
+      "role": "Offered to role"
+    },
+    "due": "due",
+    "claim": "Claim",
+    "reviewInMam": "Approve or reject the asset in the asset editor, at review point",
+    "openAsset": "Open asset",
+    "outcome": {
+      "approved": "Approve",
+      "rejected": "Reject",
+      "done": "Done"
+    },
+    "to": "To",
+    "toHint": "user ids, #group ids — comma separated",
+    "message": "Message",
+    "send": "Send",
+    "you": "You",
+    "mandatory": "required in this channel",
+    "save": "Save preferences",
+    "type": {
+      "asset.approved": "An asset I created is approved",
+      "asset.rejected": "An asset I created is rejected",
+      "asset.re-review-due": "An approval I gave has expired",
+      "transcode.failed": "A transcode I asked for failed",
+      "message.mention": "I am mentioned in a message",
+      "alert": "Operations alerts"
+    },
+    "loadError": "The inbox could not be loaded.",
+    "sendError": "The message could not be sent.",
+    "saveError": "The preferences could not be saved.",
+    "actionError": "That could not be done.",
+    "claimTaken": "Someone else claimed this task first.",
+    "completeRefused": "This task can no longer be completed — it was closed or moved.",
+    "preferencesMoved": "Your preferences were changed elsewhere; they have been read again."
   }
 }

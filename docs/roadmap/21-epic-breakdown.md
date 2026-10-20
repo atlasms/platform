@@ -477,7 +477,7 @@ Source: [notifications-plan](services/notifications-plan.md) §2; lift from [`re
 | 25.6 | ✅ Per-user preferences — per type, opt in/out: the channel's `defaultOn` until chosen, a `mandatory` type never off (the write refused); a shared alert filtered at read (decided 2026-10-18; notifications.md §13f) | 3 |
 | 25.7 | Live delivery on **per-user streams** (decided 2026-10-12: a message naming `recipientUserId` reaches only that user's connections — [websocket §5](../architecture/services/websocket.md#5-messaging)); a new eligibility rule, so its PR waits for the product owner's security review | 3 |
 | 25.8 | ✅ Task → BMS feedback — completing a task resolves the waiting workflow step (BMS's completion router consumes `task.updated`; bms.md §13e) | 3 |
-| 25.9 | Studio inbox panel — tasks, messages, notifications, live | 5 |
+| 25.9 | ✅ Studio inbox panel — tasks, messages, notifications, live: tasks (claim, outcomes, a review task pointing at MAM), notifications (read, open), messages, preferences; re-read every 30 s and on resync until 25.7's live delivery (studio-frontend.md, Inbox) | 5 |
 
 **Decided 2026-10-12:** 25.7 → per-user streams by identity match (security review on the PR).
 **Decided 2026-10-16:** a task offered to a role or a group is one row, resolved to people when an inbox is READ — not fanned out when it is made (`PrincipalKind` gains `role`). A role/group task is CLAIMED before it is acted on (first claim wins); `task:assign` (Editor+) hands work out, `task:admin` cancels or reassigns (a workflow's task is never cancelled by hand); a task's history is read by its participants or under `task:audit`.

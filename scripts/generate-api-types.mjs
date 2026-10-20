@@ -51,6 +51,13 @@ const SPECS = [
   },
   // Every user's copy of the active workflows — the catalog — is loaded at sign-in (EP-22.11).
   { file: 'bms.yaml', out: 'bms.types.ts', ops: 'bms.operations.ts', title: 'BMS' },
+  // The inbox panel: tasks, messages, notifications and preferences (EP-25.9).
+  {
+    file: 'notifications.yaml',
+    out: 'notifications.types.ts',
+    ops: 'notifications.operations.ts',
+    title: 'Notifications',
+  },
 ];
 
 /**
