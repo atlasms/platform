@@ -109,7 +109,7 @@ built, the expiry half (EP-24.5, §13z); the purge half is EP-24.6, owed by peop
 | `GET/POST/PATCH` | `/assets`, `/assets/{id}` | Core + extensible metadata CRUD. | `asset:read`/`asset:write` (dept-scoped) |
 | `POST` | `/assets/{id}/versions` | Create a new version (clone metadata on replace). | `asset:write` |
 | `POST` | `/assets/{id}/approve` · `/reject` | Lifecycle verdict (approve body MAY set `expiresAt`; reject body MAY set `reason`/`retainUntil`). Either MAY name the workflow `reviewPointId` it is given at, carried on `asset.approved`/`asset.rejected` — what resolves a waiting review step (EP-22.6, bms.md §13f); only a verdict names one. | `asset:approve` |
-| `GET` | `/assets/{id}/verdicts` | Retained review-verdict history for the asset. | `asset:read` |
+| `GET` | `/assets/{id}/verdicts` | Retained review-verdict history for the asset. ✅ EP-24.4 (§13y): `{ items }`, newest first — manual and automatic, append-only by the database. | `asset:read` |
 | `GET` | `/search?q=…` | Simple search. | `asset:read` |
 | `POST` | `/search` | Advanced **faceted** search (category + subject + tag + person). | `asset:read` |
 | `GET/POST` | `/field-schemas` | Define type/category custom fields. | `metadata:admin` |
@@ -324,6 +324,32 @@ createdBy RIM sent, and `asset.created` + the audit in one transaction with the 
 redelivery is a duplicate; an id that already exists in the same channel is a duplicate too; one in
 another channel is thrown to the broker, never overwritten. The original's FileRef row arrives by
 HSM's `file.placed` — a separate consumer — and the mirror retries a placement that beats the asset.
+
+## 13y. As built — EP-24.4, the retained verdict history
+
+The review plan's WS-A2 table, as `review_verdicts` (MAM's schema; `channel_id`, `asset_id`,
+`decided_at`, the record as a document). One row per approval or rejection — the manual ones
+(`asset:approve`) and the automatic approval where the category chain says `reviewNeeded: false`
+(EP-28.7: `decidedBy: mam`, `automatic: true`) — holding who, when, the review point, the reason (a
+rejection's, trimmed), and what the verdict SET, read off the asset as it stands after the
+transition: the expiry an approval snapshotted (its own, or the category's with `expirySource`), a
+rejection's `retainUntil`.
+
+- **Written with the transition**, through `commitWith`'s `also` on the same transaction as the asset
+  row, the domain event and the audit record: a verdict exists exactly when its transition does, and a
+  refused transition (no reason, no grant, an illegal move) writes none.
+- **Append-only BY THE DATABASE**: a trigger refuses any `UPDATE` or `DELETE`, on Postgres and on the
+  sqlite double alike, and the shared conformance suite tries both. No foreign key to `assets`: the
+  history outlives a purged asset (EP-24.6), when it is needed most.
+- **Read** `GET /assets/{id}/verdicts` → `{ items }`, newest first (`decided_at`, then the ULID inside
+  one millisecond), under the asset's own read rule — another channel's asset is not found. The asset
+  keeps only its CURRENT approver (`approvedBy`); re-review leaves every verdict in the history.
+
+Evidence: `test/verdicts.test.ts` (as given, re-review's whole story, refusals write nothing, the
+read rule, the route), the automatic case in `inheritance.test.ts`, the conformance cases on sqlite
+and real Postgres (order, ties, append-only by trigger, rollback), and smoke: the EP-22.6 review
+point's approval through the gateway is in the history with its point and expiry. The Studio view is
+EP-24.9.
 
 ## 13z. As built — EP-24.5, the expiry sweep
 

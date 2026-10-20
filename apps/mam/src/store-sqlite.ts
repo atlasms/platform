@@ -19,6 +19,7 @@ import type { Asset } from './asset.ts';
 import type { Category } from './category.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
+import type { Verdict } from './verdict.ts';
 import {
   CategoryPathTaken,
   StaleCategory,
@@ -181,6 +182,25 @@ export const sqlitePeopleMigration: Migration = {
        CREATE INDEX IF NOT EXISTS people_channel_idx ON people (channel_id);`,
 };
 
+// The retained verdict history (EP-24.4): append-only by trigger, as in Postgres — the double
+// refuses what production refuses, so a test that tried to edit history would fail here too.
+export const sqliteVerdictsMigration: Migration = {
+  id: 'mam_verdicts',
+  up: `CREATE TABLE IF NOT EXISTS review_verdicts (
+         id         TEXT PRIMARY KEY,
+         channel_id TEXT NOT NULL,
+         asset_id   TEXT NOT NULL,
+         decided_at TEXT NOT NULL,
+         data       TEXT NOT NULL
+       );
+       CREATE INDEX IF NOT EXISTS review_verdicts_asset_idx
+         ON review_verdicts (asset_id, decided_at DESC, id DESC);
+       CREATE TRIGGER IF NOT EXISTS review_verdicts_no_update BEFORE UPDATE ON review_verdicts
+         BEGIN SELECT RAISE(ABORT, 'review_verdicts is append-only'); END;
+       CREATE TRIGGER IF NOT EXISTS review_verdicts_no_delete BEFORE DELETE ON review_verdicts
+         BEGIN SELECT RAISE(ABORT, 'review_verdicts is append-only'); END;`,
+};
+
 /** EP-24.5: the expiry sweep reads approved assets only; a partial index keeps it off the rest. */
 export const sqliteApprovedMigration: Migration = {
   id: 'mam_assets_approved_idx',
@@ -207,6 +227,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     sqliteFacetsMigration,
     sqlitePeopleMigration,
     sqliteApprovedMigration,
+    sqliteVerdictsMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
   const seen = new SqliteSeenStore(db);
@@ -412,6 +433,18 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         JSON.stringify(file),
       );
     },
+    async appendVerdict(verdict) {
+      db.prepare(
+        `INSERT INTO review_verdicts (id, channel_id, asset_id, decided_at, data)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(
+        verdict.id,
+        verdict.channelId,
+        verdict.assetId,
+        verdict.decidedAt,
+        JSON.stringify(verdict),
+      );
+    },
   };
 
   const toTag = (r: {
@@ -588,6 +621,14 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         .prepare('SELECT data FROM asset_files WHERE asset_id = ? ORDER BY kind, variant')
         .all(assetId) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as FileRef);
+    },
+    async verdictsOf(assetId) {
+      const rows = db
+        .prepare(
+          'SELECT data FROM review_verdicts WHERE asset_id = ? ORDER BY decided_at DESC, id DESC',
+        )
+        .all(assetId) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as Verdict);
     },
     async facetSearch(channelId, filters, limit, within) {
       const params: (string | number)[] = [channelId];
