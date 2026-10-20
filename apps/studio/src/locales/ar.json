@@ -857,7 +857,27 @@
       "archive": "أُرشف."
     },
     "running": "مرفوض ما دامت مثيلات قيد التشغيل:",
-    "moveError": "تعذّر تغيير حالة مسار العمل."
+    "moveError": "تعذّر تغيير حالة مسار العمل.",
+    "instances": "المثيل",
+    "design": "— تصميم —",
+    "run": "التشغيل",
+    "following": "متابعة مباشرة",
+    "startedBy": "بدأه",
+    "runError": "تعذّرت قراءة المثيل.",
+    "instanceState": {
+      "running": "قيد التشغيل",
+      "waiting": "في الانتظار",
+      "completed": "مكتمل",
+      "failed": "فشل"
+    },
+    "event": {
+      "entered": "دخل",
+      "awaiting": "ينتظر",
+      "completed": "اكتمل",
+      "failed": "فشل",
+      "compensated": "عُوِّض",
+      "escalated": "صُعِّد"
+    }
   },
   "schemaForm": {
     "key": "الهدف",

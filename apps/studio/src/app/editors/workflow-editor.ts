@@ -11,6 +11,7 @@ import {
   untracked,
   type OnInit,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   FFlowModule,
   type FCreateConnectionEvent,
@@ -23,10 +24,12 @@ import type {
   PaletteEntry,
   Workflow,
   WorkflowDefinition,
+  WorkflowInstance,
 } from '../core/generated/bms.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { SessionStore } from '../core/session.store.ts';
+import { WebSocketService } from '../core/websocket.service.ts';
 import { WorkflowsService } from '../core/workflows.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import { FlowTheme } from './flow-theme.ts';
@@ -44,6 +47,7 @@ import {
   toGraph,
 } from './workflow-graph.ts';
 import { FeelInput } from './feel-input.ts';
+import { OVERLAY_REFRESH_MS, isLive, stepStatuses } from './instance-overlay.model.ts';
 import { SchemaField } from './schema-field.ts';
 
 /** How long the designer waits after an edit before asking BMS to judge the graph (DSL §12.2). */
@@ -86,7 +90,25 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
             · v{{ w.latestVersion }}
           }
         </span>
-        @if (versionChoices().length > 1) {
+        @if (instances().length > 0) {
+          <select
+            class="instances"
+            [attr.aria-label]="locale.t('workflowEditor.instances')"
+            [disabled]="busy() || dirty()"
+            (change)="watch($any($event.target).value)"
+          >
+            <option value="" [selected]="!overlay()">
+              {{ locale.t('workflowEditor.design') }}
+            </option>
+            @for (i of instances(); track i.id) {
+              <option [value]="i.id" [selected]="overlay()?.id === i.id">
+                {{ i.startedAt.slice(0, 16).replace('T', ' ') }} ·
+                {{ locale.t('workflowEditor.instanceState.' + i.state) }} · v{{ i.version }}
+              </option>
+            }
+          </select>
+        }
+        @if (versionChoices().length > 1 && !overlay()) {
           <select
             class="versions"
             [attr.aria-label]="locale.t('workflowEditor.versions')"
@@ -210,6 +232,7 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
                   [fNodeDraggingDisabled]="!canEdit()"
                   [attr.data-kind]="n.kind"
                   [attr.data-marker]="n.marker ?? null"
+                  [attr.data-status]="n.status ?? null"
                   [attr.title]="issuesOf(n.id)"
                 >
                   @if (n.target) {
@@ -237,6 +260,35 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
         </f-flow>
 
         <aside class="side">
+          @if (overlay(); as run) {
+            <section class="run" [attr.data-state]="run.state">
+              <h3>{{ locale.t('workflowEditor.run') }}</h3>
+              <p>
+                {{ locale.t('workflowEditor.instanceState.' + run.state) }} · v{{ run.version }}
+                @if (live()) {
+                  <span class="muted">· {{ locale.t('workflowEditor.following') }}</span>
+                }
+              </p>
+              <p class="muted">
+                {{ locale.t('workflowEditor.startedBy') }} {{ run.startedBy }} ·
+                {{ run.startedAt.slice(0, 16).replace('T', ' ') }}
+                @if (run.endedAt) {
+                  → {{ run.endedAt.slice(0, 16).replace('T', ' ') }}
+                }
+              </p>
+              @if (run.error) {
+                <p class="error">{{ run.error }}</p>
+              }
+              <ol class="history">
+                @for (h of run.history ?? []; track h.seq) {
+                  <li [attr.data-event]="h.event">
+                    <span class="at">{{ h.at.slice(11, 19) }}</span>
+                    {{ stepName(h.stepId) }} — {{ locale.t('workflowEditor.event.' + h.event) }}
+                  </li>
+                }
+              </ol>
+            </section>
+          }
           @if (selectedStep(); as s) {
             <label>
               {{ locale.t('workflowEditor.stepName') }}
@@ -374,6 +426,23 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
       color: var(--color-fg-on-accent);
       background: var(--color-accent);
     }
+    .history {
+      margin: 0;
+      padding-inline-start: var(--space-3);
+      font-size: 0.75rem;
+    }
+    .history [data-event='failed'] {
+      color: var(--color-danger);
+    }
+    .history .at {
+      color: var(--color-fg-muted);
+      font-family: ui-monospace, monospace;
+    }
+    .run p {
+      margin: 0 0 var(--space-1);
+      font-size: 0.75rem;
+    }
+    .instances,
     .versions {
       padding: var(--space-1);
       color: inherit;
@@ -416,10 +485,22 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
     .step[data-kind='parallel'] {
       border-style: dashed;
     }
-    .step[data-marker='warning'] {
+    .step[data-status='done'] {
+      border-color: var(--color-success);
+      background: var(--color-success-bg);
+    }
+    .step[data-status='active'],
+    .step[data-status='waiting'] {
+      border-color: var(--color-accent);
+      background: var(--color-accent-bg);
+      box-shadow: 0 0 0 2px var(--color-accent);
+    }
+    .step[data-marker='warning'],
+    .step[data-status='compensated'] {
       border-color: var(--color-warning);
     }
-    .step[data-marker='error'] {
+    .step[data-marker='error'],
+    .step[data-status='failed'] {
       border-color: var(--color-danger);
       background: var(--color-danger-bg);
     }
@@ -529,6 +610,7 @@ export class WorkflowEditor implements OnInit {
   private readonly editors = inject(EditorStore);
   private readonly permissions = inject(PermissionService);
   private readonly session = inject(SessionStore);
+  private readonly ws = inject(WebSocketService);
   private readonly destroyRef = inject(DestroyRef);
   protected readonly locale = inject(LocaleService);
 
@@ -546,6 +628,7 @@ export class WorkflowEditor implements OnInit {
   protected readonly error = signal<string | null>(null);
   protected readonly notice = signal<string | null>(null);
   private validateTimer: ReturnType<typeof setTimeout> | undefined;
+  private followTimer: ReturnType<typeof setInterval> | undefined;
   private validation = 0;
 
   /** UX only — BMS enforces `workflow:admin` on every write. */
@@ -557,7 +640,17 @@ export class WorkflowEditor implements OnInit {
   /** A published version picked from the list (EP-23.7); null is the editable one. */
   protected readonly viewing = signal<number | null>(null);
   /** Editable: an admin, on the draft (or the latest version, which saving makes a draft). */
-  protected readonly canEdit = computed(() => this.isAdmin() && this.viewing() === null);
+  protected readonly canEdit = computed(
+    () => this.isAdmin() && this.viewing() === null && this.overlay() === null,
+  );
+  /** The workflow's recent instances (EP-23.9), for the overlay's picker. */
+  protected readonly instances = signal<WorkflowInstance[]>([]);
+  /** The instance painted on the canvas, or null — the designer as such. */
+  protected readonly overlay = signal<WorkflowInstance | null>(null);
+  protected readonly live = computed(() => {
+    const run = this.overlay();
+    return !!run && isLive(run.state);
+  });
   protected readonly confirmArchive = signal(false);
   protected readonly viewingValue = computed(() => String(this.viewing() ?? 'current'));
   /** The editable definition first, then every other published version, newest first. */
@@ -585,7 +678,12 @@ export class WorkflowEditor implements OnInit {
   );
   protected readonly graph = computed(() => {
     const d = this.def();
-    return d ? toGraph(d, this.issues()) : { nodes: [], edges: [] };
+    const run = this.overlay();
+    if (!d) return { nodes: [], edges: [] };
+    // A run is painted by its statuses alone: the validator's markers are about the draft.
+    return run
+      ? toGraph(d, [], stepStatuses(run.history ?? [], run.currentSteps))
+      : toGraph(d, this.issues());
   });
   protected readonly dirty = computed(() => {
     const d = this.def();
@@ -626,7 +724,10 @@ export class WorkflowEditor implements OnInit {
       const dirty = this.dirty();
       untracked(() => this.editors.setDirty(tabId, dirty));
     });
-    this.destroyRef.onDestroy(() => clearTimeout(this.validateTimer));
+    this.destroyRef.onDestroy(() => {
+      clearTimeout(this.validateTimer);
+      this.stopFollowing();
+    });
   }
 
   ngOnInit(): void {
@@ -637,7 +738,12 @@ export class WorkflowEditor implements OnInit {
   protected load(): void {
     this.error.set(null);
     this.viewing.set(null);
+    this.overlay.set(null);
     this.confirmArchive.set(false);
+    this.api.instances(this.workflowId()).subscribe({
+      next: (page) => this.instances.set(page.items),
+      error: () => this.instances.set([]), // no runs to show is not the designer's error
+    });
     this.api.get(this.workflowId()).subscribe({
       next: (w) => {
         this.workflow.set(w);
@@ -657,12 +763,21 @@ export class WorkflowEditor implements OnInit {
     });
   }
 
-  private show(d: WorkflowDefinition): void {
+  private show(d: WorkflowDefinition, judge = true): void {
     this.def.set(d);
     this.saved.set(graphOf(d));
     this.selectedSteps.set([]);
     this.selectedEdges.set([]);
-    this.scheduleValidation(0);
+    if (judge) this.scheduleValidation(0);
+    else {
+      clearTimeout(this.validateTimer);
+      this.validating.set(false);
+      this.issues.set([]);
+    }
+  }
+
+  protected stepName(stepId: string): string {
+    return this.def()?.steps.find((s) => s.id === stepId)?.name ?? stepId;
   }
 
   protected glyph(kind: StepKind): string {
@@ -818,6 +933,76 @@ export class WorkflowEditor implements OnInit {
       },
     });
   }
+
+  // --- the live-instance overlay (EP-23.9) ---------------------------------------------------
+
+  /**
+   * An instance on the canvas — the version it is PINNED to, read-only, each step coloured by
+   * where the run is — or, with no id, back to designing. A live run is re-read every
+   * {@link OVERLAY_REFRESH_MS} and whenever an event names it: BMS publishes no event per step,
+   * so the history is read, not pushed.
+   */
+  watch(instanceId: string): void {
+    const w = this.workflow();
+    if (!w || this.dirty()) return;
+    this.stopFollowing();
+    if (instanceId === '') {
+      this.load();
+      return;
+    }
+    this.error.set(null);
+    this.api.instance(instanceId).subscribe({
+      next: (run) => {
+        this.api.version(w.id, run.version).subscribe({
+          next: (d) => {
+            this.overlay.set(run);
+            this.show(d, false);
+            this.follow();
+          },
+          error: () => this.error.set(this.locale.t('workflowEditor.loadError')),
+        });
+      },
+      error: () => this.error.set(this.locale.t('workflowEditor.runError')),
+    });
+  }
+
+  private follow(): void {
+    this.stopFollowing();
+    if (!this.live()) return;
+    this.followTimer = setInterval(() => this.reread(), OVERLAY_REFRESH_MS);
+  }
+
+  private stopFollowing(): void {
+    clearInterval(this.followTimer);
+    this.followTimer = undefined;
+  }
+
+  /** The run read again; it stops being followed once it can no longer move. */
+  private reread(): void {
+    const run = this.overlay();
+    if (!run) return this.stopFollowing();
+    this.api.instance(run.id).subscribe({
+      next: (fresh) => {
+        if (this.overlay()?.id !== fresh.id) return; // left, or another run picked, meanwhile
+        this.overlay.set(fresh);
+        if (!isLive(fresh.state)) this.stopFollowing();
+      },
+      error: () => undefined, // the next tick tries again; a run read once stays on the canvas
+    });
+  }
+
+  // `workflow.*` events reach a holder of workflow:read (websocket eligibility). One that names
+  // the instance on the canvas re-reads it at once rather than at the next tick.
+  private readonly wsSubscription = effect(() => {
+    const channelId = this.session.channelId();
+    if (channelId) void this.ws.subscribe(`atlas.${channelId}.workflow.>`);
+  });
+  private readonly wsEvents = this.ws.events$
+    .pipe(takeUntilDestroyed(this.destroyRef))
+    .subscribe(({ payload }) => {
+      const id = (payload as { payload?: { instanceId?: unknown } } | null)?.payload?.instanceId;
+      if (typeof id === 'string' && id === this.overlay()?.id) this.reread();
+    });
 
   // --- versions, publish, lifecycle (EP-23.7) ------------------------------------------------
 

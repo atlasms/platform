@@ -693,6 +693,20 @@ component reads them all.
 Open an instance → subscribe over [WebSocket](services/websocket.md) to its `step_history`; color
 nodes (done/active/waiting/failed) on the **same** definition graph. Read-only mode.
 
+**As built (EP-23.9).** The designer's *Instance* picker lists the workflow's recent runs
+(`GET /instances?workflowId=`); picking one paints it on the version it is PINNED to (not the
+draft), read-only, the validator's markers off. A step's status is its LAST history event in
+sequence order (`entered` → active, `awaiting`/`escalated` → waiting, `completed` → done,
+`failed`, `compensated`) — a loop shows its latest pass — and a step in the instance's
+`currentSteps` is waiting whatever the mirror last wrote; a step never reached is uncoloured. The
+side panel shows the run (state, who started it, when, its error) and its history in order.
+
+**Not over a socket, as first written:** BMS publishes no event per step — the history is written
+by its activities into its own mirror, not onto the bus. So a live run (`running`/`waiting`) is
+re-read every 3 s, and at once when a `workflow.*` event names it (`workflow.step.requested`,
+`workflow.task.created`, `workflow.completed`, read under `workflow:read`); following stops when
+the run ends, or the overlay is left.
+
 ### 12.5 Offline
 Canvas, validation (schema + FEEL parse can run client-side), and the BPMN converter are pure JS —
 they work air-gapped. Only publish/persist needs the backend.
