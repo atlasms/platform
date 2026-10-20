@@ -641,6 +641,31 @@ JSON-Schema preset, or a small custom renderer). FEEL fields get a FEEL input wi
 parse hints (reuse the `feel` lib). **New step kind ⇒ zero canvas code** — the palette + schema
 drive the form.
 
+**As built (EP-23.5)** — a small custom renderer (`editors/schema-field.ts` over the pure
+`schema-form.model.ts`), not formly: the schemas are a narrow, known subset, and one recursive
+component reads them all.
+
+- **What a field is comes from its schema alone.** Inlining (EP-23.1) erases what a `$ref` said,
+  so `palette()` ANNOTATES: `x-atlas-type: feel | duration` where the field was a `Feel` or a
+  `Duration`, and `x-choices: <key>` on the field a closed list constrains (a start's
+  `trigger.event`, a wait-event's `event`, a command's `request.event`). Annotations, never
+  `enum`: a draft may hold a value the list no longer has (an import, a retired command) — the
+  select shows it, and publish is what refuses it.
+- Fields: an object's properties (each its own field, nested ones grouped, required ones
+  marked), a data mapping (rows of target → FEEL: add, rename in place, remove), an enum or a
+  closed list (a select), FEEL (a monospace input — the expression editor is 23.6), a duration, text,
+  a number, a boolean, a sub-flow version (a whole number or `latest`), and JSON for anything else
+  (a human task's `form`), so nothing the schema allows is out of reach.
+- Every edit emits the field's WHOLE new value up the tree; the designer replaces the step's
+  `config` (`setStepConfig`) — one immutable definition signal, as for the canvas. An emptied
+  optional field is ABSENT, not `''`.
+- A selected EDGE has its own panel: its name, and — leaving a branch — its condition and
+  whether it is the branch's default (one default per branch: the flag and the branch's
+  `config.default` move together, as BPMN keeps them on the gateway).
+- The palette is `workflow:admin`'s (EP-23.1), so a reader sees a step's configuration as JSON.
+  Step-level policy (`timeout`, `retry`, `onError`, `compensation`) is not in the kinds' config
+  schemas and has no panel yet.
+
 ### 12.4 Live-instance overlay (FR-BMS-6)
 Open an instance → subscribe over [WebSocket](services/websocket.md) to its `step_history`; color
 nodes (done/active/waiting/failed) on the **same** definition graph. Read-only mode.

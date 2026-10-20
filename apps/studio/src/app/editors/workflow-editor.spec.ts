@@ -55,8 +55,25 @@ const workflow = (overrides: Partial<Workflow> = {}): Workflow => ({
   ...overrides,
 });
 
+const HUMAN_TASK_SCHEMA = {
+  type: 'object',
+  required: ['taskType', 'assignee'],
+  properties: {
+    taskType: { enum: ['approve', 'edit', 'review', 'generic'] },
+    assignee: {
+      type: 'object',
+      properties: { role: { type: 'string' }, userId: { type: 'string' } },
+    },
+    dueIn: { type: 'string', 'x-atlas-type': 'duration' },
+  },
+};
 const PALETTE: PaletteEntry[] = (['command', 'human-task', 'branch', 'end'] as const).map(
-  (kind) => ({ kind, label: kind, configSchema: {} }) as PaletteEntry,
+  (kind) =>
+    ({
+      kind,
+      label: kind,
+      configSchema: kind === 'human-task' ? HUMAN_TASK_SCHEMA : { type: 'object' },
+    }) as PaletteEntry,
 );
 
 class FakeWorkflows {
@@ -110,6 +127,9 @@ interface Internal {
   onSelect(e: { nodeIds: string[]; groupIds: string[]; connectionIds: string[] }): void;
   removeSelected(): void;
   rename(id: string, name: string): void;
+  configure(id: string, config: unknown): void;
+  editEdge(id: string, patch: { name?: string; when?: string }): void;
+  makeDefault(id: string, on: boolean): void;
   save(): void;
   revert(): void;
   def: () => WorkflowDefinition | null;
@@ -295,5 +315,64 @@ describe('WorkflowEditor', () => {
     const archived = setup();
     archived.load(workflow({ state: 'archived' }));
     expect(archived.component.canEdit()).toBe(false);
+  });
+
+  it('a selected step’s property panel is generated from its kind’s palette schema, and edits the config', () => {
+    const t = setup();
+    t.load();
+    t.component.onSelect({ nodeIds: ['s_review'], groupIds: [], connectionIds: [] });
+    t.fixture.detectChanges();
+    const config = t.root.querySelector('atlas-schema-field.config') as HTMLElement;
+    const names = [...config.querySelectorAll('label.name')].map((l) =>
+      l.textContent?.replace(/\s+/g, ' ').trim(),
+    );
+    expect(names).toEqual(['Task type *', 'Role', 'User id', 'Due in']);
+    const dueIn = config.querySelector('input[placeholder="PT30M"]') as HTMLInputElement;
+    dueIn.value = 'P1D';
+    dueIn.dispatchEvent(new Event('input'));
+    expect(t.component.def()!.steps[1]!.config).toEqual({
+      taskType: 'approve',
+      assignee: { role: 'librarian' },
+      dueIn: 'P1D',
+    });
+    expect(t.component.dirty()).toBe(true);
+    vi.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+    expect(t.fake.validations.at(-1)?.input.steps[1]).toMatchObject({ config: { dueIn: 'P1D' } });
+    t.component.configure('s_review', undefined); // emptied: `{}`, never absent
+    expect(t.component.def()!.steps[1]!.config).toEqual({});
+  });
+
+  it('a selected edge out of a branch edits its name, condition and default', () => {
+    const t = setup();
+    const def = definition();
+    def.steps.push({ id: 's_gate', kind: 'branch', position: { x: 360, y: 0 }, config: {} });
+    def.transitions.push({ id: 't3', from: 's_gate', to: 's_end' });
+    t.load(workflow({ draft: def }));
+    t.component.onSelect({ nodeIds: [], groupIds: [], connectionIds: ['t3'] });
+    t.fixture.detectChanges();
+    expect(t.root.querySelector('.side input.feel')).not.toBeNull(); // a branch edge has a condition
+    t.component.editEdge('t3', { when: '= vars.ok' });
+    t.component.makeDefault('t3', true);
+    const edge = t.component.def()!.transitions.find((x) => x.id === 't3');
+    expect(edge).toMatchObject({ when: '= vars.ok', isDefault: true });
+    expect(t.component.def()!.steps.find((s) => s.id === 's_gate')?.config).toEqual({
+      default: 't3',
+    });
+
+    t.component.onSelect({ nodeIds: [], groupIds: [], connectionIds: ['t1'] });
+    t.fixture.detectChanges();
+    expect(t.root.querySelector('.side input.feel')).toBeNull(); // only a branch's edges have one
+  });
+
+  it('a reader, who has no palette, sees a step’s configuration as it is', () => {
+    const t = setup(['workflow:read']);
+    t.load();
+    t.component.onSelect({ nodeIds: ['s_review'], groupIds: [], connectionIds: [] });
+    t.fixture.detectChanges();
+    expect(t.root.querySelector('atlas-schema-field')).toBeNull();
+    expect(JSON.parse(t.root.querySelector('pre.json')?.textContent ?? '')).toEqual({
+      taskType: 'approve',
+      assignee: { role: 'librarian' },
+    });
   });
 });

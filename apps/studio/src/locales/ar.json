@@ -833,6 +833,17 @@
       "branch": "تفرّع",
       "parallel": "متوازٍ",
       "sub-flow": "مسار فرعي"
-    }
+    },
+    "config": "الإعدادات",
+    "edgeName": "اسم الوصلة",
+    "when": "الشرط (FEEL)",
+    "isDefault": "افتراضي — يُسلك حين لا يتحقق أي شرط"
+  },
+  "schemaForm": {
+    "key": "الهدف",
+    "remove": "إزالة",
+    "addRow": "إضافة ربط",
+    "badVersion": "الإصدار رقم صحيح، أو latest.",
+    "badJson": "ليس JSON صالحًا — لم يُطبَّق."
   }
 }

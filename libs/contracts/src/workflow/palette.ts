@@ -8,6 +8,12 @@
 // start may trigger on, the commands a command step may issue (with the authority each exercises),
 // the events a wait-event may wait for — the same lists publish holds a definition to, so the
 // designer cannot offer what publish would refuse.
+//
+// Inlining erases what a `$ref` said, so the schema is ANNOTATED where it matters to a property
+// panel (EP-23.5): `x-atlas-type: feel | duration` where a field was a `Feel` or a `Duration`
+// (an expression editor, a duration hint), and `x-choices: <key of choices>` on the field a closed
+// list constrains. Annotations, not `enum`: a draft may hold a value the list no longer has (an
+// import, a retired command), and the panel must still show it — publish is what refuses it.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -57,8 +63,13 @@ function build(): PaletteEntry[] {
     if (typeof ref === 'string') {
       const target = lookup(ref);
       const { $ref: _ref, ...rest } = node;
+      const annotated = ANNOTATED[ref];
       // Sibling keywords (a description beside the $ref) are kept over the target's.
-      return { ...(resolve(target, depth + 1) as Record<string, Json>), ...rest };
+      return {
+        ...(resolve(target, depth + 1) as Record<string, Json>),
+        ...(annotated ? { 'x-atlas-type': annotated } : {}),
+        ...rest,
+      };
     }
     return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, resolve(v, depth + 1)]));
   };
@@ -77,12 +88,44 @@ function build(): PaletteEntry[] {
     const { configSchemaRef: _r, ...meta } = k;
     const kind = String(k['kind']);
     const choices = choicesFor(kind);
+    const configSchema = resolve(need(defs, name, ref as string)) as Record<string, Json>;
+    for (const [path, key] of CHOICE_FIELDS[kind] ?? []) markChoices(configSchema, path, key);
     return {
       ...(meta as unknown as Omit<PaletteEntry, 'configSchema' | 'choices'>),
-      configSchema: resolve(need(defs, name, ref as string)) as Record<string, Json>,
+      configSchema,
       ...(choices ? { choices } : {}),
     };
   });
+}
+
+/** The `$def`s whose meaning a property panel needs once they are inlined. */
+const ANNOTATED: Record<string, string> = {
+  '#/$defs/Feel': 'feel',
+  '#/$defs/Duration': 'duration',
+};
+
+/** Where each closed list applies: a property path in the kind's config, and its `choices` key. */
+const CHOICE_FIELDS: Record<string, [string[], string][]> = {
+  start: [[['trigger', 'event'], 'triggers']],
+  'wait-event': [[['event'], 'events']],
+  command: [[['request', 'event'], 'commands']],
+};
+
+function markChoices(schema: Record<string, Json>, path: string[], key: string): void {
+  let node: Json = schema;
+  for (const name of path) {
+    const props: Json =
+      node !== null && typeof node === 'object' && !Array.isArray(node)
+        ? (node['properties'] ?? null)
+        : null;
+    node =
+      props !== null && typeof props === 'object' && !Array.isArray(props)
+        ? (props[name] ?? null)
+        : null;
+  }
+  if (node === null || typeof node !== 'object' || Array.isArray(node))
+    throw new Error(`palette: no field ${path.join('.')} to offer ${key} on`);
+  node['x-choices'] = key;
 }
 
 function need(table: Record<string, Json>, name: string, ref: string): Json {

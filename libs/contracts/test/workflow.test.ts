@@ -320,6 +320,24 @@ test('the palette: every step kind, a self-contained config schema each, and the
     (of('command').choices?.['commands'] as { event: string }[]).map((c) => c.event),
     Object.keys(WORKFLOW_COMMANDS),
   );
+  // Inlining erased the $refs, so what a property panel needs to know is annotated (EP-23.5).
+  type S = Record<string, unknown>;
+  const at = (schema: S, ...path: string[]): S =>
+    path.reduce<S>((n, k) => (n['properties'] as Record<string, S>)[k]!, schema);
+  assert.equal(at(of('start').configSchema, 'trigger', 'event')['x-choices'], 'triggers');
+  assert.equal(at(of('start').configSchema, 'trigger', 'filter')['x-atlas-type'], 'feel');
+  assert.equal(at(of('wait-event').configSchema, 'event')['x-choices'], 'events');
+  assert.equal(at(of('wait-event').configSchema, 'correlate')['x-atlas-type'], 'feel');
+  assert.equal(at(of('command').configSchema, 'request', 'event')['x-choices'], 'commands');
+  assert.equal(at(of('human-task').configSchema, 'dueIn')['x-atlas-type'], 'duration');
+  const mapping = at(of('command').configSchema, 'request', 'input');
+  assert.equal(
+    (mapping['additionalProperties'] as S)['x-atlas-type'],
+    'feel',
+    'a mapping value is FEEL',
+  );
+  // Annotations, never enums: a draft may hold a value the closed list no longer has.
+  assert.equal(at(of('wait-event').configSchema, 'event')['enum'], undefined);
   // Each preset step's config is valid against its kind's schema — the schema the designer edits by.
   const ajv = new Ajv({ strict: false, allErrors: true });
   for (const name of PRESETS)

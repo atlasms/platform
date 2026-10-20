@@ -10,6 +10,9 @@ import {
   outOf,
   removeSelection,
   renameStep,
+  setDefaultEdge,
+  setEdge,
+  setStepConfig,
   stepOfConnector,
   toGraph,
 } from './workflow-graph.ts';
@@ -163,5 +166,42 @@ describe('edit operations', () => {
       ],
       transitions: [],
     });
+  });
+
+  it('a step’s config is replaced whole; nothing else changes', () => {
+    const d = canonical();
+    const next = setStepConfig(d, 's_review', { taskType: 'review', assignee: { role: 'qa' } });
+    expect(next.steps.find((s) => s.id === 's_review')?.config).toEqual({
+      taskType: 'review',
+      assignee: { role: 'qa' },
+    });
+    expect(d.steps.find((s) => s.id === 's_review')?.config).toMatchObject({ taskType: 'approve' });
+  });
+
+  it('an edge’s name or condition is set, and removed when blank', () => {
+    const d = canonical();
+    const named = setEdge(d, 't_ok', { name: 'approved', when: '= vars.ok' });
+    expect(named.transitions.find((t) => t.id === 't_ok')).toMatchObject({
+      name: 'approved',
+      when: '= vars.ok',
+    });
+    const cleared = setEdge(named, 't_ok', { when: '  ' });
+    expect(cleared.transitions.find((t) => t.id === 't_ok')).toEqual({
+      id: 't_ok',
+      from: 's_gate',
+      to: 's_ok',
+      name: 'approved',
+    });
+  });
+
+  it('a branch has ONE default: making an edge it moves the flag and the branch’s config together', () => {
+    const d = setDefaultEdge(canonical(), 't_ok', true);
+    expect(d.transitions.filter((t) => t.isDefault).map((t) => t.id)).toEqual(['t_ok']);
+    expect(d.steps.find((s) => s.id === 's_gate')?.config).toEqual({ default: 't_ok' });
+    const none = setDefaultEdge(d, 't_ok', false);
+    expect(none.transitions.some((t) => t.isDefault)).toBe(false);
+    expect(none.steps.find((s) => s.id === 's_gate')?.config).toEqual({});
+    // An edge that does not leave a branch has no default to be.
+    expect(setDefaultEdge(canonical(), 't1', true)).toEqual(canonical());
   });
 });
