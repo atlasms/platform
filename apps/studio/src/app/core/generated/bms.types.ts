@@ -159,7 +159,7 @@ export interface PaletteEntry {
   /** the BPMN element this maps to */
   bpmn?: string;
   waits?: 'no' | 'yes' | 'if-await' | 'at-join' | 'on-trigger';
-  /** The kind's config as a self-contained JSON Schema — its $def in workflow-definition.schema.json with every $ref inlined (EP-23.1). */
+  /** The kind's config as a self-contained JSON Schema — its $def in workflow-definition.schema.json with every $ref inlined (EP-23.1). Annotated for a property panel (EP-23.5): `x-atlas-type: feel | duration` where a field was a Feel or a Duration, and `x-choices: <key of choices>` on the field a closed list constrains — annotations, never `enum`, since a draft may hold a value the list no longer has. */
   configSchema: Record<string, unknown>;
   hint?: string;
   /** The closed lists the kind's property panel offers — publish holds a definition to the same lists: start → triggers, command → commands (target, answers, the authority each requires), wait-event → events. */

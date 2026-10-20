@@ -17,7 +17,7 @@ import {
   type FMoveNodesEvent,
   type FSelectionChangeEvent,
 } from '@foblex/flow';
-import type { StepKind, ValidationIssue } from '@atlas/contracts/workflow-types';
+import type { StepConfig, StepKind, ValidationIssue } from '@atlas/contracts/workflow-types';
 import type {
   DraftInput,
   PaletteEntry,
@@ -37,9 +37,13 @@ import {
   nextFreePoint,
   removeSelection,
   renameStep,
+  setDefaultEdge,
+  setEdge,
+  setStepConfig,
   stepOfConnector,
   toGraph,
 } from './workflow-graph.ts';
+import { SchemaField } from './schema-field.ts';
 
 /** How long the designer waits after an edit before asking BMS to judge the graph (DSL §12.2). */
 export const VALIDATE_DEBOUNCE_MS = 400;
@@ -67,7 +71,7 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
 @Component({
   selector: 'atlas-workflow-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FFlowModule, FlowTheme],
+  imports: [FFlowModule, FlowTheme, SchemaField],
   template: `
     <atlas-flow-theme />
     @if (workflow(); as w) {
@@ -197,6 +201,52 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
               />
             </label>
             <p class="muted">{{ locale.t('workflowEditor.kind.' + s.kind) }} · {{ s.id }}</p>
+            @if (entryOf(s.kind); as entry) {
+              <h3>{{ locale.t('workflowEditor.config') }}</h3>
+              <atlas-schema-field
+                class="config"
+                [schema]="entry.configSchema"
+                [value]="s.config ?? {}"
+                [choices]="entry.choices"
+                [readOnly]="!canEdit()"
+                (valueChange)="configure(s.id, $event)"
+              />
+            } @else if (!canEdit() && s.config) {
+              <!-- The palette is an admin's (EP-23.1): a reader sees the configuration as it is. -->
+              <h3>{{ locale.t('workflowEditor.config') }}</h3>
+              <pre class="json">{{ jsonOf(s.config) }}</pre>
+            }
+          } @else if (selectedEdge(); as e) {
+            <label>
+              {{ locale.t('workflowEditor.edgeName') }}
+              <input
+                [value]="e.name ?? ''"
+                [disabled]="!canEdit()"
+                (input)="editEdge(e.id, { name: $any($event.target).value })"
+              />
+            </label>
+            @if (fromBranch(e.from)) {
+              <label>
+                {{ locale.t('workflowEditor.when') }}
+                <input
+                  class="feel"
+                  placeholder="= …"
+                  [value]="e.when ?? ''"
+                  [disabled]="!canEdit()"
+                  (input)="editEdge(e.id, { when: $any($event.target).value })"
+                />
+              </label>
+              <label class="check">
+                <input
+                  type="checkbox"
+                  [checked]="e.isDefault === true"
+                  [disabled]="!canEdit()"
+                  (change)="makeDefault(e.id, $any($event.target).checked)"
+                />
+                {{ locale.t('workflowEditor.isDefault') }}
+              </label>
+            }
+            <p class="muted">{{ e.from }} → {{ e.to }} · {{ e.id }}</p>
           }
           <h3>{{ locale.t('workflowEditor.issues') }}</h3>
           @if (validating()) {
@@ -355,6 +405,20 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
       display: flex;
       flex-direction: column;
       gap: var(--space-1);
+      margin-block-end: var(--space-1);
+    }
+    .side label.check {
+      flex-direction: row;
+      align-items: center;
+    }
+    .json {
+      margin: 0;
+      font-size: 0.75rem;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .side .feel {
+      font-family: ui-monospace, monospace;
     }
     .side input {
       padding: var(--space-1) var(--space-2);
@@ -434,6 +498,26 @@ export class WorkflowEditor implements OnInit {
     const ids = this.selectedSteps();
     return ids.length === 1 ? this.def()?.steps.find((s) => s.id === ids[0]) : undefined;
   });
+  /** One edge selected, and no step: its own panel. */
+  protected readonly selectedEdge = computed(() => {
+    const ids = this.selectedEdges();
+    return ids.length === 1 && this.selectedSteps().length === 0
+      ? this.def()?.transitions.find((t) => t.id === ids[0])
+      : undefined;
+  });
+
+  /** The palette entry a kind's property panel is generated from (EP-23.5). */
+  protected entryOf(kind: StepKind): PaletteEntry | undefined {
+    return this.palette().find((p) => p.kind === kind);
+  }
+
+  protected jsonOf(value: unknown): string {
+    return JSON.stringify(value, null, 2);
+  }
+
+  protected fromBranch(stepId: string): boolean {
+    return this.def()?.steps.find((s) => s.id === stepId)?.kind === 'branch';
+  }
 
   constructor() {
     // The tab's dot follows every edit path. `setDirty` READS the layout it writes, so it runs
@@ -547,6 +631,25 @@ export class WorkflowEditor implements OnInit {
     const d = this.def();
     if (!d || !this.canEdit()) return;
     this.edit(renameStep(d, stepId, name));
+  }
+
+  /** The property panel's whole new config for a step; emptied, it is `{}`, never absent. */
+  configure(stepId: string, config: unknown): void {
+    const d = this.def();
+    if (!d || !this.canEdit()) return;
+    this.edit(setStepConfig(d, stepId, (config ?? {}) as StepConfig));
+  }
+
+  editEdge(id: string, patch: { name?: string; when?: string }): void {
+    const d = this.def();
+    if (!d || !this.canEdit()) return;
+    this.edit(setEdge(d, id, patch));
+  }
+
+  makeDefault(id: string, on: boolean): void {
+    const d = this.def();
+    if (!d || !this.canEdit()) return;
+    this.edit(setDefaultEdge(d, id, on));
   }
 
   private edit(next: WorkflowDefinition): void {

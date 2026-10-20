@@ -23,6 +23,12 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- `palette()` ANNOTATES each config schema for a property panel (EP-23.5): `x-atlas-type: feel |
+duration` where a field was a `Feel` or a `Duration` before inlining, and `x-choices: <key of
+choices>` on the field a closed list constrains. Annotations, not `enum` — a draft may hold a
+  value the list no longer has. Additive: a validator that ignores unknown keywords (ajv with
+  `strict: false`, as the palette test runs it) judges the same.
+
 - **`@atlas/contracts/bpmn`** (EP-23.2): `exportBpmn(def)` and `importBpmn(xml, { channelId })` —
   the workflow DSL to and from BPMN 2.0 with diagram interchange, lifted from
   `reference/bms-workflow` and made lossless for every field the schema holds (step timeouts, error

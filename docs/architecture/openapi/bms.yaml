@@ -427,7 +427,7 @@ components:
         category: { type: string, enum: [events, activities, gateways] }
         bpmn: { type: string, description: 'the BPMN element this maps to' }
         waits: { type: string, enum: [no, yes, if-await, at-join, on-trigger] }
-        configSchema: { type: object, description: 'The kind''s config as a self-contained JSON Schema — its $def in workflow-definition.schema.json with every $ref inlined (EP-23.1).' }
+        configSchema: { type: object, description: 'The kind''s config as a self-contained JSON Schema — its $def in workflow-definition.schema.json with every $ref inlined (EP-23.1). Annotated for a property panel (EP-23.5): `x-atlas-type: feel | duration` where a field was a Feel or a Duration, and `x-choices: <key of choices>` on the field a closed list constrains — annotations, never `enum`, since a draft may hold a value the list no longer has.' }
         hint: { type: string }
         choices: { type: object, description: "The closed lists the kind's property panel offers — publish holds a definition to the same lists: start → triggers, command → commands (target, answers, the authority each requires), wait-event → events." }
     ValidationIssue:

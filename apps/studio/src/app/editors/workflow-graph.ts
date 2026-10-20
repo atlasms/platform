@@ -197,6 +197,66 @@ export function renameStep(def: WorkflowDefinition, id: string, name: string): W
   };
 }
 
+/** A step's configuration replaced whole — the property panel's edit (EP-23.5). */
+export function setStepConfig(
+  def: WorkflowDefinition,
+  id: string,
+  config: StepConfig,
+): WorkflowDefinition {
+  return {
+    ...def,
+    steps: def.steps.map((s) => (s.id === id ? { ...s, config } : s)),
+  };
+}
+
+/** An edge's name or condition set — or removed when blank. */
+export function setEdge(
+  def: WorkflowDefinition,
+  id: string,
+  patch: { name?: string; when?: string },
+): WorkflowDefinition {
+  return {
+    ...def,
+    transitions: def.transitions.map((t) => {
+      if (t.id !== id) return t;
+      const next: Transition = { ...t };
+      for (const key of ['name', 'when'] as const) {
+        if (!(key in patch)) continue;
+        const v = patch[key]?.trim() ? patch[key] : undefined;
+        if (v === undefined) delete next[key];
+        else next[key] = v;
+      }
+      return next;
+    }),
+  };
+}
+
+/**
+ * An edge made — or unmade — its branch's DEFAULT: the one taken when no condition holds. A branch
+ * has one, so its other edges stop being it, and the branch's `config.default` names it (the two
+ * are the same fact, kept together as BPMN keeps it: the gateway's `default` flow).
+ */
+export function setDefaultEdge(
+  def: WorkflowDefinition,
+  id: string,
+  on: boolean,
+): WorkflowDefinition {
+  const edge = def.transitions.find((t) => t.id === id);
+  const branch = edge && def.steps.find((s) => s.id === edge.from && s.kind === 'branch');
+  if (!edge || !branch) return def;
+  return {
+    ...def,
+    steps: def.steps.map((s) =>
+      s.id === branch.id ? { ...s, config: on ? { default: id } : {} } : s,
+    ),
+    transitions: def.transitions.map((t) => {
+      if (t.from !== branch.id) return t;
+      const { isDefault: _d, ...rest } = t;
+      return on && t.id === id ? { ...rest, isDefault: true } : rest;
+    }),
+  };
+}
+
 /**
  * The selection removed: its steps, its edges, and every edge that touched a removed step. A
  * branch whose default edge went keeps no dangling `default`; an error path or compensation that

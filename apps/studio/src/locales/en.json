@@ -833,6 +833,17 @@
       "branch": "Branch",
       "parallel": "Parallel",
       "sub-flow": "Sub-flow"
-    }
+    },
+    "config": "Configuration",
+    "edgeName": "Edge name",
+    "when": "Condition (FEEL)",
+    "isDefault": "Default — taken when no condition holds"
+  },
+  "schemaForm": {
+    "key": "target",
+    "remove": "Remove",
+    "addRow": "Add a mapping",
+    "badVersion": "A version is a whole number, or latest.",
+    "badJson": "Not valid JSON — not applied."
   }
 }
