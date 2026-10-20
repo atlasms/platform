@@ -120,7 +120,7 @@ describe('SchemaField — a property panel from a config schema', () => {
     t.type(input.querySelector('input.key'), 'assetId', 'change');
     t.type(input.querySelector('.row input.feel'), '= vars.assetId');
     expect(t.host.value()).toMatchObject({ request: { input: { assetId: '= vars.assetId' } } });
-    (input.querySelector('.row button') as HTMLButtonElement).click();
+    (input.querySelector('.row button.remove') as HTMLButtonElement).click();
     t.fixture.detectChanges();
     expect(t.host.value()).toEqual({ action: 'transcode', request: { event: '' } });
   });

@@ -23,6 +23,11 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- **`@atlas/contracts/workflow-feel`** (EP-23.6): the FEEL subset checker (`feelProblem`,
+  `referencedVars`, `FEEL_ROOTS`, `FEEL_FUNCTIONS`) on a subpath of its own — browser-safe (feelin
+  only, no file system), so Studio's FEEL editor runs the checker publish runs. The same exports stay
+  on `@atlas/contracts/workflow`.
+
 - `palette()` ANNOTATES each config schema for a property panel (EP-23.5): `x-atlas-type: feel |
 duration` where a field was a `Feel` or a `Duration` before inlining, and `x-choices: <key of
 choices>` on the field a closed list constrains. Annotations, not `enum` — a draft may hold a

@@ -9,7 +9,8 @@
     "./workflow": "./src/workflow/index.ts",
     "./workflow-types": "./src/workflow/types.ts",
     "./workflow-correlate": "./src/workflow/correlate.ts",
-    "./bpmn": "./src/bpmn/index.ts"
+    "./bpmn": "./src/bpmn/index.ts",
+    "./workflow-feel": "./src/workflow/feel.ts"
   },
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts",
