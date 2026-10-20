@@ -4,6 +4,7 @@ import type {
   Catalog,
   DraftInput,
   PaletteEntry,
+  PublishResult,
   ValidationResult,
   Workflow,
   WorkflowDefinition,
@@ -59,6 +60,28 @@ export class WorkflowsService {
     return this.api
       .call(ops.validateWorkflow, { params: { id }, body: input })
       .as<ValidationResult>();
+  }
+
+  /**
+   * The draft published as an immutable version — over the revision read (409), judged by the same
+   * rules as /validate (422 with `details.issues`), refused (403) when the caller does not hold
+   * what its command steps will do (`requires`).
+   */
+  publish(id: string, revision: number) {
+    return this.api
+      .call(ops.publishWorkflow, { params: { id }, query: { revision } })
+      .as<PublishResult>();
+  }
+
+  /** A lifecycle move (EP-22.11) — deactivating and archiving are refused while instances run. */
+  transition(id: string, action: 'activate' | 'deactivate' | 'archive', revision: number) {
+    const op =
+      action === 'activate'
+        ? ops.activateWorkflow
+        : action === 'deactivate'
+          ? ops.deactivateWorkflow
+          : ops.archiveWorkflow;
+    return this.api.call(op, { params: { id }, query: { revision } }).as<Workflow>();
   }
 
   /** The step kinds a designer offers (`workflow:admin`, EP-23.1). */

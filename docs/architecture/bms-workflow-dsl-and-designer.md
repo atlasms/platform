@@ -641,7 +641,19 @@ projection and edit operations, typed by `@atlas/contracts/workflow-types`):
   Studio and in a BPMN tool.
 - **Save** is the whole graph over the revision read; a 409 reads the workflow again (never a
   retry). With no draft open the latest published version is shown and saving opens the next.
-  Read-only without `workflow:admin` or once archived. Publish is 23.7.
+  Read-only without `workflow:admin` or once archived.
+- **Publish (EP-23.7)** is offered only on a graph BMS has judged clean — never while a judgement
+  is pending (from the edit on, through the debounce) or has found an error. With unsaved edits it
+  is *Save and publish*: the save first, then the publish over the revision that save returned.
+  BMS judges it again: a 422's `details.issues` are painted on the canvas, a 403 is its reason (a
+  command step's `requires`, authorization-model §8.1), a 409 a re-read. Warnings go with the new
+  version and are counted in the notice.
+- **Versions**: a picker of the editable definition (the draft, or the latest version when none is
+  open) and every other published version, newest first, with who published it and when; a
+  published version is shown READ-ONLY. Not while there are unsaved edits.
+- **Lifecycle**: deactivate (active), activate (inactive), archive (either — final, so it takes a
+  second click), each over the revision read; refused while instances run, the count from BMS's
+  `details.running` shown.
 - **Theme**: only Foblex's canvas and connection styles, their `--ff-*` properties set from
   Studio's tokens (`editors/flow-theme.scss`), loaded with the designer's lazy chunk — not in
   every user's first load.

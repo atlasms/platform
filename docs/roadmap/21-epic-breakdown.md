@@ -439,7 +439,7 @@ Source: [bms-plan](services/bms-plan.md) §2 steps 6–8 and "Designer & format 
 | 23.4 | ✅ Studio canvas — nodes and edges edited thin over the definition: Foblex Flow over the definition signal, palette add, connect/move/remove, debounced validation markers, CAS save (DSL §12.2) | 8 |
 | 23.5 | ✅ Palette + property panels generated from the step kinds' config schemas: one recursive renderer over the palette's schemas (`x-atlas-type`/`x-choices` annotations), an edge panel (name, condition, branch default) (DSL §12.3) | 5 |
 | 23.6 | ✅ FEEL expression editor for conditions, over the **restricted subset** decided 2026-10-12 ([DSL §3](../architecture/bms-workflow-dsl-and-designer.md#3-expression-language--feel)): publish's own checker in the browser (`@atlas/contracts/workflow-feel`), live verdicts, insertable roots/vars/functions | 5 |
-| 23.7 | Publish/version flow — draft → published, a published version immutable | 3 |
+| 23.7 | ✅ Publish/version flow — draft → published, a published version immutable: publish only on a clean judgement (Save and publish), 422 issues painted, a versions picker (read-only), activate/deactivate/archive with BMS's running count (DSL §12.2) | 3 |
 | 23.8 | ✅ Import/export BPMN from Studio: BMS `POST /workflows/import` + `GET /workflows/{id}/export` over the 23.2 converter, and Studio's Workflows panel (list, import, export) | 2 |
 | 23.9 | Live-instance overlay — the canvas coloured by a running instance's step history (FR-BMS-6) | 3 |
 

@@ -86,18 +86,63 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
             · v{{ w.latestVersion }}
           }
         </span>
-        @if (canEdit()) {
-          <span class="actions">
+        @if (versionChoices().length > 1) {
+          <select
+            class="versions"
+            [attr.aria-label]="locale.t('workflowEditor.versions')"
+            [disabled]="busy() || dirty()"
+            (change)="view($any($event.target).value)"
+          >
+            @for (v of versionChoices(); track v.value) {
+              <option [value]="v.value" [selected]="v.value === viewingValue()">
+                {{ v.label }}
+              </option>
+            }
+          </select>
+        }
+        <span class="actions">
+          @if (canEdit()) {
             <button type="button" [disabled]="busy() || !dirty()" (click)="save()">
               {{ locale.t('workflowEditor.save') }}
             </button>
             <button type="button" class="link" [disabled]="busy() || !dirty()" (click)="revert()">
               {{ locale.t('workflowEditor.revert') }}
             </button>
-          </span>
-        } @else {
-          <span class="muted">{{ locale.t('workflowEditor.readOnly') }}</span>
-        }
+            @if (w.draftVersion !== undefined || dirty()) {
+              <button
+                type="button"
+                class="primary"
+                [disabled]="!canPublish()"
+                [attr.title]="publishBlocked() ? locale.t('workflowEditor.publishBlocked') : null"
+                (click)="publish()"
+              >
+                {{ locale.t(dirty() ? 'workflowEditor.saveAndPublish' : 'workflowEditor.publish') }}
+              </button>
+            }
+          } @else {
+            <span class="muted">{{ locale.t('workflowEditor.readOnly') }}</span>
+          }
+          @if (isAdmin() && viewing() === null) {
+            @if (w.state === 'active') {
+              <button type="button" class="link" [disabled]="busy()" (click)="move('deactivate')">
+                {{ locale.t('workflowEditor.deactivate') }}
+              </button>
+            } @else if (w.state === 'inactive') {
+              <button type="button" class="link" [disabled]="busy()" (click)="move('activate')">
+                {{ locale.t('workflowEditor.activate') }}
+              </button>
+            }
+            @if (w.state === 'active' || w.state === 'inactive') {
+              <button type="button" class="link danger" [disabled]="busy()" (click)="archive()">
+                {{
+                  locale.t(
+                    confirmArchive() ? 'workflowEditor.confirmArchive' : 'workflowEditor.archive'
+                  )
+                }}
+              </button>
+            }
+          }
+        </span>
       </header>
 
       @if (canEdit()) {
@@ -322,6 +367,21 @@ const graphOf = (d: WorkflowDefinition) => JSON.stringify({ s: d.steps, t: d.tra
       color: var(--color-danger);
       margin-inline-start: auto;
     }
+    .actions button.danger {
+      margin-inline-start: 0;
+    }
+    button.primary {
+      color: var(--color-fg-on-accent);
+      background: var(--color-accent);
+    }
+    .versions {
+      padding: var(--space-1);
+      color: inherit;
+      background: var(--color-bg-hover);
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      font: inherit;
+    }
     .body {
       flex: 1;
       display: grid;
@@ -489,11 +549,40 @@ export class WorkflowEditor implements OnInit {
   private validation = 0;
 
   /** UX only — BMS enforces `workflow:admin` on every write. */
-  protected readonly canEdit = computed(() => {
+  protected readonly isAdmin = computed(() => {
     this.session.policy(); // the dependency; the check reads it internally
     const w = this.workflow();
     return !!w && w.state !== 'archived' && this.permissions.can('workflow:admin');
   });
+  /** A published version picked from the list (EP-23.7); null is the editable one. */
+  protected readonly viewing = signal<number | null>(null);
+  /** Editable: an admin, on the draft (or the latest version, which saving makes a draft). */
+  protected readonly canEdit = computed(() => this.isAdmin() && this.viewing() === null);
+  protected readonly confirmArchive = signal(false);
+  protected readonly viewingValue = computed(() => String(this.viewing() ?? 'current'));
+  /** The editable definition first, then every other published version, newest first. */
+  protected readonly versionChoices = computed(() => {
+    const w = this.workflow();
+    if (!w) return [];
+    const current =
+      w.draftVersion !== undefined
+        ? `${this.locale.t('workflowsPanel.draft')} v${w.draftVersion}`
+        : `v${w.latestVersion} · ${this.locale.t('workflowEditor.latest')}`;
+    const published = w.versions
+      .filter((v) => w.draftVersion !== undefined || v.version !== w.latestVersion)
+      .map((v) => ({
+        value: String(v.version),
+        label: `v${v.version} · ${v.publishedAt.slice(0, 10)} · ${v.publishedBy}`,
+      }));
+    return [{ value: 'current', label: current }, ...published];
+  });
+  /** Publish waits for a clean judgement: never while BMS is judging, or has found an error. */
+  protected readonly publishBlocked = computed(
+    () => this.validating() || this.issues().some((i) => i.severity === 'error'),
+  );
+  protected readonly canPublish = computed(
+    () => this.canEdit() && !this.busy() && !this.publishBlocked(),
+  );
   protected readonly graph = computed(() => {
     const d = this.def();
     return d ? toGraph(d, this.issues()) : { nodes: [], edges: [] };
@@ -547,6 +636,8 @@ export class WorkflowEditor implements OnInit {
   /** The workflow, and the definition to show: its open draft, else its latest published version. */
   protected load(): void {
     this.error.set(null);
+    this.viewing.set(null);
+    this.confirmArchive.set(false);
     this.api.get(this.workflowId()).subscribe({
       next: (w) => {
         this.workflow.set(w);
@@ -556,7 +647,7 @@ export class WorkflowEditor implements OnInit {
             next: (d) => this.show(d),
             error: () => this.error.set(this.locale.t('workflowEditor.loadError')),
           });
-        if (this.canEdit() && this.palette().length === 0)
+        if (this.isAdmin() && this.palette().length === 0)
           this.api.palette().subscribe({
             next: (p) => this.palette.set(p),
             error: () => this.error.set(this.locale.t('workflowEditor.paletteError')),
@@ -672,6 +763,9 @@ export class WorkflowEditor implements OnInit {
   // --- validation: BMS's rules, on the graph as it stands ----------------------------------------
 
   private scheduleValidation(delay: number): void {
+    // Pending from the edit on, not from the request: a graph waiting out the debounce has not
+    // been judged, and publish must not be offered on it.
+    this.validating.set(true);
     clearTimeout(this.validateTimer);
     this.validateTimer = setTimeout(() => this.validate(), delay);
   }
@@ -697,7 +791,8 @@ export class WorkflowEditor implements OnInit {
 
   // --- save -------------------------------------------------------------------------------------
 
-  save(): void {
+  /** The draft saved; `then` runs with the saved workflow (Save and publish). */
+  save(then?: (saved: Workflow) => void): void {
     const w = this.workflow();
     const d = this.def();
     if (!w || !d || !this.dirty() || this.busy()) return;
@@ -710,6 +805,7 @@ export class WorkflowEditor implements OnInit {
         if (view.draft) this.show(view.draft);
         this.notice.set(this.locale.t('workflowEditor.saved'));
         this.editors.setDirty(this.tabId(), false);
+        then?.(view);
       },
       error: (err: unknown) => {
         this.busy.set(false);
@@ -719,6 +815,107 @@ export class WorkflowEditor implements OnInit {
           this.load();
           this.error.set(this.locale.t('workflowEditor.moved'));
         } else this.error.set(reasonOf(err) ?? this.locale.t('workflowEditor.saveError'));
+      },
+    });
+  }
+
+  // --- versions, publish, lifecycle (EP-23.7) ------------------------------------------------
+
+  /** A published version shown read-only — or, `current`, back to the editable one. */
+  view(choice: string): void {
+    const w = this.workflow();
+    if (!w || this.dirty()) return;
+    if (choice === 'current') {
+      this.load();
+      return;
+    }
+    const version = Number(choice);
+    this.api.version(w.id, version).subscribe({
+      next: (d) => {
+        this.viewing.set(version);
+        this.show(d);
+      },
+      error: () => this.error.set(this.locale.t('workflowEditor.loadError')),
+    });
+  }
+
+  /**
+   * The draft published as an immutable version: saved first when it has unsaved edits, over
+   * the revision that save returned. BMS judges it again — a 422's issues are painted where they
+   * belong, a 403 is its reason (the authority a command step needs), a 409 a re-read.
+   */
+  publish(): void {
+    if (!this.canPublish()) return;
+    if (this.dirty()) {
+      this.save((saved) => this.publishAt(saved));
+      return;
+    }
+    const w = this.workflow();
+    if (w) this.publishAt(w);
+  }
+
+  private publishAt(w: Workflow): void {
+    this.busy.set(true);
+    this.error.set(null);
+    this.api.publish(w.id, w.revision).subscribe({
+      next: (result) => {
+        this.busy.set(false);
+        this.load();
+        const warnings = result.warnings?.length ?? 0;
+        this.notice.set(
+          `${this.locale.t('workflowEditor.published')} v${result.version}` +
+            (warnings > 0 ? ` · ${warnings} ${this.locale.t('workflowEditor.warnings')}` : ''),
+        );
+      },
+      error: (err: unknown) => {
+        this.busy.set(false);
+        if (err instanceof HttpErrorResponse && err.status === 422) {
+          const body = err.error as { details?: { issues?: ValidationIssue[] } } | null;
+          if (body?.details?.issues) this.issues.set(body.details.issues);
+          this.error.set(this.locale.t('workflowEditor.publishInvalid'));
+        } else if (err instanceof HttpErrorResponse && err.status === 409) {
+          this.load();
+          this.error.set(this.locale.t('workflowEditor.moved'));
+        } else this.error.set(reasonOf(err) ?? this.locale.t('workflowEditor.publishError'));
+      },
+    });
+  }
+
+  /** Archiving is final, so it takes a second click. */
+  archive(): void {
+    if (!this.confirmArchive()) {
+      this.confirmArchive.set(true);
+      return;
+    }
+    this.confirmArchive.set(false);
+    this.move('archive');
+  }
+
+  /** A lifecycle move; refused while instances run, which BMS counts (`details.running`). */
+  move(action: 'activate' | 'deactivate' | 'archive'): void {
+    const w = this.workflow();
+    if (!w || this.busy()) return;
+    this.busy.set(true);
+    this.error.set(null);
+    this.api.transition(w.id, action, w.revision).subscribe({
+      next: (view) => {
+        this.busy.set(false);
+        this.workflow.set(view);
+        this.notice.set(this.locale.t(`workflowEditor.done.${action}`));
+      },
+      error: (err: unknown) => {
+        this.busy.set(false);
+        const body =
+          err instanceof HttpErrorResponse
+            ? (err.error as { details?: { running?: unknown } } | null)
+            : null;
+        const running = body?.details?.running;
+        if (typeof running === 'number' && running > 0) {
+          this.error.set(`${this.locale.t('workflowEditor.running')} ${running}`);
+        } else if (err instanceof HttpErrorResponse && err.status === 409) {
+          this.load();
+          this.error.set(this.locale.t('workflowEditor.moved'));
+        } else this.error.set(reasonOf(err) ?? this.locale.t('workflowEditor.moveError'));
       },
     });
   }
