@@ -25,7 +25,7 @@ export const MamOperations = {
   approveAsset: { method: 'POST', path: '/api/v1/assets/{id}/approve', params: ['id'] },
   /** Reject an asset - manual verdict (scope asset:approve) */
   rejectAsset: { method: 'POST', path: '/api/v1/assets/{id}/reject', params: ['id'] },
-  /** Retained review-verdict history for an asset (scope asset:read) */
+  /** Retained review-verdict history for an asset, newest first (scope asset:read; EP-24.4, FR-APP-5) — every approval and rejection, manual or automatic, with who gave it, when, at which review point and why. Never edited: the store refuses an update or a delete, and the history outlives a purged asset. */
   listVerdicts: { method: 'GET', path: '/api/v1/assets/{id}/verdicts', params: ['id'] },
   /** Simple free-text search (scope asset:read) */
   simpleSearch: { method: 'GET', path: '/api/v1/search', params: [] },

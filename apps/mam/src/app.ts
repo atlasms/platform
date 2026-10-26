@@ -430,6 +430,14 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     ),
   );
 
+  // The retained verdict history (EP-24.4), newest first. A page, so the shape can grow a cursor
+  // without breaking a client — an asset's verdicts are few, so today it is all of them.
+  app.get('/api/v1/assets/:id/verdicts', async (req, reply) =>
+    handle(req, reply, async () => ({
+      items: await options.service.verdicts(await callerOf(req), (req.params as { id: string }).id),
+    })),
+  );
+
   app.patch('/api/v1/assets/:id', async (req, reply) =>
     handle(req, reply, async () =>
       options.service.update(

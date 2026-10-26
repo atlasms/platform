@@ -18,6 +18,7 @@ import type { Asset } from './asset.ts';
 import type { Category } from './category.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
+import type { Verdict } from './verdict.ts';
 import {
   CategoryPathTaken,
   StaleCategory,
@@ -251,6 +252,30 @@ export const pgApprovedMigration: Migration = {
   up: `CREATE INDEX IF NOT EXISTS assets_approved_idx ON assets (id) WHERE state = 'approved';`,
 };
 
+// The retained verdict history (EP-24.4; review-lifecycle plan WS-A2, FR-APP-5): one row per
+// approval or rejection, APPEND-ONLY by trigger — an update or a delete is refused by the
+// database itself, whichever code tries it. No foreign key to `assets`: the history outlives a
+// purged asset (EP-24.6), which is when it matters most.
+export const pgVerdictsMigration: Migration = {
+  id: 'mam_verdicts',
+  up: `CREATE TABLE IF NOT EXISTS review_verdicts (
+         id         text PRIMARY KEY,
+         channel_id text NOT NULL,
+         asset_id   text NOT NULL,
+         decided_at timestamptz NOT NULL,
+         data       jsonb NOT NULL
+       );
+       CREATE INDEX IF NOT EXISTS review_verdicts_asset_idx
+         ON review_verdicts (asset_id, decided_at DESC, id DESC);
+       CREATE OR REPLACE FUNCTION review_verdicts_refuse() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION '% is append-only', TG_TABLE_NAME; END;
+       $$;
+       DROP TRIGGER IF EXISTS review_verdicts_append_only ON review_verdicts;
+       CREATE TRIGGER review_verdicts_append_only
+         BEFORE UPDATE OR DELETE ON review_verdicts
+         FOR EACH ROW EXECUTE FUNCTION review_verdicts_refuse();`,
+};
+
 /** Everything MAM's database needs, in order. Applied at startup under an advisory lock. */
 export const mamMigrations: Migration[] = [
   outboxMigration,
@@ -270,6 +295,7 @@ export const mamMigrations: Migration[] = [
   pgFacetsMigration,
   pgPeopleMigration,
   pgApprovedMigration,
+  pgVerdictsMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
@@ -652,6 +678,19 @@ export function pgAssetStore(pool: PgPool): AssetStore {
               ],
             );
           },
+          async appendVerdict(verdict) {
+            await client.query(
+              `INSERT INTO review_verdicts (id, channel_id, asset_id, decided_at, data)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [
+                verdict.id,
+                verdict.channelId,
+                verdict.assetId,
+                verdict.decidedAt,
+                JSON.stringify(verdict),
+              ],
+            );
+          },
         };
         return fn(tx);
       });
@@ -750,6 +789,16 @@ export function pgAssetStore(pool: PgPool): AssetStore {
     async filesOf(assetId) {
       const { rows } = await pool.query<{ data: FileRef }>(
         'SELECT data FROM asset_files WHERE asset_id = $1 ORDER BY kind, variant',
+        [assetId],
+      );
+      return rows.map((r) => r.data);
+    },
+
+    async verdictsOf(assetId) {
+      // Newest first; the id (a ULID, minted in order) breaks a tie inside one millisecond.
+      const { rows } = await pool.query<{ data: Verdict }>(
+        `SELECT data FROM review_verdicts WHERE asset_id = $1
+         ORDER BY decided_at DESC, id DESC`,
         [assetId],
       );
       return rows.map((r) => r.data);

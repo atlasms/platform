@@ -15,6 +15,7 @@ import type { Person } from './person.ts';
 import type { VocabularyTerm } from './vocabulary.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
+import type { Verdict } from './verdict.ts';
 import type { ParsedQuery, SearchHit } from './search.ts';
 import type { Tag, TagCandidate } from './tag.ts';
 
@@ -157,6 +158,9 @@ export interface AssetStore {
 
   /** The asset's files as last mirrored from HSM/MTS (EP-17.8), by kind then variant. */
   filesOf(assetId: string): Promise<FileRef[]>;
+
+  /** Every verdict the asset was given (EP-24.4), newest first — the retained history. */
+  verdictsOf(assetId: string): Promise<Verdict[]>;
 
   /** A channel's whole category tree, deprecated nodes included, in path order (#260). */
   categories(channelId: string): Promise<Category[]>;
@@ -329,4 +333,9 @@ export interface AssetTx {
   markSeen(messageId: string): Promise<boolean>;
   /** Write a file row, replacing the one with the same (asset, kind, variant). */
   putFile(file: FileRef): Promise<void>;
+  /**
+   * Record a verdict (EP-24.4) — in the transaction that moves the asset, so a verdict exists
+   * exactly when its transition does. Append-only: the table refuses an update or a delete.
+   */
+  appendVerdict(verdict: Verdict): Promise<void>;
 }

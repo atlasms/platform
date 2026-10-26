@@ -55,6 +55,9 @@ if (!URL) {
           );
           return Number(rows[0]?.c ?? 0);
         },
+        raw: async (sql: string) => {
+          await pool.query(sql);
+        },
         cleanup: async () => {
           await pool.query(`DROP SCHEMA ${schema} CASCADE`);
           await pool.end();

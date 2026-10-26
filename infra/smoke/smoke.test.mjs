@@ -2121,6 +2121,13 @@ test('smoke: EP-22.6 — a wait-event moves on asset.ready; a review step is res
     body: JSON.stringify({ expiresAt: '2099-01-01T00:00:00.000Z', reviewPointId: point }),
   });
   assert.equal(approved.status, 200, `approve failed: ${approved.text}`);
+  // EP-24.4: the verdict is retained — through the gateway, with the point it was given at.
+  const verdicts = json(await get(`/api/v1/assets/${assetId}/verdicts`, { headers }));
+  assert.deepEqual(
+    verdicts.items.map((v) => [v.verdict, v.reviewPointId, v.expiresAt]),
+    [['approved', point, '2099-01-01T00:00:00.000Z']],
+    JSON.stringify(verdicts),
+  );
   const done = await poll(
     instance,
     (i) => i.state === 'completed' || i.state === 'failed',

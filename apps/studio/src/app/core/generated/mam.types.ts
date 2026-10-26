@@ -6,6 +6,32 @@
 
 export type Ulid = string;
 
+/** One review verdict, as it was given (EP-24.4) — retained, never edited. */
+export interface Verdict {
+  id: Ulid;
+  assetId: Ulid;
+  channelId: string;
+  verdict: 'approved' | 'rejected';
+  /** The user who gave it — `mam` for an automatic approval. */
+  decidedBy: string;
+  decidedAt: string;
+  /** A rejection's reason. */
+  reason?: string;
+  /** The workflow review step it was given at (EP-22.6). */
+  reviewPointId?: string;
+  /** The expiry the approval snapshotted. */
+  expiresAt?: string;
+  expirySource?: 'asset' | 'category';
+  /** Until when the rejected media is kept. */
+  retainUntil?: string;
+  /** True when no person gave it: the category chain needs no review (EP-28.7). */
+  automatic?: boolean;
+}
+
+export interface VerdictPage {
+  items: Verdict[];
+}
+
 /** One of an asset's files, as MAM mirrors it from HSM/MTS (data-model.md §1.5; file.schema.json). A file belongs to exactly one asset; unique per (asset, kind, variant). */
 export interface FileRef {
   id: Ulid;

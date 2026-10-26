@@ -14,6 +14,9 @@ assetStoreConformance('sqliteAssetStore', {
     return {
       store,
       unsentCount: async () => outbox.unsentCount(),
+      raw: async (sql: string) => {
+        store.db.exec(sql);
+      },
       cleanup: async () => store.close(),
     };
   },
