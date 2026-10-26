@@ -162,3 +162,83 @@ test('GET /assets/{id}/verdicts over HTTP: the page, newest first', async () => 
   );
   await app.close();
 });
+
+test('GET /assets?state=ready,expired is the review queue; an unknown state is a 422, not an empty page', async () => {
+  const h = harness();
+  const waiting = await h.ready();
+  const approved = await h.ready();
+  await h.service.transition(h.caller(), approved.id, 'approve');
+  const app = await buildMamApp({ service: h.service, policyFor: () => h.caller().policy });
+  const headers = { 'x-atlas-user': 'ana', 'x-atlas-channel': 'ch12' };
+  const queue = await app.inject({
+    method: 'GET',
+    url: '/api/v1/assets?state=ready,expired&order=desc',
+    headers,
+  });
+  assert.equal(queue.statusCode, 200, queue.body);
+  assert.deepEqual(
+    queue.json<{ items: { id: string }[] }>().items.map((a) => a.id),
+    [waiting.id],
+  );
+  const typo = await app.inject({ method: 'GET', url: '/api/v1/assets?state=redy', headers });
+  assert.equal(typo.statusCode, 422);
+  await app.close();
+});
+
+// Found by EP-24.9's review panel, which offers all three expiry choices.
+test('an approval’s expiry: null is PERMANENT even under a category default; a date is its own; a past one is refused', async () => {
+  const h = harness();
+  const admin = h.caller('ana', [
+    'asset:read',
+    'asset:write',
+    'asset:approve',
+    'taxonomy:admin',
+    'taxonomy:read',
+  ]);
+  const cat = await h.service.category(admin, 'cat-1');
+  await h.service.updateCategory(admin, 'cat-1', cat.version, { defaultExpiry: 'P1D' });
+
+  const permanent = await h.ready();
+  // Before EP-24.9 this was a 422 from MAM's own event schema: `expiresAt: null` reached the payload.
+  const p = await h.service.transition(h.caller(), permanent.id, 'approve', { expiresAt: null });
+  assert.deepEqual([p.expiresAt, p.expirySource], [undefined, undefined]);
+  assert.equal((await h.service.verdicts(h.caller(), p.id))[0]?.expiresAt, undefined);
+
+  const dated = await h.ready();
+  const d = await h.service.transition(h.caller(), dated.id, 'approve', {
+    expiresAt: '2030-01-01T00:00:00.000Z',
+  });
+  assert.deepEqual([d.expiresAt, d.expirySource], ['2030-01-01T00:00:00.000Z', undefined]);
+
+  const late = await h.ready();
+  await assert.rejects(
+    h.service.transition(h.caller(), late.id, 'approve', { expiresAt: '2020-01-01T00:00:00.000Z' }),
+    /must be in the future/,
+  );
+  await assert.rejects(
+    h.service.transition(h.caller(), late.id, 'approve', { expiresAt: 'tomorrow' }),
+    /date-time, or null/,
+  );
+});
+
+test('re-review re-arms the clock: inheriting again snapshots the category default from THIS approval', async () => {
+  const h = harness();
+  const admin = h.caller('ana', [
+    'asset:read',
+    'asset:write',
+    'asset:approve',
+    'taxonomy:admin',
+    'taxonomy:read',
+  ]);
+  const cat = await h.service.category(admin, 'cat-1');
+  await h.service.updateCategory(admin, 'cat-1', cat.version, { defaultExpiry: 'P1D' });
+  const a = await h.ready();
+  const first = await h.service.transition(h.caller(), a.id, 'approve');
+  assert.deepEqual([first.expiresAt, first.expirySource], ['2026-08-06T12:00:00.000Z', 'category']);
+  h.later(2 * 86_400_000);
+  assert.equal(await h.service.expireLapsed(), 1);
+  // Before EP-24.9 the lapsed 2026-08-06 survived the re-approval, and the next sweep expired it again.
+  const again = await h.service.transition(h.caller(), a.id, 'approve');
+  assert.deepEqual([again.expiresAt, again.expirySource], ['2026-08-08T12:00:00.000Z', 'category']);
+  assert.equal(await h.service.expireLapsed(), 0, 'not swept straight back');
+});

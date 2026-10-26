@@ -9,6 +9,7 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AssetsService } from '../core/assets.service.ts';
+import { badgeOf } from '../editors/review.model.ts';
 import type { Asset, Category, Tag } from '../core/generated/mam.types.ts';
 import { CategoriesService } from '../core/categories.service.ts';
 import { categoryLabel, visibleRows } from '../core/category-tree.ts';
@@ -105,7 +106,18 @@ import { WebSocketService } from '../core/websocket.service.ts';
       </ul>
     }
 
-    <p class="mode">{{ heading() }}</p>
+    <div class="mode-row">
+      <p class="mode">{{ heading() }}</p>
+      <button
+        type="button"
+        class="queue"
+        [class.on]="reviewQueue()"
+        [attr.aria-pressed]="reviewQueue()"
+        (click)="toggleQueue()"
+      >
+        {{ locale.t('mediaPanel.needsReview') }}
+      </button>
+    </div>
 
     @if (error()) {
       <p class="error" role="alert">{{ error() }}</p>
@@ -123,7 +135,14 @@ import { WebSocketService } from '../core/websocket.service.ts';
           <li>
             <button type="button" (click)="open(asset)">
               <span class="title">{{ asset.title }}</span>
-              @if (asset.state) {
+              @if (badgeOf(asset); as b) {
+                <span class="state" [attr.data-tone]="b.tone">
+                  {{ locale.t(b.key) }}
+                  @if (b.days !== undefined) {
+                    {{ b.days }}{{ locale.t('review.days') }}
+                  }
+                </span>
+              } @else if (asset.state) {
                 <span class="state">{{ asset.state }}</span>
               }
             </button>
@@ -290,6 +309,36 @@ import { WebSocketService } from '../core/websocket.service.ts';
     .error {
       color: var(--color-danger);
     }
+    .mode-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-1);
+    }
+    .queue {
+      padding: 0 var(--space-1);
+      color: var(--color-fg-muted);
+      background: none;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      font: inherit;
+      font-size: 0.6875rem;
+      cursor: pointer;
+    }
+    .queue.on {
+      color: var(--color-fg-on-accent);
+      background: var(--color-accent);
+      border-color: var(--color-accent);
+    }
+    .state[data-tone='ok'] {
+      color: var(--color-success);
+    }
+    .state[data-tone='warning'] {
+      color: var(--color-warning);
+    }
+    .state[data-tone='danger'] {
+      color: var(--color-danger);
+    }
     .visually-hidden {
       position: absolute;
       inline-size: 1px;
@@ -322,8 +371,12 @@ export class MediaPanel {
   protected readonly selected = signal<Category | undefined>(undefined);
   protected readonly rows = computed(() => visibleRows(this.categories(), this.expanded()));
 
+  /** The review queue (EP-24.9): what awaits a verdict — ready, or expired and due re-review. */
+  protected readonly reviewQueue = signal(false);
+
   protected readonly heading = computed(() => {
     if (this.query()) return this.locale.t('mediaPanel.results');
+    if (this.reviewQueue()) return this.locale.t('mediaPanel.needsReview');
     const chosen = this.selected();
     return chosen
       ? `${this.locale.t('mediaPanel.inCategory')} ${this.label(chosen)}`
@@ -429,10 +482,28 @@ export class MediaPanel {
     });
   }
 
-  /** The list request the browse view makes: newest first, narrowed to the chosen subtree. */
-  private browse(): { order: 'desc'; categoryId?: string; subtree?: boolean } {
+  /**
+   * The list request the browse view makes: newest first, narrowed to the chosen subtree — and,
+   * with the review queue on, to what awaits a verdict.
+   */
+  private browse(): { order: 'desc'; categoryId?: string; subtree?: boolean; state?: string } {
     const chosen = this.selected();
-    return chosen ? { order: 'desc', categoryId: chosen.id, subtree: true } : { order: 'desc' };
+    return {
+      order: 'desc',
+      ...(chosen ? { categoryId: chosen.id, subtree: true } : {}),
+      ...(this.reviewQueue() ? { state: 'ready,expired' } : {}),
+    };
+  }
+
+  protected toggleQueue(): void {
+    this.reviewQueue.update((on) => !on);
+    this.query.set('');
+    this.loadRecent();
+  }
+
+  /** `Approved · expires in 12d`, `Expired — re-review`… (WS-H) for a row. */
+  protected badgeOf(asset: Asset) {
+    return badgeOf(asset, new Date());
   }
 
   protected open(asset: Asset): void {

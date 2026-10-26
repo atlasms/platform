@@ -24,7 +24,7 @@ import {
   type Span,
   type Tracer,
 } from '@atlas/service-kit';
-import type { LifecycleAction } from './lifecycle.ts';
+import { ASSET_STATES, type AssetState, type LifecycleAction } from './lifecycle.ts';
 import type { MamService, Caller, ReadOptions, TransitionOptions } from './service.ts';
 
 export interface MamAppOptions {
@@ -225,13 +225,20 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
   // every client forgets to read, which turns "there is more" into "there is nothing".
   app.get('/api/v1/assets', async (req, reply) =>
     handle(req, reply, async () => {
-      const { limit, cursor, order, categoryId, subtree } = req.query as {
+      const { limit, cursor, order, categoryId, subtree, state } = req.query as {
         limit?: string;
         cursor?: string;
         order?: string;
         categoryId?: string;
         subtree?: string;
+        state?: string;
       };
+      // `state=ready,expired` — the review queue (EP-24.9). A state that does not exist is a 422,
+      // not an empty page: a typo would otherwise read as "nothing to review".
+      const states = state === undefined ? undefined : state.split(',').map((s) => s.trim());
+      for (const s of states ?? [])
+        if (!(ASSET_STATES as readonly string[]).includes(s))
+          throw new ValidationError(`state must be among ${ASSET_STATES.join(', ')}`);
       const parsed = limit === undefined ? undefined : Number(limit);
       if (parsed !== undefined && !Number.isInteger(parsed)) {
         throw new ValidationError('limit must be an integer');
@@ -247,6 +254,7 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
         ...(order === undefined ? {} : { order }),
         ...(categoryId === undefined ? {} : { categoryId }),
         ...(subtree === 'true' ? { subtree: true } : {}),
+        ...(states === undefined ? {} : { states: states as AssetState[] }),
       });
     }),
   );

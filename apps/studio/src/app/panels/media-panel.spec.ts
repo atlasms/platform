@@ -139,6 +139,7 @@ interface InternalPanel {
   rows: () => { category: Category; level: number }[];
   toggle(id: string): void;
   select(category: Category | undefined): void;
+  toggleQueue(): void;
 }
 
 describe('MediaPanel', () => {
@@ -153,6 +154,20 @@ describe('MediaPanel', () => {
     const { fake, component } = harness;
     expect(fake.listCalls[0]).toEqual({ order: 'desc' });
     expect(component.heading()).toBe('Recent');
+  });
+
+  it('the review queue lists what awaits a verdict — ready, or expired and due re-review — newest first', () => {
+    const { fake, component, fixture } = harness;
+    component.toggleQueue();
+    expect(fake.listCalls.at(-1)).toEqual({ order: 'desc', state: 'ready,expired' });
+    expect(component.heading()).toBe('mediaPanel.needsReview');
+    fake.lists.at(-1)?.next({ items: [{ ...asset('a1', 'Waiting'), state: 'expired' } as Asset] });
+    fixture.detectChanges();
+    const badge = (fixture.nativeElement as HTMLElement).querySelector('.items .state');
+    expect(badge?.getAttribute('data-tone')).toBe('warning');
+    // Paging stays in the queue; turning it off is the whole channel again.
+    component.toggleQueue();
+    expect(fake.listCalls.at(-1)).toEqual({ order: 'desc' });
   });
 
   it('renders the page it is given and keeps the cursor', () => {

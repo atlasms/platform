@@ -579,6 +579,11 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         );
         params.push(...options.categoryIds);
       }
+      if (options.states !== undefined) {
+        if (options.states.length === 0) return [];
+        where.push(`state IN (${options.states.map(() => '?').join(', ')})`);
+        params.push(...options.states);
+      }
       let sql =
         `SELECT data FROM assets WHERE ${where.join(' AND ')} ORDER BY id` + (desc ? ' DESC' : '');
       if (options.limit !== undefined) {

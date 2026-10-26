@@ -59,7 +59,8 @@
     "allMedia": "كل الوسائط",
     "expand": "توسيع",
     "collapse": "طي",
-    "inCategory": "في"
+    "inCategory": "في",
+    "needsReview": "يحتاج مراجعة"
   },
   "search": {
     "title": "البحث",
@@ -221,7 +222,8 @@
     "classificationIds": "التصنيفات",
     "inheritedTags": "وسوم من الفئة:",
     "cast": "طاقم العمل",
-    "addCast": "إضافة"
+    "addCast": "إضافة",
+    "review": "المراجعة"
   },
   "editor": {
     "close": "إغلاق",
@@ -890,5 +892,39 @@
     "ok": "ضمن مجموعة تعابير مسار العمل.",
     "undeclared": "ليس متغيرًا معلنًا:",
     "insert": "إدراج…"
+  },
+  "review": {
+    "badge": {
+      "awaiting": "بانتظار المراجعة",
+      "approvedExpires": "معتمد · ينتهي خلال",
+      "approvedPermanent": "معتمد · دائم",
+      "expired": "منتهٍ — يحتاج مراجعة",
+      "rejectedPurges": "مرفوض — يُحذف خلال",
+      "rejected": "مرفوض"
+    },
+    "days": "ي",
+    "giveVerdict": "القرار",
+    "expiry": "الانتهاء عند الاعتماد",
+    "inherit": "الافتراضي للفئة",
+    "noDefault": "غير محدد — دائم",
+    "onDate": "في تاريخ",
+    "permanent": "دائم",
+    "approve": "اعتماد",
+    "reason": "سبب الرفض (مطلوب)",
+    "retainUntil": "الاحتفاظ بالمادة المرفوضة حتى (اختياري)",
+    "reject": "رفض",
+    "history": "سجل المراجعة",
+    "noVerdicts": "لا قرار بعد.",
+    "verdict": {
+      "approved": "معتمد",
+      "rejected": "مرفوض"
+    },
+    "automatic": "تلقائي (الفئة لا تحتاج مراجعة)",
+    "at": "عند",
+    "expiresAt": "ينتهي",
+    "fromCategory": "افتراضي الفئة",
+    "keptUntil": "محفوظ حتى",
+    "badDate": "اختر تاريخًا في المستقبل.",
+    "verdictError": "تعذّر إصدار القرار."
   }
 }

@@ -7,6 +7,7 @@ import type {
   FileRef,
   Tag,
   UpdateAssetInput,
+  VerdictPage,
 } from './generated/mam.types.ts';
 import { MamOperations as ops } from './generated/mam.operations.ts';
 
@@ -40,6 +41,22 @@ export interface ListOptions {
   categoryId?: string;
   /** With `categoryId`: that category and everything below it. */
   subtree?: boolean;
+  /** Only these lifecycle states, comma-separated — `ready,expired` is the review queue (EP-24.9). */
+  state?: string;
+}
+
+/** An approval as the review panel gives it (mam.yaml `approveAsset`). */
+export interface ApproveInput {
+  /** Omitted: inherit the category default. `null`: permanent. A date-time: this expiry. */
+  expiresAt?: string | null;
+  reviewPointId?: string;
+}
+
+/** A rejection — its reason is required; MAM refuses one without (422). */
+export interface RejectInput {
+  reason: string;
+  retainUntil?: string;
+  reviewPointId?: string;
 }
 
 /** What `POST /search` answers (mam.yaml): the page and, per facet, value → count on it. */
@@ -72,6 +89,20 @@ export class AssetsService {
         ...(options.fresh ? { headers: { 'cache-control': 'no-cache' } } : {}),
       })
       .as<Asset>();
+  }
+
+  /** A manual verdict (EP-24.9) — `asset:approve`; MAM judges whether the asset may be approved. */
+  approve(id: string, input: ApproveInput = {}) {
+    return this.api.call(ops.approveAsset, { params: { id }, body: input }).as<Asset>();
+  }
+
+  reject(id: string, input: RejectInput) {
+    return this.api.call(ops.rejectAsset, { params: { id }, body: input }).as<Asset>();
+  }
+
+  /** Every verdict the asset was given, newest first (EP-24.4) — retained, never edited. */
+  verdicts(id: string) {
+    return this.api.call(ops.listVerdicts, { params: { id } }).as<VerdictPage>();
   }
 
   /** Save only changed, user-editable core fields; MAM remains the authorization boundary. */
