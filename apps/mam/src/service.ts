@@ -116,6 +116,7 @@ import {
   canTransition,
   eventFor,
   hasLapsed,
+  type AssetState,
   type LifecycleAction,
   type LifecycleContext,
 } from './lifecycle.ts';
@@ -214,6 +215,8 @@ export interface ListPage {
   categoryId?: string;
   /** With `categoryId`: that category AND everything below it. */
   subtree?: boolean;
+  /** Only assets in these lifecycle states (EP-24.9) — `ready,expired` is the review queue. */
+  states?: readonly AssetState[];
 }
 
 /** What an authorization check knows about the asset it is asked about. */
@@ -503,7 +506,7 @@ export class MamService {
       const fetch = limit * PAGE_OVERFETCH;
       const page = await this.options.store.listByChannel(caller.channelId, {
         limit: fetch,
-        ...defined({ after: cursor, order: options.order, categoryIds }),
+        ...defined({ after: cursor, order: options.order, categoryIds, states: options.states }),
       });
       // A short page from the store means the channel is exhausted; a full one means there is more.
       more = page.length === fetch;
@@ -837,6 +840,46 @@ export class MamService {
     }
   }
 
+  /**
+   * The expiry an approval leaves (mam.yaml `approveAsset`, review plan WS-B):
+   *
+   * - a date-time is the asset's OWN expiry (no `expirySource`) — and must be in the future: an
+   *   approval that has already lapsed is a mistake, refused rather than swept away a minute later;
+   * - `null` is PERMANENT — no expiry, no source, whatever the category says;
+   * - omitted INHERITS. A category snapshot is re-taken at every approval ("re-approval re-arms the
+   *   clock"), and an expiry that has already lapsed is void — before EP-24.9 both survived, so
+   *   re-approving an expired asset kept its lapsed date and the next sweep expired it again. An
+   *   own expiry still in the future is kept, as before.
+   */
+  private async expiryOnApproval(
+    existing: Asset,
+    updated: Asset,
+    given: string | null | undefined,
+  ): Promise<void> {
+    if (given === null) {
+      delete updated.expiresAt;
+      delete updated.expirySource;
+      return;
+    }
+    if (given !== undefined) {
+      if (typeof given !== 'string' || Number.isNaN(Date.parse(given)))
+        throw new ValidationError('expiresAt must be a date-time, or null for permanent');
+      if (Date.parse(given) <= Date.parse(updated.updatedAt))
+        throw new ValidationError('expiresAt must be in the future');
+      updated.expiresAt = given;
+      delete updated.expirySource;
+      return;
+    }
+    const lapsed =
+      updated.expiresAt !== undefined &&
+      Date.parse(updated.expiresAt) <= Date.parse(updated.updatedAt);
+    if (updated.expirySource === 'category' || lapsed) {
+      delete updated.expiresAt;
+      delete updated.expirySource;
+    }
+    await this.snapshotExpiry(existing, updated);
+  }
+
   private async transitionOnce(
     caller: Caller,
     id: string,
@@ -879,10 +922,10 @@ export class MamService {
       state: result.next ?? existing.state,
       version: existing.version + 1,
       updatedAt: this.now().toISOString(),
-      ...defined({ expiresAt: options.expiresAt, retainUntil: options.retainUntil }),
+      ...defined({ retainUntil: options.retainUntil }),
     };
     if (action === 'approve') {
-      await this.snapshotExpiry(existing, updated);
+      await this.expiryOnApproval(existing, updated, options.expiresAt);
       updated.approvedBy = caller.userId;
     }
 
@@ -2806,7 +2849,11 @@ export class MamService {
 
 /** What a lifecycle transition's request may carry (`POST /assets/{id}/<verb>`). */
 export interface TransitionOptions {
-  expiresAt?: string;
+  /**
+   * An approval's expiry (mam.yaml `approveAsset`): a date-time sets the asset's own, `null` makes
+   * it PERMANENT, and omitted INHERITS — the category default, snapshotted at this approval.
+   */
+  expiresAt?: string | null;
   retainUntil?: string;
   reason?: string;
   /** A verdict's workflow review point (EP-22.6). */

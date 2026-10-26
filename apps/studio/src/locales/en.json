@@ -59,7 +59,8 @@
     "allMedia": "All media",
     "expand": "Expand",
     "collapse": "Collapse",
-    "inCategory": "In"
+    "inCategory": "In",
+    "needsReview": "Needs review"
   },
   "search": {
     "title": "Search",
@@ -221,7 +222,8 @@
     "classificationIds": "Classifications",
     "inheritedTags": "Tags from the category:",
     "cast": "Cast & crew",
-    "addCast": "Add"
+    "addCast": "Add",
+    "review": "Review"
   },
   "editor": {
     "close": "Close",
@@ -890,5 +892,39 @@
     "ok": "Within the workflow expression subset.",
     "undeclared": "Not a declared var:",
     "insert": "Insert…"
+  },
+  "review": {
+    "badge": {
+      "awaiting": "Awaiting review",
+      "approvedExpires": "Approved · expires in",
+      "approvedPermanent": "Approved · permanent",
+      "expired": "Expired — re-review",
+      "rejectedPurges": "Rejected — purges in",
+      "rejected": "Rejected"
+    },
+    "days": "d",
+    "giveVerdict": "Verdict",
+    "expiry": "Expiry when approved",
+    "inherit": "The category's default",
+    "noDefault": "none set — permanent",
+    "onDate": "On a date",
+    "permanent": "Permanent",
+    "approve": "Approve",
+    "reason": "Reason for rejecting (required)",
+    "retainUntil": "Keep the rejected media until (optional)",
+    "reject": "Reject",
+    "history": "Review history",
+    "noVerdicts": "No verdict yet.",
+    "verdict": {
+      "approved": "Approved",
+      "rejected": "Rejected"
+    },
+    "automatic": "automatic (category needs no review)",
+    "at": "at",
+    "expiresAt": "Expires",
+    "fromCategory": "category default",
+    "keptUntil": "Kept until",
+    "badDate": "Choose a date in the future.",
+    "verdictError": "The verdict could not be given."
   }
 }

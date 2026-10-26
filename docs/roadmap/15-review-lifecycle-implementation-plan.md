@@ -393,6 +393,21 @@ without manual chasing.
 
 **Exit H:** a reviewer completes the full loop from the UI; expiry state is visible at a glance.
 
+**As built (EP-24.9).** The asset editor's **Review** section (`editors/asset-review.ts`): the
+lifecycle badge, a verdict on a `ready` asset or again on an `expired` one for a holder of
+`asset:approve` — approve with the expiry INHERITED (the category default shown), ON A DATE, or
+PERMANENT; reject with a required reason and an optional retention date — and the verdict history
+from `GET /assets/{id}/verdicts`, re-read after each verdict. Badges on the Media panel's rows. The
+re-review queue is the Media panel's **Needs review** toggle — `GET /assets?state=ready,expired`
+(a filter MAM gained for it) inside the chosen category — rather than a saved faceted search:
+lifecycle state is not a search facet, and the list already authorizes per asset. Not built: the
+category admin's `defaultExpiry` editor (the vocabulary of WS-A3 — absolute date, basis — is wider
+than what MAM stores today, an ISO duration or date string), and assigning the queue via tasks.
+
+Building it found two defects in MAM's approve, both fixed with it (mam.md §13x): `expiresAt: null`
+— the contract's "permanent" — failed MAM's own event schema, and re-approving an expired asset
+with the expiry inherited kept its LAPSED date, so the next sweep expired it again.
+
 ---
 
 ## WS-I — Observability, configuration & security

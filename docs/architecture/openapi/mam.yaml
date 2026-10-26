@@ -38,6 +38,7 @@ paths:
         - { name: order, in: query, required: false, schema: { type: string, enum: [asc, desc], default: asc }, description: ULID order; use desc for newest-first views. }
         - { name: categoryId, in: query, required: false, schema: { type: string }, description: 'Only assets in this category (the Media panel browse tree, #260).' }
         - { name: subtree, in: query, required: false, schema: { type: boolean, default: false }, description: 'With categoryId: the category AND every category below it.' }
+        - { name: state, in: query, required: false, schema: { type: string }, description: 'Comma-separated lifecycle states — `ready,expired` is the review queue (EP-24.9). An unknown state is a 422, never an empty page.' }
       responses:
         '200':
           description: One page of assets
@@ -135,7 +136,7 @@ paths:
       summary: Approve an asset for air - manual verdict (scope asset:approve)
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
-      requestBody: { content: { application/json: { schema: { type: object, properties: { expiresAt: { type: string, format: date-time, description: 'When the media becomes unusable and needs re-review (FR-APP-7). Omit to inherit the category default; null for permanent.' }, reviewPointId: { type: string } } } } } }
+      requestBody: { content: { application/json: { schema: { type: object, properties: { expiresAt: { type: [string, 'null'], format: date-time, description: 'When the media becomes unusable and needs re-review (FR-APP-7) — in the future, or a 422. Omit to INHERIT: the category default, snapshotted at THIS approval (re-approval re-arms the clock, and a lapsed expiry is void). null for permanent.' }, reviewPointId: { type: string } } } } } }
       responses:
         '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
   /assets/{id}/reject:

@@ -57,7 +57,7 @@ Each Activity-Bar icon opens a container; views inside are collapsible sub-panel
 
 | Panel | Views (collapsible sub-panels) | Opens editors of type |
 |-------|--------------------------------|-----------------------|
-| **Media** | Browse tree (categories), Recent, Collections/Saved searches, Filters (facets) | Asset detail / metadata editor |
+| **Media** | Browse tree (categories), Recent, Collections/Saved searches, Filters (facets). ✅ EP-24.9: *Needs review* (ready + expired) and lifecycle badges on every row | Asset detail / metadata editor — and its **Review** section (EP-24.9): the verdict (approve with an inherited, dated or permanent expiry; reject with a reason) and the retained history |
 | **Search** | Simple query, Advanced (faceted: category ∧ subject ∧ tag ∧ person), Results | Asset editor |
 | **Ingest / Import** | Ingest queue, Watchers, Quarantine, Upload | Ingest-item editor |
 | **Schedule** | Channels, Calendar, Schedule items, Rights windows | Schedule editor |

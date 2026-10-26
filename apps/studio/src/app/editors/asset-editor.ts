@@ -37,8 +37,9 @@ import { LocaleService } from '../core/locale.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { WebSocketService } from '../core/websocket.service.ts';
 import { TranscodeJobs } from './transcode-jobs.ts';
+import { AssetReview } from './asset-review.ts';
 
-type EditorSection = 'basic' | 'files';
+type EditorSection = 'basic' | 'files' | 'review';
 
 /** After a transcode completes: how often, and how many times, to look for its rows in MAM. */
 const RENDITION_WAIT_MS = 1_000;
@@ -85,7 +86,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
 @Component({
   selector: 'atlas-asset-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranscodeJobs],
+  imports: [TranscodeJobs, AssetReview],
   template: `
     @if (loading()) {
       <div class="state">
@@ -125,6 +126,15 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
           (click)="section.set('files')"
         >
           {{ locale.t('assetEditor.files') }}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          [attr.aria-selected]="section() === 'review'"
+          [class.active]="section() === 'review'"
+          (click)="section.set('review')"
+        >
+          {{ locale.t('assetEditor.review') }}
         </button>
       </nav>
 
@@ -605,6 +615,13 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
             </div>
           }
         </form>
+      } @else if (section() === 'review') {
+        <atlas-asset-review
+          [asset]="current"
+          [defaultExpiry]="policies()?.defaultExpiry?.value ?? null"
+          [canApprove]="canApprove()"
+          (changed)="reload({ fresh: true })"
+        />
       } @else if (section() === 'files') {
         <section class="files">
           <div class="file-summary">
@@ -1035,6 +1052,18 @@ export class AssetEditor implements OnInit {
       classificationIds: asset.classificationIds ?? null,
     });
     this.dirtyLists.set(new Set());
+  }
+
+  /** UX only — MAM enforces `asset:approve` on every verdict (EP-24.9). */
+  protected canApprove(): boolean {
+    const asset = this.asset();
+    if (!asset) return false;
+    return this.permissions.can('asset:approve', {
+      type: 'asset',
+      channelId: asset.channelId,
+      ownerId: asset.createdBy,
+      state: asset.state,
+    });
   }
 
   protected canEdit(group: FieldGroup): boolean {

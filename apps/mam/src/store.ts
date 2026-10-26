@@ -53,6 +53,11 @@ export interface ListOptions {
    * service expands "this category and below" into the ids; the store only matches.
    */
   categoryIds?: readonly string[];
+  /**
+   * Only assets in one of these lifecycle states (EP-24.9) — the review queue's `ready` and
+   * `expired`. Matched on the `state` column, which `(channel_id, state)` indexes.
+   */
+  states?: readonly string[];
 }
 
 /**

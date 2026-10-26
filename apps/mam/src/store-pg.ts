@@ -325,6 +325,10 @@ export function pgAssetStore(pool: PgPool): AssetStore {
         if (options.categoryIds.length === 0) return [];
         sql += ` AND data->>'categoryId' = ANY(${p([...options.categoryIds])}::text[])`;
       }
+      if (options.states !== undefined) {
+        if (options.states.length === 0) return [];
+        sql += ` AND state = ANY(${p([...options.states])}::text[])`;
+      }
       sql += desc ? ' ORDER BY id DESC' : ' ORDER BY id';
       if (options.limit !== undefined) sql += ` LIMIT ${p(options.limit)}`;
 

@@ -1169,6 +1169,36 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  test(`${name}: a listing filtered by state — the review queue — keeps its keyset order`, async () => {
+    await withFixture(async ({ store }) => {
+      const rows = [
+        asset({ state: 'ready' }),
+        asset({ state: 'approved' }),
+        asset({ state: 'expired' }),
+        asset({ state: 'ready', channelId: 'ch99' }),
+        asset({ state: 'ready' }),
+      ];
+      await store.transaction(async (tx) => {
+        for (const r of rows) await tx.put(r);
+      });
+      const queue = await store.listByChannel('ch12', { states: ['ready', 'expired'] });
+      assert.deepEqual(
+        queue.map((a) => a.id),
+        [rows[0]!.id, rows[2]!.id, rows[4]!.id],
+      );
+      const newest = await store.listByChannel('ch12', {
+        states: ['ready', 'expired'],
+        order: 'desc',
+        limit: 2,
+      });
+      assert.deepEqual(
+        newest.map((a) => a.id),
+        [rows[4]!.id, rows[2]!.id],
+      );
+      assert.deepEqual(await store.listByChannel('ch12', { states: [] }), []);
+    });
+  });
+
   // --- EP-24.4: the retained verdict history ------------------------------------------------
 
   const verdict = (assetId: string, n: number, overrides: Partial<Verdict> = {}): Verdict => ({

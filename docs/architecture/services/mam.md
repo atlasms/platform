@@ -325,6 +325,29 @@ redelivery is a duplicate; an id that already exists in the same channel is a du
 another channel is thrown to the broker, never overwritten. The original's FileRef row arrives by
 HSM's `file.placed` — a separate consumer — and the mirror retries a placement that beats the asset.
 
+## 13x. As built — EP-24.9's MAM half: the expiry an approval leaves, and the review queue
+
+`POST /assets/{id}/approve`'s `expiresAt` now does what the contract always said (review plan
+WS-B), decided in one place (`expiryOnApproval`):
+
+- a **date-time** is the asset's own expiry (no `expirySource`), and must be in the FUTURE — an
+  approval that has already lapsed is a 422, not a verdict the sweep undoes a minute later;
+- **`null`** is PERMANENT — no expiry, no source, whatever the category says. It used to fail MAM's
+  own `asset.approved` schema (`/expiresAt must be string`): permanent approval of media under a
+  category default was impossible;
+- **omitted** INHERITS: the category default, snapshotted at THIS approval. A category snapshot is
+  re-taken at every approval ("re-approval re-arms the clock", WS-A3) and a lapsed expiry is void —
+  it used to survive, so re-approving an expired asset kept its past date and the next sweep expired
+  it again. An expiry of the asset's own that is still in the future is kept.
+
+`GET /assets?state=ready,expired` — a comma-separated lifecycle filter on the `state` column the
+`(channel_id, state)` index already covers; an unknown state is a 422, not an empty page. It is the
+review queue Studio's Media panel shows (EP-24.9).
+
+Evidence: `test/verdicts.test.ts` (permanent under a default, an own date, a past one refused,
+re-review re-arming the category clock, the queue over HTTP) and a conformance case on sqlite and
+Postgres for the filter.
+
 ## 13y. As built — EP-24.4, the retained verdict history
 
 The review plan's WS-A2 table, as `review_verdicts` (MAM's schema; `channel_id`, `asset_id`,
