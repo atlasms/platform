@@ -86,6 +86,9 @@ export function entityRule(entityType: string): ReadRule {
   if (entityType === 'category') return { permission: 'taxonomy:read' };
   // A vocabulary term (EP-28.3) likewise: `vocabulary-term:read` exists nowhere.
   if (entityType === 'vocabulary-term') return { permission: 'taxonomy:read' };
+  // A field schema (EP-27.4) is the taxonomy's configuration too; `field-schema:read` exists
+  // nowhere, so under the default its change log — audited since EP-27.4 — was readable by no one.
+  if (entityType === 'field-schema') return { permission: 'taxonomy:read' };
   // A person (EP-28.5) is the people register's, which `people:read` governs; `person:read`
   // exists nowhere.
   if (entityType === 'person') return { permission: 'people:read' };

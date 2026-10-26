@@ -7,11 +7,12 @@ import { GroupsView } from './admin/groups-view.ts';
 import { PeopleView } from './admin/people-view.ts';
 import { ProfilesView } from './admin/profiles-view.ts';
 import { RolesView } from './admin/roles-view.ts';
+import { SchemasView } from './admin/schemas-view.ts';
 import { UsersView } from './admin/users-view.ts';
 import { VocabulariesView } from './admin/vocabularies-view.ts';
 
 type AdminView =
-  'users' | 'groups' | 'roles' | 'profiles' | 'categories' | 'vocabularies' | 'people';
+  'users' | 'groups' | 'roles' | 'profiles' | 'categories' | 'vocabularies' | 'schemas' | 'people';
 
 /** What reveals each view. The panel itself is revealed by any of these (panels.ts). */
 const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
@@ -23,6 +24,8 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
   { id: 'categories', permissions: ['taxonomy:admin'] },
   // EP-28.3: the flat controlled vocabularies — taxonomy administration too.
   { id: 'vocabularies', permissions: ['taxonomy:admin'] },
+  // EP-27.4: the custom field schemas — what extended fields each media type / branch carries.
+  { id: 'schemas', permissions: ['taxonomy:admin'] },
   // EP-28.5: the people register.
   { id: 'people', permissions: ['people:admin'] },
 ];
@@ -31,8 +34,9 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
  * The Admin panel (studio-frontend.md §1: Users, Groups, Roles/Rules, Field schemas, Theme) —
  * as built, four views: **Users** (EP-20.7), **Groups** and **Roles** (over the IAM admin
  * API of EP-10.4/10.6), and **Transcode profiles** (MTS's registry, EP-16.6). Each view lists and
- * creates; each item opens as an EDITOR TAB where the editing is. Field schemas and theme are the
- * panel's later views.
+ * creates; each item opens as an EDITOR TAB where the editing is. Since then: Categories (#260),
+ * Vocabularies (EP-28.3), People (EP-28.5) and **Field schemas** (EP-27.4). Theme is the panel's
+ * later view.
  *
  * Each view is revealed by its own permission — people by `user:admin`, profiles by `config:*` —
  * and the panel by any of them (panels.ts). The services enforce in the row's channel; Studio
@@ -48,6 +52,7 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
     ProfilesView,
     CategoriesView,
     VocabulariesView,
+    SchemasView,
     PeopleView,
   ],
   template: `
@@ -83,6 +88,9 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
       }
       @case ('vocabularies') {
         <atlas-vocabularies-view />
+      }
+      @case ('schemas') {
+        <atlas-schemas-view />
       }
       @case ('people') {
         <atlas-people-view />

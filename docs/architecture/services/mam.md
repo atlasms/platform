@@ -113,7 +113,7 @@ built, the expiry half (EP-24.5, §13z); the purge half is EP-24.6, owed by peop
 | `GET` / `PUT` | `/assets/{id}/shotlist` | The asset's notable segments, read in timeline order and replaced whole. ✅ EP-27.3 (§13v) | `asset:read` / `asset:write`, both on the `shotlist` field group |
 | `GET` | `/search?q=…` | Simple search. | `asset:read` |
 | `POST` | `/search` | Advanced **faceted** search (category + subject + tag + person). | `asset:read` |
-| `GET/POST` | `/field-schemas` | Define type/category custom fields. | `metadata:admin` |
+| `GET` / `PUT` | `/field-schemas` | Define type/category custom fields. ✅ EP-27.4 (§13w): `PUT` without `?version=` is a NEW schema, with it a compare-and-set replacement; validated whole (422 `details.problems` by path); audited. (This row said `GET/POST` under `metadata:admin`, a permission no catalogue defines — the read was always `asset:read`, the write `taxonomy:admin`.) | `asset:read` / `taxonomy:admin` |
 | `GET/POST` | `/tags`, `/categories`, `/subjects` | Controlled vocabularies. | `taxonomy:admin` |
 | `GET/POST/PATCH` | `/people` | People register. | `people:admin` |
 | `POST` | `/assets/{id}/people` | Associate a person + role with an asset. | `asset:write` |
@@ -352,6 +352,29 @@ the last shot, removed, saved whole; a timecode that is not one is refused in th
 shown under the field it names; read-only without the `shotlist` grant; re-read when the asset's
 version moves, never over unsaved rows. Smoke saves one through the gateway, is refused a segment
 past the media's end, and finds the change in the asset's history.
+## 13w. As built — EP-27.4, field schemas administered
+
+What an operator can now do from Studio's Admin › Field schemas, MAM enforces:
+
+- **Validated whole** (`fieldSchemaProblems`): every problem at once, each at its path
+  (`fields[2].options`), in a 422's `details.problems` — a media type and an optional category path
+  in their shapes; per field a unique, stable `name`, a label, a Tier-0 `type`; options only on an
+  `enum` (at least one, none twice), a vocabulary only on a `vocabulary` field, a length bound only on
+  text (1–100000), a known field group; no key the model does not know. Before EP-27.4 the body went
+  to the store unchecked (`req.body as never`) — a typo'd type became a field no form could render.
+- **Compare-and-set**: a `version` column (a schema stored before reads as 1); `PUT` without
+  `?version=` is a NEW schema (an id that exists is a 409), with it a replacement of exactly that
+  version (another write in between is a 409, a version of a schema that is not there a 404). It was
+  a blind upsert by id: two administrators each wrote over the other.
+- **Audited**: `audit.recorded` (`field-schema`, `field-schema.created` / `.updated`, the delta) in
+  the transaction of the write — a schema change, which changes what every asset in its scope must
+  carry, left no record before. The log reads that history under `taxonomy:read` (logging
+  `visibility.ts`; `field-schema:read` exists nowhere).
+- A new schema's id is minted when absent (Studio mints a ULID); an id written before EP-27.4 may be
+  any bounded token.
+
+Evidence: `test/field-schemas.test.ts` (minted + audited, CAS 409/404, every problem by path and
+nothing stored, the HTTP route) and a conformance case on sqlite and Postgres.
 
 ## 13x. As built — EP-24.9's MAM half: the expiry an approval leaves, and the review queue
 

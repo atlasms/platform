@@ -500,7 +500,14 @@
     "people": "People",
     "categoryScope": "Only in categories",
     "categoryScopeNone": "Nothing chosen: the whole channel.",
-    "categoryScopeSome": "Each chosen category and everything below it — nothing else."
+    "categoryScopeSome": "Each chosen category and everything below it — nothing else.",
+    "schemas": "Field schemas",
+    "newSchema": "New field schema",
+    "mediaType": "Media type",
+    "appliesTo": "Applies to",
+    "wholeChannel": "the whole channel",
+    "noSchemas": "No field schemas yet.",
+    "fieldsCount": "fields"
   },
   "watchers": {
     "new": "New watcher",
@@ -940,5 +947,39 @@
     "refused": "MAM refused the shot list — see the marked fields.",
     "conflict": "The asset changed while you were editing — the shot list was read again.",
     "failed": "The shot list could not be saved or read."
+  },
+  "schemaEditor": {
+    "save": "Save schema",
+    "revert": "Revert",
+    "readOnly": "Read-only",
+    "renameWarning": "Renamed — values assets hold under the old name become orphaned (kept, no longer governed):",
+    "newField": "New field",
+    "up": "Move up",
+    "down": "Move down",
+    "remove": "Remove",
+    "name": "Name (key)",
+    "label": "Label",
+    "type": "Type",
+    "group": "Field group",
+    "options": "Options — one per line",
+    "vocabulary": "Vocabulary",
+    "maxLength": "Max length",
+    "required": "Required",
+    "helpText": "Help text",
+    "addField": "Add a field",
+    "gone": "This field schema no longer exists.",
+    "saved": "Schema saved.",
+    "invalid": "The schema was refused — see the marked fields.",
+    "moved": "Someone else saved this schema; it has been read again.",
+    "saveError": "The schema could not be saved.",
+    "types": {
+      "string": "Text (short)",
+      "text": "Text (long)",
+      "number": "Number",
+      "boolean": "Yes / no",
+      "date": "Date",
+      "enum": "One of a list",
+      "vocabulary": "A vocabulary term"
+    }
   }
 }

@@ -77,6 +77,127 @@ export interface FieldSchema {
   /** Materialized category path, e.g. `/sports/football/`. Absent ⇒ applies to the whole channel. */
   categoryPath?: string;
   fields: readonly FieldDefinition[];
+  /**
+   * Bumped on every write; a replacement names the version it read (EP-27.4) — compare-and-set,
+   * so two administrators editing one schema cannot silently overwrite each other. A schema
+   * stored before versions existed reads as version 1.
+   */
+  version?: number;
+}
+
+/** One reason a schema is refused, at the path an editor places it under (`fields[2].options`). */
+export interface SchemaProblem {
+  path: string;
+  message: string;
+}
+
+const NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+const SLUG = /^[a-z][a-z0-9-]{0,63}$/;
+// A ULID when Studio mints it; any bounded token, since schemas written before EP-27.4 carry ids
+// of their operators' choosing.
+const ID = /^[A-Za-z0-9_-]{1,64}$/;
+const FIELD_KEYS = new Set([
+  'name',
+  'label',
+  'type',
+  'required',
+  'options',
+  'vocabulary',
+  'fieldGroup',
+  'maxLength',
+  'helpText',
+]);
+const SCHEMA_KEYS = new Set(['id', 'channelId', 'mediaType', 'categoryPath', 'fields', 'version']);
+
+/**
+ * Everything wrong with a schema as written (EP-27.4) — all of it, each at its path, so an editor
+ * can mark every field at once rather than one refusal per save. The field TYPES are code (Tier 0,
+ * {@link FIELD_TYPES}); everything else is the operator's, held to what the validator and the form
+ * renderer can honour: a unique, stable `name`; options only on an `enum` (and at least one);
+ * a vocabulary only on a `vocabulary` field; a length bound only on text; a known field group.
+ */
+export function fieldSchemaProblems(
+  input: unknown,
+  fieldGroups: readonly string[],
+): SchemaProblem[] {
+  const problems: SchemaProblem[] = [];
+  const at = (path: string, message: string) => problems.push({ path, message });
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return [{ path: '', message: 'a field schema is an object' }];
+  }
+  const s = input as Record<string, unknown>;
+  for (const key of Object.keys(s))
+    if (!SCHEMA_KEYS.has(key)) at(key, 'is not part of a field schema');
+  if (s['id'] !== undefined && (typeof s['id'] !== 'string' || !ID.test(s['id'])))
+    at('id', 'must be letters, digits, - and _, at most 64');
+  if (typeof s['mediaType'] !== 'string' || !SLUG.test(s['mediaType']))
+    at('mediaType', 'must be a media type, e.g. video');
+  const path = s['categoryPath'];
+  if (path !== undefined && (typeof path !== 'string' || !/^\/([a-z0-9-]+\/)*$/.test(path)))
+    at('categoryPath', 'must be a category path, e.g. /sports/football/');
+  const fields = s['fields'];
+  if (!Array.isArray(fields)) {
+    at('fields', 'must be a list of fields');
+    return problems;
+  }
+  if (fields.length > 200) at('fields', 'at most 200 fields');
+  const seen = new Set<string>();
+  fields.forEach((raw, i) => {
+    const where = `fields[${i}]`;
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      at(where, 'must be a field definition');
+      return;
+    }
+    const f = raw as Record<string, unknown>;
+    for (const key of Object.keys(f))
+      if (!FIELD_KEYS.has(key)) at(`${where}.${key}`, 'is not part of a field definition');
+    const name = f['name'];
+    if (typeof name !== 'string' || !NAME.test(name))
+      at(`${where}.name`, 'must start with a letter: letters, digits and _ only, at most 64');
+    else if (seen.has(name)) at(`${where}.name`, `"${name}" is defined twice`);
+    else seen.add(name);
+    const label = f['label'];
+    if (typeof label !== 'string' || label.trim() === '' || label.length > 120)
+      at(`${where}.label`, 'must be a label of at most 120');
+    const type = f['type'];
+    if (typeof type !== 'string' || !(FIELD_TYPES as readonly string[]).includes(type)) {
+      at(`${where}.type`, `must be one of ${FIELD_TYPES.join(', ')}`);
+      return;
+    }
+    if (f['required'] !== undefined && typeof f['required'] !== 'boolean')
+      at(`${where}.required`, 'must be true or false');
+    const options = f['options'];
+    if (type === 'enum') {
+      if (
+        !Array.isArray(options) ||
+        options.length === 0 ||
+        options.some((o) => typeof o !== 'string' || o.trim() === '')
+      )
+        at(`${where}.options`, 'an enum field lists at least one option');
+      else if (new Set(options).size !== options.length)
+        at(`${where}.options`, 'an option is listed twice');
+    } else if (options !== undefined) at(`${where}.options`, 'only an enum field has options');
+    const vocabulary = f['vocabulary'];
+    if (type === 'vocabulary') {
+      if (typeof vocabulary !== 'string' || !SLUG.test(vocabulary))
+        at(`${where}.vocabulary`, 'a vocabulary field names its vocabulary');
+    } else if (vocabulary !== undefined)
+      at(`${where}.vocabulary`, 'only a vocabulary field names a vocabulary');
+    const group = f['fieldGroup'];
+    if (group !== undefined && (typeof group !== 'string' || !fieldGroups.includes(group)))
+      at(`${where}.fieldGroup`, `must be one of ${fieldGroups.join(', ')}`);
+    const max = f['maxLength'];
+    if (max !== undefined) {
+      if (type !== 'string' && type !== 'text')
+        at(`${where}.maxLength`, 'only a string or text field has a length bound');
+      else if (typeof max !== 'number' || !Number.isInteger(max) || max < 1 || max > 100_000)
+        at(`${where}.maxLength`, 'must be a whole number from 1 to 100000');
+    }
+    const help = f['helpText'];
+    if (help !== undefined && (typeof help !== 'string' || help.length > 500))
+      at(`${where}.helpText`, 'must be text of at most 500');
+  });
+  return problems;
 }
 
 /** What an asset is, for the purpose of deciding which schemas apply. */

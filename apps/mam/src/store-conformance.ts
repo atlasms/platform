@@ -1238,6 +1238,32 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  test(`${name}: a field schema is written compare-and-set on its version (EP-27.4)`, async () => {
+    await withFixture(async ({ store }) => {
+      const schema = {
+        id: 'fs-cas',
+        channelId: 'ch12',
+        mediaType: 'video',
+        fields: [{ name: 'rating', label: 'Rating', type: 'number' as const }],
+        version: 1,
+      };
+      await store.transaction(async (tx) => tx.putSchema(schema));
+      await assert.rejects(
+        store.transaction(async (tx) => tx.putSchema(schema)),
+        /already exists/,
+        'a new schema over an existing id',
+      );
+      await store.transaction(async (tx) => tx.putSchema({ ...schema, version: 2 }, 1));
+      await assert.rejects(
+        store.transaction(async (tx) => tx.putSchema({ ...schema, version: 2 }, 1)),
+        /changed since version 1/,
+        'a second writer over the version already replaced',
+      );
+      const [stored] = await store.schemas('ch12');
+      assert.equal(stored?.version, 2);
+    });
+  });
+
   // --- EP-24.4: the retained verdict history ------------------------------------------------
 
   const verdict = (assetId: string, n: number, overrides: Partial<Verdict> = {}): Verdict => ({

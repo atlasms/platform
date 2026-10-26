@@ -25,6 +25,7 @@ import {
   CategoryPathTaken,
   StaleCategory,
   StalePerson,
+  StaleSchema,
   StaleTerm,
   StaleWrite,
   TermKeyTaken,
@@ -183,6 +184,12 @@ export const sqlitePeopleMigration: Migration = {
        CREATE INDEX IF NOT EXISTS people_channel_idx ON people (channel_id);`,
 };
 
+/** EP-27.4: a field schema is written compare-and-set; one stored before reads as version 1. */
+export const sqliteSchemaVersionMigration: Migration = {
+  id: 'mam_field_schemas_version',
+  up: `ALTER TABLE field_schemas ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`,
+};
+
 // The retained verdict history (EP-24.4): append-only by trigger, as in Postgres — the double
 // refuses what production refuses, so a test that tried to edit history would fail here too.
 export const sqliteVerdictsMigration: Migration = {
@@ -245,6 +252,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     sqliteApprovedMigration,
     sqliteVerdictsMigration,
     sqliteShotlistMigration,
+    sqliteSchemaVersionMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
   const seen = new SqliteSeenStore(db);
@@ -289,22 +297,37 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
                                              data       = excluded.data`,
       ).run(assetId, channelId, JSON.stringify(values));
     },
-    async putSchema(schema) {
-      db.prepare(
-        `INSERT INTO field_schemas (id, channel_id, media_type, category_path, fields)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET channel_id    = excluded.channel_id,
-                                       media_type    = excluded.media_type,
-                                       category_path = excluded.category_path,
-                                       fields        = excluded.fields`,
-      ).run(
-        schema.id,
-        schema.channelId,
-        schema.mediaType,
-        schema.categoryPath ?? null,
-        JSON.stringify(schema.fields),
-      );
-      bump();
+    async putSchema(schema, ifVersion) {
+      const version = schema.version ?? 1;
+      const written =
+        ifVersion === undefined
+          ? db
+              .prepare(
+                `INSERT INTO field_schemas (id, channel_id, media_type, category_path, fields, version)
+                 VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+              )
+              .run(
+                schema.id,
+                schema.channelId,
+                schema.mediaType,
+                schema.categoryPath ?? null,
+                JSON.stringify(schema.fields),
+                version,
+              )
+          : db
+              .prepare(
+                `UPDATE field_schemas SET media_type = ?, category_path = ?, fields = ?, version = ?
+                  WHERE id = ? AND version = ?`,
+              )
+              .run(
+                schema.mediaType,
+                schema.categoryPath ?? null,
+                JSON.stringify(schema.fields),
+                version,
+                schema.id,
+                ifVersion,
+              );
+      if (Number(written.changes) !== 1) throw new StaleSchema(schema.id, ifVersion);
     },
     async setShotlist(assetId, channelId, items) {
       // Replace, not merge — the list is small and arrives whole.
@@ -499,7 +522,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     async schemas(channelId) {
       const rows = db
         .prepare(
-          `SELECT id, channel_id, media_type, category_path, fields
+          `SELECT id, channel_id, media_type, category_path, fields, version
              FROM field_schemas WHERE channel_id = ? ORDER BY id`,
         )
         .all(channelId) as {
@@ -508,6 +531,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         media_type: string;
         category_path: string | null;
         fields: string;
+        version: number;
       }[];
       return rows.map((r) => ({
         id: r.id,
@@ -517,6 +541,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         // absent is what "applies channel-wide" means.
         ...(r.category_path !== null ? { categoryPath: r.category_path } : {}),
         fields: JSON.parse(r.fields) as FieldSchema['fields'],
+        version: r.version,
       }));
     },
     async tagsOf(assetId) {

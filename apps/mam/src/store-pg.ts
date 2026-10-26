@@ -24,6 +24,7 @@ import {
   CategoryPathTaken,
   StaleCategory,
   StalePerson,
+  StaleSchema,
   StaleTerm,
   StaleWrite,
   TermKeyTaken,
@@ -277,6 +278,12 @@ export const pgVerdictsMigration: Migration = {
          FOR EACH ROW EXECUTE FUNCTION review_verdicts_refuse();`,
 };
 
+/** EP-27.4: a field schema is written compare-and-set; one stored before reads as version 1. */
+export const pgSchemaVersionMigration: Migration = {
+  id: 'mam_field_schemas_version',
+  up: `ALTER TABLE field_schemas ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;`,
+};
+
 /** Everything MAM's database needs, in order. Applied at startup under an advisory lock. */
 /** EP-27.3: an asset's shot list — one row per segment, read in timeline order. */
 export const pgShotlistMigration: Migration = {
@@ -313,6 +320,7 @@ export const mamMigrations: Migration[] = [
   pgApprovedMigration,
   pgVerdictsMigration,
   pgShotlistMigration,
+  pgSchemaVersionMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
@@ -395,8 +403,9 @@ export function pgAssetStore(pool: PgPool): AssetStore {
         media_type: string;
         category_path: string | null;
         fields: FieldSchema['fields'];
+        version: number;
       }>(
-        `SELECT id, channel_id, media_type, category_path, fields
+        `SELECT id, channel_id, media_type, category_path, fields, version
            FROM field_schemas WHERE channel_id = $1 ORDER BY id`,
         [channelId],
       );
@@ -408,6 +417,7 @@ export function pgAssetStore(pool: PgPool): AssetStore {
         // absent is what "applies channel-wide" means.
         ...(r.category_path !== null ? { categoryPath: r.category_path } : {}),
         fields: r.fields,
+        version: r.version,
       }));
     },
 
@@ -525,23 +535,36 @@ export function pgAssetStore(pool: PgPool): AssetStore {
               [assetId, channelId, JSON.stringify(values)],
             );
           },
-          async putSchema(schema) {
-            await client.query(
-              `INSERT INTO field_schemas (id, channel_id, media_type, category_path, fields)
-               VALUES ($1, $2, $3, $4, $5)
-               ON CONFLICT (id) DO UPDATE SET channel_id    = excluded.channel_id,
-                                              media_type    = excluded.media_type,
-                                              category_path = excluded.category_path,
-                                              fields        = excluded.fields`,
-              [
-                schema.id,
-                schema.channelId,
-                schema.mediaType,
-                schema.categoryPath ?? null,
-                JSON.stringify(schema.fields),
-              ],
-            );
-            await bumpConfig();
+          async putSchema(schema, ifVersion) {
+            const version = schema.version ?? 1;
+            const written =
+              ifVersion === undefined
+                ? await client.query(
+                    `INSERT INTO field_schemas (id, channel_id, media_type, category_path, fields, version)
+                     VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING`,
+                    [
+                      schema.id,
+                      schema.channelId,
+                      schema.mediaType,
+                      schema.categoryPath ?? null,
+                      JSON.stringify(schema.fields),
+                      version,
+                    ],
+                  )
+                : await client.query(
+                    `UPDATE field_schemas
+                        SET media_type = $2, category_path = $3, fields = $4, version = $5
+                      WHERE id = $1 AND version = $6`,
+                    [
+                      schema.id,
+                      schema.mediaType,
+                      schema.categoryPath ?? null,
+                      JSON.stringify(schema.fields),
+                      version,
+                      ifVersion,
+                    ],
+                  );
+            if (written.rowCount !== 1) throw new StaleSchema(schema.id, ifVersion);
           },
           async setShotlist(assetId, channelId, items) {
             // Replace, not merge — the list is small and arrives whole.
