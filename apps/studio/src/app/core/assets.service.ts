@@ -5,6 +5,8 @@ import type {
   Asset,
   AssetInheritance,
   FileRef,
+  ShotList,
+  ShotListItemInput,
   Tag,
   UpdateAssetInput,
   VerdictPage,
@@ -98,6 +100,16 @@ export class AssetsService {
 
   reject(id: string, input: RejectInput) {
     return this.api.call(ops.rejectAsset, { params: { id }, body: input }).as<Asset>();
+  }
+
+  /** The asset's shot list, in timeline order (EP-27.3). */
+  shotlist(id: string) {
+    return this.api.call(ops.getAssetShotList, { params: { id } }).as<ShotList>();
+  }
+
+  /** Replace the asset's shot list, whole; an item keeps its id across saves. */
+  setShotlist(id: string, items: ShotListItemInput[]) {
+    return this.api.call(ops.putAssetShotList, { params: { id }, body: { items } }).as<ShotList>();
   }
 
   /** Every verdict the asset was given, newest first (EP-24.4) — retained, never edited. */

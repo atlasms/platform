@@ -32,6 +32,27 @@ export interface VerdictPage {
   items: Verdict[];
 }
 
+export interface ShotList {
+  assetId: Ulid;
+  items: ShotListItem[];
+}
+
+export interface ShotListItemInput {
+  id?: Ulid;
+  /** Offset into the media timeline, in milliseconds. */
+  startMs: number;
+  /** After startMs. */
+  endMs: number;
+  description: string;
+}
+
+export interface ShotListItem {
+  id: Ulid;
+  startMs: number;
+  endMs: number;
+  description: string;
+}
+
 /** One of an asset's files, as MAM mirrors it from HSM/MTS (data-model.md §1.5; file.schema.json). A file belongs to exactly one asset; unique per (asset, kind, variant). */
 export interface FileRef {
   id: Ulid;

@@ -683,6 +683,45 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  // --- the shot list (EP-27.3) -------------------------------------------------
+
+  test(`${name}: a shot list is replaced whole and read in timeline order, per asset`, async () => {
+    await withFixture(async ({ store }) => {
+      const a = asset();
+      const b = asset();
+      const item = (id: string, startMs: number, endMs: number) => ({
+        id,
+        startMs,
+        endMs,
+        description: `shot ${id}`,
+      });
+      await store.transaction(async (tx) => {
+        await tx.put(a);
+        await tx.put(b);
+        // Given out of order: the store answers in start, then end, then id order.
+        await tx.setShotlist(a.id, a.channelId, [
+          item('S3', 5000, 9000),
+          item('S1', 0, 4000),
+          item('S2', 0, 2000),
+        ]);
+        await tx.setShotlist(b.id, b.channelId, [item('S9', 1, 2)]);
+      });
+      assert.deepEqual(
+        (await store.shotlistOf(a.id)).map((i) => i.id),
+        ['S2', 'S1', 'S3'],
+      );
+      // Replaced, not merged — and another asset's list is untouched.
+      await store.transaction((tx) => tx.setShotlist(a.id, a.channelId, [item('S4', 100, 200)]));
+      assert.deepEqual(await store.shotlistOf(a.id), [item('S4', 100, 200)]);
+      assert.deepEqual(
+        (await store.shotlistOf(b.id)).map((i) => i.id),
+        ['S9'],
+      );
+      await store.transaction((tx) => tx.setShotlist(a.id, a.channelId, []));
+      assert.deepEqual(await store.shotlistOf(a.id), []);
+    });
+  });
+
   // --- free-form tags (EP-17.3) ----------------------------------------------
 
   test(`${name}: tags round-trip, ordered by normalized label`, async () => {

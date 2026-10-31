@@ -287,6 +287,42 @@ paths:
       responses:
         '200': { description: 'Files, by kind then variant', content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/FileRef' } } } } }
         '404': { $ref: '#/components/responses/Error' }
+  /assets/{id}/shotlist:
+    parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
+    get:
+      operationId: getAssetShotList
+      tags: [assets]
+      # EP-27.3 (data-model §1.6, FR-MAM-3): the asset's notable segments, ordered by start. Scope
+      # asset:read on the `shotlist` field group.
+      summary: The asset's shot list — time-coded segments, ordered by start (scope asset:read / shotlist)
+      responses:
+        '200': { description: Shot list, content: { application/json: { schema: { $ref: '#/components/schemas/ShotList' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: putAssetShotList
+      tags: [assets]
+      summary: Replace the asset's shot list, whole (scope asset:write / shotlist)
+      description: >-
+        The final list, as tags are: an item keeps its `id` across saves (send it back) and one
+        without is minted. Segments may overlap; each lies inside the media's duration when MAM
+        knows it. A change is an asset revision — `asset.updated` with `changedFields: [shotlist]`
+        and the before/after list in its audit delta — so it is in the asset's own history. The
+        same list sent again changes nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              additionalProperties: false
+              properties:
+                items: { type: array, maxItems: 500, items: { $ref: '#/components/schemas/ShotListItemInput' } }
+      responses:
+        '200': { description: The stored shot list, content: { application/json: { schema: { $ref: '#/components/schemas/ShotList' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { description: 'Refused — details.problems names each item and field', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /assets/{id}/tags:
     parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
     get:
@@ -606,6 +642,31 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/Verdict' } }
+    ShotList:
+      type: object
+      required: [assetId, items]
+      additionalProperties: false
+      properties:
+        assetId: { $ref: '#/components/schemas/Ulid' }
+        items: { type: array, items: { $ref: '#/components/schemas/ShotListItem' } }
+    ShotListItemInput:
+      type: object
+      required: [startMs, endMs, description]
+      additionalProperties: false
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        startMs: { type: integer, minimum: 0, description: 'Offset into the media timeline, in milliseconds.' }
+        endMs: { type: integer, minimum: 1, description: 'After startMs.' }
+        description: { type: string, minLength: 1, maxLength: 2000 }
+    ShotListItem:
+      type: object
+      required: [id, startMs, endMs, description]
+      additionalProperties: false
+      properties:
+        id: { $ref: '#/components/schemas/Ulid' }
+        startMs: { type: integer, minimum: 0 }
+        endMs: { type: integer, minimum: 1 }
+        description: { type: string }
     FileRef:
       type: object
       description: One of an asset's files, as MAM mirrors it from HSM/MTS (data-model.md §1.5; file.schema.json). A file belongs to exactly one asset; unique per (asset, kind, variant).

@@ -223,7 +223,8 @@
     "inheritedTags": "Tags from the category:",
     "cast": "Cast & crew",
     "addCast": "Add",
-    "review": "Review"
+    "review": "Review",
+    "shotlist": "Shot list"
   },
   "editor": {
     "close": "Close",
@@ -926,5 +927,18 @@
     "keptUntil": "Kept until",
     "badDate": "Choose a date in the future.",
     "verdictError": "The verdict could not be given."
+  },
+  "shotlist": {
+    "empty": "No shots yet.",
+    "start": "Start",
+    "end": "End",
+    "description": "What happens",
+    "remove": "Remove shot",
+    "add": "Add a shot",
+    "save": "Save shot list",
+    "badTimecode": "Not a timecode — HH:MM:SS.mmm, MM:SS or seconds",
+    "refused": "MAM refused the shot list — see the marked fields.",
+    "conflict": "The asset changed while you were editing — the shot list was read again.",
+    "failed": "The shot list could not be saved or read."
   }
 }

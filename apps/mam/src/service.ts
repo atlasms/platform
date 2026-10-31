@@ -20,6 +20,7 @@ import {
   type Envelope,
   type EventPayloads,
 } from '@atlas/contracts';
+import { durationMsOf, parseShotList, sameShotList, type ShotListItem } from './shotlist.ts';
 import type { Message } from '@atlas/messaging';
 import { can, canEnforce, compile, type EffectivePolicy } from '@atlas/policy';
 import {
@@ -174,6 +175,8 @@ const EXTENDED_PREFIX = 'extended.';
  * Librarian's file-and-rights grant no longer reaches an asset's keywords.
  */
 const TAXONOMY_GROUP = 'taxonomy';
+/** The shot list's field group (authorization-model §3.1): the Editor's. */
+const SHOTLIST_GROUP = 'shotlist';
 
 /** Page size when a caller does not ask. Large enough to be useful, small enough to render. */
 const DEFAULT_SEARCH_LIMIT = 50;
@@ -2227,6 +2230,67 @@ export class MamService {
     );
 
     return resolved;
+  }
+
+  // --- the shot list (EP-27.3) -------------------------------------------------
+
+  /** The asset's notable segments, in timeline order — `asset:read` on the `shotlist` group. */
+  async shotlist(caller: Caller, id: string): Promise<{ assetId: string; items: ShotListItem[] }> {
+    const asset = await this.get(caller, id);
+    this.authorize(caller, 'asset:read', await this.scopeOf(asset), SHOTLIST_GROUP);
+    return { assetId: asset.id, items: await this.options.store.shotlistOf(asset.id) };
+  }
+
+  /**
+   * Replace an asset's shot list, whole — as tags are, and re-applied over the asset's current
+   * version if a concurrent write lands between the read and the commit (`onCurrent`). A change is
+   * an asset REVISION: `asset.updated` with `changedFields: ['shotlist']`, the before/after list in
+   * the audit delta, so it is read in the asset's own history. The same list again changes nothing.
+   */
+  async setShotlist(
+    caller: Caller,
+    id: string,
+    raw: unknown,
+  ): Promise<{ assetId: string; items: ShotListItem[] }> {
+    return this.onCurrent(() => this.setShotlistOnce(caller, id, raw));
+  }
+
+  private async setShotlistOnce(
+    caller: Caller,
+    id: string,
+    raw: unknown,
+  ): Promise<{ assetId: string; items: ShotListItem[] }> {
+    const asset = await this.fresh(caller, id);
+    this.authorize(caller, 'asset:write', await this.scopeOf(asset), SHOTLIST_GROUP);
+    const { items, problems } = parseShotList(raw, durationMsOf(asset.durationSec));
+    if (problems.length > 0)
+      throw new ValidationError(
+        `the shot list has ${problems.length} problem${problems.length === 1 ? '' : 's'}: ${problems
+          .map((p) => `${p.path} ${p.message}`)
+          .join('; ')}`,
+        { problems },
+      );
+    // Read BEFORE the transaction: the prior state the audit delta needs.
+    const current = await this.options.store.shotlistOf(asset.id);
+    if (sameShotList(current, items)) return { assetId: asset.id, items: current };
+
+    const updated: Asset = {
+      ...asset,
+      version: asset.version + 1,
+      updatedAt: this.now().toISOString(),
+    };
+    await this.commitWith(
+      caller,
+      updated,
+      asset,
+      {
+        type: 'asset.updated',
+        payload: { assetId: updated.id, changedFields: ['shotlist'], source: 'user' },
+        delta: { shotlist: { before: current, after: items } },
+      },
+      (tx) => tx.setShotlist(asset.id, asset.channelId, items),
+    );
+    return { assetId: asset.id, items };
   }
 
   // --- simple search (EP-17.4) -----------------------------------------------
