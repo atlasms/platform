@@ -113,7 +113,7 @@ built, the expiry half (EP-24.5, §13z); the purge half is EP-24.6, owed by peop
 | `GET` / `PUT` | `/assets/{id}/shotlist` | The asset's notable segments, read in timeline order and replaced whole. ✅ EP-27.3 (§13v) | `asset:read` / `asset:write`, both on the `shotlist` field group |
 | `GET` | `/search?q=…` | Simple search. | `asset:read` |
 | `POST` | `/search` | Advanced **faceted** search (category + subject + tag + person). | `asset:read` |
-| `GET` / `PUT` | `/field-schemas` | Define type/category custom fields. ✅ EP-27.4 (§13w): `PUT` without `?version=` is a NEW schema, with it a compare-and-set replacement; validated whole (422 `details.problems` by path); audited. (This row said `GET/POST` under `metadata:admin`, a permission no catalogue defines — the read was always `asset:read`, the write `taxonomy:admin`.) | `asset:read` / `taxonomy:admin` |
+| `GET` / `PUT` | `/field-schemas` | Define type/category custom fields. ✅ EP-27.4 (§13w): `PUT` without `?version=` is a NEW schema, with it a compare-and-set replacement; validated whole (422 `details.problems` by path); audited. (This row said `GET/POST` under `metadata:admin`. The authorization model's §3 catalogues `metadata:admin` for field schemas, but no starter role grants it and MAM never enforced it — the read was always `asset:read`, the write `taxonomy:admin`. Which of the two governs a schema is an open product question; until it is answered the code's `taxonomy:admin` stands.) | `asset:read` / `taxonomy:admin` |
 | `GET/POST` | `/tags`, `/categories`, `/subjects` | Controlled vocabularies. | `taxonomy:admin` |
 | `GET/POST/PATCH` | `/people` | People register. | `people:admin` |
 | `POST` | `/assets/{id}/people` | Associate a person + role with an asset. | `asset:write` |
