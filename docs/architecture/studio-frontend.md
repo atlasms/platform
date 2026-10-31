@@ -83,7 +83,7 @@ Its tabs map directly to the [Asset aggregate](data-model.md#1-the-asset-aggrega
 | **Versions** | previous and next **media-file** versions (not metadata edits — those are in History) | MAM (`replacesId` chain) |
 | **Broadcast history** | a table of schedule rows where this media aired; usage vs allowed count | [Scheduling](services/scheduling.md) |
 | **Rush / originals** | the raw camera/recorder assets used to make this item | MAM ([AssetRelation](data-model.md#18-rush--original--other-relations--asset_relation)) |
-| **Shot list** | start/end timecode, thumbnail, and notes per notable segment | MAM |
+| **Shot list** | start/end timecode, thumbnail, and notes per notable segment — ✅ EP-27.3: the asset editor's Shot list section (timecodes as `HH:MM:SS.mmm`, saved whole, MAM's 422 under its field; thumbnails wait for EP-29.4) | MAM |
 | **Files** | every file — original, hi-res, low-res, thumbnail, … (set varies by category/BMS) — each with its integrity hash, online/offline state, and technical info (codec, bitrate, size) | [HSM](services/hsm.md) (files) + MAM (set) |
 | **History** | git-style diff timeline of metadata edits | [Logging](services/logging-analytics.md#64-change-history--diff-read-model) |
 

@@ -590,6 +590,63 @@ test('smoke: EP-19.1 — a write is in the audit history, with its delta, throug
   assert.ok(first.messageId, 'and links back to the envelope in the log');
 });
 
+test('smoke: EP-27.3 — a shot list through the gateway: replaced whole, read in order, in the asset’s history', async () => {
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      title: 'Shot-listed clip',
+      mediaType: 'video',
+      fileType: 'mxf',
+      durationSec: 120,
+      categoryId: await categoryFor(token),
+    }),
+  });
+  assert.equal(created.status, 201, created.text);
+  const asset = json(created);
+  const url = `/api/v1/assets/${asset.id}/shotlist`;
+
+  const put = await get(url, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({
+      items: [
+        { startMs: 90_000, endMs: 100_000, description: 'Interview' },
+        { startMs: 0, endMs: 12_000, description: 'Opening' },
+      ],
+    }),
+  });
+  assert.equal(put.status, 200, put.text);
+  const read = json(await get(url, { headers }));
+  assert.deepEqual(
+    read.items.map((i) => i.description),
+    ['Opening', 'Interview'],
+  );
+  // Past the media's end is a 422 naming the item.
+  const tooLong = await get(url, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ items: [{ startMs: 0, endMs: 125_000, description: 'x' }] }),
+  });
+  assert.equal(tooLong.status, 422, tooLong.text);
+
+  const deadline = Date.now() + 20_000;
+  let revisions = [];
+  for (;;) {
+    const res = await get(`/api/v1/history/asset/${asset.id}`, { headers });
+    assert.equal(res.status, 200, res.text);
+    revisions = json(res).revisions;
+    if (revisions.some((r) => r.delta.shotlist) || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  const revision = revisions.find((r) => r.delta.shotlist);
+  assert.ok(revision, 'the shot-list change never reached the asset’s history');
+  assert.equal(revision.delta.shotlist.after.length, 2);
+});
+
 test('smoke: EP-19.3 — the audit log browse finds a write by its correlation id', async () => {
   // The request view: everything one request caused, read back from the log. The create carries
   // its correlation id on the response; MAM wrote it into both envelopes — the domain event and

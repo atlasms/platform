@@ -45,6 +45,10 @@ export const MamOperations = {
   getAssetInherited: { method: 'GET', path: '/api/v1/assets/{id}/inherited', params: ['id'] },
   /** The asset's files as mirrored from the HSM ledger (scope asset:read / files) */
   listAssetFiles: { method: 'GET', path: '/api/v1/assets/{id}/files', params: ['id'] },
+  /** The asset's shot list — time-coded segments, ordered by start (scope asset:read / shotlist) */
+  getAssetShotList: { method: 'GET', path: '/api/v1/assets/{id}/shotlist', params: ['id'] },
+  /** Replace the asset's shot list, whole (scope asset:write / shotlist) */
+  putAssetShotList: { method: 'PUT', path: '/api/v1/assets/{id}/shotlist', params: ['id'] },
   /** The asset's free-form tags (FR-TAX-1) */
   listAssetTags: { method: 'GET', path: '/api/v1/assets/{id}/tags', params: ['id'] },
   /** Replace the asset's tag set; unknown labels are minted (scope asset:write / taxonomy) */

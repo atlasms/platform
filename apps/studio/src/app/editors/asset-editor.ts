@@ -38,8 +38,9 @@ import { SessionStore } from '../core/session.store.ts';
 import { WebSocketService } from '../core/websocket.service.ts';
 import { TranscodeJobs } from './transcode-jobs.ts';
 import { AssetReview } from './asset-review.ts';
+import { AssetShotList } from './asset-shotlist.ts';
 
-type EditorSection = 'basic' | 'files' | 'review';
+type EditorSection = 'basic' | 'files' | 'review' | 'shotlist';
 
 /** After a transcode completes: how often, and how many times, to look for its rows in MAM. */
 const RENDITION_WAIT_MS = 1_000;
@@ -58,7 +59,7 @@ type TermHolder = keyof typeof TERM_VOCABULARY;
 type EditableField = Exclude<keyof UpdateAssetInput, 'inherit' | ListField | 'cast'>;
 /** The fields a category can supply when the asset sets none (EP-28.2, data-model §2.2). */
 type MediaDefault = 'structureId' | 'genre' | 'supplyType' | 'productionGroup' | 'productionDate';
-type FieldGroup = 'core' | 'taxonomy' | 'rights' | 'cast';
+type FieldGroup = 'core' | 'taxonomy' | 'rights' | 'cast' | 'shotlist';
 type Draft = Record<EditableField, string>;
 
 const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
@@ -86,7 +87,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
 @Component({
   selector: 'atlas-asset-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranscodeJobs, AssetReview],
+  imports: [TranscodeJobs, AssetReview, AssetShotList],
   template: `
     @if (loading()) {
       <div class="state">
@@ -135,6 +136,15 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
           (click)="section.set('review')"
         >
           {{ locale.t('assetEditor.review') }}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          [attr.aria-selected]="section() === 'shotlist'"
+          [class.active]="section() === 'shotlist'"
+          (click)="section.set('shotlist')"
+        >
+          {{ locale.t('assetEditor.shotlist') }}
         </button>
       </nav>
 
@@ -622,6 +632,8 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
           [canApprove]="canApprove()"
           (changed)="reload({ fresh: true })"
         />
+      } @else if (section() === 'shotlist') {
+        <atlas-asset-shotlist [asset]="current" [canEdit]="canEdit('shotlist')" />
       } @else if (section() === 'files') {
         <section class="files">
           <div class="file-summary">

@@ -15,6 +15,7 @@ import {
   type Db,
   type Migration,
 } from '@atlas/data';
+import type { ShotListItem } from './shotlist.ts';
 import type { Asset } from './asset.ts';
 import type { Category } from './category.ts';
 import type { FieldSchema } from './field-schema.ts';
@@ -201,6 +202,21 @@ export const sqliteVerdictsMigration: Migration = {
          BEGIN SELECT RAISE(ABORT, 'review_verdicts is append-only'); END;`,
 };
 
+/** EP-27.3: an asset's shot list — one row per segment, read in timeline order. */
+export const sqliteShotlistMigration: Migration = {
+  id: 'mam_shotlist',
+  up: `CREATE TABLE IF NOT EXISTS shotlist_items (
+         id         TEXT PRIMARY KEY,
+         channel_id TEXT NOT NULL,
+         asset_id   TEXT NOT NULL,
+         start_ms   INTEGER NOT NULL,
+         end_ms     INTEGER NOT NULL,
+         data       TEXT NOT NULL
+       );
+       CREATE INDEX IF NOT EXISTS shotlist_items_asset_idx
+         ON shotlist_items (asset_id, start_ms, end_ms, id);`,
+};
+
 /** EP-24.5: the expiry sweep reads approved assets only; a partial index keeps it off the rest. */
 export const sqliteApprovedMigration: Migration = {
   id: 'mam_assets_approved_idx',
@@ -228,6 +244,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     sqlitePeopleMigration,
     sqliteApprovedMigration,
     sqliteVerdictsMigration,
+    sqliteShotlistMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
   const seen = new SqliteSeenStore(db);
@@ -288,6 +305,16 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         JSON.stringify(schema.fields),
       );
       bump();
+    },
+    async setShotlist(assetId, channelId, items) {
+      // Replace, not merge — the list is small and arrives whole.
+      db.prepare('DELETE FROM shotlist_items WHERE asset_id = ?').run(assetId);
+      const insert = db.prepare(
+        `INSERT INTO shotlist_items (id, channel_id, asset_id, start_ms, end_ms, data)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      );
+      for (const i of items)
+        insert.run(i.id, channelId, assetId, i.startMs, i.endMs, JSON.stringify(i));
     },
     async setTags(assetId, channelId, candidates) {
       const resolved = candidates.map((c) => {
@@ -626,6 +653,12 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         .prepare('SELECT data FROM asset_files WHERE asset_id = ? ORDER BY kind, variant')
         .all(assetId) as { data: string }[];
       return rows.map((r) => JSON.parse(r.data) as FileRef);
+    },
+    async shotlistOf(assetId) {
+      const rows = db
+        .prepare('SELECT data FROM shotlist_items WHERE asset_id = ? ORDER BY start_ms, end_ms, id')
+        .all(assetId) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as ShotListItem);
     },
     async verdictsOf(assetId) {
       const rows = db

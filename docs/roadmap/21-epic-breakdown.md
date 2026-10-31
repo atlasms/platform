@@ -507,7 +507,7 @@ Source: [mam-plan](services/mam-plan.md) §2.
 |----|-------|:---:|
 | 27.1 | ✅ Advanced faceted search over effective values (#419, #417) | 8 |
 | 27.2 | ✅ Decision: MAM's search **stays in Postgres**; OpenSearch only if 27.7 fails NFR-PERF (decided 2026-10-12, [mam.md §13](../architecture/services/mam.md)) | 2 |
-| 27.3 | Shot-list — time-coded segments on an asset, audited | 5 |
+| 27.3 | ✅ Shot-list — time-coded segments on an asset, audited: millisecond offsets, replaced whole, every change an asset revision under the `shotlist` field group; Studio's Shot list section (mam.md §13v) | 5 |
 | 27.4 | Metadata schema editor — field schemas in Studio's Admin panel | 5 |
 | 27.5 | Auto-vs-manual field provenance — AI/derived values kept distinct, never overwriting what a person entered | 3 |
 | 27.6 | Version chain + replace-with-clone — `POST /assets/{id}/versions`, `asset.replaced(oldId, newId)`, Scheduling swaps references | 5 |

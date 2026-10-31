@@ -17,6 +17,7 @@ import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
 import type { Verdict } from './verdict.ts';
 import type { ParsedQuery, SearchHit } from './search.ts';
+import type { ShotListItem } from './shotlist.ts';
 import type { Tag, TagCandidate } from './tag.ts';
 
 /** The extensible per-asset document (EP-17.2). Shape is whatever the FieldSchema defines. */
@@ -163,6 +164,9 @@ export interface AssetStore {
 
   /** The asset's files as last mirrored from HSM/MTS (EP-17.8), by kind then variant. */
   filesOf(assetId: string): Promise<FileRef[]>;
+
+  /** The asset's shot list (EP-27.3), ordered by start, then end, then id. */
+  shotlistOf(assetId: string): Promise<ShotListItem[]>;
 
   /** Every verdict the asset was given (EP-24.4), newest first — the retained history. */
   verdictsOf(assetId: string): Promise<Verdict[]>;
@@ -314,6 +318,11 @@ export interface AssetTx {
    * — a read-then-insert in the service would race and the unique index would reject the loser.
    */
   setTags(assetId: string, channelId: string, tags: readonly TagCandidate[]): Promise<Tag[]>;
+  /**
+   * Replace an asset's shot list (EP-27.3) — the whole list, in its transaction: the asset's
+   * revision and the segments commit together.
+   */
+  setShotlist(assetId: string, channelId: string, items: readonly ShotListItem[]): Promise<void>;
   /**
    * Replace an asset's search terms (EP-17.4).
    *

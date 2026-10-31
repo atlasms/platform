@@ -4,6 +4,7 @@
 // Held to the same conformance suite as the sqlite adapter, because the properties MAM depends on
 // (tenant isolation, outbox atomicity) are properties of the adapter, not of the service.
 
+import type { ShotListItem } from './shotlist.ts';
 import type { Migration } from '@atlas/data';
 import {
   outboxHeadersMigration,
@@ -277,6 +278,21 @@ export const pgVerdictsMigration: Migration = {
 };
 
 /** Everything MAM's database needs, in order. Applied at startup under an advisory lock. */
+/** EP-27.3: an asset's shot list — one row per segment, read in timeline order. */
+export const pgShotlistMigration: Migration = {
+  id: 'mam_shotlist',
+  up: `CREATE TABLE IF NOT EXISTS shotlist_items (
+         id         text PRIMARY KEY,
+         channel_id text NOT NULL,
+         asset_id   text NOT NULL,
+         start_ms   integer NOT NULL,
+         end_ms     integer NOT NULL,
+         data       jsonb NOT NULL
+       );
+       CREATE INDEX IF NOT EXISTS shotlist_items_asset_idx
+         ON shotlist_items (asset_id, start_ms, end_ms, id);`,
+};
+
 export const mamMigrations: Migration[] = [
   outboxMigration,
   pgAssetsMigration,
@@ -296,6 +312,7 @@ export const mamMigrations: Migration[] = [
   pgPeopleMigration,
   pgApprovedMigration,
   pgVerdictsMigration,
+  pgShotlistMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
@@ -525,6 +542,16 @@ export function pgAssetStore(pool: PgPool): AssetStore {
               ],
             );
             await bumpConfig();
+          },
+          async setShotlist(assetId, channelId, items) {
+            // Replace, not merge — the list is small and arrives whole.
+            await client.query('DELETE FROM shotlist_items WHERE asset_id = $1', [assetId]);
+            for (const i of items)
+              await client.query(
+                `INSERT INTO shotlist_items (id, channel_id, asset_id, start_ms, end_ms, data)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [i.id, channelId, assetId, i.startMs, i.endMs, JSON.stringify(i)],
+              );
           },
           async setTags(assetId, channelId, candidates) {
             const resolved: Tag[] = [];
@@ -793,6 +820,14 @@ export function pgAssetStore(pool: PgPool): AssetStore {
     async filesOf(assetId) {
       const { rows } = await pool.query<{ data: FileRef }>(
         'SELECT data FROM asset_files WHERE asset_id = $1 ORDER BY kind, variant',
+        [assetId],
+      );
+      return rows.map((r) => r.data);
+    },
+
+    async shotlistOf(assetId) {
+      const { rows } = await pool.query<{ data: ShotListItem }>(
+        'SELECT data FROM shotlist_items WHERE asset_id = $1 ORDER BY start_ms, end_ms, id',
         [assetId],
       );
       return rows.map((r) => r.data);

@@ -110,6 +110,7 @@ built, the expiry half (EP-24.5, §13z); the purge half is EP-24.6, owed by peop
 | `POST` | `/assets/{id}/versions` | Create a new version (clone metadata on replace). | `asset:write` |
 | `POST` | `/assets/{id}/approve` · `/reject` | Lifecycle verdict (approve body MAY set `expiresAt`; reject body MAY set `reason`/`retainUntil`). Either MAY name the workflow `reviewPointId` it is given at, carried on `asset.approved`/`asset.rejected` — what resolves a waiting review step (EP-22.6, bms.md §13f); only a verdict names one. | `asset:approve` |
 | `GET` | `/assets/{id}/verdicts` | Retained review-verdict history for the asset. ✅ EP-24.4 (§13y): `{ items }`, newest first — manual and automatic, append-only by the database. | `asset:read` |
+| `GET` / `PUT` | `/assets/{id}/shotlist` | The asset's notable segments, read in timeline order and replaced whole. ✅ EP-27.3 (§13v) | `asset:read` / `asset:write`, both on the `shotlist` field group |
 | `GET` | `/search?q=…` | Simple search. | `asset:read` |
 | `POST` | `/search` | Advanced **faceted** search (category + subject + tag + person). | `asset:read` |
 | `GET/POST` | `/field-schemas` | Define type/category custom fields. | `metadata:admin` |
@@ -324,6 +325,33 @@ createdBy RIM sent, and `asset.created` + the audit in one transaction with the 
 redelivery is a duplicate; an id that already exists in the same channel is a duplicate too; one in
 another channel is thrown to the broker, never overwritten. The original's FileRef row arrives by
 HSM's `file.placed` — a separate consumer — and the mirror retries a placement that beats the asset.
+
+## 13v. As built — EP-27.3, the shot list
+
+An asset's notable segments (data-model §1.6, FR-MAM-3): `{ id, startMs, endMs, description }`, one
+row each in `shotlist_items` (channel-scoped, indexed by asset and start).
+
+- **Millisecond offsets, not SMPTE strings.** A frame-accurate timecode needs the media's frame rate,
+  which an asset does not always have (audio, an unprobed file); an offset is exact whatever the rate.
+  Studio shows and takes `HH:MM:SS.mmm` (also `MM:SS` and seconds).
+- **Replaced whole**, as tags are: `PUT` carries the final list; an item keeps its `id` across saves
+  (sent back), one without is minted; the list is stored in start, end, id order. Re-applied over the
+  asset's current version when a concurrent write lands (`onCurrent`), so no client version is asked.
+  Segments may overlap; each must end after it starts and, when MAM knows the media's
+  `durationSec`, no later than its end. Validated whole: a 422 names every problem by path
+  (`details.problems`, `items/2/endMs`).
+- **A change is an asset revision**: the version moves, `asset.updated` names `changedFields:
+  [shotlist]`, and the audit delta carries the before/after list — so the shot list's history is the
+  asset's own (`GET /history/asset/{id}`). The same list sent again changes nothing and emits nothing.
+- The `shotlist` field group governs both: `asset:read` to read it, `asset:write` to write it (the
+  Editor's; the Librarian's grant reads it and is refused the write).
+- Not yet: `thumbnailRef` (a filmstrip frame) waits for the VTT filmstrip rendition (EP-29.4).
+
+Studio: the asset editor's **Shot list** section — rows of start, end and description, added after
+the last shot, removed, saved whole; a timecode that is not one is refused in the form, MAM's 422 is
+shown under the field it names; read-only without the `shotlist` grant; re-read when the asset's
+version moves, never over unsaved rows. Smoke saves one through the gateway, is refused a segment
+past the media's end, and finds the change in the asset's history.
 
 ## 13x. As built — EP-24.9's MAM half: the expiry an approval leaves, and the review queue
 

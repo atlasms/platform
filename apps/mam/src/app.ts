@@ -481,6 +481,25 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
 
   // Free-form tags (EP-17.3). PUT, not PATCH: the body is the asset's complete tag set, which is
   // what a tag input hands back — there is no partial form of "these are the keywords".
+  // The shot list (EP-27.3): read under the `shotlist` field group, replaced whole.
+  app.get('/api/v1/assets/:id/shotlist', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.shotlist(await callerOf(req), (req.params as { id: string }).id),
+    ),
+  );
+  app.put('/api/v1/assets/:id/shotlist', async (req, reply) =>
+    handle(req, reply, async () => {
+      const body = (req.body ?? {}) as { items?: unknown };
+      // An absent `items` is refused, not read as "clear it": an empty list is said by `[]`.
+      if (!Array.isArray(body.items)) throw new ValidationError('body must carry an `items` array');
+      return options.service.setShotlist(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+        body.items,
+      );
+    }),
+  );
+
   app.get('/api/v1/assets/:id/tags', async (req, reply) =>
     handle(req, reply, async () =>
       options.service.tags(
