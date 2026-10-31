@@ -271,10 +271,11 @@ test('removing a field from the schema orphans its data rather than destroying i
   const asset = await service.create(caller(), NEW_ASSET);
   await service.updateExtended(caller(), asset.id, { competition: 'FA Cup', rating: 4 });
 
-  // The operator reorganises and drops `rating`.
+  // The operator reorganises and drops `rating` — a replacement of the version they read (EP-27.4).
   await service.putSchema(
     caller(),
     schema({ fields: [{ name: 'competition', label: 'Competition', type: 'string' }] }),
+    1,
   );
 
   const after = await service.extended(caller(), asset.id);

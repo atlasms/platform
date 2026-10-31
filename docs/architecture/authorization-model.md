@@ -48,7 +48,7 @@ A permission is `resource:action` — flat, greppable, and stable.
 | `task` | `assign` (hand work to a user, group or role by hand), `admin` (cancel or reassign any task), `audit` (any task's change log) — EP-25.2, decided 2026-10-16. Acting on a task you hold — claim, forward, complete — needs no permission: holding it IS the grant; a task's PARTICIPANTS read its history without `task:audit` |
 | `taxonomy` | `read`, `admin` (categories, structures, classifications, subjects, tags) |
 | `people` | `read`, `admin` |
-| `metadata` | `admin` (field schemas) |
+| `metadata` | `admin` (field schemas) — catalogued but, as of EP-27.4, neither granted by a starter role nor enforced: MAM writes field schemas under `taxonomy:admin`. Open question for the product owner |
 | `feed` | `read`, `admin` |
 | `user` | `read`, `admin` |
 | `config` | `read`, `admin` (registries + settings — scoped by level; see [Configuration & Reference Data §8](configuration-and-reference-data.md#8-permissions)) |
