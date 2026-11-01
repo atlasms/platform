@@ -262,6 +262,16 @@ export class StalePerson extends Conflict {
   }
 }
 
+export class StaleSchema extends Conflict {
+  constructor(id: string, ifVersion: number | undefined) {
+    super(
+      ifVersion === undefined
+        ? `field schema ${id} already exists`
+        : `field schema ${id} changed since version ${ifVersion} was read — reload it`,
+    );
+  }
+}
+
 /** The vocabulary already has a term with this key in the channel. */
 export class TermKeyTaken extends Conflict {
   constructor(vocabulary: string, key: string) {
@@ -304,7 +314,11 @@ export interface AssetTx {
    * to express "remove this value".
    */
   putExtended(assetId: string, channelId: string, values: ExtendedValues): Promise<void>;
-  putSchema(schema: FieldSchema): Promise<void>;
+  /**
+   * Write a field schema — compare-and-set on its `version` like the rest ({@link StaleSchema}):
+   * with `ifVersion` only over that version, without it a new schema is inserted (EP-27.4).
+   */
+  putSchema(schema: FieldSchema, ifVersion?: number): Promise<void>;
   /**
    * Replace an asset's tag set, minting any label the channel has not seen (EP-17.3).
    *

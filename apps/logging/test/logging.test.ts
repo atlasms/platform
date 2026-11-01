@@ -308,6 +308,11 @@ test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENT
     requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'vocabulary-term' } }),
     { permission: 'taxonomy:read' },
   );
+  // …and a field schema (EP-27.4).
+  assert.deepEqual(
+    requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'field-schema' } }),
+    { permission: 'taxonomy:read' },
+  );
   // …and a person, under the people register's read (EP-28.5).
   assert.deepEqual(
     requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'person' } }),

@@ -575,10 +575,18 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     handle(req, reply, async () => options.service.schemas(await callerOf(req))),
   );
 
+  // `?version=` replaces exactly that version (EP-27.4); absent, the body is a new schema.
   app.put('/api/v1/field-schemas', async (req, reply) =>
-    handle(req, reply, async () =>
-      options.service.putSchema(await callerOf(req), req.body as never),
-    ),
+    handle(req, reply, async () => {
+      const { version } = req.query as { version?: string };
+      if (version !== undefined && !/^[1-9]\d*$/.test(version))
+        throw new ValidationError('version must be a positive integer');
+      return options.service.putSchema(
+        await callerOf(req),
+        req.body as never,
+        version === undefined ? undefined : Number(version),
+      );
+    }),
   );
 
   // The versioned reference snapshot (EP-04.8, configuration-and-reference-data.md §5).

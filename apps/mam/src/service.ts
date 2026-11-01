@@ -31,6 +31,7 @@ import {
   ValidationError,
 } from '@atlas/service-kit';
 import {
+  fieldSchemaProblems,
   orphanedFields,
   requiredFieldNames,
   resolveFields,
@@ -47,7 +48,13 @@ import {
 } from './file.ts';
 import type { Verdict, VerdictKind } from './verdict.ts';
 import type { AssetCache, CacheFamilies, CacheFamily } from './cache.ts';
-import { StaleWrite, type AssetStore, type AssetTx, type ExtendedValues } from './store.ts';
+import {
+  StaleSchema,
+  StaleWrite,
+  type AssetStore,
+  type AssetTx,
+  type ExtendedValues,
+} from './store.ts';
 import {
   childPath,
   createProblems,
@@ -87,7 +94,7 @@ import {
   type Vocabulary,
   type VocabularyTerm,
 } from './vocabulary.ts';
-import { groupsForCoreFields, groupsForExtended } from './field-groups.ts';
+import { ASSET_FIELD_GROUPS, groupsForCoreFields, groupsForExtended } from './field-groups.ts';
 import {
   chainOf,
   defaultsProblems,
@@ -2060,16 +2067,64 @@ export class MamService {
     return merged;
   }
 
-  /** Define or replace a FieldSchema. Operator-managed configuration, not asset data. */
-  async putSchema(caller: Caller, schema: FieldSchema): Promise<FieldSchema> {
+  /**
+   * Define or replace a FieldSchema — operator-managed configuration, not asset data (EP-27.4).
+   *
+   * Without `version` it is a NEW schema (an id the store already has is a 409); with it, a
+   * compare-and-set replacement of exactly that version (another write in between is a 409, never
+   * an overwrite). The body is judged whole first ({@link fieldSchemaProblems}): a 422 whose
+   * `details.problems` place every refusal at its path. And it is audited — `audit.recorded` with
+   * the delta in the transaction of the write; before EP-27.4 a schema change left no record at
+   * all, though it changes what every asset in its scope must carry.
+   */
+  async putSchema(caller: Caller, input: FieldSchema, version?: number): Promise<FieldSchema> {
     // `taxonomy:admin`, not `asset:write`: editing a schema changes what every asset in its scope
     // must carry, which is a governance action rather than an editorial one.
     this.authorize(caller, 'taxonomy:admin');
-    if (schema.channelId !== caller.channelId) {
+    if (input.channelId !== undefined && input.channelId !== caller.channelId) {
       throw new Forbidden('a schema cannot be written into another channel');
     }
-    await this.options.store.transaction(async (tx) => tx.putSchema(schema));
-    return schema;
+    const problems = fieldSchemaProblems(input, ASSET_FIELD_GROUPS);
+    if (problems.length > 0) {
+      throw new ValidationError(
+        problems.map((p) => (p.path ? `${p.path}: ${p.message}` : p.message)).join('; '),
+        { problems },
+      );
+    }
+    const existing = input.id
+      ? (await this.options.store.schemas(caller.channelId)).find((s) => s.id === input.id)
+      : undefined;
+    if (version === undefined && existing)
+      throw new Conflict(`field schema ${input.id} exists — replace it with ?version=`);
+    if (version !== undefined) {
+      if (!existing) throw new NotFound(`no field schema ${input.id ?? '(no id)'}`);
+      if ((existing.version ?? 1) !== version) throw new StaleSchema(existing.id, version);
+    }
+    const next: FieldSchema = {
+      id: input.id ?? ulid(),
+      channelId: caller.channelId,
+      mediaType: input.mediaType,
+      ...defined({ categoryPath: input.categoryPath }),
+      fields: input.fields,
+      version: (existing?.version ?? 0) + 1,
+    };
+    await this.options.store.transaction(async (tx) => {
+      await tx.putSchema(next, existing ? version : undefined);
+      await tx.enqueue(
+        this.eventRecord(caller, next.channelId, 'audit.recorded', {
+          entityType: 'field-schema',
+          entityId: next.id,
+          revision: next.version!,
+          action: existing ? 'field-schema.updated' : 'field-schema.created',
+          origin: { service: 'mam' },
+          delta: delta(
+            existing as unknown as Record<string, unknown> | undefined,
+            next as unknown as Record<string, unknown>,
+          ),
+        } satisfies EventPayloads['audit.recorded']),
+      );
+    });
+    return next;
   }
 
   async schemas(caller: Caller): Promise<FieldSchema[]> {

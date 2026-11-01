@@ -33,9 +33,9 @@ export const MamOperations = {
   advancedSearch: { method: 'POST', path: '/api/v1/search', params: [] },
   /** Rebuild the channel's search index from the assets (scope taxonomy:admin) */
   reindexSearch: { method: 'POST', path: '/api/v1/search/reindex', params: [] },
-  /** List custom field schemas */
+  /** The channel's custom field schemas (scope asset:read) */
   listFieldSchemas: { method: 'GET', path: '/api/v1/field-schemas', params: [] },
-  /** Define or replace the custom fields of a type/category scope (scope taxonomy:admin) */
+  /** Define or replace the custom fields of a media type / category scope (scope taxonomy:admin; EP-27.4). Without `version` it is a NEW schema (an existing id is a 409); with it, a compare-and-set replacement of that version (another write in between is a 409). Judged whole first: a 422's `details.problems` place every refusal at its path. Audited. */
   putFieldSchema: { method: 'PUT', path: '/api/v1/field-schemas', params: [] },
   /** The asset's extended values with the field definitions that govern them (scope asset:read) */
   getAssetExtended: { method: 'GET', path: '/api/v1/assets/{id}/extended', params: ['id'] },

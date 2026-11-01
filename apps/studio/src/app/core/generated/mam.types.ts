@@ -6,6 +6,38 @@
 
 export type Ulid = string;
 
+export interface FieldDefinition {
+  /** The key in the asset's extended document — stable: renaming one orphans its values. */
+  name: string;
+  label: string;
+  /** Tier 0 — code switches on it. */
+  type: 'string' | 'text' | 'number' | 'boolean' | 'date' | 'enum' | 'vocabulary';
+  required?: boolean;
+  /** An enum field's values — at least one, none twice; only on an enum. */
+  options?: string[];
+  /** The controlled vocabulary a vocabulary field draws from. */
+  vocabulary?: string;
+  /** The asset field group that authorizes it (#225) — core when absent. */
+  fieldGroup?: string;
+  /** A string or text field's bound. */
+  maxLength?: number;
+  helpText?: string;
+}
+
+/** A set of custom fields and where they apply — a media type, narrowed by a category path prefix. */
+export interface FieldSchema {
+  /** Minted on create when absent (a ULID); a write naming one that exists needs `?version=`. */
+  id?: string;
+  /** The caller's — a schema is never written into another channel. */
+  channelId?: string;
+  mediaType: string;
+  /** A materialized category path (`/sports/football/`), matched as a prefix; absent = the whole channel. */
+  categoryPath?: string;
+  fields: FieldDefinition[];
+  /** Bumped on every write (EP-27.4); a schema stored before reads as 1. */
+  version?: number;
+}
+
 /** One review verdict, as it was given (EP-24.4) — retained, never edited. */
 export interface Verdict {
   id: Ulid;

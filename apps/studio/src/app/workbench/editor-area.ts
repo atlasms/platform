@@ -12,6 +12,7 @@ import { RecorderEditor } from '../editors/recorder-editor.ts';
 import { RightsWindowEditor } from '../editors/rights-window-editor.ts';
 import { CategoryEditor } from '../editors/category-editor.ts';
 import { WorkflowEditor } from '../editors/workflow-editor.ts';
+import { FieldSchemaEditor } from '../editors/field-schema-editor.ts';
 import { Dashboard } from '../panels/dashboard.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { EditorStore } from './editor.store.ts';
@@ -50,6 +51,7 @@ import { EditorStore } from './editor.store.ts';
     RightsWindowEditor,
     CategoryEditor,
     WorkflowEditor,
+    FieldSchemaEditor,
   ],
   template: `
     @if (store.isEmpty()) {
@@ -223,6 +225,15 @@ import { EditorStore } from './editor.store.ts';
                     @case ('recorder') {
                       @defer (on immediate) {
                         <atlas-recorder-editor [recorderId]="tab.resourceId" [tabId]="tab.id" />
+                      } @placeholder {
+                        <p class="muted">{{ locale.t('editor.loading') }}</p>
+                      } @error {
+                        <p class="error" role="alert">{{ locale.t('editor.loadFailed') }}</p>
+                      }
+                    }
+                    @case ('field-schema') {
+                      @defer (on immediate) {
+                        <atlas-field-schema-editor [schemaId]="tab.resourceId" [tabId]="tab.id" />
                       } @placeholder {
                         <p class="muted">{{ locale.t('editor.loading') }}</p>
                       } @error {

@@ -250,10 +250,32 @@ paths:
             application/json:
               schema: { type: object, required: [indexed], properties: { indexed: { type: integer } } }
   /field-schemas:
-    get: { operationId: listFieldSchemas, tags: [admin], summary: List custom field schemas, responses: { '200': { description: Schemas } } }
-    # PUT, not POST: a schema is addressed by its scope (type + category) and the body is the whole
-    # definition, so writing it again is idempotent — which is what MAM serves.
-    put: { operationId: putFieldSchema, tags: [admin], summary: Define or replace the custom fields of a type/category scope (scope taxonomy:admin), responses: { '200': { description: Stored } } }
+    get:
+      operationId: listFieldSchemas
+      tags: [admin]
+      summary: The channel's custom field schemas (scope asset:read)
+      responses:
+        '200': { description: Schemas, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/FieldSchema' } } } } }
+    # PUT, not POST: the body is the whole definition. It was an idempotent upsert by scope until
+    # EP-27.4; a replacement is now compare-and-set on `?version=`, so two administrators cannot
+    # silently overwrite each other.
+    put:
+      operationId: putFieldSchema
+      tags: [admin]
+      summary: >-
+        Define or replace the custom fields of a media type / category scope (scope taxonomy:admin;
+        EP-27.4). Without `version` it is a NEW schema (an existing id is a 409); with it, a
+        compare-and-set replacement of that version (another write in between is a 409). Judged
+        whole first: a 422's `details.problems` place every refusal at its path. Audited.
+      parameters:
+        - { name: version, in: query, required: false, schema: { type: integer, minimum: 1 }, description: The version being replaced. }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/FieldSchema' } } } }
+      responses:
+        '200': { description: Stored — with its id and its new version, content: { application/json: { schema: { $ref: '#/components/schemas/FieldSchema' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { description: "Not a valid schema — `details.problems` is a list of { path, message } (`fields[2].options`).", content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /assets/{id}/extended:
     parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
     # The extensible metadata is read and written on its own (EP-17.2): governed by its field
@@ -620,6 +642,30 @@ components:
         order between them. Any other value is ignored.
   schemas:
     Ulid: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$' }
+    FieldDefinition:
+      type: object
+      required: [name, label, type]
+      properties:
+        name: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_]{0,63}$', description: "The key in the asset's extended document — stable: renaming one orphans its values." }
+        label: { type: string, maxLength: 120 }
+        type: { type: string, enum: [string, text, number, boolean, date, enum, vocabulary], description: Tier 0 — code switches on it. }
+        required: { type: boolean }
+        options: { type: array, items: { type: string }, description: "An enum field's values — at least one, none twice; only on an enum." }
+        vocabulary: { type: string, description: The controlled vocabulary a vocabulary field draws from. }
+        fieldGroup: { type: string, description: "The asset field group that authorizes it (#225) — core when absent." }
+        maxLength: { type: integer, minimum: 1, maximum: 100000, description: A string or text field's bound. }
+        helpText: { type: string, maxLength: 500 }
+    FieldSchema:
+      type: object
+      required: [mediaType, fields]
+      description: A set of custom fields and where they apply — a media type, narrowed by a category path prefix.
+      properties:
+        id: { type: string, description: "Minted on create when absent (a ULID); a write naming one that exists needs `?version=`." }
+        channelId: { type: string, description: The caller's — a schema is never written into another channel. }
+        mediaType: { type: string }
+        categoryPath: { type: string, description: "A materialized category path (`/sports/football/`), matched as a prefix; absent = the whole channel." }
+        fields: { type: array, items: { $ref: '#/components/schemas/FieldDefinition' } }
+        version: { type: integer, minimum: 1, description: Bumped on every write (EP-27.4); a schema stored before reads as 1. }
     Verdict:
       type: object
       required: [id, assetId, channelId, verdict, decidedBy, decidedAt]
