@@ -60,6 +60,13 @@ class FakeAssets {
     return result;
   }
 
+  readonly dismissals: Array<{ id: string; field: string; result: Subject<Asset> }> = [];
+  dismissDerived(id: string, field: string) {
+    const result = new Subject<Asset>();
+    this.dismissals.push({ id, field, result });
+    return result;
+  }
+
   readonly inheritances: Array<{ id: string; result: Subject<AssetInheritance> }> = [];
   inherited(id: string) {
     const result = new Subject<AssetInheritance>();
@@ -415,6 +422,37 @@ describe('AssetEditor', () => {
     expect(component.dirtyCount()).toBe(0);
     expect(editors.activeTab()?.dirty).toBe(false);
     expect(component.saved()).toBe(true);
+  });
+
+  it('EP-27.5: a value MAM held beside a person’s is offered under the field — Use fills the form, Dismiss asks MAM to drop it', () => {
+    const { component, fake, fixture } = setup(['core']);
+    const at = '2026-11-06T12:00:00.000Z';
+    fake.gets[0]?.result.next(
+      record({
+        durationSec: 90,
+        provenance: { durationSec: { source: 'user', by: 'u1', at } },
+        derived: { durationSec: { value: 92.04, source: 'technical', by: 'mts', at } },
+      }),
+    );
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const held = root.querySelector('atlas-field-origin .held');
+    expect(held?.textContent).toContain('92.04');
+    const [use, dismiss] = Array.from(held!.querySelectorAll('button'));
+
+    use!.click();
+    fixture.detectChanges();
+    expect((root.querySelector('[name="durationSec"]') as HTMLInputElement).value).toBe('92.04');
+    expect(component.dirtyCount()).toBe(1);
+
+    dismiss!.click();
+    expect(fake.dismissals.map((d) => [d.id, d.field])).toEqual([
+      ['01K00000000000000000000000', 'durationSec'],
+    ]);
+    fake.dismissals[0]!.result.next(record({ durationSec: 90, version: 5 }));
+    fixture.detectChanges();
+    expect(root.querySelector('atlas-field-origin .held')).toBeNull();
+    expect(component.dirtyCount(), 'the form is left as it was').toBe(1);
   });
 
   it('keeps edits dirty when MAM refuses or cannot save them', () => {

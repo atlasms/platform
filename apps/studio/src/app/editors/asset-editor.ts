@@ -39,6 +39,7 @@ import { WebSocketService } from '../core/websocket.service.ts';
 import { TranscodeJobs } from './transcode-jobs.ts';
 import { AssetReview } from './asset-review.ts';
 import { AssetShotList } from './asset-shotlist.ts';
+import { FieldOrigin } from './field-origin.ts';
 
 type EditorSection = 'basic' | 'files' | 'review' | 'shotlist';
 
@@ -87,7 +88,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
 @Component({
   selector: 'atlas-asset-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranscodeJobs, AssetReview, AssetShotList],
+  imports: [TranscodeJobs, AssetReview, AssetShotList, FieldOrigin],
   template: `
     @if (loading()) {
       <div class="state">
@@ -170,6 +171,13 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                   (input)="change('title', $any($event.target).value)"
                 />
               </label>
+              <atlas-field-origin
+                [asset]="current"
+                field="title"
+                [canEdit]="canEdit('core')"
+                (use)="useDerived('title', $event)"
+                (dismiss)="dismissDerived('title')"
+              />
               <label>
                 {{ locale.t('assetEditor.mediaType') }}
                 <input [value]="current.mediaType" disabled />
@@ -188,6 +196,13 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                   (input)="change('description', $any($event.target).value)"
                 ></textarea>
               </label>
+              <atlas-field-origin
+                [asset]="current"
+                field="description"
+                [canEdit]="canEdit('core')"
+                (use)="useDerived('description', $event)"
+                (dismiss)="dismissDerived('description')"
+              />
               <label>
                 {{ locale.t('assetEditor.episodeNumber') }}
                 <input
@@ -200,6 +215,13 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                   (input)="change('episodeNo', $any($event.target).value)"
                 />
               </label>
+              <atlas-field-origin
+                [asset]="current"
+                field="episodeNo"
+                [canEdit]="canEdit('core')"
+                (use)="useDerived('episodeNo', $event)"
+                (dismiss)="dismissDerived('episodeNo')"
+              />
               <label>
                 {{ locale.t('assetEditor.duration') }}
                 <input
@@ -212,6 +234,13 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
                   (input)="change('durationSec', $any($event.target).value)"
                 />
               </label>
+              <atlas-field-origin
+                [asset]="current"
+                field="durationSec"
+                [canEdit]="canEdit('core')"
+                (use)="useDerived('durationSec', $event)"
+                (dismiss)="dismissDerived('durationSec')"
+              />
             </div>
           </section>
 
@@ -1104,6 +1133,21 @@ export class AssetEditor implements OnInit {
     this.editors.setDirty(this.tabId(), dirty.size > 0);
     this.saved.set(false);
     this.saveError.set(null);
+  }
+
+  /** EP-27.5: put a held value in the form — saving it is what takes it (and settles it in MAM). */
+  protected useDerived(field: EditableField, value: unknown): void {
+    this.change(field, typeof value === 'string' ? value : String(value));
+  }
+
+  /** EP-27.5: drop a held value unused. The form is left as it is; only the asset is replaced. */
+  protected dismissDerived(field: EditableField): void {
+    const current = this.asset();
+    if (!current) return;
+    this.assetsApi.dismissDerived(current.id, field).subscribe({
+      next: (asset) => this.asset.set(asset),
+      error: () => this.saveError.set(this.locale.t('provenance.dismissFailed')),
+    });
   }
 
   protected save(event: Event): void {

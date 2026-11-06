@@ -58,6 +58,8 @@ Solid lines = MAM-owned; dotted lines = **cross-service read views** (§1.9).
 | `replacesId` | ULID? | The prior version this supersedes (media-file change). |
 | `createdBy` | user id | |
 | `createdAt` | date-time | |
+| `provenance` | map? | Per core field, who or what set it — `{ source: user / technical / ai, by, at, confidence?, jobId? }` (FR-MAM-8, EP-27.5; [mam.md §13u](services/mam.md)). |
+| `derived` | map? | Per field, a measured or AI value held BESIDE a field a person owns — never applied over theirs; taken by editing the field, or dismissed. |
 
 Extensible, type/category-specific fields live in **AssetExtended** (document store) keyed by
 `assetId` — governed by **FieldSchema** per `mediaType`/category ([FR-MAM-2](../requirements/05-functional-requirements.md#mam)).

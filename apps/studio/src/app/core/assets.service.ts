@@ -122,12 +122,20 @@ export class AssetsService {
     return this.api.call(ops.updateAsset, { params: { id }, body: patch }).as<Asset>();
   }
 
-  /** The asset's files as MAM mirrors them from HSM/MTS (EP-17.8) — the Files tab's rows. */
+  /**
+   * EP-27.5: drop a value MAM held beside a field a person set (taking it is an ordinary update of
+   * the field). The asset comes back without it.
+   */
+  dismissDerived(id: string, field: string) {
+    return this.api.call(ops.dismissAssetDerived, { params: { id, field } }).as<Asset>();
+  }
+
   /** What the asset inherits from its category chain, live, each value with its origin (EP-28.2). */
   inherited(id: string) {
     return this.api.call(ops.getAssetInherited, { params: { id } }).as<AssetInheritance>();
   }
 
+  /** The asset's files as MAM mirrors them from HSM/MTS (EP-17.8) — the Files tab's rows. */
   files(id: string) {
     return this.api.call(ops.listAssetFiles, { params: { id } }).as<FileRef[]>();
   }

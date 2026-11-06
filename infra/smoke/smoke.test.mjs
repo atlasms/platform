@@ -3348,6 +3348,12 @@ test('smoke: EP-15.5 — an accepted upload becomes an asset: its original in HS
     [json(asset).title, json(asset).mediaType, json(asset).fileType, json(asset).state],
     ['Smoke Ingest', 'audio', 'wav', 'created'],
   );
+  // EP-27.5: none of it is a person's — the name is the file's, the kind the probe's.
+  assert.deepEqual(
+    [json(asset).provenance?.title?.source, json(asset).provenance?.title?.by],
+    ['technical', 'rim'],
+    JSON.stringify(json(asset).provenance),
+  );
 
   const location = json(await get(`/api/v1/assets/${job.assetId}/location`, { headers }));
   const original = location.find((f) => f.kind === 'original');
@@ -3464,15 +3470,25 @@ test('smoke: EP-16 — a real transcode: enqueued through the gateway, run by FF
   // above can be there before transcode.completed has been applied (#375's first smoke run).
   const renditionsDeadline = Date.now() + 30_000;
   let hasRenditions = false;
+  let mirrored;
   for (;;) {
     const asset = await get(`/api/v1/assets/${assetId}`, {
       headers: { ...headers, 'cache-control': 'no-cache' },
     });
-    hasRenditions = json(asset).hasRenditions === true;
+    mirrored = json(asset);
+    hasRenditions = mirrored.hasRenditions === true;
     if (hasRenditions || Date.now() > renditionsDeadline) break;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   assert.equal(hasRenditions, true, 'the asset never learned it has renditions');
+  // EP-27.5: the asset was created with no duration, so the one FFmpeg measured fills it, in the
+  // same write — stamped as MTS's measurement, not a person's.
+  assert.ok(mirrored.durationSec > 0, `no measured duration: ${JSON.stringify(mirrored)}`);
+  assert.deepEqual(
+    [mirrored.provenance?.durationSec?.source, mirrored.provenance?.durationSec?.by],
+    ['technical', 'mts'],
+  );
+  assert.equal(mirrored.provenance?.title?.source, 'user', 'the title is the person’s');
 });
 
 test('smoke: EP-16.4 — transcode progress arrives live on a real socket, from live.<channel>, kept by nothing', async () => {

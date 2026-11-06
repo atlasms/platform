@@ -23,6 +23,11 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- **`$defs/MetadataSource`** (EP-27.5) in `common.schema.json`: `user` / `technical` / `ai`, ranked
+  in that order when values meet on one field (mam.md §13u). `asset.updated`'s `source` now `$ref`s it
+  — the same three values it listed inline, so no consumer sees a difference; the generated
+  `EventPayloads['asset.updated']['source']` names the shared type.
+
 - **`@atlas/contracts/workflow-feel`** (EP-23.6): the FEEL subset checker (`feelProblem`,
   `referencedVars`, `FEEL_ROOTS`, `FEEL_FUNCTIONS`) on a subpath of its own — browser-safe (feelin
   only, no file system), so Studio's FEEL editor runs the checker publish runs. The same exports stay

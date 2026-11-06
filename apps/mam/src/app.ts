@@ -479,8 +479,6 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     ),
   );
 
-  // Free-form tags (EP-17.3). PUT, not PATCH: the body is the asset's complete tag set, which is
-  // what a tag input hands back — there is no partial form of "these are the keywords".
   // The shot list (EP-27.3): read under the `shotlist` field group, replaced whole.
   app.get('/api/v1/assets/:id/shotlist', async (req, reply) =>
     handle(req, reply, async () =>
@@ -500,6 +498,16 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     }),
   );
 
+  // EP-27.5: drop a value held beside a field a person set (taking it is a PATCH of the field).
+  app.delete('/api/v1/assets/:id/derived/:field', async (req, reply) =>
+    handle(req, reply, async () => {
+      const { id, field } = req.params as { id: string; field: string };
+      return options.service.dismissDerived(await callerOf(req), id, field);
+    }),
+  );
+
+  // Free-form tags (EP-17.3). PUT, not PATCH: the body is the asset's complete tag set, which is
+  // what a tag input hands back — there is no partial form of "these are the keywords".
   app.get('/api/v1/assets/:id/tags', async (req, reply) =>
     handle(req, reply, async () =>
       options.service.tags(

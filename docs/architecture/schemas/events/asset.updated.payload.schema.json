@@ -14,7 +14,7 @@
       "minItems": 1,
       "description": "Names of the fields that changed."
     },
-    "source": { "enum": ["user", "ai", "technical"], "description": "Provenance of the change (FR-MAM-8)." },
+    "source": { "$ref": "../common.schema.json#/$defs/MetadataSource", "description": "Provenance of the change (FR-MAM-8): `user` for a person's write, `technical` for a value MAM measured from the media (EP-27.5)." },
     "expiresAt": {
       "type": ["string", "null"],
       "format": "date-time",

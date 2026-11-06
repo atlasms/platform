@@ -6,6 +6,7 @@
 
 import type { AssetState } from './lifecycle.ts';
 import type { CastEntry } from './person.ts';
+import type { DerivedValue, FieldProvenance } from './provenance.ts';
 
 export interface Asset {
   id: string;
@@ -72,6 +73,16 @@ export interface Asset {
   version: number;
   /** Renditions attached by MTS. Gates `markReady`. */
   hasRenditions: boolean;
+  /**
+   * Who or what set each core field (EP-27.5, provenance.ts), by field name. Absent for a field set
+   * before EP-27.5 — which ranks as a person's — and left off the record when empty.
+   */
+  provenance?: Record<string, FieldProvenance>;
+  /**
+   * Values measured, or proposed by AI, for fields a person owns: held here, never applied, until a
+   * person takes one (a PATCH of the field) or dismisses it.
+   */
+  derived?: Record<string, DerivedValue>;
   createdBy: string;
   createdAt: string;
   updatedAt: string;

@@ -92,6 +92,10 @@ export type SettingScope = (typeof SettingScopeValues)[number];
 export const RoleClassValues = ['on-screen', 'crew'] as const;
 export type RoleClass = (typeof RoleClassValues)[number];
 
+/** Who or what set an asset field (FR-MAM-8, EP-27.5): a person, a measurement of the media (the probe, a transcode), or AI enrichment. Ranked user > technical > ai: a lower-ranked value never replaces a higher one, it is held beside it (mam.md §13u). */
+export const MetadataSourceValues = ['user', 'technical', 'ai'] as const;
+export type MetadataSource = (typeof MetadataSourceValues)[number];
+
 /** Which AI tier ran: online (interactive, bounded latency) or offline (batch). Not the HSM storage Tier. */
 export const AiTierValues = ['online', 'offline'] as const;
 export type AiTier = (typeof AiTierValues)[number];
@@ -249,8 +253,8 @@ export interface AssetUpdatedPayload {
   assetId: Ulid;
   /** Names of the fields that changed. */
   changedFields: string[];
-  /** Provenance of the change (FR-MAM-8). */
-  source?: 'user' | 'ai' | 'technical';
+  /** Provenance of the change (FR-MAM-8): `user` for a person's write, `technical` for a value MAM measured from the media (EP-27.5). */
+  source?: MetadataSource;
   /** Present exactly when `changedFields` names `expiresAt`: the new value, or null when the expiry was cleared. The one lifecycle value a metadata edit changes, carried so a consumer keeping approvals (Scheduling) never has to read it back from MAM. */
   expiresAt?: string | null;
 }

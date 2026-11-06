@@ -67,7 +67,7 @@ orchestration ([BMS](bms.md)); AI inference ([AI](ai-enrichment.md) — MAM reco
 | **Subject** / **AssetSubject** | Subject: id, channelId, vocabularyId, term · join: assetId, subjectId | Relational |
 | **Person** | id, channelId, name, imageRef? | Relational + object (image) |
 | **AssetPerson** (cast & crew) | assetId, personId, roleForAsset, roleClass (on-screen/crew) | Relational (join) |
-| **MetadataProvenance** | assetId, field, source (user/AI/technical), confidence? | Relational/document |
+| **MetadataProvenance** | assetId, field, source (user/AI/technical), confidence? — as built (EP-27.5, §13u): `provenance` and `derived` maps on the asset record, by field | Relational/document |
 
 Provenance ([FR-MAM-8](../../requirements/05-functional-requirements.md#mam)) keeps
 **AI/derived** metadata distinct from **user-entered** — AI never silently overwrites mandatory
@@ -111,6 +111,7 @@ built, the expiry half (EP-24.5, §13z); the purge half is EP-24.6, owed by peop
 | `POST` | `/assets/{id}/approve` · `/reject` | Lifecycle verdict (approve body MAY set `expiresAt`; reject body MAY set `reason`/`retainUntil`). Either MAY name the workflow `reviewPointId` it is given at, carried on `asset.approved`/`asset.rejected` — what resolves a waiting review step (EP-22.6, bms.md §13f); only a verdict names one. | `asset:approve` |
 | `GET` | `/assets/{id}/verdicts` | Retained review-verdict history for the asset. ✅ EP-24.4 (§13y): `{ items }`, newest first — manual and automatic, append-only by the database. | `asset:read` |
 | `GET` / `PUT` | `/assets/{id}/shotlist` | The asset's notable segments, read in timeline order and replaced whole. ✅ EP-27.3 (§13v) | `asset:read` / `asset:write`, both on the `shotlist` field group |
+| `DELETE` | `/assets/{id}/derived/{field}` | Drop a value MAM held beside a field a person set, unused — taking it is a PATCH of the field. ✅ EP-27.5 (§13u) | `asset:write` on the field's group |
 | `GET` | `/search?q=…` | Simple search. | `asset:read` |
 | `POST` | `/search` | Advanced **faceted** search (category + subject + tag + person). | `asset:read` |
 | `GET` / `PUT` | `/field-schemas` | Define type/category custom fields. ✅ EP-27.4 (§13w): `PUT` without `?version=` is a NEW schema, with it a compare-and-set replacement; validated whole (422 `details.problems` by path); audited. (This row said `GET/POST` under `metadata:admin`. The authorization model's §3 catalogues `metadata:admin` for field schemas, but no starter role grants it and MAM never enforced it — the read was always `asset:read`, the write `taxonomy:admin`. Which of the two governs a schema is an open product question; until it is answered the code's `taxonomy:admin` stands.) | `asset:read` / `taxonomy:admin` |
@@ -325,6 +326,53 @@ createdBy RIM sent, and `asset.created` + the audit in one transaction with the 
 redelivery is a duplicate; an id that already exists in the same channel is a duplicate too; one in
 another channel is thrown to the broker, never overwritten. The original's FileRef row arrives by
 HSM's `file.placed` — a separate consumer — and the mirror retries a placement that beats the asset.
+
+## 13u. As built — EP-27.5, field provenance
+
+FR-MAM-8: automatically derived metadata is recorded distinctly from what a person entered, and never
+overwrites it (FR-AI-3 for AI). Decided in building it; the rule is `src/provenance.ts`, pure.
+
+- **Every core field carries where it came from**: `provenance.<field>` = `{ source, by, at,
+  confidence?, jobId? }` on the asset record, `source` the Tier-0 `MetadataSource` — `user` (a
+  person; `by` their id), `technical` (a measurement of the media; `by` the service that measured it,
+  `rim` or `mts`) or `ai`. A person's create stamps everything they send; a PATCH stamps the fields it
+  changed; `inherit` (EP-28.2) removes the field's entry, since the asset no longer sets it. Ingest
+  (`ingest.accepted`) stamps `title` (the file's name), `mediaType`, `fileType` and `durationSec` (the
+  probe's) as `technical`, with the ingest job's id — so an editor's retitle makes the title theirs
+  while the probe still owns the rest.
+- **Ranked user > technical > ai.** A derived value is APPLIED to a field only when nothing ranked
+  higher set it; otherwise it is HELD in `derived.<field>` = `{ value, source, by, at, … }`, beside
+  the field and never in it. An AI value is never applied to a mandatory field (the asset's
+  mandatory-metadata set), even an empty one: it is held for a person. The same value proposed
+  again holds nothing new.
+- **A field set before EP-27.5 has no provenance and ranks as a person's**: never overwritten. A
+  producer also does not PROMPT against it (below), so an upgrade does not cover old assets in held
+  values.
+- **A person settles a held value**: taking it is an ordinary PATCH of the field (which clears what was
+  held — the write is theirs); `DELETE /assets/{id}/derived/{field}` drops it unused, authorized as a
+  write of that field's group, an asset revision (`asset.updated` `changedFields:
+  [derived.<field>]`, `source: user`). Nothing held is a 404, as is a name that is not a core field.
+- **The producers today**: ingest (above), and MAM's FileRef mirror — `transcode.completed` carries
+  the duration MTS measured on each rendition that plays the media whole; the broadcast one's, else
+  the proxy's, is proposed as `technical` (`by: mts`, the job's id) ONLY where the asset has no
+  duration or a PERSON typed one. The original's probe outranks a rendition's measure, so a duration
+  ingest stamped is left alone. Filled: `asset.updated` `changedFields: [durationSec]`, `source:
+  technical`; held: `changedFields: [derived.durationSec]`. Either rides the same revision as the
+  renditions' attachment, and a later transcode that changes nothing writes nothing (#385).
+- **AI enrichment** (not built) is the third producer this is for: its `ai.enrichment.completed`
+  results become `deriveInto(…, { source: 'ai', confidence })` with the mandatory set passed. Its
+  person/tag/subject/caption SUGGESTIONS stay its own (ai-enrichment.md §3) — confirmed there, written
+  to MAM by a person's grant.
+- The audit delta is the record diff, so every provenance and held-value change is in the asset's
+  history with the field it belongs to.
+- Not yet: provenance on EXTENDED fields (`extended.<key>`) — no producer derives one yet.
+
+Studio: under each Identity field of the asset editor, a measured or AI value says so ("From the
+media file", "Suggested by AI · 82%", who and when on hover); a held value is shown with **Use this**
+(puts it in the form; saving takes it) and **Dismiss** — both only to someone who may edit the field.
+Smoke: an uploaded file's asset says its title is `technical` by `rim`; an asset created without a
+duration gets the one FFmpeg measured, stamped `technical` by `mts`, beside a title that is the
+person's.
 
 ## 13v. As built — EP-27.3, the shot list
 
