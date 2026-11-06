@@ -39,9 +39,10 @@ import { WebSocketService } from '../core/websocket.service.ts';
 import { TranscodeJobs } from './transcode-jobs.ts';
 import { AssetReview } from './asset-review.ts';
 import { AssetShotList } from './asset-shotlist.ts';
+import { AssetVersions } from './asset-versions.ts';
 import { FieldOrigin } from './field-origin.ts';
 
-type EditorSection = 'basic' | 'files' | 'review' | 'shotlist';
+type EditorSection = 'basic' | 'files' | 'review' | 'shotlist' | 'versions';
 
 /** After a transcode completes: how often, and how many times, to look for its rows in MAM. */
 const RENDITION_WAIT_MS = 1_000;
@@ -88,7 +89,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
 @Component({
   selector: 'atlas-asset-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranscodeJobs, AssetReview, AssetShotList, FieldOrigin],
+  imports: [TranscodeJobs, AssetReview, AssetShotList, AssetVersions, FieldOrigin],
   template: `
     @if (loading()) {
       <div class="state">
@@ -146,6 +147,15 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
           (click)="section.set('shotlist')"
         >
           {{ locale.t('assetEditor.shotlist') }}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          [attr.aria-selected]="section() === 'versions'"
+          [class.active]="section() === 'versions'"
+          (click)="section.set('versions')"
+        >
+          {{ locale.t('assetEditor.versions') }}
         </button>
       </nav>
 
@@ -663,6 +673,12 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
         />
       } @else if (section() === 'shotlist') {
         <atlas-asset-shotlist [asset]="current" [canEdit]="canEdit('shotlist')" />
+      } @else if (section() === 'versions') {
+        <atlas-asset-versions
+          [asset]="current"
+          [canEdit]="canEdit('core')"
+          (changed)="reload({ fresh: true })"
+        />
       } @else if (section() === 'files') {
         <section class="files">
           <div class="file-summary">

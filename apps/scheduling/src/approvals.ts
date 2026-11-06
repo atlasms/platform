@@ -26,6 +26,12 @@ export interface MediaApproval {
   expiresAt?: string;
   /** `occurredAt` of the event that set `expiresAt` (or cleared it). */
   expiryAsOf?: string;
+  /**
+   * The version that superseded this asset (`asset.replaced`, EP-27.6). Set once — MAM makes a
+   * version from the newest only — and never cleared. Validation warns on an item still naming it;
+   * nothing re-points the item (decided with the product owner: an operator does, by hand).
+   */
+  replacedById?: string;
 }
 
 /** The asset events this record is built from; every other `asset.*` is acked and ignored. */
@@ -35,7 +41,14 @@ export const APPROVAL_EVENTS = [
   'asset.expired',
   'asset.deleted',
   'asset.updated',
+  'asset.replaced',
 ] as const;
+
+/** The asset an event is about: `asset.replaced` names it `oldId`, every other one `assetId`. */
+export function assetOf(envelope: Envelope): string {
+  const payload = envelope.payload as { assetId?: string; oldId?: string };
+  return (envelope.type === 'asset.replaced' ? payload.oldId : payload.assetId) ?? '';
+}
 
 const VERDICTS: Record<string, ApprovalState> = {
   'asset.approved': 'approved',
@@ -57,9 +70,8 @@ export function applyAssetEvent(
   envelope: Envelope,
 ): MediaApproval | undefined {
   const at = envelope.occurredAt;
-  const payload = envelope.payload as { assetId: string };
   const base: MediaApproval = current ?? {
-    assetId: payload.assetId,
+    assetId: assetOf(envelope),
     channelId: envelope.channelId,
     state: 'unknown',
   };
@@ -89,6 +101,14 @@ export function applyAssetEvent(
       ...rest,
       ...(expiry.value !== undefined ? { expiresAt: expiry.value } : {}),
       expiryAsOf: at,
+    };
+    changed = true;
+  }
+
+  if (envelope.type === 'asset.replaced' && next.replacedById === undefined) {
+    next = {
+      ...next,
+      replacedById: (envelope.payload as unknown as EventPayloads['asset.replaced']).newId,
     };
     changed = true;
   }

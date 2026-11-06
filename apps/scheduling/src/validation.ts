@@ -1,7 +1,7 @@
 // On-demand validation of a reel (EP-31; scheduling.md §6.2, FR-SCH-2/3) — pure.
 //
 // ADVISORY by design (data-model §3.4): the write path stores overlaps and gaps without comment,
-// and this is where they are named. Six validators run:
+// and this is where they are named. These validators run:
 //   - overlap  (critical) an item starts before the previous one ends, or a sub-schedule item runs
 //              outside its live item or into its sibling;
 //   - anchor   (critical) the same, where the item run into is FIXED — a time-locked start that
@@ -18,6 +18,9 @@
 //              is not online and intact in this channel's storage — HSM's answer, asked at
 //              validation time (availability.ts). When HSM could not be asked, this validator
 //              does not run and the report names it in `unchecked`, never silently.
+//   - superseded (warning) the media has a newer version (EP-27.6, `asset.replaced`). A warning: the
+//              old media is still what it was, and its own approval is judged as ever. Nothing
+//              re-points the item — decided with the product owner; the operator does, by hand.
 
 import { DEFAULT_RENDITION, renditionKey, type RenditionState } from './availability.ts';
 import type { MediaApproval } from './approvals.ts';
@@ -25,7 +28,7 @@ import { covered, governingWindows, type RightsWindow } from './rights.ts';
 import { inReelOrder, type ScheduleItem } from './schedule.ts';
 
 export type IssueKind =
-  'gap' | 'overlap' | 'anchor' | 'approval' | 'expiry' | 'rights' | 'availability';
+  'gap' | 'overlap' | 'anchor' | 'approval' | 'expiry' | 'rights' | 'availability' | 'superseded';
 export type Severity = 'info' | 'warning' | 'critical';
 
 export interface ValidationIssue {
@@ -207,6 +210,14 @@ export function validateReel(
       }
     }
     const approval = approvals.get(item.mediaId);
+    if (approval?.replacedById !== undefined) {
+      issues.push({
+        kind: 'superseded',
+        itemId: item.id,
+        severity: 'warning',
+        message: `${label(item)} at ${t(item.start)}: media ${item.mediaId} has a new version, ${approval.replacedById} — re-point the item to air it`,
+      });
+    }
     const state = approval?.state ?? 'unknown';
     if (!isApproved(state)) {
       issues.push({

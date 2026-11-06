@@ -23,6 +23,12 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- **`superseded`** (EP-27.6) in `schedule.validated`'s issue `kind` (and Scheduling's `IssueKind`):
+  a WARNING on an item whose media has a newer version (`asset.replaced`) — reels are not re-pointed
+  automatically (scheduling.md §6.3). A consumer switching over the kinds meets a new value.
+- **`asset.replaced` has a producer** (EP-27.6): MAM's `POST /assets/{id}/versions` (mam.md §13t).
+  The payload is unchanged; Scheduling consumes it.
+
 - **`$defs/MetadataSource`** (EP-27.5) in `common.schema.json`: `user` / `technical` / `ai`, ranked
   in that order when values meet on one field (mam.md §13u). `asset.updated`'s `source` now `$ref`s it
   — the same three values it listed inline, so no consumer sees a difference; the generated

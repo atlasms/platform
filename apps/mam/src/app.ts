@@ -506,6 +506,22 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     }),
   );
 
+  // EP-27.6: the version chain — make another asset (the new media) this one's next version, and
+  // read the chain. 201: the new version, as it now stands.
+  app.post('/api/v1/assets/:id/versions', async (req, reply) =>
+    handle(req, reply, async () => {
+      const { id } = req.params as { id: string };
+      const version = await options.service.createVersion(await callerOf(req), id, req.body);
+      return reply.code(201).send(version);
+    }),
+  );
+
+  app.get('/api/v1/assets/:id/versions', async (req, reply) =>
+    handle(req, reply, async () => ({
+      items: await options.service.versions(await callerOf(req), (req.params as { id: string }).id),
+    })),
+  );
+
   // Free-form tags (EP-17.3). PUT, not PATCH: the body is the asset's complete tag set, which is
   // what a tag input hands back — there is no partial form of "these are the keywords".
   app.get('/api/v1/assets/:id/tags', async (req, reply) =>

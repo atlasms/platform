@@ -19,7 +19,9 @@ export const MamOperations = {
   getAsset: { method: 'GET', path: '/api/v1/assets/{id}', params: ['id'] },
   /** Update asset metadata (scope asset:write) */
   updateAsset: { method: 'PATCH', path: '/api/v1/assets/{id}', params: ['id'] },
-  /** Create a new version (clone metadata on replace, FR-MAM-6) */
+  /** The asset's version chain, oldest first (scope asset:read) */
+  listAssetVersions: { method: 'GET', path: '/api/v1/assets/{id}/versions', params: ['id'] },
+  /** Make another asset this one's next version, cloning its metadata (FR-MAM-6, FR-APP-3) */
   createAssetVersion: { method: 'POST', path: '/api/v1/assets/{id}/versions', params: ['id'] },
   /** Approve an asset for air - manual verdict (scope asset:approve) */
   approveAsset: { method: 'POST', path: '/api/v1/assets/{id}/approve', params: ['id'] },

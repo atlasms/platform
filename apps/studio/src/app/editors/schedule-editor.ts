@@ -62,6 +62,7 @@ const ISSUE_KIND_LABEL: Readonly<Record<IssueKind, string>> = {
   expiry: 'scheduleEditor.issue.expiry',
   rights: 'scheduleEditor.issue.rights',
   availability: 'scheduleEditor.issue.availability',
+  superseded: 'scheduleEditor.issue.superseded',
 };
 
 interface NewItemForm {

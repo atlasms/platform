@@ -54,8 +54,9 @@ Solid lines = MAM-owned; dotted lines = **cross-service read views** (§1.9).
 | `recommendedBroadcastEnd` | date? | Advisory window end. |
 | `expiresAt` | date-time? | **Enforced** usable-until → re-review ([review lifecycle](../roadmap/15-review-lifecycle-implementation-plan.md)). |
 | `retainUntil` | date-time? | For rejected media: purge time. |
-| `version` | integer | Version number within the id's version chain (§1.7). |
-| `replacesId` | ULID? | The prior version this supersedes (media-file change). |
+| `version` | integer | The record's REVISION — bumped on every write, the compare-and-set token and the audit revision. (It said "version number within the chain"; the chain is the two links below, and an asset's place in it is read from them.) |
+| `replacesId` | ULID? | The prior version this supersedes (media-file change, §1.7). |
+| `replacedById` | ULID? | The version that superseded this one — set, the asset takes no further verdict (EP-27.6). |
 | `createdBy` | user id | |
 | `createdAt` | date-time | |
 | `provenance` | map? | Per core field, who or what set it — `{ source: user / technical / ai, by, at, confidence?, jobId? }` (FR-MAM-8, EP-27.5; [mam.md §13u](services/mam.md)). |
@@ -163,8 +164,11 @@ Two different mechanisms — **do not conflate**:
 
 - **Version** = a **new media file** supersedes the old → **a new Asset `id`** with metadata cloned,
   linked by `replacesId` (prev) and discoverable as the next version (the asset whose
-  `replacesId = this.id`). Emits `asset.replaced(oldId,newId)`; Scheduling swaps references. This is
-  the "Versions" tab (prev/next).
+  `replacesId = this.id`). Emits `asset.replaced(oldId,newId)`. This is the "Versions" tab
+  (prev/next). As built (EP-27.6, [mam.md §13t](services/mam.md)): the new media arrives as its own
+  asset and `POST /assets/{id}/versions` links it; the old one takes `replacedById`, keeps its state
+  and takes no further verdict; Scheduling carries the old asset's rights windows and WARNS on reels
+  still naming it — it does not swap the references (decided 2026-11-06).
 - **Metadata edit** = a field change on the **same** `id` → recorded as a **revision** in the
   [change-history/diff](services/logging-analytics.md#64-change-history--diff-read-model) (FR-AUD),
   **not** a new version.

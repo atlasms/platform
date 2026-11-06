@@ -27,7 +27,7 @@ import {
   type EventPayloads,
 } from '@atlas/contracts';
 import type { Message, OutboxRecord } from '@atlas/messaging';
-import { canEnforce, type EffectivePolicy } from '@atlas/policy';
+import { canEnforce, compile, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, Forbidden, NotFound, ValidationError } from '@atlas/service-kit';
 import {
   checkReel,
@@ -39,7 +39,7 @@ import {
   type ScheduleItemInput,
   type UpdateScheduleInput,
 } from './schedule.ts';
-import { APPROVAL_EVENTS, applyAssetEvent, type MediaApproval } from './approvals.ts';
+import { APPROVAL_EVENTS, applyAssetEvent, assetOf, type MediaApproval } from './approvals.ts';
 import { planCopy, type CopyRequest } from './copy.ts';
 import type { RightsWindow, RightsWindowInput } from './rights.ts';
 import type { ScheduleStore, ScheduleTx } from './store.ts';
@@ -75,7 +75,12 @@ export interface Caller {
   channelId: string;
   policy: EffectivePolicy;
   correlationId?: string;
+  /** `service` for Scheduling's own writes (a consumer's), so the audit names no person. */
+  actorKind?: 'user' | 'service';
 }
+
+/** Scheduling's own authority for a consumer's write — it holds nothing; it is never checked. */
+const SYSTEM_POLICY = compile({ subjectId: 'scheduling', permVersion: 0, rules: [] });
 
 export interface SchedulingServiceOptions {
   store: ScheduleStore;
@@ -268,13 +273,24 @@ export class SchedulingService {
       );
     }
 
+    // EP-27.6: a replacement carries the old asset's OWN rights windows to the new version
+    // (decided with the product owner) — without them the new media would be governed by its
+    // category's windows, or by none: looser than the licence. Read before the transaction (they
+    // are not written by it); copied in it, once, with the seen-mark and the record.
+    const assetId = assetOf(envelope);
+    const inherited =
+      envelope.type === 'asset.replaced'
+        ? (await this.store.rightsWindows(envelope.channelId, { assetIds: [assetId] })).filter(
+            (w) => w.assetId === assetId,
+          )
+        : [];
+
     let outcome: ApprovalOutcome = 'unchanged';
     await this.store.transaction(async (tx) => {
       if (!(await tx.markSeen(msg.id))) {
         outcome = 'duplicate';
         return;
       }
-      const assetId = (envelope.payload as { assetId: string }).assetId;
       const current = await tx.approvalForUpdate(assetId);
       // An asset id is global, but a record is the channel's that announced it first; another
       // channel claiming the same id is not a fact about this record.
@@ -290,9 +306,43 @@ export class SchedulingService {
         // seen-mark with it) and let the broker redeliver, which reads the record it made.
         throw new Conflict(`approval record for ${assetId} was created concurrently; retry`);
       }
+      if (next.replacedById !== undefined && current?.replacedById === undefined) {
+        await this.carryRights(envelope, inherited, next.replacedById, tx);
+      }
       outcome = 'applied';
     });
     return outcome;
+  }
+
+  /** Each of the old asset's windows, copied onto its new version — a new window, audited. */
+  private async carryRights(
+    envelope: Envelope,
+    windows: readonly RightsWindow[],
+    newId: string,
+    tx: ScheduleTx,
+  ): Promise<void> {
+    const system: Caller = {
+      userId: 'scheduling',
+      channelId: envelope.channelId,
+      policy: SYSTEM_POLICY,
+      actorKind: 'service',
+      ...(envelope.correlationId !== undefined ? { correlationId: envelope.correlationId } : {}),
+    };
+    const at = this.now().toISOString();
+    for (const window of windows) {
+      const copy: RightsWindow = {
+        ...window,
+        id: ulid(),
+        assetId: newId,
+        version: 1,
+        createdBy: 'scheduling',
+        createdAt: at,
+        updatedAt: at,
+        notes: window.notes ?? `Copied from ${window.assetId}'s window ${window.id} (new version)`,
+      };
+      await tx.putRightsWindow(copy);
+      await tx.enqueue(this.rightsAudit(system, 'rights-window.copied', copy, undefined));
+    }
   }
 
   // --- rights windows (EP-31; rights.ts) -------------------------------------------------------------
@@ -717,7 +767,7 @@ export class SchedulingService {
       type,
       channelId,
       payload: payload as Record<string, unknown>,
-      actor: { kind: 'user', id: caller.userId },
+      actor: { kind: caller.actorKind ?? 'user', id: caller.userId },
       ...(caller.correlationId !== undefined ? { correlationId: caller.correlationId } : {}),
     });
     const headers = this.traceHeaders();

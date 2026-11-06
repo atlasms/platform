@@ -601,7 +601,15 @@ export interface ScheduleValidatedPayload {
   scheduleId: Ulid;
   valid: boolean;
   issues?: {
-    kind: 'gap' | 'overlap' | 'anchor' | 'approval' | 'expiry' | 'rights' | 'availability';
+    kind:
+      | 'gap'
+      | 'overlap'
+      | 'anchor'
+      | 'approval'
+      | 'expiry'
+      | 'rights'
+      | 'availability'
+      | 'superseded';
     itemId?: Ulid;
     severity?: Severity;
     message?: string;

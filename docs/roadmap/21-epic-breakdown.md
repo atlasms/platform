@@ -494,7 +494,7 @@ Source: [media-editor.md](../architecture/services/media-editor.md) (D3: basic N
 | 26.4 | Proxy scrubbing on the VTT filmstrip (with EP-29.3) | 3 |
 | 26.5 | Transitions and filters from an allowlist (never raw FFmpeg — the profile-registry rule) | 5 |
 | 26.6 | `editor.render.requested` → MTS render job | 5 |
-| 26.7 | Render to a new version (with EP-27.5's version chain) | 3 |
+| 26.7 | Render to a new version (with EP-27.6's version chain — the render arrives as its own asset and is linked by `POST /assets/{id}/versions`) | 3 |
 | 26.8 | Render progress + failure handling in the editor | 2 |
 
 **Spike first:** 26.1 — the approach is decided (short-GOP editing proxy); the spike confirms it and its report is the artifact.
@@ -510,7 +510,7 @@ Source: [mam-plan](services/mam-plan.md) §2.
 | 27.3 | ✅ Shot-list — time-coded segments on an asset, audited: millisecond offsets, replaced whole, every change an asset revision under the `shotlist` field group; Studio's Shot list section (mam.md §13v) | 5 |
 | 27.4 | ✅ Metadata schema editor — field schemas in Studio's Admin panel: the view + an editor tab; MAM's write now validated (by path), compare-and-set, audited (mam.md §13w) | 5 |
 | 27.5 | ✅ Auto-vs-manual field provenance — AI/derived values kept distinct, never overwriting what a person entered: every core field's source (user > technical > ai), a lower-ranked value held beside the field, settled by a PATCH or dismissed; ingest and MTS's measured duration are its producers (mam.md §13u) | 3 |
-| 27.6 | Version chain + replace-with-clone — `POST /assets/{id}/versions`, `asset.replaced(oldId, newId)`, Scheduling swaps references | 5 |
+| 27.6 | ✅ Version chain + replace-with-clone — `POST /assets/{id}/versions` makes another asset (the new media) the next version, its metadata cloned; `asset.replaced(oldId, newId)`; the old asset takes no further verdict; Scheduling carries the old asset's rights windows and WARNS on reels still naming it — never re-points them (decided 2026-11-06; mam.md §13t, scheduling.md §6.3) | 5 |
 | 27.7 | Search performance check at a target catalogue size against NFR-PERF — the threshold past which 27.2 moves search to OpenSearch | 3 |
 
 **Decided 2026-10-12:** 27.2 → Postgres, measured by 27.7.

@@ -107,7 +107,7 @@ built, the expiry half (EP-24.5, §13z); the purge half is EP-24.6, owed by peop
 | Method | Path | Purpose | Authz |
 |--------|------|---------|-------|
 | `GET/POST/PATCH` | `/assets`, `/assets/{id}` | Core + extensible metadata CRUD. | `asset:read`/`asset:write` (dept-scoped) |
-| `POST` | `/assets/{id}/versions` | Create a new version (clone metadata on replace). | `asset:write` |
+| `GET` / `POST` | `/assets/{id}/versions` | The version chain, oldest first / make another asset (the new media) this one's next version, cloning its metadata. ✅ EP-27.6 (§13t) | `asset:read` / `asset:write` on `core` of `{id}` + the copied groups on the new asset |
 | `POST` | `/assets/{id}/approve` · `/reject` | Lifecycle verdict (approve body MAY set `expiresAt`; reject body MAY set `reason`/`retainUntil`). Either MAY name the workflow `reviewPointId` it is given at, carried on `asset.approved`/`asset.rejected` — what resolves a waiting review step (EP-22.6, bms.md §13f); only a verdict names one. | `asset:approve` |
 | `GET` | `/assets/{id}/verdicts` | Retained review-verdict history for the asset. ✅ EP-24.4 (§13y): `{ items }`, newest first — manual and automatic, append-only by the database. | `asset:read` |
 | `GET` / `PUT` | `/assets/{id}/shotlist` | The asset's notable segments, read in timeline order and replaced whole. ✅ EP-27.3 (§13v) | `asset:read` / `asset:write`, both on the `shotlist` field group |
@@ -159,7 +159,8 @@ drift ([Messaging §4.2](../04-messaging-and-data.md#42-consistency)).
 
 ### 6.3 Replacement
 On replace, MAM **clones** the prior version's metadata to a **new asset id** and emits
-`asset.replaced(oldId,newId)` so [Scheduling](scheduling.md) can swap references
+`asset.replaced(oldId,newId)`, on which [Scheduling](scheduling.md) warns on the reels that still name
+the old one and carries its rights windows — it never re-points them on its own (§13t)
 ([FR-MAM-6](../../requirements/05-functional-requirements.md#mam),
 [FR-APP-3](../../requirements/05-functional-requirements.md#approval)).
 
@@ -326,6 +327,51 @@ createdBy RIM sent, and `asset.created` + the audit in one transaction with the 
 redelivery is a duplicate; an id that already exists in the same channel is a duplicate too; one in
 another channel is thrown to the broker, never overwritten. The original's FileRef row arrives by
 HSM's `file.placed` — a separate consumer — and the mirror retries a placement that beats the asset.
+
+## 13t. As built — EP-27.6, the version chain
+
+FR-MAM-6 / FR-APP-3 (data-model §1.7): a new media FILE is a new asset id, its metadata cloned from
+the version it supersedes. Decided in building it (the first three with the product owner,
+2026-11-06); the rule is `src/versions.ts`, pure.
+
+- **The new media arrives as an asset of its own** — an upload through RIM (`ingest.accepted`), later
+  an editor's render (EP-26.7) — and `POST /assets/{id}/versions` `{ assetId }` makes it the NEXT
+  version of `{id}`. Nothing in RIM or HSM changes: the new file is placed under its own asset id, as
+  every file is.
+- **The copy**: every core field `{id}` has — title, description, episode, category, structure,
+  genre, supply type, production group/date, subjects, classifications, cast, allowed broadcast
+  count — is copied onto the new version with the provenance it had (EP-27.5), and any value held
+  beside it there is settled; the extended document and the tags are merged in. Two things win over
+  the copy: a field a PERSON already set on the new asset (they set it for this media), and what
+  the new media measures of itself — its file type and duration. NOT copied: the approval and what
+  is bound to it (`expiresAt`, `approvedBy`, `retainUntil`) — the new media is reviewed on its own;
+  the shot list — its offsets are into the old media's timeline; the files; the verdicts.
+- **The link**: the new version takes `replacesId`, the old one `replacedById` (so the chain reads
+  forwards without a query). `replaced` is NOT a state — lifecycle.ts's reconciliation stands: the
+  old asset keeps its own, but takes no further verdict (approve/reject is a 409 naming its
+  successor). One linear chain: an asset is replaced once (a second time is a 409 — make the next
+  version from the newest), the new asset must not already be in a chain, must be of the same media
+  type (422) and must have had no verdict (409; it is reviewed after it is made).
+- **One transaction**: both records (compare-and-set on both versions — two concurrent replacements
+  of one asset commit one), the merged tags and document, the search projection, `asset.updated` for
+  the new version (`changedFields`: what the copy changed + `replacesId`), `asset.replaced` `{ oldId,
+  newId }`, and BOTH audit deltas (the old asset's action is `asset.replaced`).
+- **Authorized** (decided with the product owner): `asset:write` on the OLD asset's `core` group —
+  superseding it is an editorial act — and, on the new asset, `asset:write` for every group the copy
+  writes (`core` for the link; `taxonomy`, `cast`, `rights`, extended fields' groups as copied),
+  checked where the new asset is now AND where the copy puts it.
+- **`GET /assets/{id}/versions`**: the chain, oldest first, the asset itself included; a version the
+  caller may not read is left out.
+- **Scheduling** (scheduling.md §6.4), decided with the product owner: reels are NEVER re-pointed
+  automatically — validation warns on an item naming a superseded asset — and the old asset's own
+  rights windows are copied to the new version.
+
+Studio: the asset editor's **Versions** section — the chain (this version marked, the others open in
+their tab), a superseded asset points at its successor, and on the newest, a holder of `core` picks
+an asset of the same media type with no verdict yet (an upload of the new media) and makes it the new
+version, which opens. Smoke: a version made through the gateway carries the copied metadata, reads
+back as a chain of two, is refused a second time, is in the old asset's history, and Scheduling
+carries its rights window.
 
 ## 13u. As built — EP-27.5, field provenance
 

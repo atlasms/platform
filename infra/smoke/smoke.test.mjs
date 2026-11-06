@@ -647,6 +647,91 @@ test('smoke: EP-27.3 — a shot list through the gateway: replaced whole, read i
   assert.equal(revision.delta.shotlist.after.length, 2);
 });
 
+test('smoke: EP-27.6 — a new version through the gateway: metadata copied, the chain read, both audited, its rights windows carried by Scheduling', async () => {
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const make = async (body) => {
+    const res = await get('/api/v1/assets', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+    assert.equal(res.status, 201, res.text);
+    return json(res);
+  };
+  const old = await make({
+    title: 'Versioned bulletin',
+    description: 'The first cut',
+    mediaType: 'video',
+    fileType: 'mxf',
+    episodeNo: 7,
+    categoryId: await categoryFor(token),
+  });
+  // The new media, as an upload would arrive: its own asset, the file's name for a title.
+  const next = await make({ title: 'bulletin_recut.mov', mediaType: 'video', fileType: 'mov' });
+
+  // The old asset is licensed for an hour; Scheduling carries that to the new version.
+  const from = new Date(Date.now() + 86_400_000).toISOString();
+  const to = new Date(Date.now() + 90_000_000).toISOString();
+  const licensed = await get('/api/v1/rights-windows', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId: old.id, validFrom: from, validTo: to }),
+  });
+  assert.equal(licensed.status, 201, licensed.text);
+
+  const made = await get(`/api/v1/assets/${old.id}/versions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId: next.id }),
+  });
+  assert.equal(made.status, 201, made.text);
+  const version = json(made);
+  assert.deepEqual(
+    [version.id, version.title, version.description, version.episodeNo, version.fileType],
+    [next.id, 'Versioned bulletin', 'The first cut', 7, 'mov'],
+  );
+  assert.equal(version.replacesId, old.id);
+  const again = await get(`/api/v1/assets/${old.id}/versions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId: next.id }),
+  });
+  assert.equal(again.status, 409, 'an asset is replaced once; the next version is made from it');
+
+  const chain = json(await get(`/api/v1/assets/${next.id}/versions`, { headers }));
+  assert.deepEqual(
+    chain.items.map((a) => a.id),
+    [old.id, next.id],
+  );
+  assert.equal(chain.items[0].replacedById, next.id);
+
+  const deadline = Date.now() + 20_000;
+  let audited = false;
+  let carried = [];
+  for (;;) {
+    const history = json(await get(`/api/v1/history/asset/${old.id}`, { headers }));
+    audited = history.revisions.some((r) => r.action === 'asset.replaced');
+    carried = json(await get(`/api/v1/rights-windows?assetId=${next.id}`, { headers }));
+    if ((audited && carried.length > 0) || Date.now() > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.ok(audited, 'the replacement never reached the old asset’s history');
+  assert.equal(carried.length, 1, 'Scheduling never carried the rights window to the new version');
+  assert.deepEqual(
+    [carried[0].validFrom, carried[0].validTo],
+    [json(licensed).validFrom, json(licensed).validTo],
+  );
+  for (const w of [json(licensed), carried[0]]) {
+    const removed = await get(`/api/v1/rights-windows/${w.id}?version=${w.version}`, {
+      method: 'DELETE',
+      headers,
+    });
+    assert.equal(removed.status, 204, removed.text);
+  }
+});
+
 test('smoke: EP-19.3 — the audit log browse finds a write by its correlation id', async () => {
   // The request view: everything one request caused, read back from the log. The create carries
   // its correlation id on the response; MAM wrote it into both envelopes — the domain event and

@@ -12,6 +12,7 @@
 import {
   buildEnvelope,
   envelopeShapeErrors,
+  isUlid,
   subjectFor,
   ulid,
   validatePayload,
@@ -22,6 +23,7 @@ import {
 } from '@atlas/contracts';
 import { durationMsOf, parseShotList, sameShotList, type ShotListItem } from './shotlist.ts';
 import { deriveInto, dismissDerived, stampedBy, userWrote } from './provenance.ts';
+import { cloneOnto, mergeExtended, mergeTagLabels, versionProblem } from './versions.ts';
 import type { Message } from '@atlas/messaging';
 import { can, canEnforce, compile, type EffectivePolicy } from '@atlas/policy';
 import {
@@ -215,6 +217,9 @@ const PAGE_OVERFETCH = 4;
  * this point".
  */
 const MAX_PAGE_SCANS = 5;
+
+/** How many versions either side of an asset its chain read walks (EP-27.6) — a bound, not a rule. */
+const MAX_CHAIN = 100;
 
 /** Where to resume. `cursor` is the last id the caller has already been shown a decision for. */
 export interface ListPage {
@@ -771,6 +776,142 @@ export class MamService {
     return updated;
   }
 
+  // --- the version chain (EP-27.6; versions.ts) ------------------------------
+
+  /**
+   * Make `newId` — an asset carrying new media — the next version of `id` (FR-MAM-6, FR-APP-3):
+   * the old asset's metadata copied onto it by versions.ts's rule, the two linked (`replacesId` /
+   * `replacedById`), `asset.replaced` announced. ONE transaction: both records, the copied tags and
+   * document, both audit deltas and both events, or none of it.
+   *
+   * Authorized, decided with the product owner: `asset:write` on the OLD asset's `core` group —
+   * superseding it is an editorial act — and `asset:write` on the new asset for every group the
+   * copy writes, where the new asset is now AND where the copy puts it (its category may change).
+   */
+  async createVersion(caller: Caller, id: string, body: unknown): Promise<Asset> {
+    const newId = parseVersionInput(body);
+    return this.onCurrent(() => this.createVersionOnce(caller, id, newId));
+  }
+
+  private async createVersionOnce(caller: Caller, id: string, newId: string): Promise<Asset> {
+    const previous = await this.fresh(caller, id);
+    const next = await this.fresh(caller, newId);
+    const problem = versionProblem(previous, next);
+    if (problem) {
+      throw problem.status === 409
+        ? new Conflict(problem.message)
+        : new ValidationError(problem.message);
+    }
+    this.authorize(caller, 'asset:write', await this.scopeOf(previous), 'core');
+
+    const { asset: copied, cloned } = cloneOnto(previous, next);
+    const [previousTags, nextTags, previousDoc, nextDoc] = await Promise.all([
+      this.options.store.tagsOf(previous.id),
+      this.options.store.tagsOf(next.id),
+      this.options.store.extended(previous.id),
+      this.options.store.extended(next.id),
+    ]);
+    const tags = mergeTagLabels(previousTags, nextTags);
+    const doc = mergeExtended(previousDoc ?? {}, nextDoc ?? {});
+    const fields = await this.fieldsFor(copied);
+    const groups = [
+      ...new Set([
+        'core', // `replacesId` — the link itself
+        ...groupsForCoreFields(cloned),
+        ...(tags.added ? [TAXONOMY_GROUP] : []),
+        ...groupsForExtended(fields, doc.cloned),
+      ]),
+    ].sort();
+    this.authorizeGroups(caller, 'asset:write', await this.scopeOf(next), groups);
+    this.authorizeGroups(caller, 'asset:write', await this.scopeOf(copied), groups);
+
+    const at = this.now().toISOString();
+    const version: Asset = { ...copied, version: next.version + 1, updatedAt: at };
+    const superseded: Asset = {
+      ...previous,
+      replacedById: next.id,
+      version: previous.version + 1,
+      updatedAt: at,
+    };
+    const changedFields = [
+      ...cloned,
+      ...(tags.added ? ['tags'] : []),
+      ...doc.cloned.map((name) => `${EXTENDED_PREFIX}${name}`),
+      'replacesId',
+    ];
+    const sideTables: Delta = {
+      ...(tags.added
+        ? {
+            tags: {
+              before: nextTags.map((t) => t.label),
+              after: tags.labels.map((t) => t.label),
+            },
+          }
+        : {}),
+      ...(doc.cloned.length > 0 ? { extended: { before: nextDoc ?? {}, after: doc.merged } } : {}),
+    };
+    const replaced = this.eventRecord(caller, previous.channelId, 'asset.replaced', {
+      oldId: previous.id,
+      newId: next.id,
+    } satisfies EventPayloads['asset.replaced']);
+    const supersededAudit = this.auditRecord(caller, superseded, previous, 'asset.replaced');
+
+    await this.commitWith(
+      caller,
+      version,
+      next,
+      {
+        type: 'asset.updated',
+        payload: { assetId: version.id, changedFields, source: 'user' },
+        delta: sideTables,
+      },
+      async (tx) => {
+        await tx.put(superseded, previous.version);
+        if (tags.added) {
+          await tx.setTags(
+            version.id,
+            version.channelId,
+            tags.labels.map((t) => ({ id: ulid(), ...t })),
+          );
+        }
+        if (doc.cloned.length > 0) await tx.putExtended(version.id, version.channelId, doc.merged);
+        await tx.enqueue(replaced);
+        await tx.enqueue(supersededAudit);
+      },
+      { tagLabels: tags.labels.map((t) => t.label), extended: doc.merged },
+    );
+    await this.evictCached(previous.id);
+    return version;
+  }
+
+  /**
+   * The asset's version chain, oldest first (EP-27.6) — what Studio's Versions section shows.
+   * Each version is listed only where the caller may read it: versions can sit in different
+   * categories, and the chain is no way round a narrower grant.
+   */
+  async versions(caller: Caller, id: string): Promise<Asset[]> {
+    const asset = await this.get(caller, id);
+    const back: Asset[] = [];
+    const forward: Asset[] = [];
+    const seen = new Set([asset.id]);
+    const walk = async (start: string | undefined, step: (a: Asset) => string | undefined) => {
+      const out: Asset[] = [];
+      for (let at = start; at !== undefined && out.length < MAX_CHAIN && !seen.has(at);) {
+        seen.add(at);
+        const found = await this.options.store.get(at);
+        if (!found || found.channelId !== caller.channelId) break;
+        out.push(found);
+        at = step(found);
+      }
+      return out;
+    };
+    back.push(...(await walk(asset.replacesId, (a) => a.replacesId)));
+    forward.push(...(await walk(asset.replacedById, (a) => a.replacedById)));
+    const chain = [...back.reverse(), asset, ...forward];
+    const paths = await this.pathsOf(chain);
+    return chain.filter((a) => a.id === asset.id || this.mayRead(caller, a, paths));
+  }
+
   /**
    * Move an asset through its lifecycle.
    *
@@ -960,6 +1101,12 @@ export class MamService {
         throw new ValidationError('reviewPointId must be a non-empty string of at most 200');
     }
 
+    // A superseded version takes no further verdict (EP-27.6): the new version is the one reviewed.
+    if ((action === 'approve' || action === 'reject') && existing.replacedById !== undefined) {
+      throw new Conflict(
+        `asset ${existing.id} is replaced by ${existing.replacedById}; review the new version`,
+      );
+    }
     const context = await this.contextFor(existing);
     const result = canTransition(context, action);
     if (!result.allowed) {
@@ -3094,6 +3241,18 @@ const UPDATABLE_FIELDS = [
  * The duration MTS measured for the media, from the renditions that play it whole — broadcast
  * first, then the proxy. A still has none.
  */
+/** `POST /assets/{id}/versions`'s body: `{ assetId }`, the asset carrying the new media (EP-27.6). */
+function parseVersionInput(body: unknown): string {
+  const assetId =
+    typeof body === 'object' && body !== null && !Array.isArray(body)
+      ? (body as Record<string, unknown>)['assetId']
+      : undefined;
+  if (typeof assetId !== 'string' || !isUlid(assetId)) {
+    throw new ValidationError('assetId is required: the asset carrying the new media, a ULID');
+  }
+  return assetId;
+}
+
 function measuredDuration(
   renditions: readonly { kind: string; durationSec?: number }[],
 ): number | undefined {

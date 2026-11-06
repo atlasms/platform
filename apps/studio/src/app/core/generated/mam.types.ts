@@ -189,7 +189,10 @@ export interface Asset {
   approvedBy?: string;
   /** For rejected media: purge time (FR-APP-8). */
   retainUntil?: string;
+  /** The version this one supersedes (EP-27.6). */
   replacesId?: Ulid;
+  /** The version that superseded this one — set, the asset takes no further verdict (EP-27.6). */
+  replacedById?: Ulid;
   /** True once MTS renditions have been attached; individual files arrive through the FileRef projection (EP-17.8). */
   hasRenditions: boolean;
   /** Who or what set each core field (EP-27.5, FR-MAM-8), by field name. A field set before EP-27.5 has no entry — read it as possibly a person's: it is never overwritten by a derived value. */
