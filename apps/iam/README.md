@@ -118,9 +118,10 @@ npx nx test @atlas/iam                                                          
 ATLAS_PG_URL=postgres://atlas:atlas@localhost:55432/atlas npx nx test @atlas/iam   # + Postgres
 ```
 
-| Variable                                         | Default                            |                                            |
-| ------------------------------------------------ | ---------------------------------- | ------------------------------------------ |
-| `ATLAS_PG_URL`                                   | `postgres://…@postgres:5432/atlas` | waited for at startup, within 120 s        |
-| `ATLAS_NATS_URL`                                 | `nats://nats:4222`                 | the outbox relay; retried, never readiness |
-| `ATLAS_SEED_USERNAME` / `_PASSWORD` / `_CHANNEL` | unset                              | dev bootstrap; idempotent across restarts  |
-| `ATLAS_LOCKOUT_*`                                | 10 / 15 min / 15 min               | see `lockout.ts`                           |
+| Variable                                               | Default                            |                                                                                              |
+| ------------------------------------------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------- |
+| `ATLAS_PG_URL`                                         | `postgres://…@postgres:5432/atlas` | waited for at startup, within 120 s                                                          |
+| `ATLAS_NATS_URL`                                       | `nats://nats:4222`                 | the outbox relay; retried, never readiness                                                   |
+| `ATLAS_SEED_USERNAME` / `_PASSWORD` / `_CHANNEL`       | unset                              | dev bootstrap; idempotent across restarts                                                    |
+| `ATLAS_SEED_RIVAL_USERNAME` / `_PASSWORD` / `_CHANNEL` | unset (`ch99`)                     | dev: a second account, same grant in ANOTHER channel — the isolation suite's rival (EP-30.2) |
+| `ATLAS_LOCKOUT_*`                                      | 10 / 15 min / 15 min               | see `lockout.ts`                                                                             |
