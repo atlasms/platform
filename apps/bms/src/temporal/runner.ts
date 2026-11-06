@@ -16,7 +16,7 @@ import {
   WorkflowNotFoundError,
 } from '@temporalio/client';
 import { NamespaceNotFoundError } from '@temporalio/common';
-import { msToTs } from '@temporalio/common/lib/time.js';
+import { msToTs } from '@temporalio/common/time';
 import { NativeConnection, Worker } from '@temporalio/worker';
 import { InstanceNotRunning, type InstanceRunner } from '../runner.ts';
 import type { BmsRuntime } from '../runtime.ts';

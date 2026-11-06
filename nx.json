@@ -42,6 +42,10 @@
   "defaultBase": "main",
   "parallel": 4,
   "useInferencePlugins": false,
-  "_comment": "Nx Cloud is deliberately NOT enabled: the build must work fully offline in air-gapped environments (FR-PLat-7 / A9). Caching stays local under .nx/cache.",
-  "analytics": false
+  "_comment": "Nx Cloud is deliberately NOT enabled: the build must work fully offline in air-gapped environments (FR-PLat-7 / A9). Caching stays local under .nx/cache. neverConnectToCloud also stops Nx 24 calling the Nx Cloud API on every run to mint the onboarding link in its performance report.",
+  "analytics": false,
+  "affected": {
+    "legacy": true
+  },
+  "neverConnectToCloud": true
 }
