@@ -224,7 +224,8 @@
     "cast": "Cast & crew",
     "addCast": "Add",
     "review": "Review",
-    "shotlist": "Shot list"
+    "shotlist": "Shot list",
+    "versions": "Versions"
   },
   "editor": {
     "close": "Close",
@@ -301,7 +302,8 @@
       "approval": "Not approved",
       "expiry": "Approval expires",
       "rights": "Rights",
-      "availability": "Availability"
+      "availability": "Availability",
+      "superseded": "Replaced by a new version"
     },
     "copy": {
       "title": "Copy to another day…",
@@ -989,5 +991,18 @@
       "enum": "One of a list",
       "vocabulary": "A vocabulary term"
     }
+  },
+  "versions": {
+    "superseded": "A newer version of this media exists; this one takes no further verdict.",
+    "openNewest": "Open the new version",
+    "only": "This is the only version of this media.",
+    "this": "this one",
+    "make": "New version",
+    "makeHint": "Upload the new media first; then choose it here. Its metadata is copied from this asset, and it is reviewed on its own.",
+    "find": "Choose the new media…",
+    "none": "No asset of this media type is waiting to become a version.",
+    "from": "New media",
+    "create": "Make it the new version",
+    "failed": "The new version could not be made."
   }
 }

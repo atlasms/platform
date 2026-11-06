@@ -366,7 +366,7 @@ components:
     IssueKind:
       type: string
       description: Tier 0 — each kind is a validator with its own rule (schedule.validated).
-      enum: [gap, overlap, anchor, approval, expiry, rights, availability]
+      enum: [gap, overlap, anchor, approval, expiry, rights, availability, superseded]
     ValidationIssue:
       type: object
       required: [kind, severity, message]

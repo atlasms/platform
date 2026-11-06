@@ -130,6 +130,19 @@ export class AssetsService {
     return this.api.call(ops.dismissAssetDerived, { params: { id, field } }).as<Asset>();
   }
 
+  /** The asset's version chain, oldest first, itself included (EP-27.6). */
+  versions(id: string) {
+    return this.api.call(ops.listAssetVersions, { params: { id } }).as<{ items: Asset[] }>();
+  }
+
+  /**
+   * Make `assetId` — an asset carrying the new media — the next version of `id` (EP-27.6). MAM
+   * copies `id`'s metadata onto it and answers with the new version as it now stands.
+   */
+  createVersion(id: string, assetId: string) {
+    return this.api.call(ops.createAssetVersion, { params: { id }, body: { assetId } }).as<Asset>();
+  }
+
   /** What the asset inherits from its category chain, live, each value with its origin (EP-28.2). */
   inherited(id: string) {
     return this.api.call(ops.getAssetInherited, { params: { id } }).as<AssetInheritance>();

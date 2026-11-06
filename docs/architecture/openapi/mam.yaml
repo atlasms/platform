@@ -121,14 +121,47 @@ paths:
         '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
         '4XX': { $ref: '#/components/responses/Error' }
   /assets/{id}/versions:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+    get:
+      operationId: listAssetVersions
+      tags: [assets]
+      summary: The asset's version chain, oldest first (scope asset:read)
+      description: >-
+        EP-27.6 (data-model §1.7, mam.md §13t). Every version linked to this asset by `replacesId` /
+        `replacedById`, oldest first, this asset included. A version the caller may not read is left
+        out rather than refused: versions can sit in different categories.
+      responses:
+        '200': { description: The chain, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/Asset' } } } } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
     post:
       operationId: createAssetVersion
       tags: [assets]
-      summary: Create a new version (clone metadata on replace, FR-MAM-6)
-      parameters:
-        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      summary: Make another asset this one's next version, cloning its metadata (FR-MAM-6, FR-APP-3)
+      description: >-
+        EP-27.6 (mam.md §13t). The new media arrives as an asset of its own (an upload, an editor's
+        render); this links it as the NEXT version of `{id}` and copies `{id}`'s metadata onto it —
+        except what the new media measures (file type, duration), what a person already set on the
+        new asset, and the approval (the new version is reviewed on its own). The shot list and the
+        files are not copied. `{id}` takes `replacedById` and no further verdict; `asset.replaced`
+        is emitted, and both records are audited, in one transaction. Requires `asset:write` on
+        `{id}`'s `core` group and, on the new asset, `asset:write` on every group the copy writes.
+        409 when `{id}` is already replaced (make the version from the newest), when the new asset
+        is already in a chain, or when it already has a verdict; 422 when it is `{id}` itself or of
+        another media type.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assetId]
+              additionalProperties: false
+              properties:
+                assetId: { $ref: '#/components/schemas/Ulid', description: 'The asset carrying the new media — it becomes the next version.' }
       responses:
-        '201': { description: New version, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+        '201': { description: 'The new version, as it now stands', content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+        '4XX': { $ref: '#/components/responses/Error' }
   /assets/{id}/approve:
     post:
       operationId: approveAsset
@@ -825,7 +858,8 @@ components:
         expirySource: { type: string, enum: [asset, category], description: 'category when expiresAt is the category''s defaultExpiry, snapshotted at approval (FR-TAX-7); absent when the asset''s own.' }
         approvedBy: { type: string, description: 'Who approved it last — a user id, or mam for an automatic approval. Named as priorApprover when the approval lapses (EP-24.5).' }
         retainUntil: { type: string, format: date-time, description: 'For rejected media: purge time (FR-APP-8).' }
-        replacesId: { $ref: '#/components/schemas/Ulid' }
+        replacesId: { $ref: '#/components/schemas/Ulid', description: 'The version this one supersedes (EP-27.6).' }
+        replacedById: { $ref: '#/components/schemas/Ulid', description: 'The version that superseded this one — set, the asset takes no further verdict (EP-27.6).' }
         hasRenditions: { type: boolean, description: True once MTS renditions have been attached; individual files arrive through the FileRef projection (EP-17.8). }
         provenance:
           type: object

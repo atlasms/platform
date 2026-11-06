@@ -84,7 +84,8 @@ stateDiagram-v2
   `schedule.validated`, `schedule.sent-to-air` (→ HSM triggers the copy/export).
 - **Consumes:** `asset.approved` (becomes schedulable), `asset.expired` (approval lapsed → **no
   longer schedulable**; flag affected schedule items for re-review), `asset.deleted` (drop item
-  references), `asset.replaced` (swap item references), `restore.completed` (a needed rendition is
+  references), `asset.replaced` (WARN on items still naming the old version and carry its rights
+  windows — never re-point an item, §6.3), `restore.completed` (a needed rendition is
   back online), `playout.export.completed` (mark Sent).
 
 See [Messaging §Workflow/scheduling](../04-messaging-and-data.md#workflow--scheduling--people).
@@ -117,6 +118,23 @@ Before air a schedule is checked for gaps/overlaps, that every item references a
 asset with an **available** rendition (querying HSM location; requesting **restore** if near-
 line/offline), and that **rights windows** are satisfied
 ([FR-SCH-2/3](../../requirements/05-functional-requirements.md#scheduling)).
+
+### 6.3 A new version of scheduled media (EP-27.6)
+MAM makes a new version of an asset as a NEW asset id ([mam.md §13t](mam.md)) and announces
+`asset.replaced(oldId,newId)`. Decided with the product owner (2026-11-06):
+
+- **Reels are never re-pointed automatically.** The approval record keeps `replacedById` (the same
+  consumer, the same transaction as its seen-mark, set once), and validation reports every item
+  still naming the old asset as `superseded` — a WARNING that names the new version: the old media
+  is still what it was and its own approval is judged as ever, so a reel airing it is not invalid.
+  The operator re-points the item, by hand, as any edit (the new version needs its own approval
+  before it validates clean).
+- **The old asset's own rights windows are carried** to the new version — each copied as a new
+  window (new id, version 1, `createdBy: scheduling`), audited `rights-window.copied` with a
+  `service` actor, in the transaction that applies the event, so a redelivery copies nothing.
+  Without it the new media would be governed by its category's windows, or by none — looser than
+  the licence. A category's windows are the category's and are not copied; the old asset keeps its
+  own.
 
 ## 7. Dependencies
 
@@ -203,7 +221,7 @@ reaches Scheduling from `asset.approved` and from `asset.updated`, which now car
 when it names it (it named the field without the value). The stream keeps everything, so a new
 deployment backfills from history. The record is a read model of facts MAM already audited, and is
 not audited again. Not done in this slice: flagging items on `asset.expired` (validation computes
-it instead), `asset.replaced` (no producer yet), rights windows, availability, the approved-only
+it instead), `asset.replaced` (since EP-27.6, §6.3), rights windows, availability, the approved-only
 guard at serialization and send-to-air — the last two correctness-critical (§5.7), with MCRList.
 **EP-31, second slice: rights windows** (`rights.ts`, `/rights-windows`). A window licenses the
 channel to air ONE asset or ONE category between `validFrom` and `validTo`; it is permissive, and

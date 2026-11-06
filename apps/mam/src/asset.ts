@@ -68,8 +68,14 @@ export interface Asset {
   approvedBy?: string;
   /** Purge time for rejected media. */
   retainUntil?: string;
-  /** A new media FILE means a new asset id; this chains the versions. */
+  /** A new media FILE means a new asset id; this chains the versions (EP-27.6, versions.ts). */
   replacesId?: string;
+  /**
+   * The version that superseded this one, set when it was made — the chain read forwards without a
+   * query. A replaced asset keeps its state (`replaced` is not one, lifecycle.ts) but takes no
+   * further verdict, and is not made a version again: a new version is made from the newest.
+   */
+  replacedById?: string;
   version: number;
   /** Renditions attached by MTS. Gates `markReady`. */
   hasRenditions: boolean;

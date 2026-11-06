@@ -140,7 +140,7 @@ export type ScheduleWithItems = Schedule & { items: ScheduleItem[] };
 
 /** Tier 0 — each kind is a validator with its own rule (schedule.validated). */
 export type IssueKind =
-  'gap' | 'overlap' | 'anchor' | 'approval' | 'expiry' | 'rights' | 'availability';
+  'gap' | 'overlap' | 'anchor' | 'approval' | 'expiry' | 'rights' | 'availability' | 'superseded';
 
 export interface ValidationIssue {
   kind: IssueKind;

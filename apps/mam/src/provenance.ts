@@ -34,14 +34,14 @@ export interface Derivation extends Omit<FieldProvenance, 'source'> {
   source: Exclude<MetadataSource, 'user'>;
 }
 
-const RANK: Readonly<Record<MetadataSource, number>> = { ai: 1, technical: 2, user: 3 };
+export const RANK: Readonly<Record<MetadataSource, number>> = { ai: 1, technical: 2, user: 3 };
 
 /**
  * The rank of whoever owns a field now. A field with a value and NO provenance was set before
  * EP-27.5 and may well be a person's, so it ranks as one: a derived value never replaces it. An
  * empty field with no provenance is nobody's.
  */
-function ownerRank(asset: Asset, field: string): number {
+export function ownerRank(asset: Asset, field: string): number {
   const recorded = asset.provenance?.[field];
   if (recorded) return RANK[recorded.source];
   return (asset as unknown as Record<string, unknown>)[field] === undefined ? 0 : RANK.user;

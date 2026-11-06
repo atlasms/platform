@@ -775,6 +775,78 @@ export function scheduleStoreConformance(name: string, harness: ScheduleStoreHar
       assert.equal((await service.validate(caller(), s.id)).issues.length, 2);
     });
   });
+  test(`[${name}] REPLACED (EP-27.6): the new version takes the old one's rights windows once, and an item still naming the old one is WARNED, never re-pointed`, async () => {
+    await withFixture(async ({ service, store, drain }) => {
+      const s = await service.create(caller(), { broadcastDate: '2026-09-12', timezone: 'UTC' });
+      const [old, next] = [ulid(), ulid()];
+      await service.applyAssetEvent(approved(old, '2026-09-01T00:00:00.000Z'));
+      const own = await service.createRightsWindow(librarian(), {
+        assetId: old,
+        validFrom: at(0),
+        validTo: at(45),
+        territory: 'GB',
+      });
+      // A category's window is the category's, not the asset's: it is not copied.
+      await service.createRightsWindow(librarian(), {
+        categoryId: 'films',
+        validFrom: at(0),
+        validTo: at(600),
+      });
+      await service.replaceItems(caller(), s.id, [
+        media(0, 0, 30, { mediaId: old, categoryId: 'films', mediaTitle: 'News' }),
+      ]);
+      const before = (await drain()).length;
+
+      const replaced = assetEvent(
+        'asset.replaced',
+        { oldId: old, newId: next },
+        '2026-09-02T00:00:00.000Z',
+      );
+      assert.equal(await service.applyAssetEvent(replaced), 'applied');
+      assert.equal(await service.applyAssetEvent(replaced), 'duplicate');
+      assert.equal(
+        (await store.approvals(CH, [old]))[0]?.replacedById,
+        next,
+        'the old asset is recorded as superseded',
+      );
+      assert.equal((await store.approvals(CH, [old]))[0]?.state, 'approved', 'its verdict stands');
+
+      const copied = await service.listRightsWindows(librarian(), { assetId: next });
+      assert.equal(copied.length, 1, 'copied once, the redelivery a duplicate');
+      assert.deepEqual(
+        [copied[0]!.validFrom, copied[0]!.validTo, copied[0]!.territory, copied[0]!.version],
+        [own.validFrom, own.validTo, 'GB', 1],
+      );
+      assert.notEqual(copied[0]!.id, own.id);
+      assert.equal(
+        (await service.listRightsWindows(librarian(), { assetId: old })).length,
+        1,
+        'the old asset keeps its own',
+      );
+      const audits = (await drain())
+        .slice(before)
+        .filter((e) => e.type === 'audit.recorded')
+        .map((e) => ({
+          actor: e.actor,
+          payload: e.payload as unknown as EventPayloads['audit.recorded'],
+        }));
+      assert.deepEqual(
+        audits.map((a) => [a.payload.entityId, a.payload.action, a.actor?.kind, a.actor?.id]),
+        [[copied[0]!.id, 'rights-window.copied', 'service', 'scheduling']],
+      );
+
+      // The reel still names the old asset — nothing re-pointed it — and says so, as a warning.
+      const report = await service.validate(caller(), s.id);
+      assert.deepEqual(
+        report.issues.map((i) => [i.kind, i.severity]),
+        [['superseded', 'warning']],
+      );
+      assert.match(report.issues[0]!.message, new RegExp(`new version, ${next}`));
+      assert.equal(report.valid, true, 'a warning does not make the reel invalid');
+      assert.equal((await service.items(caller(), s.id))[0]!.mediaId, old);
+    });
+  });
+
   test(`[${name}] a copy (§3.7) is ONE write on the target: the reel, schedule.updated and an audit record saying where it came from`, async () => {
     await withFixture(async ({ service, store, drain }) => {
       const a = await service.create(caller(), { broadcastDate: '2026-09-12', timezone: 'UTC' });
