@@ -668,8 +668,10 @@ test('smoke: EP-27.6 — a new version through the gateway: metadata copied, the
     episodeNo: 7,
     categoryId: await categoryFor(token),
   });
-  // The new media, as an upload would arrive: its own asset, the file's name for a title.
-  const next = await make({ title: 'bulletin_recut.mov', mediaType: 'video', fileType: 'mov' });
+  // The new media, as its own asset. Made here by a PERSON, so its title is theirs and the copy
+  // keeps it (an upload's file-name title is `technical`, and is replaced — mam.md §13t); what it
+  // never set — description, episode — comes from the old version.
+  const next = await make({ title: 'Bulletin, recut', mediaType: 'video', fileType: 'mov' });
 
   // The old asset is licensed for an hour; Scheduling carries that to the new version.
   const from = new Date(Date.now() + 86_400_000).toISOString();
@@ -690,7 +692,7 @@ test('smoke: EP-27.6 — a new version through the gateway: metadata copied, the
   const version = json(made);
   assert.deepEqual(
     [version.id, version.title, version.description, version.episodeNo, version.fileType],
-    [next.id, 'Versioned bulletin', 'The first cut', 7, 'mov'],
+    [next.id, 'Bulletin, recut', 'The first cut', 7, 'mov'],
   );
   assert.equal(version.replacesId, old.id);
   const again = await get(`/api/v1/assets/${old.id}/versions`, {
