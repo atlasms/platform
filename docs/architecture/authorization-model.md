@@ -147,6 +147,40 @@ pass the full resource context it holds. Lenient mode SHALL NOT be used as the s
 
 Both modes agree whenever the context is complete — that equivalence is itself a test.
 
+### 5a. Channel isolation (normative; EP-30.2) {#5a-channel-isolation}
+
+A grant's `channelIds` is one boundary; the CHANNEL OF THE RESOURCE is the other, and every service
+enforces it before any permission is asked: a resource whose `channelId` is not the caller's is
+treated as if it did not exist. The rules, each held on a deployed cluster by the isolation suite
+([`infra/smoke/isolation.test.mjs`](../../infra/smoke/isolation.test.mjs), `npm run isolation`,
+run by the Smoke workflow) — a rival account in a second channel holding the dev account's WHOLE
+grant in its own, so every refusal is the channel boundary and never a missing permission:
+
+| Surface | Another channel's … | Answer |
+|---------|---------------------|--------|
+| A read by id | asset, category, term, person, user, group, upload, ingest job, watcher, transcode job, schedule, rights window, workflow, instance, task | **404**, exactly as an id nobody made — never a 403, which would confirm it exists |
+| A write by id | the same, written, judged, deleted, signalled, claimed, completed | **404**, and the resource is unchanged |
+| A list, search, browse, the catalog, the inbox | its rows | absent |
+| An id named in a body | a category, a term, a person, an asset as a version (MAM); a user as a member (IAM); a workflow started (BMS) | refused (a 4xx), never a write into or about that channel |
+| An id addressed, not looked up | a user or group as a task's assignee or a message's recipient (Notifications); an asset on a reel (Scheduling) | written in the CALLER's channel, and reaches nothing of the other: the owner never sees the row, and a reel judges the asset as one its channel does not know (`approval`) |
+| History, the log | an entity's revisions; log entries | **200 with none** — a 404 would say whether it ever existed (logging) |
+| Files | an asset's location in HSM | **200, an empty list** (HSM) |
+| A socket | a subscription naming the channel, or wildcarding it; a frame | refused at subscribe; never delivered |
+| Naming the channel outright | a user created in it | **403** — the caller named it, so nothing is revealed by saying no |
+
+The channel compared is the caller's HOME channel, from the token (studio-frontend §3a — a session
+is not bound to a channel, but until EP-30.4 every service reads the token's). A per-tenant
+partition is not the mechanism: rows share tables, subjects share a stream, and the comparison
+above is the whole of the isolation, which is why it is tested end to end rather than per service.
+
+**Open (#577):** an MTS job may name another channel's asset with `inputFile`: HSM's internal
+content read compares no channel, and its placement refuses another channel only for the same
+(asset, kind, variant) — so a rival's job read the owner's proxy and placed a thumbnail for the
+owner's asset under its own channel. The suite's case is `todo` against #577; the fix is HSM
+file-operation code, reviewed and paired on by people (ADR-0009). **EP-25.7** must keep the
+addressed-not-looked-up row true on the per-user stream: a `user.<id>` frame for another channel's
+row would be the first to cross (noted on #456).
+
 ## 6. Delivery & caching
 
 - **JWT stays small**: it carries `sub`, `channelId`, `permVersion` — **not** the rules.

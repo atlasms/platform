@@ -21,6 +21,7 @@ kind create cluster --config infra/k8s/kind-cluster.yaml
 npm run k8s:up            # build images, load them into the node, apply the overlay
 npm run smoke             # 37 checks against http://localhost:30080 (and ws://localhost:30081)
 npm run acceptance        # EP-21.1: ONE file from upload to a validated program table
+npm run isolation         # EP-30.2: a rival in ch99 reaches for everything made in ch12, and finds nothing
 npm run perf              # EP-21.4: 40 users for a minute, percentiles against the MVP NFRs
 npm run drill -- --yes    # EP-21.3: back up, DESTROY the namespace, restore, verify, smoke + journey
 ```
