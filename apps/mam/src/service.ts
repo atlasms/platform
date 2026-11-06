@@ -21,6 +21,7 @@ import {
   type EventPayloads,
 } from '@atlas/contracts';
 import { durationMsOf, parseShotList, sameShotList, type ShotListItem } from './shotlist.ts';
+import { deriveInto, dismissDerived, stampedBy, userWrote } from './provenance.ts';
 import type { Message } from '@atlas/messaging';
 import { can, canEnforce, compile, type EffectivePolicy } from '@atlas/policy';
 import {
@@ -571,7 +572,7 @@ export class MamService {
     await this.requireCast(caller.channelId, input.cast);
 
     const at = this.now().toISOString();
-    const asset: Asset = {
+    const base: Asset = {
       id: ulid(),
       channelId: caller.channelId,
       title: input.title,
@@ -600,6 +601,8 @@ export class MamService {
         expiresAt: input.expiresAt,
       }),
     };
+    // EP-27.5: everything a person sends on create is theirs.
+    const asset = userWrote(base, personalFields(base), caller.userId, at);
 
     await this.commit(
       caller,
@@ -709,10 +712,18 @@ export class MamService {
     for (const field of inherit) delete updated[field];
     // An expiry set by hand is the asset's own, whatever a category default once put there.
     if (changedFields.includes('expiresAt')) delete updated.expirySource;
+    // EP-27.5: what the person wrote is theirs — and anything held beside it is settled by it.
+    const owned = userWrote(
+      updated,
+      changedFields.filter((f) => !(inherit as string[]).includes(f)),
+      caller.userId,
+      updated.updatedAt,
+      inherit,
+    );
 
     await this.commit(
       caller,
-      updated,
+      owned,
       existing,
       'asset.updated',
       {
@@ -729,6 +740,34 @@ export class MamService {
       await this.sourcesFor(existing),
     );
 
+    return owned;
+  }
+
+  /**
+   * EP-27.5: drop a value held beside a field a person set, unused (taking it is a PATCH of the
+   * field). Authorized as a write of that field — the held value is part of how the field reads.
+   */
+  async dismissDerived(caller: Caller, id: string, field: string): Promise<Asset> {
+    return this.onCurrent(() => this.dismissDerivedOnce(caller, id, field));
+  }
+
+  private async dismissDerivedOnce(caller: Caller, id: string, field: string): Promise<Asset> {
+    const existing = await this.fresh(caller, id);
+    const groups = groupsForCoreFields([field]);
+    if (groups.length === 0) throw new NotFound(`${field} is not a core field`);
+    this.authorizeGroups(caller, 'asset:write', await this.scopeOf(existing), groups);
+    const without = dismissDerived(existing, field);
+    if (!without) throw new NotFound(`nothing is held for ${field}`);
+    const updated: Asset = {
+      ...without,
+      version: existing.version + 1,
+      updatedAt: this.now().toISOString(),
+    };
+    await this.commit(caller, updated, existing, 'asset.updated', {
+      assetId: updated.id,
+      changedFields: [`derived.${field}`],
+      source: 'user',
+    });
     return updated;
   }
 
@@ -1031,7 +1070,7 @@ export class MamService {
       msg,
       'transcode.completed',
     );
-    const { assetId, renditions } = envelope.payload;
+    const { assetId, renditions, jobId } = envelope.payload;
     const existing = await this.assetInChannel(assetId, envelope.channelId);
     const current = new Map(
       (await this.options.store.filesOf(assetId)).map((f) => [fileKey(f.kind, f.variant), f]),
@@ -1046,12 +1085,49 @@ export class MamService {
         ...defined({ existing: current.get(fileKey(r.kind, undefined)) }),
       }),
     );
-    const updated: Asset | undefined = existing.hasRenditions
-      ? undefined
-      : { ...existing, hasRenditions: true, version: existing.version + 1, updatedAt: now };
+    // EP-27.5: the duration MTS measured. The original's probe is the asset's duration (ingest
+    // stamped it `technical`), so a rendition's measure is proposed only where the asset has none,
+    // or where a PERSON typed one — and there it is held beside theirs, never written over it.
+    const measured = measuredDuration(renditions);
+    const proposes =
+      measured !== undefined &&
+      (existing.durationSec === undefined ||
+        existing.provenance?.['durationSec']?.source === 'user');
+    const derivation = proposes
+      ? deriveInto(
+          existing,
+          { durationSec: measured },
+          { source: 'technical', by: 'mts', at: now, ...defined({ jobId }) },
+        )
+      : undefined;
+    const changedFields = derivation
+      ? [...derivation.applied, ...derivation.held.map((f) => `derived.${f}`)]
+      : [];
+    const updated: Asset | undefined =
+      existing.hasRenditions && changedFields.length === 0
+        ? undefined
+        : {
+            ...(derivation?.asset ?? existing),
+            hasRenditions: true,
+            version: existing.version + 1,
+            updatedAt: now,
+          };
     const caller = systemCaller(envelope.channelId, envelope);
+    const assetEvent =
+      updated && changedFields.length > 0
+        ? this.eventRecord(caller, envelope.channelId, 'asset.updated', {
+            assetId,
+            changedFields,
+            source: 'technical',
+          })
+        : undefined;
     const assetAudit = updated
-      ? this.auditRecord(caller, updated, existing, 'asset.attachRenditions')
+      ? this.auditRecord(
+          caller,
+          updated,
+          existing,
+          existing.hasRenditions ? 'asset.updated' : 'asset.attachRenditions',
+        )
       : undefined;
     const fileAudits = files.map((f) =>
       this.fileAudit(caller, f, current.get(fileKey(f.kind, f.variant)), 'transcode.completed'),
@@ -1064,6 +1140,7 @@ export class MamService {
       }
       if (updated) await tx.put(updated, existing.version);
       for (const f of files) await tx.putFile(f);
+      if (assetEvent) await tx.enqueue(assetEvent);
       if (assetAudit) await tx.enqueue(assetAudit);
       for (const a of fileAudits) await tx.enqueue(a);
     });
@@ -1159,7 +1236,7 @@ export class MamService {
       return 'duplicate';
     }
     const at = this.now().toISOString();
-    const asset: Asset = {
+    const received: Asset = {
       id: accepted.assetId,
       channelId: envelope.channelId,
       title: accepted.title ?? accepted.filename ?? accepted.assetId,
@@ -1173,6 +1250,14 @@ export class MamService {
       updatedAt: at,
       ...defined({ durationSec: accepted.technicalMetadata?.durationSec }),
     };
+    // EP-27.5: none of it is a person's — the name is the file's, the rest the probe's — so an
+    // editor's later word on any of it wins, and a better measurement may still replace it.
+    const asset = stampedBy(received, ['title', 'mediaType', 'fileType', 'durationSec'], {
+      source: 'technical',
+      by: 'rim',
+      at,
+      ...defined({ jobId: accepted.ingestJobId }),
+    });
     const caller = systemCaller(envelope.channelId, envelope);
     const duplicate = new Error('duplicate');
     try {
@@ -3004,6 +3089,26 @@ const UPDATABLE_FIELDS = [
   'allowedBroadcastCount',
   'expiresAt',
 ] as const satisfies readonly (keyof UpdateAssetInput)[];
+
+/**
+ * The duration MTS measured for the media, from the renditions that play it whole — broadcast
+ * first, then the proxy. A still has none.
+ */
+function measuredDuration(
+  renditions: readonly { kind: string; durationSec?: number }[],
+): number | undefined {
+  for (const kind of ['broadcast', 'proxy']) {
+    const found = renditions.find((r) => r.kind === kind && r.durationSec !== undefined);
+    if (found) return found.durationSec;
+  }
+  return undefined;
+}
+
+/** The fields a new record sets that are a person's to own (EP-27.5): the writable ones and the kind. */
+function personalFields(asset: Asset): string[] {
+  const record = asset as unknown as Record<string, unknown>;
+  return ['mediaType', 'fileType', ...UPDATABLE_FIELDS].filter((f) => record[f] !== undefined);
+}
 
 function pickUpdatable(patch: UpdateAssetInput): UpdateAssetInput {
   const out: Record<string, unknown> = {};

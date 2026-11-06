@@ -108,6 +108,10 @@
       "enum": ["on-screen", "crew"],
       "description": "A cast role's class (EP-28.5): in front of the camera or behind it. A property of the cast-role TERM, not of each assignment."
     },
+    "MetadataSource": {
+      "enum": ["user", "technical", "ai"],
+      "description": "Who or what set an asset field (FR-MAM-8, EP-27.5): a person, a measurement of the media (the probe, a transcode), or AI enrichment. Ranked user > technical > ai: a lower-ranked value never replaces a higher one, it is held beside it (mam.md §13u)."
+    },
     "AiTier": {
       "enum": ["online", "offline"],
       "description": "Which AI tier ran: online (interactive, bounded latency) or offline (batch). Not the HSM storage Tier."

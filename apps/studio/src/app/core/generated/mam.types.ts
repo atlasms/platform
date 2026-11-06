@@ -64,6 +64,30 @@ export interface VerdictPage {
   items: Verdict[];
 }
 
+/** common.schema.json MetadataSource: a person, a measurement of the media, or AI enrichment — ranked in that order (mam.md §13u). */
+export type MetadataSource = 'user' | 'technical' | 'ai';
+
+export interface FieldProvenance {
+  source: MetadataSource;
+  /** The user id for `user`; the service that measured it for `technical` (rim, mts); the AI service for `ai`. */
+  by: string;
+  at: string;
+  /** An AI value's confidence. */
+  confidence?: number;
+  /** The ingest, transcode or enrichment job it came from. */
+  jobId?: Ulid;
+}
+
+export interface DerivedValue {
+  /** The value the field would have taken — the field's own type. */
+  value: unknown;
+  source: MetadataSource;
+  by: string;
+  at: string;
+  confidence?: number;
+  jobId?: Ulid;
+}
+
 export interface ShotList {
   assetId: Ulid;
   items: ShotListItem[];
@@ -168,6 +192,10 @@ export interface Asset {
   replacesId?: Ulid;
   /** True once MTS renditions have been attached; individual files arrive through the FileRef projection (EP-17.8). */
   hasRenditions: boolean;
+  /** Who or what set each core field (EP-27.5, FR-MAM-8), by field name. A field set before EP-27.5 has no entry — read it as possibly a person's: it is never overwritten by a derived value. */
+  provenance?: Record<string, FieldProvenance>;
+  /** Values MAM measured, or AI proposed, for fields a person owns — held here, never applied (EP-27.5). Taken by PATCHing the field, dropped by DELETE /assets/{id}/derived/{field}. */
+  derived?: Record<string, DerivedValue>;
   createdBy: string;
   createdAt: string;
   updatedAt: string;

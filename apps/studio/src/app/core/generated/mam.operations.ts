@@ -49,6 +49,12 @@ export const MamOperations = {
   getAssetShotList: { method: 'GET', path: '/api/v1/assets/{id}/shotlist', params: ['id'] },
   /** Replace the asset's shot list, whole (scope asset:write / shotlist) */
   putAssetShotList: { method: 'PUT', path: '/api/v1/assets/{id}/shotlist', params: ['id'] },
+  /** Dismiss a derived value held beside a field a person set (scope asset:write on the field's group) */
+  dismissAssetDerived: {
+    method: 'DELETE',
+    path: '/api/v1/assets/{id}/derived/{field}',
+    params: ['id', 'field'],
+  },
   /** The asset's free-form tags (FR-TAX-1) */
   listAssetTags: { method: 'GET', path: '/api/v1/assets/{id}/tags', params: ['id'] },
   /** Replace the asset's tag set; unknown labels are minted (scope asset:write / taxonomy) */

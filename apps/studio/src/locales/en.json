@@ -935,6 +935,14 @@
     "badDate": "Choose a date in the future.",
     "verdictError": "The verdict could not be given."
   },
+  "provenance": {
+    "technical": "From the media file",
+    "ai": "Suggested by AI",
+    "user": "Entered by a person",
+    "use": "Use this",
+    "dismiss": "Dismiss",
+    "dismissFailed": "The suggested value could not be dismissed."
+  },
   "shotlist": {
     "empty": "No shots yet.",
     "start": "Start",

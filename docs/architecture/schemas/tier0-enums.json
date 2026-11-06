@@ -12,6 +12,7 @@
   "common.schema.json#/$defs/AiTask": "Each task is its own model pipeline in the AI service.",
   "common.schema.json#/$defs/PublishKind": "Each kind is its own outbound connector implementation; the TARGETS are a Tier-1 registry.",
   "common.schema.json#/$defs/RoleClass": "Studio groups cast into on-screen and crew, and search facets by class; a role's class is fixed by the code that reads it.",
+  "common.schema.json#/$defs/MetadataSource": "User, technical and AI values are ranked when they meet on one field: MAM applies a higher-ranked value and holds a lower-ranked one beside it (EP-27.5).",
 
   "envelope.schema.json#/properties/actor/properties/kind": "Discriminates a service actor from a user actor for audit and authorization.",
   "file.schema.json#/properties/storage/properties/status": "Gates whether a file may be exported to air.",
@@ -31,7 +32,6 @@
   "events/ai.suggestion.raised.payload.schema.json#/properties/suggestions/items/properties/kind": "Each suggestion kind lands in a different Studio affordance (person, tag, subject, caption).",
   "events/asset.deleted.payload.schema.json#/properties/reason": "Deletion reason is a discriminated union: retention, manual and policy deletions are audited and reversible differently.",
   "events/asset.expired.payload.schema.json#/properties/expirySource": "Whether expiry came from the asset or was inherited from its category decides what an operator can override.",
-  "events/asset.updated.payload.schema.json#/properties/source": "User, AI and technical provenance of a change are ranked differently when they conflict.",
   "events/config.changed.payload.schema.json#/properties/tier": "The tier system itself: registry, vocabulary and setting changes invalidate different caches.",
   "events/editor.render.requested.payload.schema.json#/properties/mediaKind": "Video, audio and photo renders are different pipelines.",
   "events/group.membership.changed.payload.schema.json#/properties/action": "Added and removed are the two directions the permission recompute handles.",

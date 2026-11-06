@@ -345,6 +345,23 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '422': { description: 'Refused — details.problems names each item and field', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /assets/{id}/derived/{field}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      - { name: field, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z]+$' }, description: 'A core field name, as in `derived` (durationSec, title, …).' }
+    delete:
+      operationId: dismissAssetDerived
+      tags: [assets]
+      summary: Dismiss a derived value held beside a field a person set (scope asset:write on the field's group)
+      description: >-
+        EP-27.5 (FR-MAM-8, mam.md §13u). A value MAM measured (or AI proposed) for a field a person
+        had already set is never applied; it is held in `derived` until a person decides. Taking it
+        is an ordinary PATCH of the field (which clears it); this drops it unused. An asset revision,
+        audited, `asset.updated` with `changedFields: [derived.<field>]`.
+      responses:
+        '200': { description: The asset without the held value, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { description: No such asset — or nothing is held for that field, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /assets/{id}/tags:
     parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
     get:
@@ -688,6 +705,31 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/Verdict' } }
+    MetadataSource:
+      type: string
+      enum: [user, technical, ai]
+      description: 'common.schema.json MetadataSource: a person, a measurement of the media, or AI enrichment — ranked in that order (mam.md §13u).'
+    FieldProvenance:
+      type: object
+      required: [source, by, at]
+      additionalProperties: false
+      properties:
+        source: { $ref: '#/components/schemas/MetadataSource' }
+        by: { type: string, description: 'The user id for `user`; the service that measured it for `technical` (rim, mts); the AI service for `ai`.' }
+        at: { type: string, format: date-time }
+        confidence: { type: number, minimum: 0, maximum: 1, description: An AI value's confidence. }
+        jobId: { $ref: '#/components/schemas/Ulid', description: 'The ingest, transcode or enrichment job it came from.' }
+    DerivedValue:
+      type: object
+      required: [value, source, by, at]
+      additionalProperties: false
+      properties:
+        value: { description: 'The value the field would have taken — the field''s own type.' }
+        source: { $ref: '#/components/schemas/MetadataSource' }
+        by: { type: string }
+        at: { type: string, format: date-time }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        jobId: { $ref: '#/components/schemas/Ulid' }
     ShotList:
       type: object
       required: [assetId, items]
@@ -785,6 +827,14 @@ components:
         retainUntil: { type: string, format: date-time, description: 'For rejected media: purge time (FR-APP-8).' }
         replacesId: { $ref: '#/components/schemas/Ulid' }
         hasRenditions: { type: boolean, description: True once MTS renditions have been attached; individual files arrive through the FileRef projection (EP-17.8). }
+        provenance:
+          type: object
+          description: 'Who or what set each core field (EP-27.5, FR-MAM-8), by field name. A field set before EP-27.5 has no entry — read it as possibly a person''s: it is never overwritten by a derived value.'
+          additionalProperties: { $ref: '#/components/schemas/FieldProvenance' }
+        derived:
+          type: object
+          description: 'Values MAM measured, or AI proposed, for fields a person owns — held here, never applied (EP-27.5). Taken by PATCHing the field, dropped by DELETE /assets/{id}/derived/{field}.'
+          additionalProperties: { $ref: '#/components/schemas/DerivedValue' }
         createdBy: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
