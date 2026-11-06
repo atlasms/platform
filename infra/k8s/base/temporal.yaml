@@ -138,6 +138,19 @@ spec:
                   key: password
             - name: DYNAMIC_CONFIG_FILE_PATH
               value: /etc/temporal/config/dynamicconfig/atlas.yaml
+            # Its SQL pools, capped. The defaults (20 per pool, idle connections KEPT, per store)
+            # held 65 of the platform Postgres's 100 connections on the dev cluster once warm, and
+            # the services then met "too many clients already" — found by the isolation suite
+            # (EP-30.2) as a 500 from Notifications' inbox. A single-replica Temporal at this load
+            # needs a handful; the idle cap is what gives the rest back.
+            - name: SQL_MAX_CONNS
+              value: "10"
+            - name: SQL_MAX_IDLE_CONNS
+              value: "2"
+            - name: SQL_VIS_MAX_CONNS
+              value: "5"
+            - name: SQL_VIS_MAX_IDLE_CONNS
+              value: "2"
             - name: BIND_ON_IP
               value: 0.0.0.0
             # The address the roles advertise to each other — the pod's own, rather than the

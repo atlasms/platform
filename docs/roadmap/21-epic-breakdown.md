@@ -559,7 +559,7 @@ Source: [studio-frontend.md](../architecture/studio-frontend.md) §5, [authoriza
 | ID | Story | Est |
 |----|-------|:---:|
 | 30.1 | ✅ i18n (en/ar) + RTL (EP-11.6) | 3 |
-| 30.2 | Channel isolation, end to end — a cross-tenant suite over every service's reads, writes, topics and history | 5 |
+| 30.2 | ✅ Channel isolation, end to end — a cross-tenant suite over every service's reads, writes, topics and history ([`isolation.test.mjs`](../../infra/smoke/isolation.test.mjs), authorization-model §5a; found #577, open for people — HSM) | 5 |
 | 30.3 | ✅ Decision: **one session, a current channel in Studio** — tokens are not channel-bound; services enforce per resource channel as today (decided 2026-10-12, [studio-frontend §3a](../architecture/studio-frontend.md#3a-several-channels-decided-2026-10-12-ep-303)) | 2 |
 | 30.4 | Channel switching in Studio — the current channel in the status bar, among the channels the user holds a grant in; scopes lists, trees, live subscriptions and creation | 5 |
 | 30.5 | Per-tenant theme — tokens from the channel's settings | 3 |

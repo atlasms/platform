@@ -21,3 +21,11 @@ spec:
               value: dev-password
             - name: ATLAS_SEED_CHANNEL
               value: ch12
+            # EP-30.2: a rival in another channel, with the same grant there — the isolation suite
+            # (infra/smoke/isolation.test.mjs) proves a full grant in ch99 reaches nothing in ch12.
+            - name: ATLAS_SEED_RIVAL_USERNAME
+              value: rival
+            - name: ATLAS_SEED_RIVAL_PASSWORD
+              value: rival-password
+            - name: ATLAS_SEED_RIVAL_CHANNEL
+              value: ch99
