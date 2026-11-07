@@ -193,6 +193,7 @@ test('an approval’s expiry: null is PERMANENT even under a category default; a
     'asset:write',
     'asset:approve',
     'taxonomy:admin',
+    'metadata:admin',
     'taxonomy:read',
   ]);
   const cat = await h.service.category(admin, 'cat-1');
@@ -228,6 +229,7 @@ test('re-review re-arms the clock: inheriting again snapshots the category defau
     'asset:write',
     'asset:approve',
     'taxonomy:admin',
+    'metadata:admin',
     'taxonomy:read',
   ]);
   const cat = await h.service.category(admin, 'cat-1');

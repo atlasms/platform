@@ -4176,6 +4176,71 @@ test('smoke: EP-28.2/28.3 — vocabularies and inheritance through the gateway: 
   );
 });
 
+test('smoke: field schemas are written under metadata:admin — the taxonomy keeper’s grant is not enough (decided 2026-11-06)', async () => {
+  // HELD for the user's review with its PR (authorization input). The dev account holds
+  // metadata:admin; a person of the same channel holding only taxonomy:admin is refused.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+  const id = `smoke-${Date.now().toString(36)}`;
+  const body = {
+    id,
+    mediaType: 'audio',
+    fields: [{ name: 'smokeNote', label: 'Smoke note', type: 'string' }],
+  };
+  const written = await get('/api/v1/field-schemas', {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(body),
+  });
+  assert.equal(written.status, 200, written.text);
+
+  const username = 'schema-keeper';
+  const password = 'schema-keeper-password-not-a-secret';
+  const login = () =>
+    get('/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+  let res = await login();
+  if (res.status === 401) {
+    const made = await get('/api/v1/users', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ username, password, name: 'Taxonomy keeper' }),
+    });
+    assert.equal(made.status, 201, made.text);
+    const grant = await get(`/api/v1/users/${json(made).id}/assignments`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        rule: {
+          id: 'schema-keeper',
+          description: 'smoke: the category tree, not the field schemas',
+          permissions: ['asset:read', 'taxonomy:read', 'taxonomy:admin'],
+          scope: { channelIds: [claims.channelId] },
+        },
+      }),
+    });
+    assert.equal(grant.status, 201, grant.text);
+    res = await login();
+  }
+  assert.equal(res.status, 200, res.text);
+  const keeper = {
+    authorization: `Bearer ${json(res).accessToken}`,
+    'content-type': 'application/json',
+  };
+  const refused = await get('/api/v1/field-schemas', {
+    method: 'PUT',
+    headers: keeper,
+    body: JSON.stringify({ ...body, id: `${id}-k` }),
+  });
+  assert.equal(refused.status, 403, refused.text);
+  assert.match(refused.text, /metadata:admin/);
+});
+
 test('smoke: the state-counts aggregate answers, and is not read as an asset id', async () => {
   // Two things no unit test covers. The gateway routes `/api/v1/assets` by PREFIX, so this reaches
   // MAM only if that still holds for a deeper path; and `/assets/counts` must resolve to the static

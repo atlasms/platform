@@ -11,7 +11,7 @@ import { seededStore } from './categories.fixture.ts';
 function harness() {
   const store = seededStore();
   const service = new MamService({ store });
-  const caller = (permissions = ['asset:read', 'taxonomy:admin', 'taxonomy:read']): Caller => ({
+  const caller = (permissions = ['asset:read', 'metadata:admin', 'taxonomy:read']): Caller => ({
     userId: 'ana',
     channelId: 'ch12',
     policy: compile({

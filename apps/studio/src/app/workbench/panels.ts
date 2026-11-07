@@ -40,6 +40,8 @@ export const ADMIN_PERMISSIONS: readonly string[] = [
   'taxonomy:admin',
   // EP-28.5: the People view.
   'people:admin',
+  // The Field schemas view (decided 2026-11-06).
+  'metadata:admin',
 ];
 
 export const PANELS: readonly PanelDefinition[] = [

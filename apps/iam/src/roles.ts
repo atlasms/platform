@@ -64,6 +64,9 @@ export const STARTER_ROLES: Role[] = [
       { ...r('lib-write', ['asset:write']), fieldGroups: ['files', 'rights'] },
       // EP-28.5: the people register is kept by whoever keeps the taxonomy.
       r('lib-restore', ['asset:restore', 'taxonomy:admin', 'people:read', 'people:admin']),
+      // The field schemas — what extra fields an asset carries (decided 2026-11-06): kept by the
+      // Librarian, under their own permission rather than the taxonomy's.
+      r('lib-metadata', ['metadata:admin']),
       r('lib-chat', ['message:send']),
     ],
   },

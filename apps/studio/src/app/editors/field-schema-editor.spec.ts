@@ -57,7 +57,7 @@ interface Internal {
   canEdit: () => boolean;
 }
 
-function setup(permissions = ['taxonomy:admin', 'asset:read']) {
+function setup(permissions = ['metadata:admin', 'asset:read']) {
   const fake = new FakeSchemas();
   TestBed.configureTestingModule({
     providers: [
@@ -170,8 +170,8 @@ describe('FieldSchemaEditor', () => {
     expect(controls()).toContain('schemaEditor.maxLength');
   });
 
-  it('without taxonomy:admin it is read-only; a schema that is gone says so', () => {
-    const reader = setup(['asset:read']);
+  it('without metadata:admin it is read-only — the taxonomy keeper’s grant is not enough; a schema that is gone says so', () => {
+    const reader = setup(['asset:read', 'taxonomy:admin']);
     reader.load();
     expect(reader.component.canEdit()).toBe(false);
     expect(reader.root.querySelector('.add')).toBeNull();

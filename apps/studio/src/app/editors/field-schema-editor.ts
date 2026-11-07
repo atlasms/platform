@@ -406,10 +406,10 @@ export class FieldSchemaEditor implements OnInit {
   protected readonly error = signal<string | null>(null);
   protected readonly notice = signal<string | null>(null);
 
-  /** UX only — MAM enforces `taxonomy:admin`. */
+  /** UX only — MAM enforces `metadata:admin` (decided 2026-11-06). */
   protected readonly canEdit = computed(() => {
     this.session.policy(); // the dependency; the check reads it internally
-    return this.permissions.can('taxonomy:admin');
+    return this.permissions.can('metadata:admin');
   });
   protected readonly dirty = computed(() => {
     const d = this.draft();
