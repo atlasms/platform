@@ -317,6 +317,25 @@ holders of `ops:read`, each reading it for themselves, a later holder seeing it)
 conformance cases on sqlite and Postgres, and smoke on kind (an approval tells its creator, titled as
 the channel's registry says; a failed workflow run's alert reaches an `ops:read` holder's inbox).
 
+## 13g. As built — EP-25.7, live delivery to a person (HELD for the product owner's security review)
+
+Every write that changes a PERSON's inbox also commits, in its own transaction, one `inbox.changed`
+per person it names (`inboxChanged` in `record.ts`): `{ recipientUserId, kind, id, at }`, nothing of
+the content. The WebSocket service delivers each only to that user's connections (a personal domain,
+websocket.md §13a), and Studio re-reads the inbox through the API.
+
+| Change | Who is named |
+|--------|--------------|
+| A task created — by hand, or a workflow's | its participants (the creator), and a user assignee |
+| A task claimed, forwarded, completed, cancelled; a workflow's task resolved or cancelled | its participants, and the user assignee before and after — a forward reaches who lost it and who has it |
+| A message sent | its sender (their other tabs) and every USER it is addressed to |
+| A notification raised | the person it was raised for |
+
+Never named: a group, or a role's holders (resolved at read time, §13b — reaching them live would need
+membership at write time), and a shared alert (one row for every holder of `ops:read`, §13e). Those
+reach their readers by Studio's re-read. A recipient id is not checked against IAM: a frame for an id
+of another channel is published in THIS channel and so reaches nobody there (EP-30.2).
+
 ## 13f. As built — EP-25.6, preferences (decided 2026-10-18)
 
 - **Per type, on or off.** Until a person chooses, a type is its `defaultOn` as their channel has it

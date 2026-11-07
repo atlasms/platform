@@ -413,3 +413,97 @@ test('onDelivered reports the fan-out, including when it reaches nobody', async 
     { subject: 'atlas.ch99.asset.approved', count: 0 },
   ]);
 });
+
+// --- EP-25.7 personal messages: an identity match, not a permission -------------------------------
+// HELD FOR THE PRODUCT OWNER'S SECURITY REVIEW (#456): a new eligibility rule.
+
+const inboxChanged = (recipientUserId: string | undefined, channelId = 'ch12') =>
+  buildEnvelope({
+    type: 'inbox.changed',
+    channelId,
+    payload: {
+      ...(recipientUserId !== undefined ? { recipientUserId } : {}),
+      kind: 'message',
+      id: '01K00000000000000000000MSG',
+      at: '2026-11-07T10:00:00.000Z',
+    } as EventPayloads['inbox.changed'],
+    actor: { kind: 'service', id: 'notifications' },
+  });
+
+test('EP-25.7: a personal message reaches the user it names — and nobody else, whatever their grants', () => {
+  const ana = { userId: 'ana', channelId: 'ch12', policy: policyFor('ana', []) };
+  const admin = { userId: 'admin', channelId: 'ch12', policy: policyFor('admin', ['*:*']) };
+  const subject = 'atlas.ch12.inbox.changed';
+  // No permission is needed by the person it names…
+  assert.deepEqual(mayReceive(ana, subject, inboxChanged('ana')), { allowed: true });
+  // …and none admits anyone else: a wildcard grant is not an identity.
+  const stolen = mayReceive(admin, subject, inboxChanged('ana'));
+  assert.equal(stolen.allowed, false);
+  assert.match(stolen.reason ?? '', /another user/);
+});
+
+test('EP-25.7: a personal message that names nobody, or is judged without its body, reaches nobody', () => {
+  const ana = { userId: 'ana', channelId: 'ch12', policy: policyFor('ana', ['*:*']) };
+  const subject = 'atlas.ch12.inbox.changed';
+  assert.equal(mayReceive(ana, subject, inboxChanged(undefined)).allowed, false);
+  assert.equal(mayReceive(ana, subject).allowed, false, 'no body is no recipient: refused');
+  // The recipient is read from the ENVELOPE's payload: a bare payload is not an envelope.
+  assert.equal(mayReceive(ana, subject, { recipientUserId: 'ana' }).allowed, false);
+  assert.equal(
+    mayReceive(ana, subject, { payload: { recipientUserId: '' } }).allowed,
+    false,
+    'an empty id names nobody',
+  );
+});
+
+test('EP-25.7: a personal message stays in its channel — by subject AND by envelope (EP-30.2)', () => {
+  const ana = { userId: 'ana', channelId: 'ch12', policy: policyFor('ana', []) };
+  // The same user id in another channel's subject: tenant isolation comes first.
+  assert.equal(
+    mayReceive(ana, 'atlas.ch99.inbox.changed', inboxChanged('ana', 'ch99')).allowed,
+    false,
+  );
+  // A ch99 envelope on a ch12 subject (a producer bug) is refused too, on the envelope's word.
+  const mislabelled = mayReceive(ana, 'atlas.ch12.inbox.changed', inboxChanged('ana', 'ch99'));
+  assert.equal(mislabelled.allowed, false);
+  assert.match(mislabelled.reason ?? '', /another channel/);
+});
+
+test('EP-25.7: anyone in the channel may subscribe to the personal domain — never to another channel’s', () => {
+  const nobody = { userId: 'ana', channelId: 'ch12', policy: policyFor('ana', []) };
+  assert.equal(maySubscribe(nobody, 'atlas.ch12.inbox.>').allowed, true);
+  assert.equal(maySubscribe(nobody, 'atlas.ch12.inbox.changed').allowed, true);
+  assert.equal(maySubscribe(nobody, 'atlas.ch99.inbox.>').allowed, false);
+  assert.equal(maySubscribe(nobody, 'atlas.*.inbox.>').allowed, false);
+});
+
+test('EP-25.7 over the bridge: the named user’s connections get the frame; another user’s, even subscribed to everything, do not', async () => {
+  const broker = new InMemoryBroker();
+  const reg = new ConnectionRegistry();
+  startBridge({ broker, registry: reg });
+  const anaPhone = fakeConn({ id: 'c1', userId: 'ana', policy: policyFor('ana', []) });
+  const anaLaptop = fakeConn({ id: 'c2', userId: 'ana', policy: policyFor('ana', []) });
+  const admin = fakeConn({ id: 'c3', userId: 'admin', policy: policyFor('admin', ['*:*']) });
+  const rival = fakeConn({
+    id: 'c4',
+    userId: 'ana',
+    channelId: 'ch99',
+    policy: policyFor('ana', ['*:*']),
+  });
+  for (const c of [anaPhone, anaLaptop, admin, rival]) reg.add(c);
+  reg.subscribe('c1', 'atlas.ch12.inbox.>');
+  reg.subscribe('c2', 'atlas.ch12.>');
+  reg.subscribe('c3', 'atlas.ch12.>');
+  reg.subscribe('c4', 'atlas.ch99.>');
+
+  const envelope = inboxChanged('ana');
+  await broker.publish({
+    id: envelope.messageId,
+    subject: 'atlas.ch12.inbox.changed',
+    body: envelope,
+  });
+  assert.equal(events(anaPhone).length, 1);
+  assert.equal(events(anaLaptop).length, 1, 'every connection of the person');
+  assert.equal(events(admin).length, 0, 'not the administrator, subscribed to everything');
+  assert.equal(events(rival).length, 0, 'not the same id in another channel');
+});

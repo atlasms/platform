@@ -111,13 +111,18 @@ export function inboxStoreConformance(name: string, harness: InboxStoreHarness):
       const sent = await drain();
       assert.deepEqual(
         sent.map((e) => e.type),
-        ['task.created', 'audit.recorded'],
+        ['task.created', 'inbox.changed', 'audit.recorded'],
       );
       for (const e of sent) {
         assert.equal(e.correlationId, correlationId, "the workflow's chain continues");
         assert.equal(e.causationId, (msg.body as Envelope).messageId);
       }
-      const audit = sent[1]?.payload as { entityType: string; entityId: string; action: string };
+      // EP-25.7: the assignee's live frame — who it is for, what changed, nothing of its content.
+      assert.deepEqual(
+        { ...(sent[1]?.payload as Record<string, unknown>), at: undefined },
+        { recipientUserId: 'user-7', kind: 'task', id: taskId, at: undefined },
+      );
+      const audit = sent[2]?.payload as { entityType: string; entityId: string; action: string };
       assert.deepEqual(
         [audit.entityType, audit.entityId, audit.action],
         ['task', taskId, 'task.created'],

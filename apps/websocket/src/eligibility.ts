@@ -43,6 +43,35 @@ const DOMAIN_READ: Readonly<Record<string, { permission: string; fieldGroup?: st
  */
 const CHANNEL_WIDE: ReadonlySet<string> = new Set(['workflow.changed']);
 
+/**
+ * PERSONAL domains (EP-25.7, decided 2026-10-12; websocket.md §5): every message in one names ONE
+ * recipient — `recipientUserId` in its envelope's payload — and reaches only connections
+ * authenticated as that user, in that channel. An identity match, not a permission: no grant,
+ * however wide, lets another user's socket receive it, and a message in one that names nobody
+ * reaches nobody. Any user of the channel may SUBSCRIBE to one, since each message is then judged
+ * by who it names.
+ *
+ * - `inbox` — `inbox.changed` (Notifications): this person's tasks, messages or notifications
+ *   changed. It names what changed and nothing of its content; the client re-reads through the API.
+ */
+const PERSONAL: ReadonlySet<string> = new Set(['inbox']);
+
+/** The recipient a personal message names — read from the ENVELOPE's payload, never its top level. */
+function recipientOf(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const payload = (body as { payload?: unknown }).payload;
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const recipient = (payload as { recipientUserId?: unknown }).recipientUserId;
+  return typeof recipient === 'string' && recipient !== '' ? recipient : undefined;
+}
+
+/** The channel an envelope says it belongs to, when it says. */
+function envelopeChannel(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const channelId = (body as { channelId?: unknown }).channelId;
+  return typeof channelId === 'string' ? channelId : undefined;
+}
+
 function readRuleFor(domain: string): { permission: string; fieldGroup?: string } {
   return DOMAIN_READ[domain] ?? { permission: `${domain}:read` };
 }
@@ -93,10 +122,13 @@ export interface EligibilityDecision {
  *    permission can grant someone else's inbox.
  * 2. **Tenant isolation.** A connection authenticated into `ch12` never receives `ch99`, whatever
  *    its grants say. This is checked *before* permissions so a broad grant cannot cross tenants.
- * 3. **The domain's read permission**, evaluated with the shared `can()` — the same function the
+ * 3. **A personal domain is an identity match** (EP-25.7): the message reaches the user its
+ *    envelope names, and nobody else — whatever their grants. It needs the message's BODY, so a
+ *    caller that cannot pass one gets a refusal for a personal subject, never a delivery.
+ * 4. **The domain's read permission**, evaluated with the shared `can()` — the same function the
  *    owning service uses to enforce, so the socket cannot disagree with the API.
  */
-export function mayReceive(sub: Subscriber, subject: string): EligibilityDecision {
+export function mayReceive(sub: Subscriber, subject: string, body?: unknown): EligibilityDecision {
   if (isPrivateSubject(subject)) {
     const owner = privateSubjectOwner(subject);
     if (owner === undefined) return { allowed: false, reason: 'malformed private subject' };
@@ -114,6 +146,20 @@ export function mayReceive(sub: Subscriber, subject: string): EligibilityDecisio
   }
 
   if (CHANNEL_WIDE.has([parsed.domain, ...parsed.rest].join('.'))) return { allowed: true };
+
+  if (PERSONAL.has(parsed.domain)) {
+    // The envelope's own channel too, not only the subject's: a personal frame is the one kind a
+    // grant does not filter, so it gets both tenant checks (EP-30.2's note on #456).
+    const channel = envelopeChannel(body);
+    if (channel !== undefined && channel !== sub.channelId)
+      return { allowed: false, reason: 'message belongs to another channel' };
+    const recipient = recipientOf(body);
+    if (recipient === undefined)
+      return { allowed: false, reason: 'a personal message names no recipient' };
+    return recipient === sub.userId
+      ? { allowed: true }
+      : { allowed: false, reason: 'personal message for another user' };
+  }
 
   const { permission, fieldGroup } = readRuleFor(parsed.domain);
   // STRICT: the full context is known here, so an unsatisfiable predicate must not pass
@@ -173,6 +219,9 @@ export function maySubscribe(sub: Subscriber, pattern: string): EligibilityDecis
   if (CHANNEL_WIDE.has(parts.slice(2).join('.'))) return { allowed: true };
 
   const domainToken = parts[2] ?? '';
+  // A personal domain (EP-25.7): anyone in the tenant may subscribe; each message reaches only the
+  // user it names.
+  if (PERSONAL.has(domainToken)) return { allowed: true };
   if (WILDCARD.has(domainToken)) {
     // Legitimate ("everything I may see in my tenant"); each message is still filtered.
     return { allowed: true };
