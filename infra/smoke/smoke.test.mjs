@@ -2289,6 +2289,168 @@ test('smoke: EP-22.6 — a wait-event moves on asset.ready; a review step is res
   assert.deepEqual([closed.outcome, closed.closedBy], ['approved', me]);
 });
 
+test('smoke: EP-24.7 — two review points on one asset: the first passes it on, the last approves it', async () => {
+  // Decided 2026-11-06: every point's verdict is retained and moves its own step; only the
+  // approving point (by default the last) approves the asset. On a live cluster: a ready asset, a
+  // workflow reviewing it at two points; the first task says it only passes the asset on, the
+  // approval given there with `final: false` leaves it `ready`, and the second task — approving —
+  // approves it. Both verdicts are in its history; the instance completes with both outcomes.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const poll = async (fn, done, budgetMs, what) => {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const value = await fn();
+      if (done(value)) return value;
+      assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(value)}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+  const me = json(await get('/api/v1/users/me/effective-permissions', { headers })).subjectId;
+  const created = await get('/api/v1/assets', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      title: 'Smoke two-point review',
+      mediaType: 'video',
+      fileType: 'mp4',
+      categoryId: await categoryFor(token),
+    }),
+  });
+  assert.equal(created.status, 201, created.text);
+  const assetId = json(created).id;
+  const enqueued = await get('/api/v1/jobs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ assetId, presetIds: ['proxy'], inputPath: 'samples/smoke.mp4' }),
+  });
+  assert.equal(enqueued.status, 202, enqueued.text);
+  await poll(
+    async () =>
+      json(
+        await get(`/api/v1/assets/${assetId}`, {
+          headers: { ...headers, 'cache-control': 'no-cache' },
+        }),
+      ),
+    (a) => a.hasRenditions === true,
+    60_000,
+    'the asset never got its rendition',
+  );
+  for (const step of ['process', 'ready']) {
+    const res = await get(`/api/v1/assets/${assetId}/${step}`, { method: 'POST', headers });
+    assert.equal(res.status, 200, `${step}: ${res.text}`);
+  }
+
+  const reviewAt = (point, variable) => ({
+    id: `s_${point.replace(/-/g, '_')}`,
+    kind: 'human-task',
+    config: {
+      taskType: 'approve',
+      assignee: { userId: me },
+      reviewPointId: point,
+      output: { [`vars.${variable}`]: '= incoming.outcome' },
+    },
+  });
+  const made = await get('/api/v1/workflows', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      name: `smoke two-point review ${Date.now()}`,
+      vars: [
+        { name: 'first', type: 'string' },
+        { name: 'last', type: 'string' },
+      ],
+      steps: [
+        { id: 's_start', kind: 'start' },
+        reviewAt('smoke-edit', 'first'),
+        reviewAt('smoke-air', 'last'),
+        { id: 's_end', kind: 'end' },
+      ],
+      transitions: [
+        { id: 't1', from: 's_start', to: 's_smoke_edit' },
+        { id: 't2', from: 's_smoke_edit', to: 's_smoke_air' },
+        { id: 't3', from: 's_smoke_air', to: 's_end' },
+      ],
+    }),
+  });
+  assert.equal(made.status, 201, made.text);
+  const w = json(made);
+  const published = await get(`/api/v1/workflows/${w.id}/publish?revision=1`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(published.status, 200, published.text);
+  let started;
+  const startBy = Date.now() + 60_000;
+  for (;;) {
+    started = await get('/api/v1/instances', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workflowId: w.id, assetId }),
+    });
+    if (started.status !== 503 || Date.now() > startBy) break;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  assert.equal(started.status, 201, started.text);
+  const instanceId = json(started).id;
+  const taskAt = (point) =>
+    poll(
+      async () =>
+        json(
+          await get('/api/v1/inbox', { headers: { ...headers, 'cache-control': 'no-cache' } }),
+        ).tasks.find((t) => t.workflowInstanceId === instanceId && t.reviewPointId === point),
+      (t) => t !== undefined,
+      60_000,
+      `the review task at ${point} never reached the inbox`,
+    );
+
+  const first = await taskAt('smoke-edit');
+  assert.equal(first.approving, false, 'the first point only passes the asset on');
+  const passed = await get(`/api/v1/assets/${assetId}/approve`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ reviewPointId: 'smoke-edit', final: false }),
+  });
+  assert.equal(passed.status, 200, passed.text);
+  assert.equal(json(passed).state, 'ready', 'a pass does not approve the asset');
+
+  const last = await taskAt('smoke-air');
+  assert.equal(last.approving, true, 'the last point approves');
+  const approved = await get(`/api/v1/assets/${assetId}/approve`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ reviewPointId: 'smoke-air', expiresAt: null }),
+  });
+  assert.equal(approved.status, 200, approved.text);
+  assert.equal(json(approved).state, 'approved');
+
+  const verdicts = json(await get(`/api/v1/assets/${assetId}/verdicts`, { headers }));
+  assert.deepEqual(
+    verdicts.items.map((v) => [v.verdict, v.reviewPointId, v.final]),
+    [
+      ['approved', 'smoke-air', undefined],
+      ['approved', 'smoke-edit', false],
+    ],
+    JSON.stringify(verdicts),
+  );
+  const done = await poll(
+    () => get(`/api/v1/instances/${instanceId}`, { headers }).then((r) => json(r)),
+    (i) => i.state === 'completed' || i.state === 'failed',
+    60_000,
+    'the verdicts never moved the instance',
+  );
+  assert.equal(done.state, 'completed', JSON.stringify(done));
+  assert.deepEqual([done.vars?.first, done.vars?.last], ['approved', 'approved']);
+  const history = await poll(
+    async () => json(await get(`/api/v1/history/asset/${assetId}`, { headers })),
+    (h) => h.revisions.some((r) => r.action === 'asset.reviewed'),
+    30_000,
+    'the pass never reached the audit history',
+  );
+  assert.ok(history.revisions.some((r) => r.action === 'asset.approved'));
+});
+
 test('smoke: EP-22.7 — the canonical preset, end to end: an upload starts it, MTS transcodes, a ready taken from the buffer, the review approved', async () => {
   // Phase 2's spine on a live cluster. The canonical preset is published (scoped by its trigger's
   // filter to one file name); a video is UPLOADED; RIM's ingest.accepted starts the instance as BMS;

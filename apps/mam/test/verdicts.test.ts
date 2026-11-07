@@ -242,3 +242,84 @@ test('re-review re-arms the clock: inheriting again snapshots the category defau
   assert.deepEqual([again.expiresAt, again.expirySource], ['2026-08-08T12:00:00.000Z', 'category']);
   assert.equal(await h.service.expireLapsed(), 0, 'not swept straight back');
 });
+
+test('EP-24.7: an approval at a point that does not approve the asset passes it on — recorded, announced, the state unchanged', async () => {
+  const h = harness();
+  const a = await h.ready();
+  const passed = await h.service.transition(h.caller('ben'), a.id, 'approve', {
+    reviewPointId: 'post-ingest',
+    final: false,
+  });
+  assert.equal(passed.state, 'ready', 'the asset is not approved by a pass');
+  assert.equal(passed.approvedBy, undefined);
+  assert.equal(passed.expiresAt, undefined);
+  assert.equal(passed.version, a.version + 1, 'a revision, audited with the verdict');
+
+  // Then the approving point decides.
+  const approved = await h.service.transition(h.caller('ana'), a.id, 'approve', {
+    reviewPointId: 'pre-schedule',
+  });
+  assert.equal(approved.state, 'approved');
+  const verdicts = await h.service.verdicts(h.caller(), a.id);
+  assert.deepEqual(
+    verdicts.map((v) => [v.verdict, v.decidedBy, v.reviewPointId, v.final]),
+    [
+      ['approved', 'ana', 'pre-schedule', undefined],
+      ['approved', 'ben', 'post-ingest', false],
+    ],
+    'both are in the history, newest first; only the pass is marked not final',
+  );
+
+  const envelopes = (
+    h.store.db.prepare('SELECT body FROM outbox ORDER BY rowid').all() as { body: string }[]
+  ).map((r) => JSON.parse(r.body) as { type: string; payload: Record<string, unknown> });
+  const reviewed = envelopes.find((e) => e.type === 'asset.reviewed');
+  assert.deepEqual(
+    [
+      reviewed?.payload['assetId'],
+      reviewed?.payload['reviewer'],
+      reviewed?.payload['reviewPointId'],
+    ],
+    [a.id, 'ben', 'post-ingest'],
+  );
+  const audit = envelopes.find(
+    (e) => e.type === 'audit.recorded' && e.payload['action'] === 'asset.reviewed',
+  );
+  assert.deepEqual((audit?.payload['delta'] as Record<string, unknown>)?.['review'], {
+    after: { verdict: 'approved', reviewPointId: 'post-ingest', final: false },
+  });
+});
+
+test('EP-24.7: a pass names its point, is an approval only, and is given only where the asset could be approved', async () => {
+  const h = harness();
+  const a = await h.ready();
+  await assert.rejects(
+    h.service.transition(h.caller(), a.id, 'approve', { final: false }),
+    /names its review point/,
+  );
+  await assert.rejects(
+    h.service.transition(h.caller(), a.id, 'reject', {
+      reason: 'no',
+      reviewPointId: 'qc',
+      final: false,
+    }),
+    /a rejection rejects/,
+  );
+  const fresh = await h.service.create(h.caller(), {
+    title: 'Not ready',
+    mediaType: 'video',
+    fileType: 'mxf',
+    categoryId: 'cat-1',
+  });
+  await assert.rejects(
+    h.service.transition(h.caller(), fresh.id, 'approve', { reviewPointId: 'qc', final: false }),
+    (err: Error) => err.constructor.name === 'Conflict',
+  );
+  // And a rejection at ANY point rejects the asset.
+  const rejected = await h.service.transition(h.caller(), a.id, 'reject', {
+    reason: 'soft focus',
+    reviewPointId: 'post-ingest',
+  });
+  assert.equal(rejected.state, 'rejected');
+  assert.deepEqual(await h.service.verdicts(h.caller(), fresh.id), []);
+});

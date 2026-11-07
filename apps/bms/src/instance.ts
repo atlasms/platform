@@ -103,6 +103,12 @@ export interface EventAwait {
    * none, resolves it (decided 2026-10-16); one naming another point does not.
    */
   reviewPointId?: string;
+  /**
+   * The APPROVING review point's await (EP-24.7): the asset's verdict decides it wherever it was
+   * given — a verdict naming any point, or none — since only one point approves and a rejection at
+   * any point rejects. Absent on every other await.
+   */
+  approving?: true;
   issuedAt: string;
   answeredAt?: string;
   /** The message id of the event that answered it. */

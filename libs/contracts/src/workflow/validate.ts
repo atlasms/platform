@@ -1,3 +1,4 @@
+import { approvingReviewPoint } from './review.ts';
 import { payloadShape, validateDomain } from '../registry.ts';
 import { WORKFLOW_COMMANDS } from './commands.ts';
 import { correlationKeys } from './correlate.ts';
@@ -275,6 +276,34 @@ export function validateDefinition(def: unknown): ValidationResult {
         at,
       );
     else points.set(cfg.reviewPointId, s.id);
+  }
+
+  // Which point APPROVES the asset (EP-24.7): one marked `approving`, or the last. Every other point's
+  // approval only passes the asset on, so the workflow must say which one decides — unambiguously.
+  for (const problem of approvingReviewPoint(wf).problems) {
+    const first = 'stepId' in problem ? problem.stepId : problem.stepIds[0]!;
+    const at = {
+      stepId: first,
+      path: `/steps/${steps.findIndex((x) => x.id === first)}/config/approving`,
+    };
+    if (problem.code === 'APPROVING_NOT_REVIEW')
+      error(
+        problem.code,
+        `step "${problem.stepId}" is marked approving but names no review point — only a review step approves`,
+        at,
+      );
+    else if (problem.code === 'DUP_APPROVING')
+      error(
+        problem.code,
+        `steps ${problem.stepIds.map((id) => `"${id}"`).join(', ')} are all marked approving — one review point approves the asset`,
+        at,
+      );
+    else
+      error(
+        problem.code,
+        `review steps ${problem.stepIds.map((id) => `"${id}"`).join(', ')} could each be the last — mark the one that approves the asset with approving: true`,
+        at,
+      );
   }
 
   const exprs: { path: string; expr: string }[] = [];

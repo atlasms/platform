@@ -10,6 +10,7 @@ import {
   WORKFLOW_EVENTS,
   WORKFLOW_TRIGGERS,
   palette,
+  approvingReviewPoint,
   validateDefinition,
   WORKFLOW_COMMANDS,
   type CommandConfig,
@@ -256,6 +257,77 @@ test('a review point is an approval, and each one in a flow is its own', () => {
   def.transitions.push({ id: 't_r2_out', from: 's_review_2', to: 's_gate' });
   const dup = validateDefinition(def).issues.find((i) => i.code === 'DUP_REVIEW_POINT');
   assert.equal(dup?.stepId, 's_review_2');
+});
+
+test('EP-24.7: ONE review point approves — the one marked, or the last; publish refuses any doubt', () => {
+  const def = load('canonical-ingest-to-air.workflow.json');
+  const review = def.steps.find((s) => s.id === 's_review')!;
+  const cfg = review.config as HumanTaskConfig;
+  // One point: it approves.
+  assert.equal(approvingReviewPoint(def).reviewPointId, cfg.reviewPointId);
+
+  // A second point AFTER it: the later one is the last, so it approves; the first is a pass.
+  const second = {
+    ...review,
+    id: 's_review_2',
+    config: { ...cfg, reviewPointId: 'final-check' },
+  };
+  def.steps.push(second);
+  const out = def.transitions.filter((t) => t.from === 's_review');
+  for (const t of out) t.from = 's_review_2';
+  def.transitions.push({ id: 't_r_r2', from: 's_review', to: 's_review_2' });
+  assert.deepEqual(
+    validateDefinition(def).issues.filter((i) => i.severity === 'error'),
+    [],
+  );
+  assert.equal(approvingReviewPoint(def).stepId, 's_review_2');
+
+  // Marking the first makes it the approving one.
+  cfg.approving = true;
+  assert.equal(approvingReviewPoint(def).stepId, 's_review');
+  // Two marked is refused; so is a mark on a step with no review point.
+  (second.config as HumanTaskConfig).approving = true;
+  const codes = () =>
+    validateDefinition(def)
+      .issues.filter((i) => i.severity === 'error')
+      .map((i) => i.code);
+  assert.deepEqual(codes(), ['DUP_APPROVING']);
+  delete (second.config as HumanTaskConfig).approving;
+  delete cfg.approving;
+  assert.deepEqual(
+    approvingReviewPoint({
+      steps: [
+        {
+          id: 's_plain',
+          kind: 'human-task',
+          config: { taskType: 'edit', assignee: { role: 'editor' }, approving: true },
+        },
+      ],
+      transitions: [],
+    }).problems,
+    [{ code: 'APPROVING_NOT_REVIEW', stepId: 's_plain' }],
+  );
+
+  // Two "last" points on parallel paths: say which.
+  def.transitions = def.transitions.filter((t) => t.id !== 't_r_r2');
+  def.transitions.push({ id: 't_r_out', from: 's_review', to: out[0]!.to });
+  const into = def.transitions.filter((t) => t.to === 's_review');
+  for (const t of into) def.transitions.push({ ...t, id: `${t.id}_2`, to: 's_review_2' });
+  const ambiguous = validateDefinition(def).issues.find((i) => i.code === 'APPROVING_AMBIGUOUS');
+  assert.ok(ambiguous, JSON.stringify(validateDefinition(def).issues));
+  assert.match(ambiguous.message, /mark the one that approves/);
+  (second.config as HumanTaskConfig).approving = true;
+  assert.equal(approvingReviewPoint(def).stepId, 's_review_2');
+  assert.equal(
+    validateDefinition(def).issues.find((i) => i.code === 'APPROVING_AMBIGUOUS'),
+    undefined,
+  );
+});
+
+test('EP-24.7: an intermediate approval is a review verdict and an event a workflow may wait for', () => {
+  assert.ok(WORKFLOW_EVENTS.includes('asset.reviewed'));
+  assert.deepEqual(REVIEW_VERDICTS['asset.reviewed'], { outcome: 'approved', by: 'reviewer' });
+  assert.ok(EVENT_TYPES.includes('asset.reviewed'));
 });
 
 test('a start trigger is an event from the closed list, and every trigger has a schema', () => {

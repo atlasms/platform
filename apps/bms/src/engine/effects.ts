@@ -25,6 +25,11 @@ export interface TaskSpec {
   /** Resolved: a user id, or a role — the expression form is evaluated before it gets here. */
   assignee: { userId?: string; role?: string };
   reviewPointId?: string;
+  /**
+   * A review step's: whether its point's approval approves the asset (EP-24.7), by the workflow's
+   * rule — marked `approving`, or the last review point. Absent on any other task.
+   */
+  approving?: boolean;
   /** Epoch ms, from `now()`. */
   dueAt?: number;
 }

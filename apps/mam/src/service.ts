@@ -1107,10 +1107,59 @@ export class MamService {
         `asset ${existing.id} is replaced by ${existing.replacedById}; review the new version`,
       );
     }
+    if (options.final !== undefined && typeof options.final !== 'boolean')
+      throw new ValidationError('final must be a boolean');
+    const intermediate = options.final === false;
+    if (intermediate) {
+      if (action !== 'approve')
+        throw new ValidationError('only an approval may be intermediate — a rejection rejects');
+      if (point === undefined)
+        throw new ValidationError(
+          'an intermediate approval names its review point (reviewPointId)',
+        );
+    }
     const context = await this.contextFor(existing);
     const result = canTransition(context, action);
     if (!result.allowed) {
       throw new Conflict(result.reason ?? `cannot ${action} this asset`);
+    }
+
+    if (intermediate) {
+      // EP-24.7 (decided 2026-11-06): an approval at a point that does not approve the asset. Only
+      // where the asset COULD be approved (the transition just checked), so a point never passes an
+      // asset that is still processing; but it moves nothing — no state, no approver, no expiry.
+      // The verdict is retained like any other, and the revision is audited with it.
+      const reviewed: Asset = {
+        ...existing,
+        version: existing.version + 1,
+        updatedAt: this.now().toISOString(),
+      };
+      const verdict: Verdict = {
+        id: ulid(),
+        assetId: reviewed.id,
+        channelId: reviewed.channelId,
+        verdict: 'approved',
+        decidedBy: caller.userId,
+        decidedAt: reviewed.updatedAt,
+        reviewPointId: point!,
+        final: false,
+      };
+      await this.commitWith(
+        caller,
+        reviewed,
+        existing,
+        {
+          type: 'asset.reviewed',
+          payload: this.payloadFor(caller, 'asset.reviewed', reviewed, { ...options, scope }),
+          // Nothing on the record changes, so the diff would be empty: the revision carries the
+          // verdict itself, which is what it records.
+          delta: {
+            review: { after: { verdict: 'approved', reviewPointId: point!, final: false } },
+          },
+        },
+        (tx) => tx.appendVerdict(verdict),
+      );
+      return reviewed;
     }
 
     const updated: Asset = {
@@ -3171,6 +3220,14 @@ export class MamService {
     };
     const at = asset.updatedAt;
     switch (eventType) {
+      case 'asset.reviewed':
+        return {
+          assetId: asset.id,
+          reviewer: caller.userId,
+          reviewedAt: at,
+          reviewPointId: options.reviewPointId,
+          ...audience,
+        };
       case 'asset.approved':
         return {
           assetId: asset.id,
@@ -3209,6 +3266,11 @@ export interface TransitionOptions {
   reason?: string;
   /** A verdict's workflow review point (EP-22.6). */
   reviewPointId?: string;
+  /**
+   * EP-24.7: `false` for an approval at a review point that does not approve the asset — recorded,
+   * announced as `asset.reviewed`, the state unchanged. Omitted or `true` approves it.
+   */
+  final?: boolean;
 }
 
 /**

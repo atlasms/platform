@@ -253,6 +253,7 @@ required per-kind config, id patterns, `maxContains:1` on `start`.
 | `wait-event.event` is an event a workflow may wait for — `WORKFLOW_EVENTS`, a closed list (`UNKNOWN_EVENT`, EP-22.6) | error |
 | `wait-event.correlate` is equality keys, `incoming.<field> = <expr>` joined with `and`, the other side not reading `incoming` (`CORRELATE_SHAPE`), on fields the event's payload has (`CORRELATE_FIELD`) | error |
 | A `human-task` with a `reviewPointId` is an approval (`REVIEW_TASK_TYPE`), and no two steps share a point (`DUP_REVIEW_POINT`) | error |
+| ONE review point approves the asset (EP-24.7): the one marked `approving: true`, else the last — the review step no other review step can follow. Refused: a mark on a step with no point (`APPROVING_NOT_REVIEW`), two marked (`DUP_APPROVING`), several "last" points with none marked (`APPROVING_AMBIGUOUS`) | error |
 | `sub-flow.workflowId` exists and is published | error |
 | `compensation` references an existing step | error |
 | Unreachable-after-terminate, unused `vars` | warning |

@@ -144,6 +144,9 @@ test('what the reference dropped round-trips too: timeouts, error paths, compens
         config: {
           taskType: 'approve',
           assignee: { role: 'librarian' },
+          // EP-24.7: the approving mark, a Boolean attribute.
+          reviewPointId: 'final',
+          approving: true,
           form: { fields: [{ name: 'note', type: 'text' }], required: ['note'] },
           escalation: { after: 'P1D', action: 'reassign', to: { role: 'editor' } },
         },

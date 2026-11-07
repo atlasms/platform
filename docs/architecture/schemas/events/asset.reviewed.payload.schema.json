@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/schemas/events/asset.reviewed.payload.schema.json",
+  "title": "asset.reviewed payload",
+  "description": "Emitted by MAM when an asset is approved at a workflow review point that does NOT approve it (EP-24.7, decided 2026-11-06): the verdict is recorded in the asset's verdict history and moves that point's workflow step, and the asset's state does not change. The point whose approval approves the asset emits asset.approved; a rejection at any point emits asset.rejected. Consumed by BMS.",
+  "type": "object",
+  "required": ["assetId", "reviewer", "reviewPointId"],
+  "additionalProperties": false,
+  "properties": {
+    "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "reviewer": { "type": "string", "description": "User id who approved at this point." },
+    "reviewedAt": { "type": "string", "format": "date-time" },
+    "reviewPointId": { "type": "string", "description": "The workflow review step this approval was given at — the only step it moves." },
+    "createdBy": { "type": "string", "description": "Who created the asset." },
+    "categoryPath": { "type": "string", "description": "The asset's category path when the event was made." }
+  }
+}

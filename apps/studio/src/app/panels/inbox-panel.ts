@@ -22,6 +22,7 @@ import { LocaleService } from '../core/locale.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { WebSocketService } from '../core/websocket.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
+import { ReviewContextStore } from '../core/review-context.store.ts';
 
 type InboxView = 'tasks' | 'notifications' | 'messages' | 'preferences';
 
@@ -107,7 +108,7 @@ export const INBOX_REFRESH_MS = 30_000;
                     {{ locale.t('inboxPanel.reviewInMam') }} “{{ task.reviewPointId }}”
                   </span>
                   @if (task.subjectRef?.entityType === 'asset') {
-                    <button type="button" (click)="openSubject(task.subjectRef!.entityId)">
+                    <button type="button" (click)="openReview(task, task.subjectRef!.entityId)">
                       {{ locale.t('inboxPanel.openAsset') }}
                     </button>
                   }
@@ -334,6 +335,7 @@ export const INBOX_REFRESH_MS = 30_000;
 export class InboxPanel implements OnInit {
   private readonly api = inject(InboxService);
   private readonly editors = inject(EditorStore);
+  private readonly reviews = inject(ReviewContextStore);
   private readonly session = inject(SessionStore);
   private readonly ws = inject(WebSocketService);
   private readonly destroyRef = inject(DestroyRef);
@@ -407,6 +409,16 @@ export class InboxPanel implements OnInit {
 
   protected complete(task: InboxTask, outcome: string): void {
     this.act(this.api.complete(task.id, outcome), 'inboxPanel.completeRefused');
+  }
+
+  /** A review task opens its asset FOR that review (EP-24.7): the point, and whether it approves. */
+  protected openReview(task: InboxTask, assetId: string): void {
+    if (task.reviewPointId)
+      this.reviews.open(assetId, {
+        reviewPointId: task.reviewPointId,
+        approving: task.approving !== false,
+      });
+    this.openSubject(assetId);
   }
 
   protected openSubject(assetId: string): void {

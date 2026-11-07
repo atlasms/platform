@@ -9,6 +9,7 @@
     "./workflow": "./src/workflow/index.ts",
     "./workflow-types": "./src/workflow/types.ts",
     "./workflow-correlate": "./src/workflow/correlate.ts",
+    "./workflow-review": "./src/workflow/review.ts",
     "./bpmn": "./src/bpmn/index.ts",
     "./workflow-feel": "./src/workflow/feel.ts"
   },

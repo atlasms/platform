@@ -1,3 +1,4 @@
+import { ReviewContextStore } from '../core/review-context.store.ts';
 import { HttpErrorResponse } from '@angular/common/http';
 import { TestBed } from '@angular/core/testing';
 import { Subject } from 'rxjs';
@@ -210,6 +211,7 @@ describe('InboxPanel', () => {
     const review = task({
       kind: 'approve',
       reviewPointId: 'pre-schedule',
+      approving: false,
       subjectRef: { entityType: 'asset', entityId: '01K00000000000000000000AST' },
     });
     t.deliver({ tasks: [review] });
@@ -220,6 +222,11 @@ describe('InboxPanel', () => {
     expect(t.editors.activeTab()).toMatchObject({
       type: 'asset',
       resourceId: '01K00000000000000000000AST',
+    });
+    // EP-24.7: the asset opens FOR this review — its point, and that it only passes the asset on.
+    expect(TestBed.inject(ReviewContextStore).for('01K00000000000000000000AST')).toEqual({
+      reviewPointId: 'pre-schedule',
+      approving: false,
     });
   });
 

@@ -226,7 +226,10 @@ verdict at (`POST /assets/{id}/approve` or `/reject` with `reviewPointId`). BMS 
 emits `workflow.task.resolved`; this service applies it — the task `done`, the verdict its outcome,
 its author `closedBy` and a participant, `task.updated` + `audit.recorded` (`task.resolved`) in one
 transaction, the seen-mark with them. A resolution for a task not here yet goes back to the broker
-(its creation rides another durable); one for a closed task is a duplicate. bms.md §13f.
+(its creation rides another durable); one for a closed task is a duplicate. bms.md §13f. Since EP-24.7
+a review task also says whether its point APPROVES the asset (`approving`, from
+`workflow.task.created`): false when the approval there only passes the asset on to a later point
+(bms.md §13j, mam.md §13s).
 
 **A workflow task CANCELLED** (EP-22.9): `workflow.task.resolved` with `state: cancelled` and a
 `reason` (`timeout`, `workflow-ended`) — its step ran out of time, or its run failed while it was

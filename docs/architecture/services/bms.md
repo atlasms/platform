@@ -503,7 +503,7 @@ its KEYS:
 
 An event published before its step starts waiting is taken from the buffer since EP-22.7 (§13g);
 ending a waiting step by its timeout is EP-22.9's (§13h). Several review points on one asset meet MAM's lifecycle (`approved` cannot be approved
-again), so multi-point flows of real use are EP-24.7's.
+again) — EP-24.7 decided how (§13j).
 
 Evidence: `libs/contracts/test/workflow.test.ts` (the keys, the publish rules), `test/review.test.ts`
 (end to end through the in-process runner: keys, channel, asset, every waiting instance, a two-point
@@ -512,6 +512,35 @@ on sqlite and Postgres, `test/temporal.test.ts` on a real Temporal (a wait-event
 resolved by a verdict), and smoke on kind: an instance waits for `asset.ready`, its review task is in
 the inbox naming its point, completing it by hand is refused, the approval in MAM at that point
 completes the instance with `approved` and closes the task.
+
+## 13j. As built — EP-24.7, several review points: one approves (decided 2026-11-06)
+
+**One review point approves the asset**; every other point's approval only PASSES it on. The rule,
+`approvingReviewPoint` (`@atlas/contracts/workflow-review` — pure, so the interpreter evaluates it
+inside Temporal's sandbox exactly as publish does): the review step marked `approving: true`, or —
+with none marked — the LAST, the review step from which no other review step is reachable (by
+transitions, error paths and compensation). Publish refuses doubt: `APPROVING_NOT_REVIEW`,
+`DUP_APPROVING`, `APPROVING_AMBIGUOUS` (two "last" points on parallel paths, or a loop through every
+point — mark one).
+
+- **The task says which it is**: `workflow.task.created` carries `approving`, Notifications keeps it on
+  the task, and Studio gives a pass at a point that does not approve (MAM `final: false`, mam.md §13s).
+- **What each point waits for.** A PASSING point: its own pass (`asset.reviewed`, a new member of
+  `WORKFLOW_EVENTS` and `REVIEW_VERDICTS`, outcome `approved`, which must NAME the point), and the
+  asset's verdict (`asset.approved` / `asset.rejected` naming it or none, as §13f). The APPROVING point:
+  the asset's verdict only — never a pass, or the review would end with the asset unapproved — and a
+  verdict naming ANY point, or none: there is one approving point and a rejection anywhere rejects,
+  so whatever decided the asset decided it (the await row carries `approving: true`).
+- **An approval given early still decides the approving point.** An event moves one step of an
+  instance, once (§13g) — except the asset's `asset.approved` for the approving point, taken from the
+  buffer even when it already moved an earlier point (approved outright from the asset editor, say):
+  MAM will not approve the asset a second time, so refusing it would strand the review.
+
+Evidence: `libs/contracts/test/workflow.test.ts` (the last point, a marked one, two marked, a mark
+off a review, parallel last points), `test/bpmn.test.ts` (`approving` round-trips),
+`test/review.test.ts` (a pass moves only its point and the last approves; an outright approval at
+the first point completes both; a marked first point decides and the later one passes), and smoke on
+kind (two points, a pass then the approval, both verdicts retained, both outcomes in the vars).
 
 ## 13g. As built — EP-22.7, triggers, the event buffer, and the canonical preset (decided 2026-10-17)
 

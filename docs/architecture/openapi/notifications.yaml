@@ -291,6 +291,7 @@ components:
         subjectRef: { $ref: '#/components/schemas/EntityRef' }
         workflowInstanceId: { $ref: '#/components/schemas/Ulid' }
         reviewPointId: { type: string, description: "A workflow review step's task (EP-22.6): the point to name when giving the verdict in MAM (POST /assets/{id}/approve or /reject). The verdict closes it; it is never completed here." }
+        approving: { type: boolean, description: "A review task's (EP-24.7): true when this point's approval approves the asset; false when it only passes it on — approve it in MAM with final: false. Absent on any other task." }
         dueAt: { type: string, format: date-time }
         title: { type: string }
         createdBy: { type: string }

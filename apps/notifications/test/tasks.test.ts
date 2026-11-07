@@ -73,7 +73,7 @@ async function harness() {
   const workflowTask = async (
     assignee: string,
     assigneeKind: 'user' | 'role',
-    review?: { reviewPointId: string },
+    review?: { reviewPointId: string; approving?: boolean },
   ) => {
     const taskId = ulid();
     const envelope = buildEnvelope({
@@ -276,9 +276,14 @@ test('IAM away: a role task cannot be claimed (503), and nothing is written', as
 
 test('a review task (EP-22.6): never completed here — the verdict in MAM closes it, through BMS', async () => {
   const h = await harness();
-  const id = await h.workflowTask('editor', 'role', { reviewPointId: 'pre-schedule' });
+  const id = await h.workflowTask('editor', 'role', {
+    reviewPointId: 'pre-schedule',
+    approving: false,
+  });
   const read = await h.call('ana', 'GET', `/api/v1/tasks/${id}`);
   assert.equal(read.json<Task>().reviewPointId, 'pre-schedule', 'the point to name in MAM');
+  // EP-24.7: and whether it approves the asset, or only passes it on (MAM's `final: false`).
+  assert.equal(read.json<Task & { approving?: boolean }>().approving, false);
 
   // Claimed, it is still not completable by hand: the verdict is MAM's.
   assert.equal((await h.call('ana', 'POST', `/api/v1/tasks/${id}/claim`)).statusCode, 200);

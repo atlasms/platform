@@ -66,6 +66,8 @@ export interface HumanTaskConfig {
   taskType: TaskKind;
   assignee: { userId?: string; role?: string; expression?: Feel };
   reviewPointId?: string;
+  /** EP-24.7: this point's approval approves the asset (default: the last review point). */
+  approving?: boolean;
   form?: Record<string, unknown>;
   dueIn?: Duration;
   output?: DataMapping;

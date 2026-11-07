@@ -25,4 +25,10 @@ export interface Verdict {
   retainUntil?: string;
   /** True when no person gave it: the category chain needs no review (EP-28.7). */
   automatic?: boolean;
+  /**
+   * False for an approval at a workflow review point that does not approve the asset (EP-24.7):
+   * recorded, and the asset passed on to the next point, its state unchanged. Absent on a verdict
+   * that decided the asset.
+   */
+  final?: false;
 }

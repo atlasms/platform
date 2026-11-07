@@ -12,6 +12,7 @@ import {
 import { AssetsService } from '../core/assets.service.ts';
 import type { Asset, Verdict } from '../core/generated/mam.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { ReviewContextStore } from '../core/review-context.store.ts';
 import {
   approvalBody,
   awaitsVerdict,
@@ -48,50 +49,58 @@ import {
       @if (offered()) {
         <div class="verdict">
           <h3>{{ locale.t('review.giveVerdict') }}</h3>
-          <fieldset>
-            <legend>{{ locale.t('review.expiry') }}</legend>
-            <label>
-              <input
-                type="radio"
-                name="expiry"
-                [checked]="choice() === 'inherit'"
-                (change)="choice.set('inherit')"
-              />
-              {{ locale.t('review.inherit') }}
-              @if (defaultExpiry(); as d) {
-                <span class="muted">({{ d }})</span>
-              } @else {
-                <span class="muted">({{ locale.t('review.noDefault') }})</span>
-              }
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="expiry"
-                [checked]="choice() === 'date'"
-                (change)="choice.set('date')"
-              />
-              {{ locale.t('review.onDate') }}
-              <input
-                type="date"
-                class="date"
-                [attr.aria-label]="locale.t('review.onDate')"
-                [value]="date()"
-                (input)="date.set($any($event.target).value); choice.set('date')"
-              />
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="expiry"
-                [checked]="choice() === 'permanent'"
-                (change)="choice.set('permanent')"
-              />
-              {{ locale.t('review.permanent') }}
-            </label>
-          </fieldset>
+          @if (point(); as p) {
+            <p class="point" [attr.data-approving]="p.approving">
+              {{ locale.t('review.atPoint') }} “{{ p.reviewPointId }}” —
+              {{ locale.t(p.approving ? 'review.pointApproves' : 'review.pointPasses') }}
+            </p>
+          }
+          @if (point()?.approving !== false) {
+            <fieldset>
+              <legend>{{ locale.t('review.expiry') }}</legend>
+              <label>
+                <input
+                  type="radio"
+                  name="expiry"
+                  [checked]="choice() === 'inherit'"
+                  (change)="choice.set('inherit')"
+                />
+                {{ locale.t('review.inherit') }}
+                @if (defaultExpiry(); as d) {
+                  <span class="muted">({{ d }})</span>
+                } @else {
+                  <span class="muted">({{ locale.t('review.noDefault') }})</span>
+                }
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="expiry"
+                  [checked]="choice() === 'date'"
+                  (change)="choice.set('date')"
+                />
+                {{ locale.t('review.onDate') }}
+                <input
+                  type="date"
+                  class="date"
+                  [attr.aria-label]="locale.t('review.onDate')"
+                  [value]="date()"
+                  (input)="date.set($any($event.target).value); choice.set('date')"
+                />
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="expiry"
+                  [checked]="choice() === 'permanent'"
+                  (change)="choice.set('permanent')"
+                />
+                {{ locale.t('review.permanent') }}
+              </label>
+            </fieldset>
+          }
           <button type="button" class="approve" [disabled]="busy()" (click)="approve()">
-            {{ locale.t('review.approve') }}
+            {{ locale.t(point()?.approving === false ? 'review.pass' : 'review.approve') }}
           </button>
 
           <label class="reason">
@@ -135,7 +144,9 @@ import {
       <ol class="history">
         @for (v of verdicts() ?? []; track v.id) {
           <li [attr.data-verdict]="v.verdict">
-            <strong>{{ locale.t('review.verdict.' + v.verdict) }}</strong>
+            <strong>{{
+              locale.t(v.final === false ? 'review.verdict.passed' : 'review.verdict.' + v.verdict)
+            }}</strong>
             · {{ v.automatic ? locale.t('review.automatic') : v.decidedBy }} ·
             {{ v.decidedAt.slice(0, 16).replace('T', ' ') }}
             @if (v.reviewPointId) {
@@ -253,6 +264,10 @@ import {
       color: var(--color-danger);
       background: var(--color-danger-bg);
     }
+    .point {
+      margin: 0;
+      font-size: 0.8125rem;
+    }
     .history {
       margin: 0;
       padding-inline-start: var(--space-3);
@@ -283,6 +298,7 @@ export class AssetReview {
   readonly changed = output<Asset>();
 
   private readonly api = inject(AssetsService);
+  private readonly reviews = inject(ReviewContextStore);
   protected readonly locale = inject(LocaleService);
   /** Injectable for tests: the badge counts days from now. */
   now: () => Date = () => new Date();
@@ -296,6 +312,8 @@ export class AssetReview {
   protected readonly error = signal<string | null>(null);
 
   protected readonly badge = computed(() => badgeOf(this.asset(), this.now()));
+  /** The review point this asset was opened for, from the Inbox's task (EP-24.7). */
+  protected readonly point = computed(() => this.reviews.for(this.asset().id));
   protected readonly offered = computed(
     () => this.canApprove() && awaitsVerdict(this.asset().state),
   );
@@ -312,12 +330,25 @@ export class AssetReview {
   });
 
   approve(): void {
+    const point = this.point();
+    // A pass (EP-24.7) sets no expiry: only the approving point's approval approves the asset.
+    if (point && !point.approving) {
+      this.give(
+        this.api.approve(this.asset().id, { reviewPointId: point.reviewPointId, final: false }),
+      );
+      return;
+    }
     const body = approvalBody(this.choice(), this.date(), this.now());
     if (body === null) {
       this.error.set(this.locale.t('review.badDate'));
       return;
     }
-    this.give(this.api.approve(this.asset().id, body));
+    this.give(
+      this.api.approve(this.asset().id, {
+        ...body,
+        ...(point ? { reviewPointId: point.reviewPointId } : {}),
+      }),
+    );
   }
 
   reject(): void {
@@ -332,6 +363,7 @@ export class AssetReview {
       this.api.reject(this.asset().id, {
         reason,
         ...(retainUntil !== undefined ? { retainUntil } : {}),
+        ...(this.point() ? { reviewPointId: this.point()!.reviewPointId } : {}),
       }),
     );
   }
@@ -343,6 +375,8 @@ export class AssetReview {
       next: (asset) => {
         this.busy.set(false);
         this.reason.set('');
+        // The task in hand is answered: the verdict closes it through BMS.
+        this.reviews.done(asset.id);
         this.changed.emit(asset);
       },
       error: (err: unknown) => {
