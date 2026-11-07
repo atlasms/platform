@@ -144,10 +144,17 @@ const service = new IamService({
 // assigned to a subject — registering them only makes them available to assign.
 log.info('starter roles registered', { added: await seedStarterRoles(service.store) });
 
-const seedUser = process.env['ATLAS_SEED_USERNAME'];
-const seedPassword = process.env['ATLAS_SEED_PASSWORD'];
-if (seedUser && seedPassword) {
-  const channelId = process.env['ATLAS_SEED_CHANNEL'] ?? 'ch12';
+/**
+ * One bootstrap account in one channel. Two may be seeded: the dev account, and since EP-30.2 a
+ * RIVAL in a second channel (`ATLAS_SEED_RIVAL_*`) with the same grant in its own channel, so the
+ * isolation suite can prove that a full grant in one tenant reaches nothing in another.
+ */
+async function seedAccount(
+  seedUser: string,
+  seedPassword: string,
+  channelId: string,
+  grantId: string,
+) {
   // The store persists now, so the seed is idempotent: an existing account is kept as it is —
   // its password included, because a restart must not silently reset a credential someone changed.
   const user =
@@ -161,10 +168,10 @@ if (seedUser && seedPassword) {
   // by a fixed id, so a restart replaces rather than duplicates it.
   await service.store.transaction((tx) =>
     tx.putAssignment({
-      id: 'seed-grant',
+      id: grantId,
       userId: user.id,
       rule: {
-        id: 'seed-grant',
+        id: grantId,
         description:
           'dev bootstrap: full asset lifecycle within the seeded channel, and its history',
         // `logs:read` so the smoke suite can read the audit history of what it wrote (EP-19.1) —
@@ -223,6 +230,27 @@ if (seedUser && seedPassword) {
     username: seedUser,
     channelId,
   });
+}
+
+const seedUser = process.env['ATLAS_SEED_USERNAME'];
+const seedPassword = process.env['ATLAS_SEED_PASSWORD'];
+if (seedUser && seedPassword) {
+  await seedAccount(
+    seedUser,
+    seedPassword,
+    process.env['ATLAS_SEED_CHANNEL'] ?? 'ch12',
+    'seed-grant',
+  );
+}
+const rivalUser = process.env['ATLAS_SEED_RIVAL_USERNAME'];
+const rivalPassword = process.env['ATLAS_SEED_RIVAL_PASSWORD'];
+if (rivalUser && rivalPassword) {
+  await seedAccount(
+    rivalUser,
+    rivalPassword,
+    process.env['ATLAS_SEED_RIVAL_CHANNEL'] ?? 'ch99',
+    'seed-grant-rival',
+  );
 }
 
 const admin = new IamAdmin({

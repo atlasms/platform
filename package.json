@@ -43,6 +43,7 @@
     "smoke": "node --test infra/smoke/smoke.test.mjs",
     "bundle": "node scripts/build-bundle.mjs",
     "acceptance": "node --test infra/smoke/mvp-acceptance.test.mjs",
+    "isolation": "node --test infra/smoke/isolation.test.mjs",
     "reference:test": "node scripts/test-reference.mjs",
     "perf": "node infra/smoke/perf-sanity.mjs",
     "drill": "node scripts/restore-drill.mjs",

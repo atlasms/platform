@@ -129,6 +129,12 @@ jobs:
       - name: MVP acceptance
         run: npm run acceptance
 
+      # EP-30.2 — channel isolation, end to end: a RIVAL in ch99 holding the dev account's whole grant
+      # in its own channel reaches for everything the dev account makes in ch12 — every service's
+      # reads, writes, lists, cross-references, the socket and the audit log — and finds nothing.
+      - name: Channel isolation
+        run: npm run isolation
+
       # EP-21.4 — performance SANITY against the MVP NFRs: 40 distinct users at a Studio pace for a
       # minute; reads, search and write→live-frame percentiles against their targets, and no 429 or
       # 5xx. A shared runner is slower than a facility's hardware, so a miss here is a real signal.
