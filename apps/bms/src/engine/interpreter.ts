@@ -25,6 +25,7 @@ import type {
   WorkflowDefinition,
 } from '@atlas/contracts/workflow';
 import { correlationKeys } from '@atlas/contracts/workflow-correlate';
+import { approvingReviewPoint } from '@atlas/contracts/workflow-review';
 import { StepTimeout, type Effects, type RunResult, type StartContext } from './effects.ts';
 import { feelEval, type FeelContext } from './feel-eval.ts';
 
@@ -51,6 +52,9 @@ export async function runWorkflow(
   fx: Effects,
 ): Promise<RunResult> {
   const byId = new Map(def.steps.map((s) => [s.id, s]));
+  // EP-24.7: the one review point whose approval approves the asset — publish refused any
+  // definition where that is not exactly one step.
+  const approvingPoint = approvingReviewPoint(def).reviewPointId;
   const outEdges = new Map<string, Transition[]>();
   for (const t of def.transitions) {
     const list = outEdges.get(t.from) ?? [];
@@ -267,7 +271,9 @@ export async function runWorkflow(
       stepId: step.id,
       taskType: c.taskType,
       assignee,
-      ...(c.reviewPointId !== undefined ? { reviewPointId: c.reviewPointId } : {}),
+      ...(c.reviewPointId !== undefined
+        ? { reviewPointId: c.reviewPointId, approving: c.reviewPointId === approvingPoint }
+        : {}),
       ...(due !== undefined ? { dueAt: fx.now() + due } : {}),
     });
     openTasks.add(step.id);

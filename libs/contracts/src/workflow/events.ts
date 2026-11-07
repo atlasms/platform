@@ -9,6 +9,8 @@ export const WORKFLOW_EVENTS: readonly string[] = [
   'asset.ready',
   'asset.approved',
   'asset.rejected',
+  // EP-24.7: an approval at a review point that does not approve the asset (decided 2026-11-06).
+  'asset.reviewed',
 ];
 
 /**
@@ -27,4 +29,7 @@ export const WORKFLOW_TRIGGERS: readonly string[] = ['ingest.accepted', 'asset.e
 export const REVIEW_VERDICTS: Readonly<Record<string, { outcome: string; by: string }>> = {
   'asset.approved': { outcome: 'approved', by: 'approver' },
   'asset.rejected': { outcome: 'rejected', by: 'rejectedBy' },
+  // An intermediate point's approval (EP-24.7): the step's outcome is `approved` like the final
+  // one, but it moves only the step that names its point, and the asset's state does not change.
+  'asset.reviewed': { outcome: 'approved', by: 'reviewer' },
 };

@@ -194,6 +194,7 @@ export class BmsRuntime {
   private async takeBuffered(
     instance: Instance,
     awaits: EventAwait[],
+    options: { reuseApproval?: boolean } = {},
   ): Promise<Record<string, unknown> | undefined> {
     const [first] = awaits;
     if (!first) return undefined;
@@ -213,7 +214,14 @@ export class BmsRuntime {
         instance.startedAt,
         assetKey(awaited) ?? undefined,
       );
-      const event = events.find((e) => !used.has(e.messageId) && matches(awaited, e.payload));
+      // An event moves one step of an instance, once — except the asset's APPROVAL for the
+      // approving review point (EP-24.7): given early, at another point or straight from the
+      // asset editor, it is still the decision this point exists to take, and MAM will not give a
+      // second one, so refusing it here would strand the review.
+      const reusable = (e: BufferedEvent) =>
+        !used.has(e.messageId) ||
+        (options.reuseApproval === true && awaited.eventType === 'asset.approved');
+      const event = events.find((e) => reusable(e) && matches(awaited, e.payload));
       if (event && (!best || earlier(event, best.event))) best = { awaited, event };
     }
     if (!best) return undefined;
@@ -255,19 +263,26 @@ export class BmsRuntime {
       );
     const taskId = derivedUlid(Date.parse(instance.startedAt), `task:${input.key}`);
     const at = this.now().toISOString();
+    // EP-24.7: the approving point waits for the asset's verdict (approved / rejected); any other
+    // point ALSO for its own intermediate approval (`asset.reviewed`), which never moves the
+    // approving one — or a pass would end the review with the asset still unapproved.
+    const approving = spec.reviewPointId !== undefined && spec.approving !== false;
     const verdicts: EventAwait[] =
       spec.reviewPointId === undefined
         ? []
-        : Object.keys(REVIEW_VERDICTS).map((eventType) => ({
-            correlationId: taskId,
-            eventType,
-            channelId: instance.channelId,
-            instanceId: instance.id,
-            stepId: spec.stepId,
-            match: { assetId: instance.assetId },
-            reviewPointId: spec.reviewPointId!,
-            issuedAt: at,
-          }));
+        : Object.keys(REVIEW_VERDICTS)
+            .filter((eventType) => !(approving && eventType === 'asset.reviewed'))
+            .map((eventType) => ({
+              correlationId: taskId,
+              eventType,
+              channelId: instance.channelId,
+              instanceId: instance.id,
+              stepId: spec.stepId,
+              match: { assetId: instance.assetId },
+              reviewPointId: spec.reviewPointId!,
+              ...(approving ? { approving: true as const } : {}),
+              issuedAt: at,
+            }));
     await this.store.transaction(async (tx) => {
       if (!(await tx.markSeen(input.key))) return;
       await tx.insertAwait({
@@ -292,7 +307,9 @@ export class BmsRuntime {
             kind: spec.taskType as TaskKind,
             ...(instance.assetId !== undefined ? { assetId: instance.assetId } : {}),
             ...(spec.dueAt !== undefined ? { dueAt: new Date(spec.dueAt).toISOString() } : {}),
-            ...(spec.reviewPointId !== undefined ? { reviewPointId: spec.reviewPointId } : {}),
+            ...(spec.reviewPointId !== undefined
+              ? { reviewPointId: spec.reviewPointId, approving }
+              : {}),
           } satisfies EventPayloads['workflow.task.created'],
           { ...SELF, correlationId: instance.id },
         ),
@@ -300,7 +317,10 @@ export class BmsRuntime {
     });
     // A verdict given before the review reached this step — at ready, by MAM itself for a category
     // that needs no review, or by an editor during the transcode — resolves it now (EP-22.7).
-    const early = verdicts.length > 0 ? await this.takeBuffered(instance, verdicts) : undefined;
+    const early =
+      verdicts.length > 0
+        ? await this.takeBuffered(instance, verdicts, { reuseApproval: approving })
+        : undefined;
     return { taskId, ...(early !== undefined ? { early } : {}) };
   }
 

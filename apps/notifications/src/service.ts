@@ -177,6 +177,7 @@ export class NotificationsService {
       ...(subjectRef !== undefined ? { subjectRef } : {}),
       ...(p.workflowInstanceId !== undefined ? { workflowInstanceId: p.workflowInstanceId } : {}),
       ...(p.reviewPointId !== undefined ? { reviewPointId: p.reviewPointId } : {}),
+      ...(p.approving !== undefined ? { approving: p.approving } : {}),
       ...(p.dueAt !== undefined ? { dueAt: p.dueAt } : {}),
       createdBy: envelope.actor?.id ?? 'bms',
       createdAt: this.now().toISOString(),

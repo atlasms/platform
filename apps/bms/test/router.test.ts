@@ -292,6 +292,7 @@ test('over the broker: one subscription per answer type, every channel', async (
     'atlas.*.asset.ready',
     'atlas.*.asset.approved',
     'atlas.*.asset.rejected',
+    'atlas.*.asset.reviewed', // EP-24.7: a pass at a point that does not approve
   ]);
   const h = await harness();
   const outcomes: string[] = [];

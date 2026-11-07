@@ -131,6 +131,7 @@ export async function exportBpmn(def: WorkflowDefinition): Promise<string> {
               role: c.assignee.role,
               expression: c.assignee.expression,
               reviewPointId: c.reviewPointId,
+              approving: c.approving,
               dueIn: c.dueIn,
             }),
             ...(c.escalation

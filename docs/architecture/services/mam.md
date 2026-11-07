@@ -108,7 +108,7 @@ built, the expiry half (EP-24.5, §13z); the purge half is EP-24.6, owed by peop
 |--------|------|---------|-------|
 | `GET/POST/PATCH` | `/assets`, `/assets/{id}` | Core + extensible metadata CRUD. | `asset:read`/`asset:write` (dept-scoped) |
 | `GET` / `POST` | `/assets/{id}/versions` | The version chain, oldest first / make another asset (the new media) this one's next version, cloning its metadata. ✅ EP-27.6 (§13t) | `asset:read` / `asset:write` on `core` of `{id}` + the copied groups on the new asset |
-| `POST` | `/assets/{id}/approve` · `/reject` | Lifecycle verdict (approve body MAY set `expiresAt`; reject body MAY set `reason`/`retainUntil`). Either MAY name the workflow `reviewPointId` it is given at, carried on `asset.approved`/`asset.rejected` — what resolves a waiting review step (EP-22.6, bms.md §13f); only a verdict names one. | `asset:approve` |
+| `POST` | `/assets/{id}/approve` · `/reject` | Lifecycle verdict (approve body MAY set `expiresAt`; reject body MAY set `reason`/`retainUntil`). Either MAY name the workflow `reviewPointId` it is given at, carried on `asset.approved`/`asset.rejected` — what resolves a waiting review step (EP-22.6, bms.md §13f); only a verdict names one. An approval with `final: false` (EP-24.7, §13s) is a PASS at a point that does not approve the asset: retained, announced as `asset.reviewed`, the state unchanged. | `asset:approve` |
 | `GET` | `/assets/{id}/verdicts` | Retained review-verdict history for the asset. ✅ EP-24.4 (§13y): `{ items }`, newest first — manual and automatic, append-only by the database. | `asset:read` |
 | `GET` / `PUT` | `/assets/{id}/shotlist` | The asset's notable segments, read in timeline order and replaced whole. ✅ EP-27.3 (§13v) | `asset:read` / `asset:write`, both on the `shotlist` field group |
 | `DELETE` | `/assets/{id}/derived/{field}` | Drop a value MAM held beside a field a person set, unused — taking it is a PATCH of the field. ✅ EP-27.5 (§13u) | `asset:write` on the field's group |
@@ -327,6 +327,32 @@ createdBy RIM sent, and `asset.created` + the audit in one transaction with the 
 redelivery is a duplicate; an id that already exists in the same channel is a duplicate too; one in
 another channel is thrown to the broker, never overwritten. The original's FileRef row arrives by
 HSM's `file.placed` — a separate consumer — and the mirror retries a placement that beats the asset.
+
+## 13s. As built — EP-24.7, several review points on one asset (decided 2026-11-06)
+
+A workflow may review one asset at several points (bms.md §13j). Decided by the product owner:
+**only one point approves.** Every point's verdict is retained and moves its own workflow step; only
+the approving point's approval (marked in the workflow, by default the last point) moves the asset to
+`approved`; a rejection at ANY point rejects the asset.
+
+- **A pass** — `POST /assets/{id}/approve` with `{ reviewPointId, final: false }`. It needs the point
+  (422), is an approval only (a rejection always rejects — 422), and is given only where the asset
+  COULD be approved (`ready`, or `expired` for re-review; otherwise the same 409 as an approval). It
+  moves nothing on the asset — no state, no approver, no expiry — but it is a REVISION: `version + 1`,
+  audited as `asset.reviewed` with the verdict as its delta (`review: { after: { verdict, reviewPointId,
+  final: false } }`, since the record diff is empty), its `review_verdicts` row (`final: false`) and
+  the `asset.reviewed` event in the same transaction.
+- **Which point approves is the workflow's**, not MAM's: the review task says so (`approving`), and
+  Studio sends a pass for a point that does not. MAM does not second-guess it — a holder of
+  `asset:approve` can approve the asset outright in any case (a verdict naming no point decides it),
+  so the flag is the workflow's semantics, not an authorization boundary. An outright approval while
+  a review is open still moves the workflow: BMS lets the approving point take it (bms.md §13j).
+- `GET /assets/{id}/verdicts` lists passes with the decisions, newest first; `final: false` marks a
+  pass.
+
+Evidence: `test/verdicts.test.ts` (a pass then the approval, both retained, the event and the audit
+delta; a pass without a point, as a rejection, before ready), and smoke on kind (EP-24.7: a pass at the
+first point leaves the asset `ready`, the second approves it, both in its history).
 
 ## 13t. As built — EP-27.6, the version chain
 

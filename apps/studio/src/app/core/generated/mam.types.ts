@@ -58,6 +58,8 @@ export interface Verdict {
   retainUntil?: string;
   /** True when no person gave it: the category chain needs no review (EP-28.7). */
   automatic?: boolean;
+  /** False for an approval at a review point that did not approve the asset (EP-24.7): recorded, the asset passed on, its state unchanged. Absent on every verdict that decided the asset. */
+  final?: boolean;
 }
 
 export interface VerdictPage {

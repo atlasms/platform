@@ -248,6 +248,20 @@ export interface AssetReplacedPayload {
   newId: Ulid;
 }
 
+/** Emitted by MAM when an asset is approved at a workflow review point that does NOT approve it (EP-24.7, decided 2026-11-06): the verdict is recorded in the asset's verdict history and moves that point's workflow step, and the asset's state does not change. The point whose approval approves the asset emits asset.approved; a rejection at any point emits asset.rejected. Consumed by BMS. */
+export interface AssetReviewedPayload {
+  assetId: Ulid;
+  /** User id who approved at this point. */
+  reviewer: string;
+  reviewedAt?: string;
+  /** The workflow review step this approval was given at — the only step it moves. */
+  reviewPointId: string;
+  /** Who created the asset. */
+  createdBy?: string;
+  /** The asset's category path when the event was made. */
+  categoryPath?: string;
+}
+
 /** Emitted by MAM when asset metadata changes. Consumed by WebSocket, Search, Logging, and Scheduling (which keeps each asset's approval expiry to validate a schedule against, EP-31). */
 export interface AssetUpdatedPayload {
   assetId: Ulid;
@@ -812,6 +826,8 @@ export interface WorkflowTaskCreatedPayload {
   dueAt?: string;
   /** Set on a review step's task (EP-22.6): the point in the workflow this approval is for. The verdict is given in MAM, naming this point (`POST /assets/{id}/approve` or `/reject` with `reviewPointId`), and it — not completing the task — moves the workflow; Notifications refuses to complete such a task by hand, and closes it on BMS's `workflow.task.resolved`. */
   reviewPointId?: string;
+  /** Set on a review step's task (EP-24.7): true when this point's approval approves the asset; false when it only passes the asset on — the approval is then given with `final: false` and recorded as `asset.reviewed`, the asset's state unchanged. A rejection rejects the asset at any point. */
+  approving?: boolean;
 }
 
 /** Emitted by BMS when something other than its completion in Notifications ends a workflow's task: a review step's verdict in MAM (EP-22.6) closes it DONE with the verdict as its outcome; the step timing out, or its workflow failing while the task is open, closes it CANCELLED (EP-22.9). Consumed by Notifications, which closes the task. */
@@ -845,6 +861,7 @@ export interface EventPayloads {
   'asset.ready': AssetReadyPayload;
   'asset.rejected': AssetRejectedPayload;
   'asset.replaced': AssetReplacedPayload;
+  'asset.reviewed': AssetReviewedPayload;
   'asset.updated': AssetUpdatedPayload;
   'audit.recorded': AuditRecordedPayload;
   'checksum.mismatch': ChecksumMismatchPayload;

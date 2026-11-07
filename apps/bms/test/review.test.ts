@@ -97,6 +97,14 @@ const approved = (assetId: string, reviewPointId?: string): Message =>
     approvedAt: new Date().toISOString(),
     ...(reviewPointId !== undefined ? { reviewPointId } : {}),
   });
+/** An approval at a point that does not approve the asset (EP-24.7). */
+const reviewed = (assetId: string, reviewPointId: string): Message =>
+  event('asset.reviewed', {
+    assetId,
+    reviewer: 'rev-3',
+    reviewedAt: new Date().toISOString(),
+    reviewPointId,
+  });
 const rejected = (assetId: string, reviewPointId?: string): Message =>
   event('asset.rejected', {
     assetId,
@@ -221,10 +229,13 @@ test('a review step: the task names its point, and MAM’s verdict AT that point
   await h.waiting(id, 's_post-ingest');
 
   // A verdict at ANOTHER point, or on another asset, is not this step's.
-  assert.equal(await h.router.routeEvent(approved(assetId, 'rights-check')), 'ignored');
-  assert.equal(await h.router.routeEvent(approved(ulid(), 'post-ingest')), 'ignored');
+  // (Passes: an APPROVAL of the asset at any point would, rightly, be the approving point's verdict
+  // when it got there — EP-24.7.)
+  assert.equal(await h.router.routeEvent(reviewed(assetId, 'rights-check')), 'ignored');
+  assert.equal(await h.router.routeEvent(reviewed(ulid(), 'post-ingest')), 'ignored');
 
-  const verdict = approved(assetId, 'post-ingest');
+  // The first point is not the approving one (the last is — EP-24.7), so its approval is a pass.
+  const verdict = reviewed(assetId, 'post-ingest');
   assert.equal(await h.router.routeEvent(verdict), 'delivered');
   // The task is closed with the verdict, caused by it…
   const [resolved] = await h.sent('workflow.task.resolved');
@@ -237,7 +248,7 @@ test('a review step: the task names its point, and MAM’s verdict AT that point
       taskId: task.taskId,
       workflowInstanceId: id,
       outcome: 'approved',
-      by: 'rev-1',
+      by: 'rev-3',
       assetId,
       reviewPointId: 'post-ingest',
       at: undefined,
@@ -255,8 +266,8 @@ test('a review step: the task names its point, and MAM’s verdict AT that point
     await h.router.routeTask({ id: done.messageId, subject: 's', body: done }),
     'duplicate',
   );
-  // The other verdict row of the same step is answered too: a late rejection moves nothing.
-  assert.equal(await h.router.routeEvent(rejected(assetId, 'post-ingest')), 'ignored');
+  // The other verdict rows of the same step are answered too: the same pass again moves nothing.
+  assert.equal(await h.router.routeEvent(reviewed(assetId, 'post-ingest')), 'ignored');
 
   // The second point: its own task, its own verdict.
   const [, second] = await h.sent('workflow.task.created', 2);
@@ -269,6 +280,81 @@ test('a review step: the task names its point, and MAM’s verdict AT that point
     [result.vars[v('post-ingest')], result.vars[v('pre-schedule')]],
     ['approved', 'rejected'],
   );
+});
+
+test('EP-24.7: a pass at an earlier point moves only that step; the LAST point approves, and takes no pass', async () => {
+  const h = await harness();
+  const workflowId = await h.publish(review(['post-ingest', 'pre-schedule']));
+  const assetId = ulid();
+  const id = await h.start({ workflowId, assetId });
+  const [first] = await h.sent('workflow.task.created');
+  // With none marked, the last review point is the approving one — and the task says which.
+  assert.equal((first!.payload as { approving?: boolean }).approving, false);
+  await h.waiting(id, 's_post-ingest');
+
+  // A pass names its point: another point's pass is not this step's.
+  assert.equal(await h.router.routeEvent(reviewed(assetId, 'pre-schedule')), 'ignored');
+  const pass = reviewed(assetId, 'post-ingest');
+  assert.equal(await h.router.routeEvent(pass), 'delivered');
+  const [resolved] = await h.sent('workflow.task.resolved');
+  assert.deepEqual(
+    [
+      (resolved!.payload as { outcome?: string }).outcome,
+      (resolved!.payload as { by?: string }).by,
+    ],
+    ['approved', 'rev-3'],
+  );
+
+  const [, second] = await h.sent('workflow.task.created', 2);
+  assert.equal((second!.payload as { approving?: boolean }).approving, true);
+  await h.waiting(id, 's_pre-schedule');
+  // The approving point waits for the ASSET's verdict: a pass naming it is nothing to it — else the
+  // review would end with the asset still unapproved.
+  assert.equal(await h.router.routeEvent(reviewed(assetId, 'pre-schedule')), 'ignored');
+  assert.equal((await h.store.instance(id))?.state, 'waiting');
+  assert.equal(await h.router.routeEvent(approved(assetId, 'pre-schedule')), 'delivered');
+  const result = await h.runner.settled(id);
+  assert.equal(result.state, 'completed');
+  assert.deepEqual(
+    [result.vars[v('post-ingest')], result.vars[v('pre-schedule')]],
+    ['approved', 'approved'],
+  );
+});
+
+test('EP-24.7: the approving point takes the asset’s approval wherever it was given — even one that moved an earlier point', async () => {
+  const h = await harness();
+  const workflowId = await h.publish(review(['post-ingest', 'pre-schedule']));
+  const assetId = ulid();
+  const id = await h.start({ workflowId, assetId });
+  await h.waiting(id, 's_post-ingest');
+  // Approved outright at the first point (from the asset editor, say): MAM will not approve it
+  // again, so the approving point must not wait for a second approval.
+  assert.equal(await h.router.routeEvent(approved(assetId, 'post-ingest')), 'delivered');
+  const result = await h.runner.settled(id);
+  assert.equal(result.state, 'completed');
+  assert.deepEqual(
+    [result.vars[v('post-ingest')], result.vars[v('pre-schedule')]],
+    ['approved', 'approved'],
+  );
+});
+
+test('EP-24.7: a point marked approving decides — an earlier one; the later point is then a pass', async () => {
+  const h = await harness();
+  const def = review(['post-ingest', 'pre-schedule']);
+  (def.steps[1] as { config: Record<string, unknown> }).config['approving'] = true;
+  const workflowId = await h.publish(def);
+  const assetId = ulid();
+  const id = await h.start({ workflowId, assetId });
+  const [first] = await h.sent('workflow.task.created');
+  assert.equal((first!.payload as { approving?: boolean }).approving, true);
+  await h.waiting(id, 's_post-ingest');
+  assert.equal(await h.router.routeEvent(reviewed(assetId, 'post-ingest')), 'ignored');
+  assert.equal(await h.router.routeEvent(approved(assetId, 'post-ingest')), 'delivered');
+  const [, second] = await h.sent('workflow.task.created', 2);
+  assert.equal((second!.payload as { approving?: boolean }).approving, false);
+  await h.waiting(id, 's_pre-schedule');
+  assert.equal(await h.router.routeEvent(reviewed(assetId, 'pre-schedule')), 'delivered');
+  assert.equal((await h.runner.settled(id)).state, 'completed');
 });
 
 test('a verdict naming NO review point resolves the review step waiting on the asset', async () => {

@@ -252,7 +252,7 @@ test('the buffer: a verdict given before the review step is reached resolves it 
   );
 });
 
-test('an event moves an instance once: the verdict that resolved one review point is not taken by the next', async () => {
+test('an event moves an instance once — but the asset’s APPROVAL also decides the approving point (EP-24.7)', async () => {
   const h = await harness();
   await h.publish(flow({ points: ['first', 'second'] }));
   const assetId = ulid();
@@ -260,11 +260,13 @@ test('an event moves an instance once: the verdict that resolved one review poin
   await h.waiting(id!, 's_ready');
   await h.router.routeEvent(ready(assetId));
   await h.waiting(id!, 's_verdict_first');
-  assert.equal(await h.router.routeEvent(approved(assetId)), 'delivered'); // names no point
-  await h.waiting(id!, 's_verdict_second');
-  assert.equal((await h.store.instance(id!))?.state, 'waiting', 'the second point still waits');
-  assert.equal(await h.router.routeEvent(approved(assetId, 'second')), 'delivered');
+  // Approved outright (naming no point) at the first point. Before EP-24.7 the second point then
+  // waited for an approval MAM would never give again; now there is one approving point — the
+  // last — and the asset's approval is its decision, taken from the buffer.
+  assert.equal(await h.router.routeEvent(approved(assetId)), 'delivered');
   assert.equal((await h.runner.settled(id!)).state, 'completed');
+  // The run is over: another approval finds nothing waiting.
+  assert.equal(await h.router.routeEvent(approved(assetId)), 'ignored');
 });
 
 // --- the canonical preset, end to end -------------------------------------------------------------

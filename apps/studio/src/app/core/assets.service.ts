@@ -52,6 +52,8 @@ export interface ApproveInput {
   /** Omitted: inherit the category default. `null`: permanent. A date-time: this expiry. */
   expiresAt?: string | null;
   reviewPointId?: string;
+  /** EP-24.7: false for an approval that only passes the asset on to the next review point. */
+  final?: boolean;
 }
 
 /** A rejection — its reason is required; MAM refuses one without (422). */

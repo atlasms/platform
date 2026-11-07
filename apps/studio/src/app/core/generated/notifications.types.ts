@@ -51,6 +51,8 @@ export interface InboxTask {
   workflowInstanceId?: Ulid;
   /** A workflow review step's task (EP-22.6): the point to name when giving the verdict in MAM (POST /assets/{id}/approve or /reject). The verdict closes it; it is never completed here. */
   reviewPointId?: string;
+  /** A review task's (EP-24.7): true when this point's approval approves the asset; false when it only passes it on — approve it in MAM with final: false. Absent on any other task. */
+  approving?: boolean;
   dueAt?: string;
   title?: string;
   createdBy?: string;

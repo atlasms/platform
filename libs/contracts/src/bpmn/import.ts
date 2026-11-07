@@ -272,6 +272,7 @@ function toStep(n: El, outgoing: Map<string, number>): Step {
             expression: str(a, 'expression'),
           }),
           reviewPointId: str(a, 'reviewPointId'),
+          approving: bool(a, 'approving'),
           form: form === undefined ? undefined : parseJson(form),
           dueIn: str(a, 'dueIn'),
           output: nonEmpty(outputs),

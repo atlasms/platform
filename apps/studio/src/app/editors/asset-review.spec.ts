@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { AssetsService, type ApproveInput, type RejectInput } from '../core/assets.service.ts';
 import type { Asset, VerdictPage } from '../core/generated/mam.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { ReviewContextStore } from '../core/review-context.store.ts';
 import { AssetReview } from './asset-review.ts';
 
 const asset = (overrides: Partial<Asset> = {}): Asset =>
@@ -204,5 +205,63 @@ describe('AssetReview — the verdict, and the history', () => {
     t.host.asset.set(asset({ state: 'expired', version: 6 }));
     t.fixture.detectChanges();
     expect(t.root.querySelector('.verdict')).not.toBeNull();
+  });
+  it('EP-24.7: opened from a task at a point that only PASSES the asset on — a pass, no expiry, named point', () => {
+    const t = setup();
+    const reviews = TestBed.inject(ReviewContextStore);
+    reviews.open(t.host.asset().id, { reviewPointId: 'post-ingest', approving: false });
+    t.fixture.detectChanges();
+    expect(t.root.querySelector('.point')?.textContent).toContain('review.pointPasses');
+    expect(t.root.querySelector('fieldset'), 'a pass sets no expiry').toBeNull();
+    expect(t.root.querySelector('.approve')?.textContent).toContain('review.pass');
+
+    t.review().approve();
+    expect(t.fake.approvals.at(-1)?.input).toEqual({ reviewPointId: 'post-ingest', final: false });
+    t.fake.approvals.at(-1)!.result.next(asset({ version: 5 }));
+    expect(reviews.for(t.host.asset().id), 'the task in hand is answered').toBeUndefined();
+  });
+
+  it('EP-24.7: at the APPROVING point — an approval naming the point, with its expiry; a rejection names it too', () => {
+    const t = setup();
+    TestBed.inject(ReviewContextStore).open(t.host.asset().id, {
+      reviewPointId: 'pre-schedule',
+      approving: true,
+    });
+    t.fixture.detectChanges();
+    expect(t.root.querySelector('.point')?.textContent).toContain('review.pointApproves');
+    expect(t.root.querySelector('fieldset')).not.toBeNull();
+    t.review().choice.set('permanent');
+    t.review().approve();
+    expect(t.fake.approvals.at(-1)?.input).toEqual({
+      expiresAt: null,
+      reviewPointId: 'pre-schedule',
+    });
+    t.review().reason.set('soft focus');
+    t.review().reject();
+    expect(t.fake.rejections.at(-1)?.input).toEqual({
+      reason: 'soft focus',
+      reviewPointId: 'pre-schedule',
+    });
+  });
+
+  it('EP-24.7: a pass in the history reads as passed on, at its point', () => {
+    const t = setup();
+    t.history({
+      items: [
+        {
+          id: 'v1',
+          assetId: 'a',
+          channelId: 'ch12',
+          verdict: 'approved',
+          decidedBy: 'ben',
+          decidedAt: '2026-10-20T10:00:00.000Z',
+          reviewPointId: 'post-ingest',
+          final: false,
+        },
+      ],
+    });
+    const row = t.root.querySelector('.history li')?.textContent?.replace(/\s+/g, ' ');
+    expect(row).toContain('review.verdict.passed');
+    expect(row).toContain('review.at post-ingest');
   });
 });

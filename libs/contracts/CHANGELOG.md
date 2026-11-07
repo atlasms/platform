@@ -23,6 +23,17 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- **`asset.reviewed`** (EP-24.7): MAM's event for an approval at a workflow review point that does
+  NOT approve the asset — `assetId`, `reviewer`, `reviewPointId` (required), `reviewedAt`,
+  `createdBy`, `categoryPath`. In `WORKFLOW_EVENTS` and `REVIEW_VERDICTS` (outcome `approved`, by
+  `reviewer`); a consumer switching over either list meets a new member.
+- **`approving`** (EP-24.7) on a `human-task` config in `workflow-definition`, in the BPMN descriptor
+  (`atlas:Assignment approving`, Boolean) and on `workflow.task.created`: which review point's approval
+  approves the asset. The validator adds `APPROVING_NOT_REVIEW`, `DUP_APPROVING` and
+  `APPROVING_AMBIGUOUS` — a workflow with two review points on parallel paths and neither marked no
+  longer publishes. `approvingReviewPoint()` on `@atlas/contracts/workflow` and on a sandbox-safe
+  subpath of its own, **`@atlas/contracts/workflow-review`**.
+
 - **`superseded`** (EP-27.6) in `schedule.validated`'s issue `kind` (and Scheduling's `IssueKind`):
   a WARNING on an item whose media has a newer version (`asset.replaced`) — reels are not re-pointed
   automatically (scheduling.md §6.3). A consumer switching over the kinds meets a new value.

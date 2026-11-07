@@ -457,7 +457,7 @@ Source: [review-lifecycle plan](15-review-lifecycle-implementation-plan.md) WS-A
 | 24.4 | ✅ Retained verdict history — `GET /assets/{id}/verdicts` (WS-C): `review_verdicts`, written with the transition, append-only by trigger, manual and automatic (mam.md §13y) | 3 |
 | 24.5 | ✅ Expiry scheduler — an approved asset past `expiresAt` becomes `expired` with `asset.expired`, needing re-review (WS-D): a leaderless, idempotent sweep in MAM every 60 s; `asset.expired` names the `priorApprover` (mam.md §13z) | 5 |
 | 24.6 | Rejected-retention purge — past `retainUntil`, the asset is purged and its files released through HSM (touches HSM deletion) ◆ | 5 |
-| 24.7 | Review points at several workflow positions (with EP-22.6) | 3 |
+| 24.7 | ✅ Review points at several workflow positions (with EP-22.6) — decided 2026-11-06: only one point approves (marked, else the last); every other point's approval is a pass (`asset.reviewed`), retained; a rejection anywhere rejects (bms.md §13j, mam.md §13s) | 3 |
 | 24.8 | Air-gating at export — only approved, unexpired media reach air (with EP-31.5) ◆ | 3 |
 | 24.9 | ✅ Studio review queue + verdict UI — approve/reject with reason and expiry, history shown (WS-H): the asset editor's Review section, badges, the Media panel's *Needs review* (`?state=ready,expired`); fixed MAM's permanent and re-review expiry on the way (mam.md §13x) | 5 |
 

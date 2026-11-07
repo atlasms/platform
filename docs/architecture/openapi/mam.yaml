@@ -169,9 +169,9 @@ paths:
       summary: Approve an asset for air - manual verdict (scope asset:approve)
       parameters:
         - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
-      requestBody: { content: { application/json: { schema: { type: object, properties: { expiresAt: { type: [string, 'null'], format: date-time, description: 'When the media becomes unusable and needs re-review (FR-APP-7) — in the future, or a 422. Omit to INHERIT: the category default, snapshotted at THIS approval (re-approval re-arms the clock, and a lapsed expiry is void). null for permanent.' }, reviewPointId: { type: string } } } } } }
+      requestBody: { content: { application/json: { schema: { type: object, properties: { expiresAt: { type: [string, 'null'], format: date-time, description: 'When the media becomes unusable and needs re-review (FR-APP-7) — in the future, or a 422. Omit to INHERIT: the category default, snapshotted at THIS approval (re-approval re-arms the clock, and a lapsed expiry is void). null for permanent.' }, reviewPointId: { type: string }, final: { type: boolean, default: true, description: 'EP-24.7: false for an approval at a review point that does NOT approve the asset (the review task says so, approving: false) — it needs reviewPointId, is recorded in the verdict history and emits asset.reviewed, which moves only that point''s step; the state does not change. true, the default, approves the asset.' } } } } } }
       responses:
-        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+        '200': { description: 'Approved — or, with final false, the asset as it stands, its verdict recorded', content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
   /assets/{id}/reject:
     post:
       operationId: rejectAsset
@@ -733,6 +733,7 @@ components:
         expirySource: { type: string, enum: [asset, category] }
         retainUntil: { type: string, format: date-time, description: Until when the rejected media is kept. }
         automatic: { type: boolean, description: "True when no person gave it: the category chain needs no review (EP-28.7)." }
+        final: { type: boolean, description: "False for an approval at a review point that did not approve the asset (EP-24.7): recorded, the asset passed on, its state unchanged. Absent on every verdict that decided the asset." }
     VerdictPage:
       type: object
       required: [items]

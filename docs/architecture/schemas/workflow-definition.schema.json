@@ -218,6 +218,7 @@
           }
         },
         "reviewPointId": { "type": "string", "description": "correlates to the MAM review verdict (FR-APP-5)." },
+        "approving": { "type": "boolean", "description": "EP-24.7 (decided 2026-11-06): this review point's approval APPROVES the asset. At most one per workflow; with none marked, the last review point approves (the one no other review step follows). Every other point's approval is recorded (asset.reviewed) and moves only its own step. Only with a reviewPointId." },
         "form": { "type": "object", "additionalProperties": true },
         "dueIn": { "$ref": "#/$defs/Duration" },
         "output": { "$ref": "#/$defs/DataMapping" },

@@ -927,7 +927,8 @@
     "noVerdicts": "No verdict yet.",
     "verdict": {
       "approved": "Approved",
-      "rejected": "Rejected"
+      "rejected": "Rejected",
+      "passed": "Passed on"
     },
     "automatic": "automatic (category needs no review)",
     "at": "at",
@@ -935,7 +936,11 @@
     "fromCategory": "category default",
     "keptUntil": "Kept until",
     "badDate": "Choose a date in the future.",
-    "verdictError": "The verdict could not be given."
+    "verdictError": "The verdict could not be given.",
+    "atPoint": "Reviewing at",
+    "pointApproves": "your approval approves the asset for air.",
+    "pointPasses": "your approval passes it on to the next review; a later point approves it.",
+    "pass": "Pass to the next review"
   },
   "provenance": {
     "technical": "From the media file",

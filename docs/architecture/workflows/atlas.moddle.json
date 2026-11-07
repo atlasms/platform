@@ -74,6 +74,7 @@
         { "name": "role", "isAttr": true, "type": "String" },
         { "name": "expression", "isAttr": true, "type": "String" },
         { "name": "reviewPointId", "isAttr": true, "type": "String" },
+        { "name": "approving", "isAttr": true, "type": "Boolean" },
         { "name": "dueIn", "isAttr": true, "type": "String" }
       ]
     },

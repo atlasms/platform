@@ -26,6 +26,11 @@ export interface Task {
    * closed by the verdict in MAM (BMS's `workflow.task.resolved`), never completed here.
    */
   reviewPointId?: string;
+  /**
+   * A review task's (EP-24.7): whether its point's approval approves the asset — false when it only
+   * passes it on, which the reviewer gives in MAM with `final: false`.
+   */
+  approving?: boolean;
   dueAt?: string;
   /** What a person wrote when assigning it by hand. */
   title?: string;

@@ -15,6 +15,10 @@ export function matches(awaited: EventAwait, payload: Record<string, unknown>): 
     if (!sameValue(valueAt(payload, path), value)) return false;
   if (awaited.reviewPointId === undefined) return true;
   const named = payload['reviewPointId'];
+  // An intermediate approval (EP-24.7) moves only the point it names; a verdict on the asset moves
+  // the point it names, or every point when it names none.
+  if (awaited.eventType === 'asset.reviewed') return named === awaited.reviewPointId;
+  if (awaited.approving === true) return true;
   return named === undefined || named === awaited.reviewPointId;
 }
 
