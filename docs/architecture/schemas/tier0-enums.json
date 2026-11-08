@@ -30,6 +30,7 @@
   "workflow-definition.schema.json#/$defs/ParallelConfig/properties/mode": "Split and join are the two halves of the parallel gateway; the engine treats them differently.",
 
   "events/ai.suggestion.raised.payload.schema.json#/properties/suggestions/items/properties/kind": "Each suggestion kind lands in a different Studio affordance (person, tag, subject, caption).",
+  "events/inbox.changed.payload.schema.json#/properties/kind": "Studio's inbox re-reads the list (tasks, messages or notifications) the change is in.",
   "events/asset.deleted.payload.schema.json#/properties/reason": "Deletion reason is a discriminated union: retention, manual and policy deletions are audited and reversible differently.",
   "events/asset.expired.payload.schema.json#/properties/expirySource": "Whether expiry came from the asset or was inherited from its category decides what an operator can override.",
   "events/config.changed.payload.schema.json#/properties/tier": "The tier system itself: registry, vocabulary and setting changes invalidate different caches.",

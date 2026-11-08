@@ -36,3 +36,24 @@ export function outboxRecord(
     message: { id: envelope.messageId, subject: subjectFor(channelId, type), body: envelope },
   };
 }
+
+/**
+ * `inbox.changed` for each PERSON whose inbox a change touched (EP-25.7) — one record per distinct,
+ * non-empty user id, in the change's own transaction. The WebSocket service delivers each only to
+ * that user's connections (a personal domain, websocket.md §5); it carries what changed, never its
+ * content, so the client re-reads through the API, which enforces who may read what. A recipient
+ * reached through a group or a role is not resolved here: those rows reach their readers by polling.
+ */
+export function inboxChanged(
+  channelId: string,
+  recipients: readonly (string | undefined)[],
+  change: { kind: 'task' | 'message' | 'notification'; id: string; at: string },
+  options: RecordOptions,
+): OutboxRecord[] {
+  const people = [
+    ...new Set(recipients.filter((r): r is string => typeof r === 'string' && r !== '')),
+  ];
+  return people.map((recipientUserId) =>
+    outboxRecord('inbox.changed', channelId, { recipientUserId, ...change }, options),
+  );
+}

@@ -21,7 +21,7 @@ import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, Forbidden, NotFound, Unavailable, ValidationError } from '@atlas/service-kit';
 import { isClosed, type EntityRef, type PrincipalKind, type Task, type TaskKind } from './inbox.ts';
 import type { PrincipalSource } from './principals.ts';
-import { outboxRecord } from './record.ts';
+import { inboxChanged, outboxRecord } from './record.ts';
 import type { InboxStore } from './store.ts';
 
 export interface ActingCaller {
@@ -100,6 +100,14 @@ export class TaskActions {
           this.chain(caller),
         ),
       );
+      // EP-25.7: live to the people it names — a group or role assignee is read by polling.
+      for (const record of inboxChanged(
+        task.channelId,
+        [...task.participants, task.assigneeKind === 'user' ? task.assignee : undefined],
+        { kind: 'task', id: task.id, at: task.createdAt },
+        this.chain(caller),
+      ))
+        await tx.enqueue(record);
       await tx.enqueue(this.audit(caller, undefined, task, 'task.created'));
     });
     return task;
@@ -225,6 +233,18 @@ export class TaskActions {
           this.chain(caller),
         ),
       );
+      // EP-25.7: everyone it names, before and after — a forward reaches who lost it and who has it.
+      for (const record of inboxChanged(
+        after.channelId,
+        [
+          ...after.participants,
+          before.assigneeKind === 'user' ? before.assignee : undefined,
+          after.assigneeKind === 'user' ? after.assignee : undefined,
+        ],
+        { kind: 'task', id: after.id, at },
+        this.chain(caller),
+      ))
+        await tx.enqueue(record);
       await tx.enqueue(this.audit(caller, before, after, `task.${change}`));
     });
     return after;

@@ -181,3 +181,29 @@ test('the list pages newest first by id', async () => {
     [ids[2]],
   );
 });
+
+test('EP-25.7: a message is live to each PERSON it names and to its sender — a group is read by polling', async () => {
+  const h = await harness();
+  const sent = await h.call('ana', 'POST', '/api/v1/messages', {
+    to: [
+      { kind: 'user', id: 'ben' },
+      { kind: 'group', id: 'g-desk' },
+    ],
+    body: 'Words',
+  });
+  assert.equal(sent.statusCode, 201, sent.body);
+  const id = sent.json<Message>().id;
+  const frames = (await h.outbox.listUnsent(100))
+    .map((r) => r.message.body as Envelope)
+    .filter((e) => e.type === 'inbox.changed')
+    .map((e) => e.payload as { recipientUserId: string; kind: string; id: string });
+  assert.deepEqual(
+    frames.map((f) => [f.recipientUserId, f.kind, f.id]).sort(),
+    [
+      ['ana', 'message', id],
+      ['ben', 'message', id],
+    ],
+    'the sender and the user named; no frame names the group, and none carries the body',
+  );
+  for (const f of frames) assert.ok(!('body' in f));
+});

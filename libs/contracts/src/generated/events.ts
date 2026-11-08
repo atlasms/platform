@@ -409,6 +409,17 @@ export interface GroupMembershipChangedPayload {
   at: string;
 }
 
+/** Emitted by Notifications & Messaging, in the transaction of the change, once per PERSON whose inbox it changed (EP-25.7): a task assigned to them or one they take part in moved, a message reached them, a notification was raised for them. A PERSONAL message — the WebSocket service delivers it only to connections authenticated as `recipientUserId`, in its channel, whatever anyone's grants (websocket §5). It names WHAT changed and nothing of its content: the client re-reads its inbox through the API, which enforces who may read what. A recipient addressed through a group or a role is not named here (yet): such rows reach their readers by polling. */
+export interface InboxChangedPayload {
+  /** The one person this frame is for. */
+  recipientUserId: string;
+  /** Which list of the inbox changed. */
+  kind: 'task' | 'message' | 'notification';
+  /** The task, message or notification that changed. */
+  id: string;
+  at: string;
+}
+
 /** Emitted by RIM when an accepted file has been placed in HSM as its asset's original (EP-15.5) — in the transaction that marks the ingest job `registered`. The fan-out: MAM creates the asset under `assetId` (state created), MTS queues the first renditions from HSM's original, AI enrichment later. `assetId` is minted by RIM and held on the job before the bytes move, so a retry places the same bytes under the same asset. */
 export interface IngestAcceptedPayload {
   assetId: Ulid;
@@ -873,6 +884,7 @@ export interface EventPayloads {
   'file.placed': FilePlacedPayload;
   'gateway.access.logged': GatewayAccessLoggedPayload;
   'group.membership.changed': GroupMembershipChangedPayload;
+  'inbox.changed': InboxChangedPayload;
   'ingest.accepted': IngestAcceptedPayload;
   'ingest.detected': IngestDetectedPayload;
   'ingest.rejected': IngestRejectedPayload;

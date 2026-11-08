@@ -149,6 +149,7 @@ Grouped by domain; payload keys abbreviated. Machine-readable **[JSON Schema pay
 | `asset.ready` | MAM | assetId | WebSocket, BMS, Notifications |
 | `asset.approved` | MAM | assetId, approver, expiresAt? | Scheduling, Integration, Logging |
 | `asset.rejected` | MAM | assetId, reason, retainUntil? | Notifications, Logging |
+| `inbox.changed` | Notifications | recipientUserId, kind (task/message/notification), id — PERSONAL: delivered only to that user's sockets (EP-25.7, websocket §13a) | WebSocket |
 | `asset.reviewed` | MAM | assetId, reviewer, reviewPointId — an approval at a review point that does not approve the asset (EP-24.7); the state is unchanged | BMS, Logging |
 | `asset.expired` | MAM | assetId, expiredAt (scheduler; → re-review) | Scheduling, Notifications, Logging |
 | `asset.replaced` | MAM | oldId, newId | Scheduling, Logging |
