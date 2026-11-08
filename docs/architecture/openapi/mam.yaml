@@ -296,7 +296,7 @@ paths:
       operationId: putFieldSchema
       tags: [admin]
       summary: >-
-        Define or replace the custom fields of a media type / category scope (scope taxonomy:admin;
+        Define or replace the custom fields of a media type / category scope (scope metadata:admin — decided 2026-11-06, it was taxonomy:admin;
         EP-27.4). Without `version` it is a NEW schema (an existing id is a 409); with it, a
         compare-and-set replacement of that version (another write in between is a 409). Judged
         whole first: a 422's `details.problems` place every refusal at its path. Audited.

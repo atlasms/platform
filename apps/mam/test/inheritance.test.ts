@@ -19,7 +19,14 @@ const CH = 'ch12';
 const ALL: Rule[] = [
   {
     id: 'all',
-    permissions: ['taxonomy:read', 'taxonomy:admin', 'asset:read', 'asset:write', 'asset:approve'],
+    permissions: [
+      'taxonomy:read',
+      'taxonomy:admin',
+      'metadata:admin',
+      'asset:read',
+      'asset:write',
+      'asset:approve',
+    ],
     scope: { channelIds: [CH] },
   },
 ];

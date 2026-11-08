@@ -17,6 +17,7 @@ const ALL: Rule[] = [
     permissions: [
       'taxonomy:read',
       'taxonomy:admin',
+      'metadata:admin',
       'asset:read',
       'asset:write',
       'people:read',

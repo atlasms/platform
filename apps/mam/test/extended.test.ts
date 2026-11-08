@@ -13,7 +13,13 @@ import { seededStore } from './categories.fixture.ts';
 const CHANNEL = 'ch12';
 
 function harness(
-  permissions: string[] = ['asset:read', 'asset:write', 'asset:approve', 'taxonomy:admin'],
+  permissions: string[] = [
+    'asset:read',
+    'asset:write',
+    'asset:approve',
+    'taxonomy:admin',
+    'metadata:admin',
+  ],
   vocabularies?: ReadonlyMap<string, ReadonlySet<string>>,
 ) {
   const store = seededStore();
@@ -292,11 +298,22 @@ test('removing a field from the schema orphans its data rather than destroying i
   );
 });
 
-test('SECURITY: writing a schema needs taxonomy:admin, not asset:write', async () => {
+test('SECURITY: writing a schema needs metadata:admin — not asset:write, nor the taxonomy keeper’s grant', async () => {
   // Editing a schema changes what every asset in its scope must carry. That is governance, not
-  // editorial work, and someone who may retitle a clip is not thereby entitled to it.
-  const { service, caller } = harness(['asset:read', 'asset:write']);
-  await assert.rejects(service.putSchema(caller(), schema()), /no rule grants "taxonomy:admin"/);
+  // editorial work, and someone who may retitle a clip is not thereby entitled to it. Since
+  // 2026-11-06 it is its own permission: keeping the category tree no longer carries it.
+  const editor = harness(['asset:read', 'asset:write']);
+  await assert.rejects(
+    editor.service.putSchema(editor.caller(), schema()),
+    /no rule grants "metadata:admin"/,
+  );
+  const keeper = harness(['asset:read', 'taxonomy:read', 'taxonomy:admin']);
+  await assert.rejects(
+    keeper.service.putSchema(keeper.caller(), schema()),
+    /no rule grants "metadata:admin"/,
+  );
+  const librarian = harness(['asset:read', 'metadata:admin']);
+  assert.ok(await librarian.service.putSchema(librarian.caller(), schema()));
 });
 
 test('SECURITY: a schema cannot be written into another channel', async () => {

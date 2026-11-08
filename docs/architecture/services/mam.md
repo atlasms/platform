@@ -328,6 +328,15 @@ redelivery is a duplicate; an id that already exists in the same channel is a du
 another channel is thrown to the broker, never overwritten. The original's FileRef row arrives by
 HSM's `file.placed` — a separate consumer — and the mirror retries a placement that beats the asset.
 
+## 13r. Field schemas under `metadata:admin` (decided 2026-11-06)
+
+`PUT /field-schemas` (§13w) is authorized under **`metadata:admin`** — its own permission — instead of
+`taxonomy:admin`: what extra fields every asset in a scope must carry is metadata governance, not the
+category tree's. The Librarian starter role carries it, and the Administrator (`*:*`) always did;
+reading schemas is unchanged. An install seeded before this keeps its Librarian role as it was —
+see authorization-model §9's upgrade note. Evidence: `test/extended.test.ts` (an editor and the
+taxonomy keeper refused, a holder of `metadata:admin` writes), smoke (the dev seed account holds it).
+
 ## 13s. As built — EP-24.7, several review points on one asset (decided 2026-11-06)
 
 A workflow may review one asset at several points (bms.md §13j). Decided by the product owner:

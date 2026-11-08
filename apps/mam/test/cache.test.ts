@@ -329,5 +329,7 @@ const taxonomyAdmin = () =>
   compile({
     subjectId: 'user-1',
     permVersion: 1,
-    rules: [{ id: 'r', permissions: ['asset:read', 'asset:write', 'taxonomy:admin'] }],
+    rules: [
+      { id: 'r', permissions: ['asset:read', 'asset:write', 'taxonomy:admin', 'metadata:admin'] },
+    ],
   });

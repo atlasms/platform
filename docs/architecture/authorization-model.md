@@ -48,7 +48,7 @@ A permission is `resource:action` — flat, greppable, and stable.
 | `task` | `assign` (hand work to a user, group or role by hand), `admin` (cancel or reassign any task), `audit` (any task's change log) — EP-25.2, decided 2026-10-16. Acting on a task you hold — claim, forward, complete — needs no permission: holding it IS the grant; a task's PARTICIPANTS read its history without `task:audit` |
 | `taxonomy` | `read`, `admin` (categories, structures, classifications, subjects, tags) |
 | `people` | `read`, `admin` |
-| `metadata` | `admin` (field schemas) — catalogued but, as of EP-27.4, neither granted by a starter role nor enforced: MAM writes field schemas under `taxonomy:admin`. Open question for the product owner |
+| `metadata` | `admin` (field schemas — what extra fields an asset carries). Decided 2026-11-06: MAM writes field schemas under `metadata:admin` (it was `taxonomy:admin` until then), held by the Librarian and the Administrator (`*:*`); reading them is unchanged |
 | `feed` | `read`, `admin` |
 | `user` | `read`, `admin` |
 | `config` | `read`, `admin` (registries + settings — scoped by level; see [Configuration & Reference Data §8](configuration-and-reference-data.md#8-permissions)) |
@@ -228,7 +228,7 @@ Ship these as defaults; operators clone and adjust ([FR-IAM-1](../requirements/0
 | **Journalist / Editor** | Viewer + `asset:write` (`core`,`taxonomy`,`cast`,`shotlist`), `workflow:act`, `task:assign` |
 | **Approver** | Editor + `asset:approve` (scoped to a category subtree) |
 | **Scheduler** | Viewer + `schedule:write`; `schedule:send` usually a **separate** role (privileged, audited) |
-| **Librarian** | `asset:write` (`files`,`rights`), `asset:restore`, `taxonomy:admin`, `people:admin`, `message:send` |
+| **Librarian** | `asset:write` (`files`,`rights`), `asset:restore`, `taxonomy:admin`, `metadata:admin` (field schemas, decided 2026-11-06), `people:admin`, `message:send` |
 | **Ops** | `ops:read`, `logs:read`, `storage:admin`, `message:send` |
 | **Administrator** | **every permission** — `*:*` (decided 2026-10-15): every action on every resource, including `logs:read` and `workflow:audit`, and any a later catalogue adds. Bounded, like every grant, by the scope of its assignment; never across tenants |
 
@@ -240,6 +240,12 @@ Ship these as defaults; operators clone and adjust ([FR-IAM-1](../requirements/0
 > install that already has an `administrator` role keeps the one it has. None in production predates
 > the `*:*` decision (2026-10-15); a dev cluster that does is updated through IAM's admin API
 > (`PATCH /roles/administrator`) or recreated.
+>
+> **Upgrading past 2026-11-06 (field schemas under `metadata:admin`):** an install whose Librarian
+> role was seeded before then does NOT gain `metadata:admin`, and — since `taxonomy:admin` no longer
+> carries it — its librarians can no longer write field schemas until the role is updated
+> (`PATCH /roles/librarian`, adding `metadata:admin`) or the right holders are granted it directly.
+> The Administrator (`*:*`) is unaffected.
 
 ## 10. Packaging — keep policy separate from IAM
 
