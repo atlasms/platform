@@ -235,6 +235,19 @@ test('forward: the holder hands it on; task:admin reassigns anything; each recip
   });
   assert.equal(re.statusCode, 200, re.body);
   assert.deepEqual(re.json<Task>().participants.sort(), ['ana', 'ben', 'boss', 'cat']);
+
+  // EP-25.7: the last forward was live to everyone the task names — who lost it, who has it.
+  const frames = (await h.outbox.listUnsent(1000))
+    .map((r) => r.message.body as Envelope)
+    .filter((e) => e.type === 'inbox.changed')
+    .map((e) => e.payload as { recipientUserId: string; id: string });
+  assert.ok(frames.every((f) => f.id === id));
+  const last = frames
+    .slice(-4)
+    .map((f) => f.recipientUserId)
+    .sort();
+  assert.deepEqual(last, ['ana', 'ben', 'boss', 'cat']);
+  assert.ok(!frames.some((f) => f.recipientUserId === 'g-desk'), 'a group is never a recipient');
 });
 
 test('cancel takes task:admin, and a workflow’s task is never cancelled by hand', async () => {

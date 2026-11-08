@@ -25,7 +25,7 @@ import { Conflict, NotFound, ValidationError } from '@atlas/service-kit';
 import { ALERT_AUDIENCE } from './notification-types.ts';
 import { channelTypes, isOn } from './preferences.ts';
 import { isClosed, type EntityRef, type Inbox, type Task } from './inbox.ts';
-import { outboxRecord } from './record.ts';
+import { inboxChanged, outboxRecord } from './record.ts';
 import type { Principal, PrincipalSource } from './principals.ts';
 import type { InboxStore } from './store.ts';
 
@@ -214,6 +214,14 @@ export class NotificationsService {
           chain,
         ),
       );
+      // EP-25.7: live to the person a workflow names — a role's holders read it by polling.
+      for (const record of inboxChanged(
+        task.channelId,
+        [...task.participants],
+        { kind: 'task', id: task.id, at: task.createdAt },
+        chain,
+      ))
+        await tx.enqueue(record);
       await tx.enqueue(
         outboxRecord(
           'audit.recorded',
@@ -287,6 +295,13 @@ export class NotificationsService {
           chain,
         ),
       );
+      for (const record of inboxChanged(
+        after.channelId,
+        [...after.participants, after.assigneeKind === 'user' ? after.assignee : undefined],
+        { kind: 'task', id: after.id, at: p.at },
+        chain,
+      ))
+        await tx.enqueue(record);
       await tx.enqueue(
         outboxRecord(
           'audit.recorded',

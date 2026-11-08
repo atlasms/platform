@@ -19,7 +19,7 @@ import { Forbidden, ValidationError } from '@atlas/service-kit';
 import type { Caller } from './service.ts';
 import type { Message, MessageRecipient } from './inbox.ts';
 import type { PrincipalSource } from './principals.ts';
-import { outboxRecord } from './record.ts';
+import { inboxChanged, outboxRecord } from './record.ts';
 import type { InboxStore } from './store.ts';
 import type { ActingCaller } from './task-actions.ts';
 
@@ -86,6 +86,15 @@ export class Messages {
           chain,
         ),
       );
+      // EP-25.7: live to each person it names, and to the sender's other tabs. A group's members
+      // read it by polling — they are resolved at read time, not here.
+      for (const record of inboxChanged(
+        message.channelId,
+        [message.from, ...message.to.filter((r) => r.kind === 'user').map((r) => r.id)],
+        { kind: 'message', id: message.id, at: message.sentAt },
+        chain,
+      ))
+        await tx.enqueue(record);
       await tx.enqueue(
         outboxRecord(
           'audit.recorded',

@@ -904,4 +904,15 @@ test('isolation: the rival’s socket heard nothing of the owner’s channel, wh
     );
   });
   assert.deepEqual(leaks, [], 'the rival’s socket received another channel’s frames');
+
+  // And the other way: the rival addressed the owner's user id (Notifications above) — a personal
+  // frame for that row is in ch99 and names the owner's id, and must never reach the owner's socket
+  // (EP-25.7; the note on #456).
+  const inbound = ownerSocket.frames.filter(
+    (f) =>
+      f.type === 'event' &&
+      (String(f.subject ?? '').split('.')[1] !== owner.channelId ||
+        JSON.stringify(f).includes(`"channelId":"${rival.channelId}"`)),
+  );
+  assert.deepEqual(inbound, [], 'the owner’s socket received the rival’s channel’s frames');
 });

@@ -230,6 +230,38 @@ the Redis the resume window and presence need (EP-07.4).
 - Keep frames small and schema-versioned; reuse the [envelope](../04-messaging-and-data.md#13-message-envelope)
   fields (`type`, `channelId`, `occurredAt`, `correlationId`) in each `event` frame.
 
+## 13a. As built — EP-25.7, personal messages (decided 2026-10-12; HELD for the product owner's security review)
+
+**A personal domain** is the mechanism, not a new subject root: `PERSONAL` in `eligibility.ts`, today
+one domain, `inbox`. Every message in it is `atlas.<ch>.inbox.<…>` like any event — durable, relayed
+from an outbox, kept by the stream — and names ONE recipient, `recipientUserId`, in its ENVELOPE's
+payload. The rule, after tenant isolation and before any permission:
+
+1. the subject's channel is the connection's (as for every event), and so is the ENVELOPE's
+   `channelId` when it says one — a personal frame is the one kind no grant filters, so it gets both
+   tenant checks (EP-30.2's note on #456);
+2. the message reaches the connection iff `recipientUserId === connection.userId`. No grant, however
+   wide (`*:*`), admits anyone else; a message in the domain that names nobody — or is judged without
+   its body — reaches nobody;
+3. SUBSCRIBING to the domain needs no permission (`atlas.<ch>.inbox.>`, or the channel wildcard):
+   each message is then judged by whom it names. Another channel's is refused as always.
+
+The registry now passes the message body to `mayReceive`; nothing else changed for any other domain.
+The old `user.<id>.…` private-subject scheme is untouched and still unused.
+
+What travels is deliberately thin: `inbox.changed` names WHAT changed (`kind`, `id`) and nothing of
+its content, so a frame delivered in error would say little, and the client re-reads through the API,
+which enforces who may read what. Recipients reached through a GROUP or a ROLE are not named (their
+holders are resolved at read time, notifications.md §13b), so those rows still reach their readers
+by Studio's 30-second re-read.
+
+Evidence: `test/websocket.test.ts` (the named user with no grant, `*:*` refused, no recipient, no
+body, a bare payload, an empty id, another channel by subject and by envelope, subscribe; over the
+bridge: two of the user's connections, an admin subscribed to everything, the same id in another
+channel), smoke on kind (EP-25.7: the recipient's socket gets the frame, the sender's own socket
+too, and a bystander subscribed to the whole channel does not), and the isolation suite (a rival's
+message naming the owner's id never reaches the owner's socket).
+
 ## 14. Open questions / future
 
 - Presence/collaborative-cursor features for the [Newsroom](newsroom.md) and editor (Post-v1.0).

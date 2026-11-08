@@ -270,6 +270,9 @@ views over Notifications ([notifications.md §13a–§13f](services/notification
 - **Preferences** — a switch per type; a mandatory type's is disabled; Save sends the whole set over
   the version read, and a 409 (another tab saved) re-reads rather than retries.
 
-Live delivery to a person is EP-25.7 (held for its security review), so the panel re-reads every 30 s
-while visible and whenever the socket resyncs. `notifications.yaml` is in the generated `SPECS`.
+**Live (EP-25.7, held for its security review):** the panel subscribes to the caller's personal stream
+(`atlas.<ch>.inbox.>`, delivered only to the person each frame names — websocket.md §13a) and re-reads
+the inbox when a frame arrives (and the messages, when that view is open). It still re-reads every
+30 s while visible and on every resync: a task offered to a group or a role, and a group's messages,
+name no person, so they reach their readers that way. `notifications.yaml` is in the generated `SPECS`.
 

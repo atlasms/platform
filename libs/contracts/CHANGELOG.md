@@ -23,6 +23,10 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- **`inbox.changed`** (EP-25.7): Notifications' PERSONAL event — `recipientUserId`, `kind`
+  (`task` / `message` / `notification`, a Tier-0 enum), `id`, `at` — one per person whose inbox a write
+  changed, in that write's transaction. The WebSocket service delivers it only to that user.
+
 - **`asset.reviewed`** (EP-24.7): MAM's event for an approval at a workflow review point that does
   NOT approve the asset — `assetId`, `reviewer`, `reviewPointId` (required), `reviewedAt`,
   `createdBy`, `categoryPath`. In `WORKFLOW_EVENTS` and `REVIEW_VERDICTS` (outcome `approved`, by

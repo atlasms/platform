@@ -4,12 +4,13 @@ import {
   Component,
   DestroyRef,
   computed,
+  effect,
   inject,
   signal,
   type OnInit,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { interval, merge } from 'rxjs';
+import { filter, interval, merge } from 'rxjs';
 import type {
   InboxTask,
   Message,
@@ -366,10 +367,28 @@ export class InboxPanel implements OnInit {
   );
   protected readonly dirty = computed(() => Object.keys(this.chosen()).length > 0);
 
+  // EP-25.7: this person's own changes, live — `inbox.changed` reaches only the user it names (a
+  // personal domain; websocket.md §5). Queued by the service until the socket is open.
+  private readonly live = effect(() => {
+    const channelId = this.session.channelId();
+    if (channelId) void this.ws.subscribe(`atlas.${channelId}.inbox.>`);
+  });
+
   ngOnInit(): void {
     this.refresh();
-    // No live delivery to a person yet (EP-25.7): read again on a timer, and when the socket
-    // says the client may have missed something.
+    // A frame names what changed and nothing of it: the inbox is read again through the API.
+    this.ws.events$
+      .pipe(
+        filter(({ subject }) => subject.split('.')[2] === 'inbox'),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe(({ payload }) => {
+        this.refresh();
+        const kind = (payload as { payload?: { kind?: string } } | undefined)?.payload?.kind;
+        if (kind === 'message' && this.view() === 'messages') this.loadMessages();
+      });
+    // Still read on a timer: a task offered to a group or a role, and a group's messages, name no
+    // person, so they reach their readers this way — and when the socket says a gap was missed.
     merge(interval(INBOX_REFRESH_MS), this.ws.resync$)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
