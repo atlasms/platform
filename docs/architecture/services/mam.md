@@ -289,50 +289,56 @@ NOT built unless a performance check at a target catalogue size fails NFR-PERF (
 does, the projection follows the audit log's shape (ADR-0005: Postgres the record, the index derived
 and rebuildable), and the threshold that triggered it is recorded here.
 
-**The check, as built (EP-27.7).** `apps/mam/perf/search-scaling.ts` (`npm run perf:search`) seeds a
-single channel to a ladder of catalogue sizes and times the ACTUAL production queries at each —
+**The check, as built (EP-27.7).** The product owner set the TARGET catalogue at **5,000,000 assets**
+(2026-11-07). `apps/mam/perf/search-scaling.ts` (`npm run perf:search`) seeds a single channel to a
+ladder of sizes UP TO AND INCLUDING that target and times the ACTUAL production queries at each —
 `pgAssetStore(pool).search(...)` and `.facetSearch(...)`, the same code a request reaches, over
 tables built by `mamMigrations` (the same DDL and indexes a deployed MAM runs). Only the seeding is
 bespoke: a Zipf-shaped term vocabulary so common words exist (the `GROUP BY asset_id`'s worst case),
 built with the production `indexTerms`, queried through the production `parseQuery` — so a query is
-tokenized exactly as the documents were. Seven scenarios span the cost curve; 150 iterations each.
-The numbers below are p95 ms on the dev Postgres (`postgres:17-alpine`, `--locale=C`, one container
-on one developer machine, 2026-11-09). An operator's server moves the absolutes down, never up; what
-travels is the TREND and where a scenario crosses the budget.
+tokenized exactly as the documents were. Seven scenarios span the cost curve. The numbers below are
+p95 ms on the dev Postgres (`postgres:17-alpine`, `--locale=C`, one container on one developer
+machine, 2026-11-09; 150 iterations per scenario to 1M, 30 at 5M where the failing scenarios each run
+for seconds). An operator's server moves the absolutes down, never up; what travels is the TREND, and
+at 5M the result is categorical, not marginal.
 
-| scenario (p95 ms) | 10k | 100k | 1M | NFR-PERF-2 (p95 < 500) |
-| --- | ---: | ---: | ---: | --- |
-| text: single common word | 6.7 | 90.3 | **1091** | breaches at 1M |
-| text: single rare/selective word | 1.4 | 2.3 | 2.7 | holds |
-| text: two-word AND | 4.0 | 67.6 | **715** | breaches at 1M |
-| text: prefix / as-you-type (common) | 32.0 | 402.4 | **3985** | at 100k already near; 8× over at 1M |
-| facet: one | 1.4 | 3.4 | 2.1 | holds |
-| facet: two (AND) | 12.3 | 119.0 | 5.6 | holds |
-| facet: one + within (a text hit set) | 6.1 | 11.1 | 4.6 | holds |
+| scenario (p95 ms) | 10k | 100k | 1M | **5M (target)** | NFR-PERF-2 (p95 < 500) |
+| --- | ---: | ---: | ---: | ---: | --- |
+| text: single common word | 6.7 | 90.3 | 1091 | **1949** | breaches by 1M, 4× over at 5M |
+| text: single rare/selective word | 1.4 | 2.3 | 2.7 | 2.6 | holds |
+| text: two-word AND | 4.0 | 67.6 | 715 | **3092** | breaches by 1M, 6× over at 5M |
+| text: prefix / as-you-type (common) | 32.0 | 402.4 | 3985 | **45902** | near at 100k; ~46 s at 5M — unusable |
+| facet: one | 1.4 | 3.4 | 2.1 | 10.0 | holds |
+| facet: two (AND) | 12.3 | 119.0 | 5.6 | 13.5 | holds |
+| facet: one + within (a text hit set) | 6.1 | 11.1 | 4.6 | 7.2 | holds |
 
 **What this says.** Two populations, and they scale oppositely:
 
-- **Faceted search and selective-term lookup hold comfortably to 1M.** The facet queries bound by
-  `LIMIT 50` + `ORDER BY id DESC` short-circuit through the `asset_facets` index — they end up FASTER
-  at 1M than at 100k, because 50 matching assets are found in fewer rows scanned once the library is
-  dense. A rare word is a tiny index range at any size. Neither needs OpenSearch.
-- **Text RELEVANCE over common terms is the one that fails.** The simple-search path counts matches
-  per asset (`GROUP BY asset_id HAVING …`), so a word present in a large fraction of the library is a
-  large aggregation that grows with it: a common single word crosses NFR-PERF-2 between 100k and 1M,
-  a two-word AND with it, and **prefix / as-you-type is the first to go** — already 402 ms p95 at
-  100k, ~4 s at 1M. That matches search.ts's own stated limit: Postgres has no stemming for Persian
-  and no relevance ranking, and a Lucene analyser is the real argument for the move, not facets.
+- **Faceted search and selective-term lookup hold comfortably — at the 5M target too** (≤ 13.5 ms).
+  The facet queries bound by `LIMIT 50` + `ORDER BY id DESC` short-circuit through the `asset_facets`
+  index (50 matching assets are found scanning a bounded prefix of the id order), and a rare word is a
+  tiny index range at any size. Neither needs OpenSearch, now or at the target.
+- **Text RELEVANCE over common terms fails, and at the target it fails categorically.** The
+  simple-search path counts matches per asset (`GROUP BY asset_id HAVING …`), so a word in a large
+  fraction of the library is an aggregation that grows with it: a common single word and a two-word
+  AND cross NFR-PERF-2 between 100k and 1M (1.9 s / 3.1 s at 5M), and **prefix / as-you-type — the way
+  the endpoint is actually used — reaches ~46 seconds at 5M**, which is not slow but broken. That
+  matches search.ts's own stated limit: Postgres has no stemming and no relevance ranking, and a
+  Lucene analyser is the real argument for the move, not facets.
 
-**So the EP-27.2 trigger is narrowed, not pulled.** The projection is still NOT built: Postgres holds
-every shape of search to ~100k assets, which is past the pilot's library, and holds facets and
-selective search far beyond that. What this check establishes is the SPECIFIC trigger — a library
-whose text search (especially as-you-type) runs over roughly 10⁵–10⁶ assets — and that when it is
-pulled, OpenSearch need only take the TEXT index (`asset_search`), while `asset_facets` can stay in
-Postgres. Cheaper interim levers exist before the full projection and are named here so they are not
-re-discovered under load: raise the as-you-type minimum prefix length (the pathological case is a
-short prefix of a frequent word), cap the candidate scan, or add a trigram/GIN index for prefix —
-each buys headroom short of a second store. Re-run `npm run perf:search` against the operator's real
-catalogue size to place them on this curve.
+**So at the target, the EP-27.2 trigger IS met — for the text index only.** At 5,000,000 assets
+MAM's Postgres TEXT search does not hold NFR-PERF-2, as-you-type most of all, so a deployment at that
+scale needs the OpenSearch projection EP-27.2 reserved — and it need only take the TEXT index
+(`asset_search`): `asset_facets` stays in Postgres, where it is fast at every size measured. The
+projection follows the audit log's shape (ADR-0005: Postgres the record, the index derived and
+rebuildable). Two things temper the "build it now" reading. First, **the pilot is not at the target**:
+Postgres holds every shape of search to ~100k assets, past the pilot's library, so the text
+projection is work for the large-library deployments, not a blocker for first ship. Second, the
+cheaper levers help — but only up to a point, and NOT at 5M: raising the as-you-type minimum prefix
+length, capping the candidate scan, or a trigram/GIN index each buys headroom in the 10⁵–10⁶ band,
+yet none rescues a 46-second as-you-type over five million rows. For a 5M library the projection is
+the answer; for the band below it, a lever may defer it. Re-run `npm run perf:search` against a
+deployment's real catalogue size to place it on this curve.
 
 ### Policies that act (EP-28.7)
 

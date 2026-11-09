@@ -43,6 +43,11 @@ import { openPool, migrate, withTransaction, type PgPool, type PgClient } from '
 import { mamMigrations, pgAssetStore, indexTerms, parseQuery } from '../src/index.ts';
 
 const URL = process.env['ATLAS_PG_URL'];
+// The product owner set the TARGET catalogue at 5,000,000 assets (2026-11-07). The default here is a
+// lighter ladder for iteration — seeding 5M takes ~30 min and the failing text scenarios run for
+// tens of seconds each — so the target run is explicit:
+//   ATLAS_SEARCH_SIZES=5000000 ATLAS_SEARCH_ITERATIONS=30 npm run perf:search
+// The ladder up to 1M shows the curve and the crossover; the 5M point confirms it at the target.
 const SIZES = (process.env['ATLAS_SEARCH_SIZES'] ?? '10000,100000,1000000')
   .split(',')
   .map((s) => Number(s.trim()))
