@@ -474,7 +474,8 @@ row each in `shotlist_items` (channel-scoped, indexed by asset and start).
   asset's own (`GET /history/asset/{id}`). The same list sent again changes nothing and emits nothing.
 - The `shotlist` field group governs both: `asset:read` to read it, `asset:write` to write it (the
   Editor's; the Librarian's grant reads it and is refused the write).
-- Not yet: `thumbnailRef` (a filmstrip frame) waits for the VTT filmstrip rendition (EP-29.4).
+- The VTT filmstrip rendition now exists (EP-29.4, mts.md §13); wiring a shot's `thumbnailRef` to a
+  filmstrip cell is the remaining step, and the cues' `#xywh` geometry is what it would point into.
 
 Studio: the asset editor's **Shot list** section — rows of start, end and description, added after
 the last shot, removed, saved whole; a timecode that is not one is refused in the form, MAM's 422 is

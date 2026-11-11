@@ -23,6 +23,12 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- **`variant`** on the `Rendition` `$def` (EP-29.4): an optional string disambiguating files of one
+  kind, carried on `transcode.completed`'s renditions. A VTT filmstrip is two renditions of kind
+  `vtt-filmstrip` — the sprite image (`variant: sprite`) and the WebVTT cues (`variant: cues`) — which
+  the FileRef key `(assetId, kind, variant)` (data-model §1.5) already distinguishes; the event could
+  not express it until now. Optional and additive: every existing single-file rendition omits it.
+
 - **`inbox.changed`** (EP-25.7): Notifications' PERSONAL event — `recipientUserId`, `kind`
   (`task` / `message` / `notification`, a Tier-0 enum), `id`, `at` — one per person whose inbox a write
   changed, in that write's transaction. The WebSocket service delivers it only to that user.

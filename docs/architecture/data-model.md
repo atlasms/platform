@@ -156,7 +156,8 @@ timeline; `thumbnailRef` points at a filmstrip frame.
 As built (EP-27.3, [mam.md §13v](services/mam.md)): `startMs`/`endMs`, millisecond OFFSETS into the
 media's timeline rather than SMPTE strings — exact whatever the frame rate, and the media need not
 have one yet; Studio renders them as `HH:MM:SS.mmm`. The list is replaced whole and every change is a
-revision of the asset. `thumbnailRef` waits for the filmstrip rendition (EP-29.4).
+revision of the asset. The filmstrip rendition exists (EP-29.4); wiring `thumbnailRef` to a filmstrip
+cell is the remaining step.
 
 ### 1.7 Versions (media-file changes) vs. metadata edits
 
