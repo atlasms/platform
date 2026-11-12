@@ -46,6 +46,7 @@
     "isolation": "node --test infra/smoke/isolation.test.mjs",
     "reference:test": "node scripts/test-reference.mjs",
     "perf": "node infra/smoke/perf-sanity.mjs",
+    "perf:search": "tsx apps/mam/perf/search-scaling.ts",
     "drill": "node scripts/restore-drill.mjs",
     "triage": "node scripts/triage-report.mjs",
     "crash:bms": "node --test infra/smoke/bms-crash.test.mjs"

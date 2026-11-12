@@ -11,7 +11,7 @@ npm run bundle -- --version 0.1.0
 
 ```
 atlas-0.1.0/
-├── images/            one tar per service (docker save)
+├── images/            one tar per image (docker save) — every Atlas service AND every third-party image
 ├── manifests/         RENDERED Kubernetes YAML — no kustomize or helm needed to install
 ├── install.sh         verify → load → apply
 ├── bundle.json        version, git commit, image IDs
@@ -41,6 +41,14 @@ air-gapped bundle is a lie: the artifact is fixed at build time, so the tag has 
 `bundle.json` also records each image ID, which a tag cannot be reassigned away from, plus the git
 commit that produced it — the first question in an incident is *what is actually installed*.
 
+**The image list is derived from the rendered manifests, not hand-maintained.** Whatever the dev
+overlay deploys is what the bundle ships: every Atlas service (built here) and every third-party
+image it depends on — Postgres, NATS, OpenSearch, and Temporal's server and schema tools — which an
+air-gapped site cannot pull for itself. A hand-kept list drifts, and a missing image fails nothing
+until the install is tried; so the bundle reads the same rendered documents it ships, and `k8s:check`
+holds the `k8s:build` / `k8s:load` scripts to those manifests, so a service added to the platform
+cannot be left out of the bundle unnoticed ([#512](https://github.com/atlasms/platform/issues/512)).
+
 **The bundle contains no Kubernetes.** The site brings its own cluster. Shipping a distribution
 would still be wrong about the site's storage, networking and node topology.
 
@@ -61,3 +69,8 @@ The air-gapped path was exercised, not described:
    and verifying it against IAM's JWKS.
 5. Appending one line to a manifest made `install.sh` fail verification and abort with exit 1
    before loading anything — a checksum that never fails is not a check.
+
+> That drill predates [#512](https://github.com/atlasms/platform/issues/512), when the bundle shipped
+> only two of the platform's images; the cluster pulled the rest. The bundle now ships every image
+> the overlay deploys, so re-running the air-gapped drill against the full set — confirming nothing
+> is pulled — is owed before the next release.
