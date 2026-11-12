@@ -16,6 +16,15 @@ export {
   type PresetRequires,
 } from './preset.ts';
 export {
+  planFilmstrip,
+  filmstripFilter,
+  filmstripVtt,
+  vttTimestamp,
+  FILMSTRIP_SPRITE_NAME,
+  type FilmstripSpec,
+  type FilmstripPlan,
+} from './filmstrip.ts';
+export {
   DEFAULT_MAX_ATTEMPTS,
   DEFAULT_RETRY_BASE_MS,
   FIRST_RENDITIONS,

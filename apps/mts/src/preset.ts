@@ -11,12 +11,14 @@
 // worker's, and NVENC/QSV/VAAPI selection belongs with the profile registry (16.6) — a built-in
 // set that assumed a GPU would fail on every machine that has none, including CI.
 
+import type { FilmstripSpec } from './filmstrip.ts';
+
 export type PresetRequires = 'video' | 'audio';
 
 export interface Preset {
   id: string;
   /** The rendition kind this produces — `common.schema.json#/$defs/RenditionKind`. */
-  kind: 'proxy' | 'thumbnail' | 'broadcast';
+  kind: 'proxy' | 'thumbnail' | 'broadcast' | 'vtt-filmstrip' | 'hover-preview';
   /** What the input must have. A request for a preset the input cannot satisfy is refused. */
   requires: PresetRequires;
   /** The output file's extension, which also decides the container. */
@@ -25,6 +27,13 @@ export interface Preset {
   still?: boolean;
   /** The encoder arguments between the input and the output path. */
   args: readonly string[];
+  /**
+   * Present only on a {@link Preset.kind} of `vtt-filmstrip` (EP-29.4): the grid geometry. The
+   * filmstrip's `-vf` is COMPUTED from this and the input's duration at run time (`filmstripFilter`),
+   * then prepended to `args` (the still-image encoder tail) — a filmstrip produces TWO files (the
+   * sprite and the generated WebVTT), so the job runner handles it on its own path.
+   */
+  filmstrip?: FilmstripSpec;
 }
 
 /**
@@ -135,6 +144,47 @@ export const BUILT_IN_PRESETS: readonly Preset[] = [
       '48000',
       '-f',
       'mxf',
+    ],
+  },
+  {
+    // The VTT scrub filmstrip (EP-29.4): a single sprite sheet of thumbnails plus a WebVTT index.
+    // `args` is only the still-image encoder tail — the `-vf tile=…` that packs the grid is computed
+    // from the input's duration at run time (`filmstrip.ts`), because the grid depends on how long
+    // the clip is. The job runner produces two files from this one preset (sprite + cues) and the
+    // VTT is written by MTS, not FFmpeg; see `service.ts`.
+    id: 'filmstrip',
+    kind: 'vtt-filmstrip',
+    requires: 'video',
+    extension: 'jpg',
+    still: true,
+    filmstrip: { columns: 10, cellWidth: 160, cellHeight: 90, maxThumbs: 100 },
+    // `-frames:v 1`: the tile filter has already packed every thumbnail into one image, so one
+    // frame is the whole sprite. `-q:v` is MJPEG quality (2 best … 31 worst); 5 is crisp and small.
+    args: ['-frames:v', '1', '-q:v', '5'],
+  },
+  {
+    // The hover preview (EP-29.5): a short, low-resolution, muted clip shown on mouse-over. A simple
+    // first-few-seconds segment, not a whole-video montage — the glossary asks for a "short
+    // low-bitrate clip", and a montage needs duration-dependent args for a marginal UX gain. 180p,
+    // CRF 30 (visibly lossy, which is the point), faststart so it plays before it finishes loading.
+    id: 'hover-preview',
+    kind: 'hover-preview',
+    requires: 'video',
+    extension: 'mp4',
+    args: [
+      '-t',
+      '6',
+      '-an',
+      '-vf',
+      'scale=-2:180',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '30',
+      '-movflags',
+      '+faststart',
     ],
   },
 ];
