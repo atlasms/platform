@@ -46,11 +46,11 @@ check and a rehearsed restore drill (EP-21). **Phase 2 is storied and under way*
 its workflow designer (EP-23) are done; Notifications (EP-25) and MTS/MAM v2 work are in progress.
 The nine Phase-2 product decisions were taken on 2026-10-12 (doc 21's Phase-2 table).
 
-| Item | State |
-| --- | --- |
-| Design docs | ✅ Complete |
-| GitHub backlog | org project **#2** — Phases 0–2 storied |
-| Tests | green across the Nx projects; smoke + acceptance + isolation suites against a live kind cluster |
+| Item           | State                                                                                           |
+| -------------- | ----------------------------------------------------------------------------------------------- |
+| Design docs    | ✅ Complete                                                                                     |
+| GitHub backlog | org project **#2** — Phases 0–2 storied                                                         |
+| Tests          | green across the Nx projects; smoke + acceptance + isolation suites against a live kind cluster |
 
 **The per-epic state — what each `EP-nn` has shipped, the defects found on the way, the test
 counts, and the current suggested next tasks — lives in [`docs/roadmap/STATUS.md`](docs/roadmap/STATUS.md).**

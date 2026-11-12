@@ -34,6 +34,8 @@ export interface Checksum {
 
 export interface Rendition {
   kind: RenditionKind;
+  /** Disambiguates files of the same kind (data-model §1.5): a VTT filmstrip is two renditions of kind `vtt-filmstrip` — the sprite image (`sprite`) and the WebVTT cues (`cues`). Absent for a kind that has one file. */
+  variant?: string;
   /** HSM-resolved logical path. */
   path: string;
   checksum: Checksum;
