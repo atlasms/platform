@@ -71,7 +71,10 @@ const rendition = (kind: 'proxy' | 'thumbnail' | 'original', path = `/online/${k
 /** An MTS message, the way the broker would hand it over. */
 function transcodeMessage(
   assetId: string,
-  renditions = [rendition('proxy'), rendition('thumbnail')],
+  renditions: EventPayloads['transcode.completed']['renditions'] = [
+    rendition('proxy'),
+    rendition('thumbnail'),
+  ],
 ): Message {
   const envelope = buildEnvelope({
     type: 'transcode.completed',
@@ -203,6 +206,59 @@ test('a second transcode.completed REPLACES a kind (MTS re-ran) — same id, nex
     before: { path: '/online/proxy.bin', tier: 'online', status: 'available' },
     after: { path: '/online/proxy-v2.bin', tier: 'online', status: 'available' },
   });
+});
+
+test('a filmstrip is two files of one kind (EP-29.4): sprite and cues become two rows, kept apart by variant', async () => {
+  const { service, caller, drain } = harness();
+  const asset = await service.create(caller(), {
+    title: 'Bulletin',
+    mediaType: 'video',
+    fileType: 'mxf',
+  });
+  await drain();
+
+  const filmstrip = [
+    {
+      kind: 'vtt-filmstrip' as const,
+      variant: 'sprite',
+      path: '/online/filmstrip.jpg',
+      checksum: { algorithm: 'sha256' as const, value: 'sprite-hash' },
+      sizeBytes: 4096,
+    },
+    {
+      kind: 'vtt-filmstrip' as const,
+      variant: 'cues',
+      path: '/online/filmstrip.vtt',
+      checksum: { algorithm: 'sha256' as const, value: 'cues-hash' },
+      sizeBytes: 512,
+    },
+  ];
+
+  await service.mirrorTranscode(transcodeMessage(asset.id, filmstrip));
+  const files = await service.files(caller(), asset.id);
+  // One kind, two rows — not one overwriting the other.
+  assert.deepEqual(
+    files
+      .map((f) => [f.kind, f.variant, f.storage.path])
+      .sort((a, b) => a[1]!.localeCompare(b[1]!)),
+    [
+      ['vtt-filmstrip', 'cues', '/online/filmstrip.vtt'],
+      ['vtt-filmstrip', 'sprite', '/online/filmstrip.jpg'],
+    ],
+  );
+  await drain();
+
+  // A re-run replaces each by (kind, variant) — the sprite keeps its identity, the cues theirs.
+  const spriteBefore = files.find((f) => f.variant === 'sprite')!;
+  await service.mirrorTranscode(
+    transcodeMessage(asset.id, [{ ...filmstrip[0]!, path: '/online/filmstrip-v2.jpg' }]),
+  );
+  const after = await service.files(caller(), asset.id);
+  assert.equal(after.length, 2, 'the cues row is untouched');
+  const sprite = after.find((f) => f.variant === 'sprite')!;
+  assert.equal(sprite.id, spriteBefore.id, 'the sprite row keeps its identity');
+  assert.equal(sprite.version, 2);
+  assert.equal(sprite.storage.path, '/online/filmstrip-v2.jpg');
 });
 
 test('file.placed: a new row for a file nothing announced (the original), then the ledger moving it to another tier', async () => {

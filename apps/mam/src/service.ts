@@ -1278,7 +1278,9 @@ export class MamService {
         assetId,
         messageId: msg.id,
         now,
-        ...defined({ existing: current.get(fileKey(r.kind, undefined)) }),
+        // EP-29.4: match the existing row by kind AND variant — a filmstrip's `sprite` and `cues`
+        // are one kind, and keying on kind alone would make each overwrite the other.
+        ...defined({ existing: current.get(fileKey(r.kind, r.variant)) }),
       }),
     );
     // EP-27.5: the duration MTS measured. The original's probe is the asset's duration (ingest

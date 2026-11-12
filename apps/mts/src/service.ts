@@ -14,7 +14,7 @@
 
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, rm, stat } from 'node:fs/promises';
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   buildEnvelope,
@@ -26,12 +26,14 @@ import {
   validatePayload,
   type Envelope,
   type EventPayloads,
+  type RenditionKind,
 } from '@atlas/contracts';
 import type { Message, OutboxRecord } from '@atlas/messaging';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, Forbidden, NotFound, ValidationError } from '@atlas/service-kit';
 import { canTransition, renditionsFor, type RenditionResult, type TranscodeJob } from './job.ts';
 import { presetById, type Preset } from './preset.ts';
+import { planFilmstrip, filmstripFilter, filmstripVtt, type FilmstripSpec } from './filmstrip.ts';
 import {
   compileProfile,
   gpuEncoderFor,
@@ -519,7 +521,7 @@ export class MtsService {
         // re-run would. One that no longer resolves is a refusal, not a TypeError in the loop.
         const preset = await this.resolvePreset(job.channelId, presetId);
         if (!preset) throw new TranscodeRefusal(`unknown preset ${presetId}`);
-        renditions.push(await this.produce(job, preset, durationSec, signal));
+        renditions.push(...(await this.produce(job, preset, durationSec, signal)));
       }
     } catch (err) {
       if (signal?.aborted) {
@@ -564,13 +566,20 @@ export class MtsService {
     return 'completed';
   }
 
-  /** One preset: run the encoder, then checksum what it wrote. */
+  /**
+   * Produce every file a preset calls for, checksum each, and (with HSM) place it. One file for an
+   * ordinary preset; a filmstrip (EP-29.4) is two — the sprite and its WebVTT — so this returns a
+   * list and the caller spreads it.
+   */
   private async produce(
     job: TranscodeJob,
     preset: Preset | CompiledProfile,
     durationSec: number | undefined,
     signal?: AbortSignal,
-  ): Promise<RenditionResult> {
+  ): Promise<RenditionResult[]> {
+    if ('filmstrip' in preset && preset.filmstrip) {
+      return this.produceFilmstrip(job, preset, preset.filmstrip, durationSec, signal);
+    }
     // Named by job and preset, so a retry of the same job overwrites its own previous output
     // rather than accumulating one file per attempt. mts.md calls this idempotent output naming,
     // and it is what makes at-least-once delivery safe on a filesystem.
@@ -595,9 +604,99 @@ export class MtsService {
       },
     );
 
-    const checksum = await sha256(outputPath);
-    let path = outputPath;
-    let sizeBytes = output.sizeBytes;
+    return [
+      await this.placeRendition(job, outputPath, {
+        kind: preset.kind,
+        profileId: preset.id,
+        still: preset.still === true,
+        // A still has no duration, and reporting 0 for one would put a zero-length clip in MAM.
+        ...(!preset.still && output.durationSec !== undefined
+          ? { durationSec: output.durationSec }
+          : {}),
+        // Which encoder made it, and whether a GPU the profile asked for was unusable here.
+        ...('encoder' in preset && preset.encoder !== undefined ? { encoder: preset.encoder } : {}),
+        ...('fallback' in preset && preset.fallback ? { fallback: true } : {}),
+      }),
+    ];
+  }
+
+  /**
+   * The VTT scrub filmstrip (EP-29.4): a sprite sheet FFmpeg packs with its `tile` filter, and the
+   * WebVTT index MTS writes from the SAME geometry — so the cues cannot drift from the image. Two
+   * renditions of kind `vtt-filmstrip`, told apart by `variant` (`sprite`, `cues`): the pair the
+   * FileRef key `(assetId, kind, variant)` already expects.
+   */
+  private async produceFilmstrip(
+    job: TranscodeJob,
+    preset: Preset,
+    spec: FilmstripSpec,
+    durationSec: number | undefined,
+    signal?: AbortSignal,
+  ): Promise<RenditionResult[]> {
+    // The grid is computed from the duration, so without it there is no filmstrip. A video whose
+    // duration cannot be read is the input's fault, like a thumbnail of an audio file — a refusal,
+    // not a retry.
+    if (durationSec === undefined) {
+      throw new TranscodeRefusal(`a filmstrip needs the input's duration, which could not be read`);
+    }
+    const plan = planFilmstrip(durationSec, spec);
+    const base = join(this.options.workRoot, 'renditions', job.id);
+    await mkdir(base, { recursive: true });
+
+    // The sprite: one tiled still. The computed `-vf` goes in front of the preset's encoder tail.
+    const spritePath = join(base, `${preset.id}-sprite.${preset.extension}`);
+    await this.options.transcoder.run(
+      {
+        inputPath: job.inputPath,
+        outputPath: spritePath,
+        args: ['-vf', filmstripFilter(plan), ...preset.args],
+      },
+      {
+        ...(signal ? { signal } : {}),
+        onProgress: (percent, speed) => void this.progress(job, preset, percent, speed),
+      },
+    );
+    const sprite = await this.placeRendition(job, spritePath, {
+      kind: 'vtt-filmstrip',
+      profileId: preset.id,
+      still: true,
+      variant: 'sprite',
+    });
+
+    // The cues: MTS writes them from the plan, not FFmpeg. They reference the sprite by its relative
+    // serving name, which the file layer resolves beside the cues (filmstrip.ts).
+    const cuesPath = join(base, `${preset.id}-cues.vtt`);
+    await writeFile(cuesPath, filmstripVtt(plan, durationSec));
+    const cues = await this.placeRendition(job, cuesPath, {
+      kind: 'vtt-filmstrip',
+      profileId: preset.id,
+      still: true,
+      variant: 'cues',
+    });
+    return [sprite, cues];
+  }
+
+  /**
+   * Checksum a produced file, place it in HSM (when configured) under its kind and variant, and
+   * describe it as a rendition. The one place a produced file becomes a `RenditionResult`, so the
+   * sprite, the cues and every ordinary output are placed and reported the same way.
+   */
+  private async placeRendition(
+    job: TranscodeJob,
+    localPath: string,
+    desc: {
+      kind: RenditionKind;
+      profileId: string;
+      still: boolean;
+      variant?: string;
+      durationSec?: number;
+      encoder?: string;
+      fallback?: boolean;
+    },
+  ): Promise<RenditionResult> {
+    const checksum = await sha256(localPath);
+    let path = localPath;
+    let sizeBytes = (await stat(localPath)).size;
     if (this.options.files) {
       // To HSM (ADR-0009): signed over this checksum, and HSM's path is the rendition's from here
       // on. The local file was scratch. A refusal or an outage throws — a tool fault, retried.
@@ -605,33 +704,31 @@ export class MtsService {
         {
           channelId: job.channelId,
           assetId: job.assetId,
-          kind: preset.kind,
+          kind: desc.kind,
           jobId: job.id,
-          profile: preset.id,
-          ...(!preset.still && output.durationSec !== undefined
-            ? { technical: { durationSec: output.durationSec } }
+          profile: desc.profileId,
+          ...(desc.variant !== undefined ? { variant: desc.variant } : {}),
+          ...(!desc.still && desc.durationSec !== undefined
+            ? { technical: { durationSec: desc.durationSec } }
             : {}),
         },
-        outputPath,
+        localPath,
         checksum,
       );
       path = placed.path;
       sizeBytes = placed.sizeBytes;
-      await rm(outputPath, { force: true });
+      await rm(localPath, { force: true });
     }
     return {
-      presetId: preset.id,
-      kind: preset.kind,
+      presetId: desc.profileId,
+      kind: desc.kind,
+      ...(desc.variant !== undefined ? { variant: desc.variant } : {}),
       path,
       checksum: { algorithm: 'sha256', value: checksum },
       sizeBytes,
-      // Which encoder made it, and whether a GPU the profile asked for was unusable here.
-      ...('encoder' in preset && preset.encoder !== undefined ? { encoder: preset.encoder } : {}),
-      ...('fallback' in preset && preset.fallback ? { fallback: true } : {}),
-      // A still has no duration, and reporting 0 for one would put a zero-length clip in MAM.
-      ...(!preset.still && output.durationSec !== undefined
-        ? { durationSec: output.durationSec }
-        : {}),
+      ...(desc.encoder !== undefined ? { encoder: desc.encoder } : {}),
+      ...(desc.fallback ? { fallback: true } : {}),
+      ...(!desc.still && desc.durationSec !== undefined ? { durationSec: desc.durationSec } : {}),
     };
   }
 
