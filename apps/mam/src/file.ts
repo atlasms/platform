@@ -65,6 +65,10 @@ export function fileFromRendition(
     channelId: context.channelId,
     assetId: context.assetId,
     kind: rendition.kind,
+    // EP-29.4: a filmstrip is two renditions of one kind (`sprite`, `cues`); `variant` is what the
+    // FileRef key `(assetId, kind, variant)` uses to keep them as two rows, not one overwriting the
+    // other. Absent for a single-file kind.
+    ...(rendition.variant !== undefined ? { variant: rendition.variant } : {}),
     storage: { path: rendition.path, tier: 'online', status: 'available' },
     checksum: rendition.checksum,
     ...(rendition.sizeBytes !== undefined ? { sizeBytes: rendition.sizeBytes } : {}),

@@ -14,7 +14,16 @@ import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { BUILT_IN_PRESETS, ffmpegTranscoder, presetById, TranscodeRefusal } from '../src/index.ts';
+import {
+  BUILT_IN_PRESETS,
+  ffmpegTranscoder,
+  filmstripFilter,
+  filmstripVtt,
+  planFilmstrip,
+  presetById,
+  TranscodeRefusal,
+  type FilmstripSpec,
+} from '../src/index.ts';
 
 const run = promisify(execFile);
 
@@ -285,4 +294,54 @@ test('a missing binary is "not available" and a tool failure — never a refusal
       return true;
     },
   );
+});
+
+/** The sprite's pixel dimensions, via ffprobe — the invariant a filmstrip's cues depend on. */
+async function pictureSize(path: string): Promise<{ width: number; height: number }> {
+  const { stdout } = await run('ffprobe', [
+    '-v',
+    'error',
+    '-select_streams',
+    'v:0',
+    '-show_entries',
+    'stream=width,height',
+    '-of',
+    'csv=p=0',
+    path,
+  ]);
+  const [width, height] = stdout.trim().split(',').map(Number);
+  return { width: width!, height: height! };
+}
+
+test('the filmstrip filter packs a real clip into a sprite whose dimensions MATCH the plan (EP-29.4)', async (t) => {
+  if (!(await haveFfmpeg(t))) return;
+  await withDir(async (dir) => {
+    // 12 seconds, so the plan lays out several thumbnails across more than one row.
+    const input = await clip(dir, 'clip.mp4', 12);
+    const spec: FilmstripSpec = { columns: 5, cellWidth: 160, cellHeight: 90, maxThumbs: 100 };
+    const plan = planFilmstrip(12, spec);
+    assert.ok(plan.gridRows >= 2, 'the fixture should span more than one row');
+
+    const spritePath = join(dir, 'sprite.jpg');
+    const out = await ffmpegTranscoder().run({
+      inputPath: input,
+      outputPath: spritePath,
+      // Exactly what the service builds: the computed filter, then the still-image encoder tail.
+      args: ['-vf', filmstripFilter(plan), '-frames:v', '1', '-q:v', '5'],
+    });
+    assert.ok(out.sizeBytes > 0, 'the sprite is non-empty');
+
+    // The whole point: the sprite is exactly (columns·cellW) × (rows·cellH), so every `#xywh` the
+    // VTT writes lands on a real cell. If the tile geometry and the plan ever diverged, this fails.
+    const size = await pictureSize(spritePath);
+    assert.equal(size.width, plan.gridColumns * plan.cellWidth);
+    assert.equal(size.height, plan.gridRows * plan.cellHeight);
+
+    // And the cues the service would write for this plan reference only cells inside that sprite.
+    const vtt = filmstripVtt(plan, 12);
+    for (const [, x, y, w, h] of vtt.matchAll(/#xywh=(\d+),(\d+),(\d+),(\d+)/g)) {
+      assert.ok(Number(x) + Number(w) <= size.width);
+      assert.ok(Number(y) + Number(h) <= size.height);
+    }
+  });
 });
