@@ -15,7 +15,7 @@
   "dependencies": {
     "@atlas/contracts": "*",
     "@atlas/service-kit": "*",
-    "fastify": "^5.12.7"
+    "fastify": "^5.12.8"
   },
   "devDependencies": {
     "tsx": "^4.23.13",
