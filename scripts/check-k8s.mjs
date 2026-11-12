@@ -22,10 +22,11 @@
 //   npm run k8s:check
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseAllDocuments } from 'yaml';
+import { imageRefsFromManifests, partitionImages } from './lib/manifest-images.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const OVERLAYS = join(ROOT, 'infra/k8s/overlays');
@@ -209,6 +210,43 @@ function checkStaging(overlay, docs) {
   const secrets = docs.filter((d) => d.kind === 'Secret');
   if (!secrets.some((s) => s.metadata?.name === 'postgres-credentials'))
     problem(overlay, 'no postgres-credentials Secret is generated');
+}
+
+/**
+ * The offline bundle (#512) must ship every image the dev overlay deploys, or an air-gapped install
+ * pulls from a registry it cannot reach. The bundle now DERIVES its list from these same manifests,
+ * so it cannot miss one — but the hand-maintained `k8s:build` / `k8s:load` scripts still can. Hold
+ * them to the manifests: every deployed Atlas image is a buildable service that both scripts name,
+ * and neither script names a service nothing deploys. The dev overlay is the bundle's source and the
+ * only overlay whose Atlas images are local (`atlas/<svc>:dev`), so the check runs on it alone.
+ */
+function checkBundleImages(label, text) {
+  const { atlas, thirdParty } = partitionImages(imageRefsFromManifests(text));
+  const deployed = new Set(atlas.map((a) => a.service));
+  for (const svc of deployed) {
+    if (!existsSync(join(ROOT, 'apps', svc)))
+      problem(label, `atlas/${svc} is deployed but apps/${svc} does not exist to build it`);
+  }
+  const scripts = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts;
+  const built = new Set(
+    [...scripts['k8s:build'].matchAll(/SERVICE=([a-z0-9-]+)/g)].map((m) => m[1]),
+  );
+  const loaded = new Set(
+    [...scripts['k8s:load'].matchAll(/atlas\/([a-z0-9-]+):dev/g)].map((m) => m[1]),
+  );
+  for (const svc of deployed) {
+    if (!built.has(svc)) problem(label, `atlas/${svc} is deployed but k8s:build never builds it`);
+    if (!loaded.has(svc)) problem(label, `atlas/${svc} is deployed but k8s:load never loads it`);
+  }
+  for (const svc of built)
+    if (!deployed.has(svc))
+      problem(label, `k8s:build builds atlas/${svc} but no overlay deploys it`);
+  for (const svc of loaded)
+    if (!deployed.has(svc)) problem(label, `k8s:load loads atlas/${svc} but no overlay deploys it`);
+  // The #512 regression shipped zero third-party images; a scan that stopped finding them would
+  // silently bring it back.
+  if (thirdParty.length === 0)
+    problem(label, 'no third-party images found in the dev overlay — the image scan is broken');
 }
 
 // --- the Helm chart ----------------------------------------------------------
@@ -488,6 +526,7 @@ for (const overlay of overlays) {
     docs = parseAllDocuments(text)
       .map((d) => d.toJS())
       .filter((d) => d && typeof d === 'object');
+    if (overlay === 'dev') checkBundleImages('dev bundle images', text);
   } catch (err) {
     problem(overlay, err.message);
     continue;
