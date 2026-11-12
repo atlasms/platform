@@ -19,7 +19,7 @@
     "@atlas/policy": "*",
     "@atlas/service-kit": "*",
     "@fastify/websocket": "^11.3.6",
-    "fastify": "^5.12.7"
+    "fastify": "^5.12.8"
   },
   "devDependencies": {
     "tsx": "^4.23.13"
