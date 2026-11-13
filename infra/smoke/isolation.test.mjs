@@ -531,42 +531,37 @@ test('isolation: MTS and HSM — another channel’s transcode job is not found;
   assert.deepEqual(rivalLocated.body, [], 'HSM locates another channel’s files');
 });
 
-// TODO(#577): OPEN — this case FAILS today and is reported, not hidden: MTS reads another channel's
-// file out of HSM by asset id alone, and HSM places a kind the owner's asset lacks under the
-// rival's channel. The fix is HSM file-operation code, which people review and pair on (rule 7),
-// so it is not made here; `todo` keeps the run green while every run prints the failure.
-test(
-  'isolation: MTS and HSM — a rival’s job naming another channel’s asset reads none of its media',
-  { todo: '#577 — cross-tenant read and placement through MTS → HSM' },
-  async (t) => {
-    if (!present(t)) return;
-    // The rival holds asset:write on files in its own channel and names the OWNER's asset, asking for
-    // its original from HSM — a rendition kind the owner's asset does not have yet. Nothing of the
-    // owner's may be read into the rival's job, and nothing may be placed for that asset in the
-    // rival's channel.
-    const enqueued = await rival.post('/api/v1/jobs', {
-      assetId: ownerAsset.id,
-      presetIds: ['thumbnail'],
-      inputFile: { kind: 'proxy' },
-    });
-    if (enqueued.status >= 400) {
-      refused(enqueued, 'a job over another channel’s asset');
-      return;
-    }
-    const settled = await poll(
-      () => rival.get(`/api/v1/jobs/${enqueued.body.id}`),
-      (res) => ['completed', 'failed', 'dead-lettered'].includes(res.body?.state),
-      90_000,
-    );
-    assert.notEqual(
-      settled.body?.state,
-      'completed',
-      `a rival transcoded another channel’s proxy into its own channel: ${settled.text}`,
-    );
-    const rivalLocated = await rival.get(`/api/v1/assets/${ownerAsset.id}/location`);
-    assert.deepEqual(rivalLocated.body, [], 'a file was placed for another channel’s asset');
-  },
-);
+// #577 (fixed): MTS passes the job's channel to HSM, which serves a file only to the channel that
+// owns it, and HSM refuses a placement into any channel but the asset's own — whatever the kind. So
+// a rival's job naming another channel's asset reads none of its media and places nothing for it.
+test('isolation: MTS and HSM — a rival’s job naming another channel’s asset reads none of its media', async (t) => {
+  if (!present(t)) return;
+  // The rival holds asset:write on files in its own channel and names the OWNER's asset, asking for
+  // its original from HSM — a rendition kind the owner's asset does not have yet. Nothing of the
+  // owner's may be read into the rival's job, and nothing may be placed for that asset in the
+  // rival's channel.
+  const enqueued = await rival.post('/api/v1/jobs', {
+    assetId: ownerAsset.id,
+    presetIds: ['thumbnail'],
+    inputFile: { kind: 'proxy' },
+  });
+  if (enqueued.status >= 400) {
+    refused(enqueued, 'a job over another channel’s asset');
+    return;
+  }
+  const settled = await poll(
+    () => rival.get(`/api/v1/jobs/${enqueued.body.id}`),
+    (res) => ['completed', 'failed', 'dead-lettered'].includes(res.body?.state),
+    90_000,
+  );
+  assert.notEqual(
+    settled.body?.state,
+    'completed',
+    `a rival transcoded another channel’s proxy into its own channel: ${settled.text}`,
+  );
+  const rivalLocated = await rival.get(`/api/v1/assets/${ownerAsset.id}/location`);
+  assert.deepEqual(rivalLocated.body, [], 'a file was placed for another channel’s asset');
+});
 
 // --- Scheduling ------------------------------------------------------------------------------------
 

@@ -139,9 +139,14 @@ paths:
       operationId: readFileContent
       tags: [internal]
       summary: A live file's bytes, for a producer reading an input (signed); the digest in x-atlas-sha256
+      description: >-
+        The requesting job's channel is required and checked against the file's: a file of any other
+        channel is answered 404, exactly as a missing one (#577). The signature authenticates the
+        producer, not its channel, so HSM enforces the channel here.
       parameters:
         - { name: assetId, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
         - { name: kind, in: path, required: true, schema: { $ref: '#/components/schemas/FileKind' } }
+        - { name: channelId, in: query, required: true, schema: { type: string } }
         - { name: variant, in: query, schema: { type: string } }
       responses:
         '200': { description: The bytes, content: { application/octet-stream: { schema: { type: string, format: binary } } } }

@@ -118,7 +118,12 @@ export class HsmService {
     }
 
     const current = await this.store.liveFile(input.assetId, input.kind, input.variant);
-    if (current && current.channelId !== input.channelId) {
+    // An asset belongs to ONE channel, fixed by its first file (#577). Refuse a placement into any
+    // other channel whatever the kind — not only when a live file of this (kind, variant) already
+    // exists there — or the ledger would hold one asset id under two channels, which is how a rival
+    // could get a rendition of another tenant's asset into its own channel.
+    const owner = await this.store.assetChannel(input.assetId);
+    if (owner !== undefined && owner !== input.channelId) {
       await driver.remove(path);
       throw new Conflict(`asset ${input.assetId} has files in another channel`);
     }
@@ -184,14 +189,22 @@ export class HsmService {
     return { file, outcome: current ? 'replaced' : 'created' };
   }
 
-  /** A live file's bytes, from its primary copy — for a producer reading an input (internal). */
+  /**
+   * A live file's bytes, from its primary copy — for a producer reading an input (internal). The
+   * requesting job's channel is checked against the file's (#577): a file of any other channel is
+   * answered exactly as a missing one, so a producer can never read another tenant's media. The
+   * internal signature authenticates the producer, not its channel — authority over the channel is
+   * HSM's to enforce here (ADR-0008).
+   */
   async content(
+    channelId: string,
     assetId: string,
     kind: FileKind,
     variant?: string,
   ): Promise<{ file: FileEntry; stream: Readable }> {
     const file = await this.store.liveFile(assetId, kind, variant);
-    if (!file) throw new NotFound(`no ${kind} file for asset ${assetId}`);
+    if (!file || file.channelId !== channelId)
+      throw new NotFound(`no ${kind} file for asset ${assetId}`);
     const target = await this.requireTarget(file.storage.targetId);
     try {
       const stream = await (await this.drivers(target)).read(file.storage.path);

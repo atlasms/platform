@@ -11,7 +11,7 @@ import { Readable } from 'node:stream';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { isUlid, ulid } from '@atlas/contracts';
 import type { EffectivePolicy } from '@atlas/policy';
-import { fileView, parseAvailability, parsePlacement, type FileKind } from './file.ts';
+import { CHANNEL, fileView, parseAvailability, parsePlacement, type FileKind } from './file.ts';
 import { operationView, OPERATION_KINDS, type OperationKind } from './operation.ts';
 import type { Caller as ServiceCaller, HsmService } from './service.ts';
 import { parseTargetInput } from './targets.ts';
@@ -446,7 +446,14 @@ export async function buildHsmApp(options: HsmAppOptions): Promise<FastifyInstan
           now(),
         );
         if (!verdict.ok) refuse(req, verdict.reason);
+        // The requesting job's channel rides in the query, so the signature (over the whole path)
+        // covers it; HSM serves bytes only to the channel that owns the file (#577).
+        const channelId = req.query['channelId'];
+        if (channelId === undefined || !CHANNEL.test(channelId)) {
+          throw new ValidationError('channelId is required: letters, digits, _ and -');
+        }
         const { file, stream } = await service.content(
+          channelId,
           req.params.assetId,
           req.params.kind as FileKind,
           req.query['variant'],

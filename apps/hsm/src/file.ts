@@ -68,7 +68,7 @@ export interface PlacementInput {
 }
 
 const VARIANT = /^[A-Za-z0-9_-]{1,64}$/;
-const CHANNEL = /^[A-Za-z0-9_-]{1,64}$/;
+export const CHANNEL = /^[A-Za-z0-9_-]{1,64}$/;
 const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
 /**
