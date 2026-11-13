@@ -1278,7 +1278,9 @@ export class MamService {
         assetId,
         messageId: msg.id,
         now,
-        ...defined({ existing: current.get(fileKey(r.kind, undefined)) }),
+        // EP-29.4: match the existing row by kind AND variant — a filmstrip's `sprite` and `cues`
+        // are one kind, and keying on kind alone would make each overwrite the other.
+        ...defined({ existing: current.get(fileKey(r.kind, r.variant)) }),
       }),
     );
     // EP-27.5: the duration MTS measured. The original's probe is the asset's duration (ingest
@@ -2359,9 +2361,11 @@ export class MamService {
    * all, though it changes what every asset in its scope must carry.
    */
   async putSchema(caller: Caller, input: FieldSchema, version?: number): Promise<FieldSchema> {
-    // `taxonomy:admin`, not `asset:write`: editing a schema changes what every asset in its scope
-    // must carry, which is a governance action rather than an editorial one.
-    this.authorize(caller, 'taxonomy:admin');
+    // `metadata:admin` (decided by the product owner 2026-11-06), not `asset:write`: editing a
+    // schema changes what every asset in its scope must carry, which is a governance action rather
+    // than an editorial one — and its own, not the taxonomy keeper's (it was `taxonomy:admin` until
+    // then). Reading schemas is unchanged: anyone who renders an asset's form reads them.
+    this.authorize(caller, 'metadata:admin');
     if (input.channelId !== undefined && input.channelId !== caller.channelId) {
       throw new Forbidden('a schema cannot be written into another channel');
     }

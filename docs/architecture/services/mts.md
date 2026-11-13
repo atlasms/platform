@@ -268,6 +268,35 @@ asset's file in HSM (`inputFile: { kind, variant? }`), fetched to scratch at run
 way in and compared with HSM's digest. HSM being away is a tool fault — retried. The work area is
 scratch now, per pod — and since EP-16.6 MTS runs as many replicas as a deployment asks for.
 
+### EP-29.4 / EP-29.5 — the VTT scrub filmstrip and the hover preview
+
+Two more built-in presets ([`preset.ts`](../../../apps/mts/src/preset.ts)), both `requires: video`,
+completing the default rendition set (FR-MTS-3).
+
+- **`hover-preview`** (EP-29.5) is an ordinary single-file preset: a short (≤ 6 s), 180p, muted,
+  CRF-30 H.264 clip — the "short low-bitrate clip shown on mouse-over" of the glossary. A
+  first-few-seconds segment, not a whole-video montage, which would need duration-dependent args for
+  a marginal gain; it flows through the normal `produce` path and is one rendition of kind
+  `hover-preview`, no variant.
+- **`filmstrip`** (EP-29.4) is the one preset that produces **two** files: a sprite sheet and the
+  WebVTT that indexes it. It is kind `vtt-filmstrip` in **two variants** — `sprite` (the image) and
+  `cues` (the `.vtt`) — the pair the FileRef key `(assetId, kind, variant)` already distinguishes
+  ([data-model §1.5](../data-model.md)); the `variant` field on `Rendition` (EP-29.4, a `common`
+  `$def`) is what carries it on `transcode.completed`, and MAM's mirror writes a row per variant.
+
+  Geometry is **computed from the input's duration**, not static: one thumbnail per interval, the
+  interval stretched so a long film never exceeds `maxThumbs` (100), at most 10 cells across, each a
+  fixed 160×90 letterbox. FFmpeg's `tile` filter packs the sprite (`filmstrip.ts` → `filmstripFilter`);
+  the SAME plan writes the cues (`filmstripVtt`), so the `#xywh=` rectangles cannot drift from the
+  image — a real-binary test asserts the sprite's pixel size equals `(columns·cellW)×(rows·cellH)`.
+  The cues reference the sprite by a relative name (`filmstrip.jpg`), the convention a scrub player
+  resolves beside the VTT; the file layer serves the sprite there. A filmstrip whose duration cannot
+  be read is a **refusal** of the input (like a thumbnail of audio), not a retry.
+
+  Both files are checksummed and placed through the one `placeRendition` path, so the sprite, the
+  cues and every ordinary output reach HSM the same way. Neither is in `FIRST_RENDITIONS`: like
+  `broadcast`, they are produced when named (a profile, a workflow step), not automatically at ingest.
+
 ### EP-15.5 — the first renditions of an ingested asset
 
 MTS consumes `ingest.accepted` and queues the asset's first renditions from its `original` in HSM:

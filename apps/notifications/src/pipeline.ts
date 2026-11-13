@@ -44,7 +44,7 @@ import {
 } from './notification-types.ts';
 import { isOn } from './preferences.ts';
 import type { PrincipalSource } from './principals.ts';
-import { outboxRecord } from './record.ts';
+import { inboxChanged, outboxRecord } from './record.ts';
 import type { InboxStore } from './store.ts';
 import type { ActingCaller } from './task-actions.ts';
 
@@ -339,6 +339,18 @@ export class NotificationPipeline {
             },
           ),
         );
+        // EP-25.7: live to the one person it was raised for.
+        for (const record of inboxChanged(
+          n.channelId,
+          [n.userId],
+          { kind: 'notification', id: n.id, at: n.createdAt },
+          {
+            actor: { kind: 'service', id: 'notifications' },
+            correlationId: envelope.correlationId ?? envelope.messageId,
+            causationId: envelope.messageId,
+          },
+        ))
+          await tx.enqueue(record);
       }
     });
     return outcome;

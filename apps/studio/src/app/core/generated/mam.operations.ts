@@ -37,7 +37,7 @@ export const MamOperations = {
   reindexSearch: { method: 'POST', path: '/api/v1/search/reindex', params: [] },
   /** The channel's custom field schemas (scope asset:read) */
   listFieldSchemas: { method: 'GET', path: '/api/v1/field-schemas', params: [] },
-  /** Define or replace the custom fields of a media type / category scope (scope taxonomy:admin; EP-27.4). Without `version` it is a NEW schema (an existing id is a 409); with it, a compare-and-set replacement of that version (another write in between is a 409). Judged whole first: a 422's `details.problems` place every refusal at its path. Audited. */
+  /** Define or replace the custom fields of a media type / category scope (scope metadata:admin — decided 2026-11-06, it was taxonomy:admin; EP-27.4). Without `version` it is a NEW schema (an existing id is a 409); with it, a compare-and-set replacement of that version (another write in between is a 409). Judged whole first: a 422's `details.problems` place every refusal at its path. Audited. */
   putFieldSchema: { method: 'PUT', path: '/api/v1/field-schemas', params: [] },
   /** The asset's extended values with the field definitions that govern them (scope asset:read) */
   getAssetExtended: { method: 'GET', path: '/api/v1/assets/{id}/extended', params: ['id'] },

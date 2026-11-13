@@ -34,6 +34,8 @@ export interface Checksum {
 
 export interface Rendition {
   kind: RenditionKind;
+  /** Disambiguates files of the same kind (data-model §1.5): a VTT filmstrip is two renditions of kind `vtt-filmstrip` — the sprite image (`sprite`) and the WebVTT cues (`cues`). Absent for a kind that has one file. */
+  variant?: string;
   /** HSM-resolved logical path. */
   path: string;
   checksum: Checksum;
@@ -406,6 +408,17 @@ export interface GroupMembershipChangedPayload {
   /** The user's new permission version after this change. */
   permVersion?: number;
   by?: string;
+  at: string;
+}
+
+/** Emitted by Notifications & Messaging, in the transaction of the change, once per PERSON whose inbox it changed (EP-25.7): a task assigned to them or one they take part in moved, a message reached them, a notification was raised for them. A PERSONAL message — the WebSocket service delivers it only to connections authenticated as `recipientUserId`, in its channel, whatever anyone's grants (websocket §5). It names WHAT changed and nothing of its content: the client re-reads its inbox through the API, which enforces who may read what. A recipient addressed through a group or a role is not named here (yet): such rows reach their readers by polling. */
+export interface InboxChangedPayload {
+  /** The one person this frame is for. */
+  recipientUserId: string;
+  /** Which list of the inbox changed. */
+  kind: 'task' | 'message' | 'notification';
+  /** The task, message or notification that changed. */
+  id: string;
   at: string;
 }
 
@@ -873,6 +886,7 @@ export interface EventPayloads {
   'file.placed': FilePlacedPayload;
   'gateway.access.logged': GatewayAccessLoggedPayload;
   'group.membership.changed': GroupMembershipChangedPayload;
+  'inbox.changed': InboxChangedPayload;
   'ingest.accepted': IngestAcceptedPayload;
   'ingest.detected': IngestDetectedPayload;
   'ingest.rejected': IngestRejectedPayload;

@@ -11,7 +11,7 @@
   "scripts": {
     "test": "node --no-warnings --import tsx --test test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint src test"
+    "lint": "eslint src test perf"
   },
   "dependencies": {
     "@atlas/contracts": "*",
@@ -21,7 +21,7 @@
     "@atlas/messaging-nats": "*",
     "@atlas/policy": "*",
     "@atlas/service-kit": "*",
-    "fastify": "^5.12.7"
+    "fastify": "^5.12.8"
   },
   "devDependencies": {
     "tsx": "^4.23.13"

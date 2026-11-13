@@ -15,7 +15,7 @@ const CHANNEL = 'ch12';
 const EDITOR: Rule[] = [
   {
     id: 'read',
-    permissions: ['asset:read', 'taxonomy:read', 'taxonomy:admin'],
+    permissions: ['asset:read', 'taxonomy:read', 'taxonomy:admin', 'metadata:admin'],
     scope: { channelIds: [CHANNEL] },
   },
   {

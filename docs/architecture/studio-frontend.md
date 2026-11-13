@@ -66,7 +66,7 @@ Each Activity-Bar icon opens a container; views inside are collapsible sub-panel
 | **Workflows** | Flow definitions, Running instances | Workflow **designer** (Foblex Flow). ✅ EP-23.8: the definitions list (state, published version, open draft), **Import BPMN…** (`workflow:admin`; each refused construct listed) and **Export BPMN** per row (a download named after the workflow). ✅ EP-23.4: **New workflow** (`workflow:admin`; a start and nothing else) and a workflow opens as an editor tab — the designer canvas (DSL §12.2 as built): property panels (§12.3), the FEEL editor (§3), publish/versions/lifecycle (EP-23.7) and the live-instance overlay (§12.4, EP-23.9) |
 | **People & Taxonomy** | People register, Categories, Subjects, Tags | Person / vocabulary editor |
 | **Feeds & Integration** | Inbound feeds, Outbound APIs, Connectors | Feed / connector editor |
-| **Admin** | Users, Groups, Roles/Rules, Transcode profiles, Categories, Vocabularies, People, Field schemas (✅ EP-27.4: a schema per media type / branch as an editor tab — fields added, reordered, removed; type-dependent controls; MAM's 422 under each control; a rename warned of), Theme — each view revealed by its own permission, the panel by any of them. An inline rule granted from a user, group or role editor can be narrowed to **category subtrees** (`scope.categoryPaths`, picked from the channel's live tree; none chosen = the whole channel) | Admin editors |
+| **Admin** | Users, Groups, Roles/Rules, Transcode profiles, Categories, Vocabularies, People, Field schemas (✅ EP-27.4: a schema per media type / branch as an editor tab — fields added, reordered, removed; type-dependent controls; MAM's 422 under each control; a rename warned of; revealed by `metadata:admin` since 2026-11-06), Theme — each view revealed by its own permission, the panel by any of them. An inline rule granted from a user, group or role editor can be narrowed to **category subtrees** (`scope.categoryPaths`, picked from the channel's live tree; none chosen = the whole channel) | Admin editors |
 | **Logs & Analytics** | Audit log, Reports, Statistics, **History/Diff** | Report / **diff** viewer |
 
 ### 2.1 The asset editor (tabs)
@@ -270,6 +270,9 @@ views over Notifications ([notifications.md §13a–§13f](services/notification
 - **Preferences** — a switch per type; a mandatory type's is disabled; Save sends the whole set over
   the version read, and a 409 (another tab saved) re-reads rather than retries.
 
-Live delivery to a person is EP-25.7 (held for its security review), so the panel re-reads every 30 s
-while visible and whenever the socket resyncs. `notifications.yaml` is in the generated `SPECS`.
+**Live (EP-25.7, held for its security review):** the panel subscribes to the caller's personal stream
+(`atlas.<ch>.inbox.>`, delivered only to the person each frame names — websocket.md §13a) and re-reads
+the inbox when a frame arrives (and the messages, when that view is open). It still re-reads every
+30 s while visible and on every resync: a task offered to a group or a role, and a group's messages,
+name no person, so they reach their readers that way. `notifications.yaml` is in the generated `SPECS`.
 

@@ -25,7 +25,7 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
   // EP-28.3: the flat controlled vocabularies — taxonomy administration too.
   { id: 'vocabularies', permissions: ['taxonomy:admin'] },
   // EP-27.4: the custom field schemas — what extended fields each media type / branch carries.
-  { id: 'schemas', permissions: ['taxonomy:admin'] },
+  { id: 'schemas', permissions: ['metadata:admin'] },
   // EP-28.5: the people register.
   { id: 'people', permissions: ['people:admin'] },
 ];

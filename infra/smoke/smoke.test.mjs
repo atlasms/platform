@@ -2923,6 +2923,113 @@ test('smoke: EP-25.4 — a message to a group is read by its members through the
   assert.equal(role.status, 422, role.text);
 });
 
+test('smoke: EP-25.7 — a message is LIVE to the person it names, and to nobody else (held for security review)', async () => {
+  // The personal domain on a live cluster: Notifications commits `inbox.changed` with the message,
+  // the relay publishes it on atlas.<ch>.inbox.changed, and the WebSocket service delivers it only
+  // to connections authenticated as `recipientUserId` — whatever anyone's grants. Two people of the
+  // channel are made here: the recipient, and a bystander subscribed to the WHOLE channel.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+  const person = async (username) => {
+    const password = 'live-inbox-password-not-a-secret';
+    const login = () =>
+      get('/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+    let res = await login();
+    if (res.status === 401) {
+      const made = await get('/api/v1/users', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ username, password, name: username }),
+      });
+      assert.equal(made.status, 201, made.text);
+      // Wide reads in the channel: the bystander could read nearly anything — but not this.
+      const grant = await get(`/api/v1/users/${json(made).id}/assignments`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          rule: {
+            id: `live-${username}`,
+            description: 'EP-25.7 smoke: a person of the channel',
+            permissions: ['asset:read', 'schedule:read', 'logs:read'],
+            scope: { channelIds: [claims.channelId] },
+          },
+        }),
+      });
+      assert.equal(grant.status, 201, grant.text);
+      res = await login();
+    }
+    assert.equal(res.status, 200, res.text);
+    const t = json(res).accessToken;
+    return {
+      token: t,
+      id: JSON.parse(Buffer.from(t.split('.')[1], 'base64url').toString('utf8')).sub,
+    };
+  };
+  const open = async (t, pattern) => {
+    const socket = new WebSocket(`${WS_BASE}/ws?token=${encodeURIComponent(t)}`);
+    const frames = [];
+    socket.addEventListener('message', (e) => frames.push(JSON.parse(String(e.data))));
+    await new Promise((resolve, reject) => {
+      socket.addEventListener('open', resolve, { once: true });
+      socket.addEventListener('error', () => reject(new Error('no socket')), { once: true });
+    });
+    socket.send(JSON.stringify({ type: 'subscribe', pattern }));
+    assert.ok(
+      await waitFor(() => frames.some((f) => f.type === 'subscribed' && f.subject === pattern)),
+      `subscribe ${pattern}: ${JSON.stringify(frames)}`,
+    );
+    return { socket, frames };
+  };
+  const recipient = await person('live-recipient');
+  const bystander = await person('live-bystander');
+  const ch = claims.channelId;
+  const theirs = await open(recipient.token, `atlas.${ch}.inbox.>`);
+  const watching = await open(bystander.token, `atlas.${ch}.>`);
+  const mine = await open(token, `atlas.${ch}.inbox.>`);
+  try {
+    const sent = await get('/api/v1/messages', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        to: [{ kind: 'user', id: recipient.id }],
+        body: `live ${Date.now()}`,
+      }),
+    });
+    assert.equal(sent.status, 201, sent.text);
+    const id = json(sent).id;
+    const frameFor = (frames) =>
+      frames.find((f) => f.type === 'event' && f.payload?.payload?.id === id);
+    assert.ok(
+      await waitFor(() => frameFor(theirs.frames), 30_000),
+      'the recipient never got it live',
+    );
+    const frame = frameFor(theirs.frames);
+    assert.equal(frame.subject, `atlas.${ch}.inbox.changed`);
+    assert.deepEqual(
+      [frame.payload.payload.recipientUserId, frame.payload.payload.kind],
+      [recipient.id, 'message'],
+    );
+    assert.ok(!('body' in frame.payload.payload), 'what changed, never its content');
+    assert.ok(await waitFor(() => frameFor(mine.frames), 30_000), "the sender's own tabs hear it");
+    // Give the bystander every chance to have received it: it was published before both above.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    assert.equal(
+      watching.frames.filter((f) => f.type === 'event' && f.subject.split('.')[2] === 'inbox')
+        .length,
+      0,
+      `a bystander subscribed to the whole channel received a personal frame: ${JSON.stringify(watching.frames)}`,
+    );
+  } finally {
+    for (const s of [theirs, watching, mine]) s.socket.close();
+  }
+});
+
 test('smoke: EP-25.5 — an approval tells the asset’s creator, titled as the channel’s registry says', async () => {
   // The pipeline on a live cluster: the channel's `asset.approved` type is given a title (a CAS on
   // the version read), the smoke user creates and approves an asset, and their inbox — the
@@ -4174,6 +4281,71 @@ test('smoke: EP-28.2/28.3 — vocabularies and inheritance through the gateway: 
     ['vocabulary-term.created', 'vocabulary-term.merged'],
     'the term’s history, read under taxonomy:read',
   );
+});
+
+test('smoke: field schemas are written under metadata:admin — the taxonomy keeper’s grant is not enough (decided 2026-11-06)', async () => {
+  // HELD for the user's review with its PR (authorization input). The dev account holds
+  // metadata:admin; a person of the same channel holding only taxonomy:admin is refused.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+  const id = `smoke-${Date.now().toString(36)}`;
+  const body = {
+    id,
+    mediaType: 'audio',
+    fields: [{ name: 'smokeNote', label: 'Smoke note', type: 'string' }],
+  };
+  const written = await get('/api/v1/field-schemas', {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(body),
+  });
+  assert.equal(written.status, 200, written.text);
+
+  const username = 'schema-keeper';
+  const password = 'schema-keeper-password-not-a-secret';
+  const login = () =>
+    get('/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+  let res = await login();
+  if (res.status === 401) {
+    const made = await get('/api/v1/users', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ username, password, name: 'Taxonomy keeper' }),
+    });
+    assert.equal(made.status, 201, made.text);
+    const grant = await get(`/api/v1/users/${json(made).id}/assignments`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        rule: {
+          id: 'schema-keeper',
+          description: 'smoke: the category tree, not the field schemas',
+          permissions: ['asset:read', 'taxonomy:read', 'taxonomy:admin'],
+          scope: { channelIds: [claims.channelId] },
+        },
+      }),
+    });
+    assert.equal(grant.status, 201, grant.text);
+    res = await login();
+  }
+  assert.equal(res.status, 200, res.text);
+  const keeper = {
+    authorization: `Bearer ${json(res).accessToken}`,
+    'content-type': 'application/json',
+  };
+  const refused = await get('/api/v1/field-schemas', {
+    method: 'PUT',
+    headers: keeper,
+    body: JSON.stringify({ ...body, id: `${id}-k` }),
+  });
+  assert.equal(refused.status, 403, refused.text);
+  assert.match(refused.text, /metadata:admin/);
 });
 
 test('smoke: the state-counts aggregate answers, and is not read as an asset id', async () => {

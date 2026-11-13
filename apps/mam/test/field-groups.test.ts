@@ -46,7 +46,7 @@ const LIBRARIAN: Rule[] = [
 const UNSCOPED: Rule[] = [
   {
     id: 'r',
-    permissions: ['asset:read', 'asset:write', 'taxonomy:admin'],
+    permissions: ['asset:read', 'asset:write', 'taxonomy:admin', 'metadata:admin'],
     scope: { channelIds: [CHANNEL] },
   },
 ];

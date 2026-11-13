@@ -14,6 +14,11 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import {
+  imageRefsFromManifests,
+  partitionImages,
+  ATLAS_EXTRA_BUILD_ARGS,
+} from './lib/manifest-images.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -24,12 +29,6 @@ const flag = (name, fallback) => {
 const VERSION = flag('version', readJson('package.json').version);
 const OUT_ROOT = flag('out', join('dist', 'bundle'));
 const OVERLAY = flag('overlay', 'infra/k8s/overlays/dev');
-
-/** Everything the platform runs. Adding a service here is the only step needed to bundle it. */
-const IMAGES = [
-  { name: 'atlas/iam', tag: VERSION, service: 'iam' },
-  { name: 'atlas/api-gateway', tag: VERSION, service: 'api-gateway' },
-];
 
 const BUNDLE = join(OUT_ROOT, `atlas-${VERSION}`);
 
@@ -52,56 +51,74 @@ function walk(dir) {
   });
 }
 
+/** `docker save` an image and record the artifact, pinned by its content-addressed image ID. */
+function saveImage(ref, fileName, service) {
+  const file = join(BUNDLE, 'images', fileName);
+  console.log(`  saving   ${ref}`);
+  run('docker', ['save', '-o', file, ref]);
+  // The image ID pins the exact content. A tag can be reassigned; this cannot.
+  const id = run('docker', ['image', 'inspect', ref, '--format', '{{.Id}}']).trim();
+  return { ref, service, file: relative(BUNDLE, file), id };
+}
+
 console.log(`Building offline bundle atlas-${VERSION}\n`);
 
 rmSync(BUNDLE, { recursive: true, force: true });
 mkdirSync(join(BUNDLE, 'images'), { recursive: true });
 mkdirSync(join(BUNDLE, 'manifests'), { recursive: true });
 
-// --- 1. images ---------------------------------------------------------------
-// Built at the bundle's version, never `:dev` and never `:latest`. A floating tag inside an
-// air-gapped bundle is a lie: the artifact is fixed at build time, so the tag must say which one.
-for (const image of IMAGES) {
-  const ref = `${image.name}:${image.tag}`;
+// --- 1. the image list, derived from the manifests ---------------------------
+// Whatever the overlay deploys is what the bundle must ship (#512): a hand-maintained list drifts,
+// and a missing image fails nothing until an air-gapped install tries to pull it. So render first,
+// then bundle exactly the images the rendered documents reference — Atlas services AND the
+// third-party images (Postgres, NATS, OpenSearch, Temporal) an isolated site cannot otherwise get.
+console.log(`  rendering ${OVERLAY}`);
+let manifests = run('kubectl', ['kustomize', OVERLAY]);
+const { atlas, thirdParty } = partitionImages(imageRefsFromManifests(manifests));
+console.log(`  ${atlas.length} Atlas services + ${thirdParty.length} third-party images\n`);
+
+// --- 2. images ---------------------------------------------------------------
+// Atlas images are BUILT from this repository at the bundle's version — never `:dev` or `:latest`,
+// because a floating tag inside an air-gapped bundle is a lie: the artifact is fixed at build time,
+// so the tag must say which one. Third-party images are PULLED and saved under their own fixed tags.
+const imageArtifacts = [];
+
+for (const { service } of atlas) {
+  const ref = `atlas/${service}:${VERSION}`;
+  const buildArgs = [`SERVICE=${service}`, ...(ATLAS_EXTRA_BUILD_ARGS[service] ?? [])];
   console.log(`  building ${ref}`);
   run('docker', [
     'build',
     '-f',
     'infra/docker/Dockerfile',
-    '--build-arg',
-    `SERVICE=${image.service}`,
+    ...buildArgs.flatMap((a) => ['--build-arg', a]),
     '-t',
     ref,
     '.',
   ]);
+  imageArtifacts.push(saveImage(ref, `${service}.tar`, service));
+  // The overlay tagged this `:dev` for local work; the bundle ships the fixed version.
+  manifests = manifests.replaceAll(
+    `image: atlas/${service}:dev`,
+    `image: atlas/${service}:${VERSION}`,
+  );
 }
 
-const imageArtifacts = [];
-for (const image of IMAGES) {
-  const ref = `${image.name}:${image.tag}`;
-  const file = join(BUNDLE, 'images', `${image.service}.tar`);
-  console.log(`  saving  ${ref}`);
-  run('docker', ['save', '-o', file, ref]);
-
-  // The image ID pins the exact content. A tag can be reassigned; this cannot.
-  const id = run('docker', ['image', 'inspect', ref, '--format', '{{.Id}}']).trim();
-  imageArtifacts.push({ ref, service: image.service, file: relative(BUNDLE, file), id });
+for (const ref of thirdParty) {
+  console.log(`  pulling  ${ref}`);
+  run('docker', ['pull', ref]);
+  // A filename from the ref, with the characters a path cannot carry flattened.
+  imageArtifacts.push(saveImage(ref, ref.replace(/[/:]/g, '-') + '.tar', null));
 }
 
-// --- 2. manifests ------------------------------------------------------------
+// --- 3. manifests ------------------------------------------------------------
 // RENDERED, not templated. The installing site needs kubectl and nothing else — no kustomize, no
-// helm, no chart repository. It also means what ships is exactly what was reviewed.
-console.log(`\n  rendering ${OVERLAY}`);
-let manifests = run('kubectl', ['kustomize', OVERLAY]);
-
-// Point every image at the bundle's version rather than whatever the overlay used for local work.
-for (const image of IMAGES) {
-  manifests = manifests.replaceAll(`image: ${image.name}:dev`, `image: ${image.name}:${image.tag}`);
-}
+// helm, no chart repository. It also means what ships is exactly what was reviewed. The Atlas images
+// were retagged to the bundle version above; third-party refs ship as the overlay named them.
 const manifestFile = join(BUNDLE, 'manifests', 'atlas.yaml');
 writeFileSync(manifestFile, manifests);
 
-// --- 3. install script -------------------------------------------------------
+// --- 4. install script -------------------------------------------------------
 writeFileSync(
   join(BUNDLE, 'install.sh'),
   `#!/usr/bin/env sh
@@ -150,7 +167,7 @@ echo "Done. Watch rollout with: kubectl get pods -n atlas -w"
   { mode: 0o755 },
 );
 
-// --- 4. the manifest of record ----------------------------------------------
+// --- 5. the manifest of record ----------------------------------------------
 const bundleManifest = {
   product: 'atlas',
   version: VERSION,
@@ -173,7 +190,7 @@ const bundleManifest = {
 };
 writeFileSync(join(BUNDLE, 'bundle.json'), JSON.stringify(bundleManifest, null, 2) + '\n');
 
-// --- 5. checksums ------------------------------------------------------------
+// --- 6. checksums ------------------------------------------------------------
 // Written last, over everything else. `sha256sum -c` expects paths relative to the bundle root,
 // which is why install.sh cd's there first.
 const sums = walk(BUNDLE)

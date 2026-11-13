@@ -93,7 +93,7 @@ export class ConnectionRegistry {
     for (const entry of this.#entries.values()) {
       const matches = [...entry.patterns].some((p) => matchSubject(p, subject));
       if (!matches) continue;
-      if (!mayReceive(subscriberOf(entry.conn), subject).allowed) continue;
+      if (!mayReceive(subscriberOf(entry.conn), subject, payload).allowed) continue;
       entry.conn.send({ type: 'event', subject, payload });
       delivered++;
     }

@@ -131,7 +131,15 @@ interface Internal {
 function setup() {
   localStorage.clear();
   const fake = new FakeInbox();
-  const ws = { resync$: new Subject<string>() };
+  const ws = {
+    resync$: new Subject<string>(),
+    events$: new Subject<{ subject: string; payload: unknown }>(),
+    patterns: [] as string[],
+    subscribe(pattern: string) {
+      this.patterns.push(pattern);
+      return Promise.resolve({ ok: true });
+    },
+  };
   TestBed.configureTestingModule({
     providers: [
       EditorStore,
@@ -179,6 +187,20 @@ describe('InboxPanel', () => {
     expect(t.fake.inboxes.length).toBe(1);
     t.ws.resync$.next('reconnected');
     expect(t.fake.inboxes.length).toBe(2);
+  });
+
+  it('EP-25.7: subscribes to its own personal stream, and reads again when a frame says it changed', () => {
+    const t = setup();
+    expect(t.ws.patterns).toContain('atlas.ch12.inbox.>');
+    const before = t.fake.inboxes.length;
+    t.ws.events$.next({
+      subject: 'atlas.ch12.inbox.changed',
+      payload: { payload: { recipientUserId: 'u1', kind: 'task', id: 't1' } },
+    });
+    expect(t.fake.inboxes.length).toBe(before + 1);
+    // Another domain's event is not the inbox's business.
+    t.ws.events$.next({ subject: 'atlas.ch12.asset.updated', payload: {} });
+    expect(t.fake.inboxes.length).toBe(before + 1);
   });
 
   it('a task offered to a role is claimed first — and someone else’s claim is said so', () => {
