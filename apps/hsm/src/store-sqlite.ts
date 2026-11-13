@@ -214,6 +214,12 @@ export function sqliteHsmStore(path = ':memory:'): HsmStore & { db: Db } {
           .get(assetId, kind, variant ?? '') as { data: string } | undefined,
       );
     },
+    async assetChannel(assetId) {
+      const row = db
+        .prepare('SELECT channel_id FROM files WHERE asset_id = ? AND deleted_at IS NULL LIMIT 1')
+        .get(assetId) as { channel_id: string } | undefined;
+      return row?.channel_id;
+    },
     async filesOf(channelId, assetId) {
       const rows = db
         .prepare(

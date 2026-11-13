@@ -500,6 +500,8 @@ export class MtsService {
       if (job.inputFile !== undefined) {
         if (!this.options.files) throw new Error('inputFile needs HSM, and none is configured');
         await this.options.files.fetch(
+          // The JOB's channel (#577): HSM hands over only a file of the channel asking for it.
+          job.channelId,
           job.assetId,
           job.inputFile.kind,
           job.inputFile.variant,

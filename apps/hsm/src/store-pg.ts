@@ -191,6 +191,13 @@ export function pgHsmStore(pool: PgPool): HsmStore {
       );
       return rows[0]?.data;
     },
+    async assetChannel(assetId) {
+      const { rows } = await pool.query<{ channel_id: string }>(
+        'SELECT channel_id FROM files WHERE asset_id = $1 AND deleted_at IS NULL LIMIT 1',
+        [assetId],
+      );
+      return rows[0]?.channel_id;
+    },
     async filesOf(channelId, assetId) {
       const { rows } = await pool.query<{ data: FileEntry }>(
         `SELECT data FROM files WHERE channel_id = $1 AND asset_id = $2 AND deleted_at IS NULL

@@ -211,6 +211,10 @@ follows from them. In short:
   HSM wrote — so the ledger's checksum is HSM's own and the producer's. The channel, variant and
   provenance travel in the (signed) query string. A new file, a replacement (same id, new key, old
   bytes released), or the same bytes again (a no-op). `file.placed` and the audit commit with the row.
+  An asset belongs to **one channel, fixed by its first file**: a placement into any other channel is
+  refused `409` **whatever the kind** — not only for a (kind, variant) already present — so the ledger
+  never holds one asset id under two channels (#577, how a rival could get a rendition of another
+  tenant's asset into its own channel through MTS).
 - **Operations** (`operation.ts`) — `copy` (a verified replica), `move` (copy, verify, compare-and-set
   the ledger, release the source), `delete` (the row keeps `deletedAt`; bytes and replicas released)
   and HSM's own `release`, the ONLY way bytes are removed — queued in the transaction that made them
@@ -224,6 +228,11 @@ follows from them. In short:
   `POST /internal/v1/availability` (EP-31): each asked (asset, kind, variant)'s live file — its
   channel, tier and status — or none. It alone also accepts a READ key (`hsm-read-keys`), which
   Scheduling signs with; a reader's key opens no other route (ADR-0009, widened again).
+  **Channel enforcement on the content read (#577):** the signature authenticates the producer, not
+  its channel — a single internal key is shared by all of MTS — so `content` takes the requesting
+  job's `channelId` (in the signed query) and answers **404 for a file of any other channel**,
+  exactly as for a missing one. MTS sends `job.channelId`; without it a rival's job could read
+  another tenant's media by naming its asset id.
 - **Enforcement (14.7)** — MTS pushes every rendition to HSM and may take its input from HSM
   (`inputFile`); its work area is scratch. `k8s:check` fails if any workload but `hsm` mounts the
   storage volume or reads the storage credentials. RIM's staging stays until an accepted file has an

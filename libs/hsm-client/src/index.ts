@@ -45,8 +45,13 @@ export interface PlacementMeta {
 /** HSM, as a producer needs it. A port: `hsmFileStore` over HTTP, `memoryFileStore` for the suites. */
 export interface FileStore {
   place(meta: PlacementMeta, localPath: string, sha256: string): Promise<Placed>;
-  /** An asset's live file of `kind`, written to `destPath`. */
+  /**
+   * An asset's live file of `kind`, written to `destPath` — only if it is a file of `channelId`
+   * (#577): the job's channel, which HSM compares with the file's. Another channel's file is not
+   * found, exactly as one nobody placed.
+   */
   fetch(
+    channelId: string,
     assetId: string,
     kind: string,
     variant: string | undefined,
@@ -103,10 +108,11 @@ export function hsmFileStore(options: {
       return { path: file.storage.path, sizeBytes: file.sizeBytes, sha256: file.checksum.value };
     },
 
-    async fetch(assetId, kind, variant, destPath) {
-      const path = `/internal/v1/assets/${encodeURIComponent(assetId)}/files/${encodeURIComponent(kind)}/content${
-        variant !== undefined ? `?variant=${encodeURIComponent(variant)}` : ''
-      }`;
+    async fetch(channelId, assetId, kind, variant, destPath) {
+      // The channel rides in the query, so the signature — over the whole path — covers it.
+      const query = new URLSearchParams({ channelId });
+      if (variant !== undefined) query.set('variant', variant);
+      const path = `/internal/v1/assets/${encodeURIComponent(assetId)}/files/${encodeURIComponent(kind)}/content?${query.toString()}`;
       const res = await doFetch(new URL(path, options.origin), {
         method: 'GET',
         headers: {
@@ -160,9 +166,11 @@ export function memoryFileStore(): FileStore & {
       files.set(`${meta.assetId}/${meta.kind}/${meta.variant ?? ''}`, { bytes, meta, path });
       return { path, sizeBytes: bytes.length, sha256 };
     },
-    async fetch(assetId, kind, variant, destPath) {
+    async fetch(channelId, assetId, kind, variant, destPath) {
       const f = files.get(`${assetId}/${kind}/${variant ?? ''}`);
-      if (!f) throw new Error(`HSM has no readable ${kind} for asset ${assetId}: 404`);
+      // As HSM does (#577): another channel's file is not found.
+      if (!f || f.meta.channelId !== channelId)
+        throw new Error(`HSM has no readable ${kind} for asset ${assetId}: 404`);
       await mkdir(dirname(destPath), { recursive: true });
       await writeFile(destPath, f.bytes);
       return {

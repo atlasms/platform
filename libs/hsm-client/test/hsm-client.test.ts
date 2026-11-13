@@ -10,7 +10,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { verifyInternalDigest, verifyInternal } from '@atlas/service-kit';
-import { hsmFileStore } from '../src/index.ts';
+import { hsmFileStore, memoryFileStore } from '../src/index.ts';
 
 const KEY = 'k'.repeat(40);
 const sha = (b: Buffer | string): string => createHash('sha256').update(b).digest('hex');
@@ -92,6 +92,7 @@ test('a read is hashed on the way in: what matches HSM’s digest lands, what do
   try {
     const dest = join(dir, 'in', 'proxy');
     const got = await hsmFileStore({ origin: good.origin, key: KEY }).fetch(
+      'ch12',
       '01ASSET000000000000000000A',
       'proxy',
       undefined,
@@ -101,6 +102,7 @@ test('a read is hashed on the way in: what matches HSM’s digest lands, what do
     assert.equal((await readFile(dest)).toString(), 'proxy bytes');
     await assert.rejects(
       hsmFileStore({ origin: bad.origin, key: KEY }).fetch(
+        'ch12',
         '01ASSET000000000000000000A',
         'proxy',
         undefined,
@@ -111,6 +113,29 @@ test('a read is hashed on the way in: what matches HSM’s digest lands, what do
   } finally {
     await good.close();
     await bad.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('#577: a read is served only to the file’s own channel — another channel’s is 404', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hsm-client-'));
+  try {
+    const src = join(dir, 'src');
+    await writeFile(src, 'owner bytes');
+    const store = memoryFileStore();
+    await store.place(
+      { channelId: 'ch12', assetId: '01ASSET000000000000000000A', kind: 'proxy', jobId: 'j' },
+      src,
+      sha('owner bytes'),
+    );
+    const dest = join(dir, 'out');
+    await store.fetch('ch12', '01ASSET000000000000000000A', 'proxy', undefined, dest);
+    assert.equal((await readFile(dest)).toString(), 'owner bytes');
+    await assert.rejects(
+      store.fetch('ch99', '01ASSET000000000000000000A', 'proxy', undefined, join(dir, 'x')),
+      /404/,
+    );
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });

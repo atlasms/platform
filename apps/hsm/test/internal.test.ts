@@ -86,8 +86,8 @@ test('a producer places a file: signed over its digest, streamed, recorded with 
     assert.equal(file.sizeBytes, body.length);
     assert.deepEqual(file.technical, { container: 'mp4' });
 
-    // Read back, signed — what MTS does for an input.
-    const content = `/internal/v1/assets/${assetId}/files/proxy/content`;
+    // Read back, signed — what MTS does for an input. The job's channel rides in the query (#577).
+    const content = `/internal/v1/assets/${assetId}/files/proxy/content?channelId=ch12`;
     const got = await h.app.inject({
       method: 'GET',
       url: content,
@@ -96,6 +96,15 @@ test('a producer places a file: signed over its digest, streamed, recorded with 
     assert.equal(got.statusCode, 200);
     assert.equal(got.headers['x-atlas-sha256'], sha(body));
     assert.equal(got.rawPayload.toString(), body.toString());
+
+    // #577: the same read for another channel is a 404 — a file is served only to its owner.
+    const cross = `/internal/v1/assets/${assetId}/files/proxy/content?channelId=ch99`;
+    const crossGot = await h.app.inject({
+      method: 'GET',
+      url: cross,
+      headers: { 'x-atlas-internal': signInternal(KEY, { method: 'GET', path: cross }) },
+    });
+    assert.equal(crossGot.statusCode, 404, crossGot.body);
 
     // Through the public surface, with a caller the gateway established.
     const where = await h.app.inject({

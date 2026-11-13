@@ -16,6 +16,12 @@ export interface HsmStore {
   file(id: string): Promise<FileEntry | undefined>;
   /** The LIVE file of (asset, kind, variant), if any. */
   liveFile(assetId: string, kind: FileKind, variant?: string): Promise<FileEntry | undefined>;
+  /**
+   * The channel an asset's live files belong to, if it has any (#577). An asset's files never span
+   * channels — the first file fixes the channel — so any one live file answers; `undefined` when the
+   * asset has no live file. Used to refuse a placement into a second channel, whatever the kind.
+   */
+  assetChannel(assetId: string): Promise<string | undefined>;
   /** An asset's live files in a channel, by kind then variant. */
   filesOf(channelId: string, assetId: string): Promise<FileEntry[]>;
   replicasOf(fileId: string): Promise<Replica[]>;

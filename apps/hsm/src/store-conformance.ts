@@ -172,11 +172,14 @@ export function hsmStoreConformance(name: string, harness: HsmStoreHarness): voi
         [file.id, 11, 'en', sha('proxy bytes')],
       );
 
-      const { stream } = await service.content(input.assetId, 'proxy', 'en');
+      const { stream } = await service.content(CH, input.assetId, 'proxy', 'en');
       const back: Buffer[] = [];
       for await (const c of stream) back.push(c as Buffer);
       assert.equal(Buffer.concat(back).toString(), 'proxy bytes');
       assert.equal((await filesUnder(join(base, 'online'))).length, 1);
+
+      // #577: another channel asking for the same file is answered as a missing one — never served.
+      await assert.rejects(service.content('ch99', input.assetId, 'proxy', 'en'), /no proxy file/);
     });
   });
 
@@ -286,6 +289,12 @@ export function hsmStoreConformance(name: string, harness: HsmStoreHarness): voi
         service.place({ ...input, channelId: 'ch99' }, bytes('y'), () => true),
         /another channel/,
       );
+      // #577: a DIFFERENT kind the asset does not have yet is refused into another channel too — the
+      // asset's channel is fixed by its first file, not per (kind, variant).
+      await assert.rejects(
+        service.place({ ...input, kind: 'thumbnail', channelId: 'ch99' }, bytes('t'), () => true),
+        /another channel/,
+      );
       await service.updateTarget(
         caller([{ id: 'u', permissions: ['storage:admin'] }]),
         online.id,
@@ -377,7 +386,7 @@ export function hsmStoreConformance(name: string, harness: HsmStoreHarness): voi
       // The source goes by a release queued in the move's transaction.
       await service.work('w1', 10);
       assert.deepEqual(await filesUnder(join(base, 'online')), []);
-      const { stream } = await service.content(input.assetId, 'broadcast');
+      const { stream } = await service.content(CH, input.assetId, 'broadcast');
       const back: Buffer[] = [];
       for await (const c of stream) back.push(c as Buffer);
       assert.equal(Buffer.concat(back).toString(), 'the master');
