@@ -30,11 +30,17 @@ function seekOnce(video, fps, target) {
       resolve({
         target,
         latency: performance.now() - t0,
-        shown: Math.round(meta.mediaTime * fps),
+        // floor, NOT round. Browsers report mediaTime at different points INSIDE a frame's
+        // interval: Chrome near the frame start, Firefox higher up (near the seeked point). So
+        // round(mediaTime*fps) lands a frame LATE in Firefox — a dead-constant off-by-one (EP-26.1
+        // measured +1 on ~90% of seeks, maxAbsDelta 1, 0 timeouts). The frame actually on screen is
+        // the one whose interval [n/fps, (n+1)/fps) contains mediaTime, i.e. floor(mediaTime*fps);
+        // the tiny epsilon absorbs float jitter at the lower boundary. This is the portable mapping.
+        shown: Math.floor(meta.mediaTime * fps + 1e-6),
         timeout: false,
       });
     });
-    // Mid-frame, so a rounding error at a frame boundary cannot masquerade as a miss.
+    // Mid-frame, so float jitter at a frame boundary cannot flip floor() onto the neighbour.
     video.currentTime = (target + 0.5) / fps;
   });
 }
@@ -46,10 +52,18 @@ async function sweep(video, fps, targets) {
   const deltas = warm.filter((s) => !s.timeout).map((s) => s.shown - s.target);
   const lat = warm.map((s) => s.latency);
   const exact = deltas.filter((d) => d === 0).length;
+  // SIGNED tally, keyed by delta. A dead-constant offset (one browser reporting the neighbour frame)
+  // and scattered misses both read as maxAbsDelta 1 — only the sign separates them. modalDelta is the
+  // offset to calibrate out if it is non-zero; deltaCounts shows whether it is truly constant.
+  const deltaCounts = {};
+  for (const d of deltas) deltaCounts[d] = (deltaCounts[d] ?? 0) + 1;
+  const modalDelta = Number(Object.entries(deltaCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 0);
   return {
     n: warm.length,
     exactPct: Math.round((100 * exact) / warm.length),
     maxAbsDelta: deltas.reduce((m, d) => Math.max(m, Math.abs(d)), 0),
+    modalDelta,
+    deltaCounts,
     timeouts: warm.filter((s) => s.timeout).length,
     latMedian: Math.round(quantile(lat, 0.5)),
     latP95: Math.round(quantile(lat, 0.95)),

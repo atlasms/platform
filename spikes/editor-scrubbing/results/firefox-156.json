@@ -1,0 +1,152 @@
+{
+  "browser": "Firefox 156",
+  "fps": 25,
+  "steps": 150,
+  "allAccurate": false,
+  "rows": [
+    {
+      "gop": 1,
+      "fps": 25,
+      "totalFrames": 500,
+      "sequential": {
+        "n": 148,
+        "exactPct": 6,
+        "maxAbsDelta": 1,
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 18,
+        "latMax": 19
+      },
+      "random": {
+        "n": 148,
+        "exactPct": 6,
+        "maxAbsDelta": 1,
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 18,
+        "latMax": 144
+      },
+      "accurate": false
+    },
+    {
+      "gop": 5,
+      "fps": 25,
+      "totalFrames": 500,
+      "sequential": {
+        "n": 148,
+        "exactPct": 6,
+        "maxAbsDelta": 1,
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 18,
+        "latMax": 30
+      },
+      "random": {
+        "n": 148,
+        "exactPct": 5,
+        "maxAbsDelta": 1,
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 18,
+        "latMax": 26
+      },
+      "accurate": false
+    },
+    {
+      "gop": 12,
+      "fps": 25,
+      "totalFrames": 500,
+      "sequential": {
+        "n": 148,
+        "exactPct": 6,
+        "maxAbsDelta": 1,
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 27,
+        "latMax": 46
+      },
+      "random": {
+        "n": 148,
+        "exactPct": 10,
+        "maxAbsDelta": 1,
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 24,
+        "latMax": 36
+      },
+      "accurate": false
+    },
+    {
+      "gop": 30,
+      "fps": 25,
+      "totalFrames": 500,
+      "sequential": {
+        "n": 148,
+        "exactPct": 6,
+        "maxAbsDelta": 1,
+        "timeouts": 0,
+        "latMedian": 22,
+        "latP95": 46,
+        "latMax": 64
+      },
+      "random": {
+        "n": 148,
+        "exactPct": 7,
+        "maxAbsDelta": 1,
+        "timeouts": 0,
+        "latMedian": 27,
+        "latP95": 46,
+        "latMax": 184
+      },
+      "accurate": false
+    },
+    {
+      "gop": 60,
+      "fps": 25,
+      "totalFrames": 500,
+      "sequential": {
+        "n": 148,
+        "exactPct": 6,
+        "maxAbsDelta": 1,
+        "timeouts": 0,
+        "latMedian": 32,
+        "latP95": 91,
+        "latMax": 116
+      },
+      "random": {
+        "n": 148,
+        "exactPct": 7,
+        "maxAbsDelta": 1,
+        "timeouts": 0,
+        "latMedian": 39,
+        "latP95": 94,
+        "latMax": 120
+      },
+      "accurate": false
+    },
+    {
+      "gop": 250,
+      "fps": 25,
+      "totalFrames": 500,
+      "sequential": {
+        "n": 148,
+        "exactPct": 6,
+        "maxAbsDelta": 1,
+        "timeouts": 0,
+        "latMedian": 206,
+        "latP95": 361,
+        "latMax": 414
+      },
+      "random": {
+        "n": 148,
+        "exactPct": 7,
+        "maxAbsDelta": 1,
+        "timeouts": 0,
+        "latMedian": 188,
+        "latP95": 431,
+        "latMax": 686
+      },
+      "accurate": false
+    }
+  ]
+}
