@@ -65,3 +65,4 @@ npm run serve -w @atlas/editor-scrubbing-spike          # → http://localhost:8
 | `measure.js`       | browser module: the accuracy + latency sweep                        |
 | `harness.html`     | one GOP                                                             |
 | `run-all.html`     | every GOP, combined table + copy-paste JSON                         |
+| `results/`         | raw `window.__spikeAll` JSON per browser (the ADR-0011 §2 numbers)  |

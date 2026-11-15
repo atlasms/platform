@@ -2,11 +2,13 @@
 
 - **Status:** Proposed — the approach was chosen on the design's case 2026-10-12
   ([media-editor §7](../architecture/services/media-editor.md#7-dependencies)); this spike (EP-26.1)
-  **validates** it and **sets the GOP length**. The size-at-constant-quality cost is measured below.
-  The frame-accuracy and seek-latency run across Chromium and Firefox is the one open item: the
-  harness is committed ([`spikes/editor-scrubbing`](../../spikes/editor-scrubbing/)) and runnable, but
-  it needs a real browser — CI has none and the spike environment had none, so a human runs it and the
-  numbers land here before this ADR is Accepted.
+  **validates** it and **sets the GOP length**. The size-at-constant-quality cost and the **Chrome**
+  accuracy/latency run are measured below — the approach works and scrubs frame-accurately in Chrome.
+  The one open item before Accepted is the same run in **Firefox** (its `requestVideoFrameCallback` is
+  the newer, less-proven implementation): the harness is committed
+  ([`spikes/editor-scrubbing`](../../spikes/editor-scrubbing/)) and runnable, but it needs a real
+  browser — CI has none and the spike environment had none, so a human runs it and the numbers land
+  here.
 - **Date:** 2026-11-15
 - **Stories:** EP-26.1 (this ADR); built by EP-26.2 – EP-26.8
   ([#26](https://github.com/atlasms/platform/issues/26))
@@ -75,57 +77,86 @@ compresses unlike real footage, so treat these as the *ratio curve*, not absolut
 revision of this ADR should repeat the row for a real clip. Reproduce:
 `spikes/editor-scrubbing/out`, `ffmpeg … -crf 23 -g N -keyint_min N …`.
 
-### 2. Frame accuracy and seek latency — **harness committed, browser run pending**
+### 2. Frame accuracy and seek latency — **Chrome measured; Firefox pending**
 
 The instrument is [`spikes/editor-scrubbing`](../../spikes/editor-scrubbing/). It builds six proxy
 candidates (GOP 1, 5, 12, 30, 60, 250) with the frame number **burned into every frame**
 (`drawtext=%{n}`), serves them with HTTP Range support (required for `<video>` seeking), and for each
 proxy seeks to a frame and — on the rVFC that follows — compares `round(mediaTime × fps)` to the
-frame requested. It reports, per GOP:
-
-- **Accuracy** — % of seeks that showed the exact frame, and the max frames off.
-- **Latency** — wall-clock from setting `currentTime` to the frame appearing (median / p95 / max),
-  for two gestures: **sequential** stepping (drag — the decoded GOP is already in hand) and **random**
-  jumps (click around — the worst case, a cold decode from the nearest keyframe). Latency is what the
-  GOP length actually sets.
+frame requested. It reports, per GOP, over 148 measured seeks (two warm-up seeks dropped) of each of
+two gestures: **sequential** stepping (drag — the decoded GOP is already in hand) and **random** jumps
+(click around — the worst case, a cold decode from the nearest keyframe).
 
 Ground truth is checkable by eye: seeking to 10.000 s must show frame **250** at 25 fps.
 
-**This run needs a real browser and has not been done yet.** To produce it:
+**Chrome 150 (2026-11-15), 20 s / 1280×720 / 25 fps proxies, 148 seeks per gesture.** Latency ms;
+"off" = max frames the displayed frame differed from the one requested; "t/o" = seeks with no rVFC
+callback within 3 s:
+
+| GOP | seq off | seq median | seq p95 | rnd off | rnd median | rnd p95 | rnd max | t/o (seq+rnd) |
+|---|---|---|---|---|---|---|---|---|
+| 1 (all-intra) | 0 | 18 | 49 | 0 | 17 | 20 | 49 | 0 |
+| 5 | 0 | 17 | 47 | 0 | 18 | 49 | 3013 | 1 |
+| 12 | 0 | 17 | 22 | 0 | 17 | 41 | 47 | 0 |
+| 30 | 0 | 19 | 50 | 0 | 17 | 40 | 51 | 0 |
+| 60 | 0 | 31 | 69 | 0 | 20 | 59 | 3013 | 2 |
+| 250 | 0 | 129 | 161 | 0 | 111 | 208 | 266 | 0 |
+
+Two readings:
+
+- **Accuracy is exact at every GOP** — every frame Chrome displayed was the one asked for (0 off,
+  including on the all-intra and the long-GOP proxies). The rVFC `mediaTime` approach is sound: a seek
+  to frame _N_ shows frame _N_. **Frame accuracy does not depend on the GOP** — it is the *latency*
+  the GOP sets, not the correctness.
+- **Latency is flat up to GOP 30, then climbs steeply.** GOP ≤ 30 holds a ~17 ms median seek
+  (imperceptible) and a sub-50 ms p95; GOP 60 starts to show (31 ms seq median); **GOP 250 is ~7×
+  worse** (111–129 ms median, 161–208 ms p95) — a lag a person feels on every scrub. GOP 12 and GOP 30
+  are within noise of each other on this run.
+- **One robustness finding, not a GOP effect:** 1–2 of 148 random seeks (at GOP 5 and GOP 60) returned
+  **no rVFC callback within 3 s** (`latMax` 3013 ms). It is non-monotonic — absent at GOP 12/30/250 —
+  so it reads as an occasional rVFC miss (a seek that lands on the frame already shown fires no new
+  frame callback), not slow decoding. **The editor must bound the wait on a seek and retry / fall back
+  to `seeked`, never block on rVFC indefinitely.** This is a note for EP-26's player, carried here so
+  it is not re-discovered.
+
+**Remaining: the same run in Firefox.** Firefox shipped `requestVideoFrameCallback` only recently and
+it is the less-proven implementation, so the spike is not complete until it is confirmed there. The
+decision below holds the recommendation to a GOP that is exact and interactive in **both** browsers;
+if Firefox is not frame-exact, that is the finding that sends v1 to the **WebCodecs fallback** — a new
+decision, its own ADR. To produce the Firefox column:
 
 ```sh
 npm run proxies -w @atlas/editor-scrubbing-spike   # needs ffmpeg; writes ./out (git-ignored)
 npm run serve   -w @atlas/editor-scrubbing-spike   # → http://localhost:8126
-# then, in EACH of Chrome and Firefox, open http://localhost:8126/run-all.html,
-# let it finish (~1–2 min) and paste back the JSON it prints (window.__spikeAll).
+# open http://localhost:8126/run-all.html in Firefox, let it finish (~1–2 min),
+# paste back the JSON it prints (window.__spikeAll).
 ```
 
-The results table to fill — the spike **passes** only if accuracy is exact (0 frames off, no
-timeouts) in **both** browsers at the chosen GOP, and random-jump p95 latency is comfortably
-interactive:
-
-| Browser | GOP | seq exact | seq p95 ms | rnd exact | rnd p95 ms | rnd max ms |
-|---|---|---|---|---|---|---|
-| Chromium | _tbd_ | | | | | |
-| Firefox | _tbd_ | | | | | |
-
-If rVFC turns out unsupported or accuracy is not exact in either browser, that is the finding that
-sends v1 to the **WebCodecs fallback** — a new decision, recorded as its own ADR.
-
-## Decision (provisional, pending Evidence §2)
+## Decision (provisional — holds once Firefox confirms Evidence §2)
 
 1. **The editing proxy is H.264/MP4, closed short GOP**, played in a plain `<video>`; the displayed
-   frame is read from **`requestVideoFrameCallback`'s `mediaTime`**. No WebCodecs in v1.
-2. **GOP 12 (~0.5 s at 25 fps) is the recommended length**, pending the latency curve from Evidence
-   §2: it is the knee of the size curve (~9% over a long GOP) and bounds a cold random-seek decode to
-   ~half a second of frames. If §2 shows random-jump latency at 12 is not interactive, step down
-   toward **GOP 5**; if exact scrub matters more than size for v1, **GOP 1 (all-intra)** is the
-   perfect-scrub option at ~2× size. The harness measures all three, so the final pick is made on the
-   numbers, not here.
-3. **The proxy is a derived rendition, keyed by frame.** Every edit (in/out, transition boundary) is
+   frame is read from **`requestVideoFrameCallback`'s `mediaTime`**. No WebCodecs in v1. Chrome
+   confirms this is frame-exact at every GOP tested (Evidence §2); Firefox must confirm the same
+   before the decision is Accepted.
+2. **GOP 12 (~0.5 s at 25 fps) is the recommended length.** Evidence §2 (Chrome) shows accuracy is
+   exact regardless of GOP, so the choice is purely the latency/size trade: latency is flat and
+   interactive up to GOP 30 (~17 ms median seek) and degrades sharply by GOP 250 (~7× worse), while
+   size falls off past ~30. GOP 12 sits safely inside the flat region (~17 ms median, 41 ms p95 random
+   in Chrome, zero timeouts) at a ~9% size premium, and its shorter decode walk leaves **headroom for
+   slower devices and for Firefox**, where the knee may sit earlier. **GOP 30 is a defensible
+   alternative** — within noise of GOP 12 on Chrome latency at less than half the size cost (~4%); if
+   Firefox holds up as well as Chrome and storage is the pressure, 30 is the cheaper pick. The two
+   bracket the answer; Firefox decides between them. **GOP 1 (all-intra)** remains the perfect-scrub
+   option (fastest seek, 0 timeouts) if latency ever matters more than its ~2× size — not needed on
+   this evidence.
+3. **The player must bound the seek wait.** rVFC occasionally fires no callback for a seek (Evidence
+   §2: 1–2 in 148 random seeks). The editor times out a pending seek and retries or falls back to the
+   `seeked` event; it never blocks on rVFC indefinitely.
+4. **The proxy is a derived rendition, keyed by frame.** Every edit (in/out, transition boundary) is
    a frame number against the proxy; the proxy's fps and frame count are recorded with it so the
    server render maps frames to mezzanine timecodes exactly. The proxy fps **is** the edit grid.
-4. **Fallback is WebCodecs**, taken only if Evidence §2 fails — its own ADR, not a silent pivot.
+5. **Fallback is WebCodecs**, taken only if Firefox fails Evidence §2 — its own ADR, not a silent
+   pivot.
 
 ## Consequences
 
@@ -142,7 +173,7 @@ sends v1 to the **WebCodecs fallback** — a new decision, recorded as its own A
 
 ## Revisit when
 
-- Evidence §2 comes back from a browser run — fill the table, pick the GOP, move this ADR to
-  **Accepted** (or to the WebCodecs fallback ADR if it fails).
+- The Firefox run completes Evidence §2 — add its column, settle GOP 12 vs 30, and move this ADR to
+  **Accepted** (or to the WebCodecs fallback ADR if Firefox is not frame-exact).
 - A target browser drops or breaks `requestVideoFrameCallback`.
 - Real-footage size numbers replace the `testsrc2` ratios and shift the knee of the curve.
