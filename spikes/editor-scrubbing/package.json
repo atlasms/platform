@@ -1,0 +1,12 @@
+{
+  "name": "@atlas/editor-scrubbing-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "EP-26.1 — time-boxed spike confirming frame-accurate scrubbing of a short-GOP H.264 editing proxy in a plain <video> via requestVideoFrameCallback, and setting the GOP length. Needs ffmpeg and a browser; deliberately has NO test script so CI never runs it.",
+  "scripts": {
+    "proxies": "node make-proxies.mjs",
+    "serve": "node serve.mjs",
+    "lint": "eslint *.mjs"
+  }
+}

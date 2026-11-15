@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EP-26.1 — editing-proxy scrubbing (all GOPs)</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        margin: 0 auto;
+        padding: 16px;
+        max-width: 900px;
+      }
+      video {
+        width: 320px;
+        max-width: 100%;
+        background: #000;
+        border-radius: 8px;
+        float: right;
+        margin-left: 16px;
+      }
+      h1 {
+        font-size: 1.1rem;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.85rem;
+        margin: 12px 0;
+      }
+      th,
+      td {
+        border: 1px solid #8884;
+        padding: 4px 8px;
+        text-align: right;
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+      #status {
+        font-weight: 600;
+      }
+      .ok {
+        color: #16794b;
+      }
+      .bad {
+        color: #c0362c;
+      }
+      code,
+      textarea {
+        font-family: ui-monospace, monospace;
+      }
+      textarea {
+        width: 100%;
+        height: 160px;
+        font-size: 0.8rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>EP-26.1 — scrubbing accuracy & latency vs GOP</h1>
+    <video id="v" muted playsinline preload="auto"></video>
+    <p id="status">starting…</p>
+    <div id="out"></div>
+    <h2 style="font-size: 0.95rem">Paste this back to Claude</h2>
+    <textarea id="json" readonly placeholder="JSON appears when the run finishes"></textarea>
+
+    <script type="module">
+      import { hasRvfc, measureProxy, browserTag } from './measure.js';
+
+      const params = new URLSearchParams(location.search);
+      const fps = Number(params.get('fps') ?? 25);
+      const steps = Number(params.get('steps') ?? 150);
+      const gops = (params.get('gops') ?? '1,5,12,30,60,250').split(',').map(Number);
+
+      const v = document.getElementById('v');
+      const statusEl = document.getElementById('status');
+      const outEl = document.getElementById('out');
+      const jsonEl = document.getElementById('json');
+
+      function loadProxy(gop) {
+        return new Promise((resolve, reject) => {
+          v.onerror = () => reject(new Error(`cannot load proxy-g${gop}.mp4`));
+          v.addEventListener('loadeddata', () => resolve(), { once: true });
+          v.src = `out/proxy-g${gop}.mp4`;
+          v.load();
+        });
+      }
+
+      function render(rows) {
+        const r = (label, s) =>
+          `<td>${s.exactPct}%</td><td>${s.maxAbsDelta}</td><td>${s.timeouts}</td>` +
+          `<td>${s.latMedian}</td><td>${s.latP95}</td><td>${s.latMax}</td>`;
+        outEl.innerHTML = `
+          <table>
+            <thead>
+              <tr><th rowspan="2">GOP</th><th rowspan="2">ok?</th>
+                  <th colspan="6">sequential (drag)</th><th colspan="6">random (jump)</th></tr>
+              <tr><th>exact</th><th>off</th><th>t/o</th><th>med</th><th>p95</th><th>max</th>
+                  <th>exact</th><th>off</th><th>t/o</th><th>med</th><th>p95</th><th>max</th></tr>
+            </thead>
+            <tbody>
+              ${rows
+                .map(
+                  (x) =>
+                    `<tr><td>${x.gop}</td><td>${x.accurate ? '✓' : '✗'}</td>` +
+                    r('seq', x.sequential) +
+                    r('rnd', x.random) +
+                    `</tr>`,
+                )
+                .join('')}
+            </tbody>
+          </table>
+          <p>Latency ms, deltas in frames. exact = % of seeks showing the exact frame; off = max frames off.</p>`;
+      }
+
+      async function run() {
+        if (!hasRvfc()) {
+          statusEl.textContent =
+            'requestVideoFrameCallback NOT supported here — this browser fails the spike.';
+          statusEl.className = 'bad';
+          const payload = { browser: browserTag(), fps, error: 'no-rvfc' };
+          jsonEl.value = JSON.stringify(payload, null, 2);
+          window.__spikeAll = payload;
+          window.__spikeDone = true;
+          return;
+        }
+        const rows = [];
+        for (const gop of gops) {
+          statusEl.textContent = `measuring GOP ${gop} … (${rows.length}/${gops.length} done)`;
+          await loadProxy(gop);
+          const res = await measureProxy(v, { gop, fps, steps });
+          rows.push(res);
+          render(rows);
+        }
+        const allAccurate = rows.every((x) => x.accurate);
+        const payload = { browser: browserTag(), fps, steps, allAccurate, rows };
+        window.__spikeAll = payload;
+        window.__spikeDone = true;
+        jsonEl.value = JSON.stringify(payload, null, 2);
+        statusEl.textContent = allAccurate
+          ? `Done — frame-accurate at every GOP ✓ (${browserTag()}). Copy the JSON below.`
+          : `Done — some GOPs were NOT frame-accurate ✗ (${browserTag()}). Copy the JSON below.`;
+        statusEl.className = allAccurate ? 'ok' : 'bad';
+        jsonEl.select();
+      }
+
+      run();
+    </script>
+  </body>
+</html>

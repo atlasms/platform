@@ -87,4 +87,21 @@ export default tseslint.config(
     },
     rules: { '@typescript-eslint/no-explicit-any': 'off' },
   },
+  {
+    // Spike harnesses have top-level `.mjs` entrypoints (ffmpeg driver, static server) run with
+    // `node`, so they use Node's globals like scripts/ do. Spikes have no `test` target (they need
+    // real servers) but lint and typecheck still apply — see spikes/README.md.
+    files: ['spikes/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+      },
+    },
+    rules: { '@typescript-eslint/no-explicit-any': 'off' },
+  },
 );
