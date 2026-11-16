@@ -1106,8 +1106,8 @@ components:
             from: { $ref: '#/components/schemas/InheritedFrom' }
     EditProject:
       type: object
-      description: A media-editor timeline over one source asset (basic-NLE, D3). Full model in ../services/media-editor.md.
-      required: [sourceAssetId, mediaKind]
+      description: A media-editor timeline over one source asset (basic-NLE, D3). Full model in ../services/media-editor.md. On a PATCH only `timeline` and `outputProfile` are read; the rest are server-managed. `version` is the compare-and-set token — pass the version you read as `?version=` when saving.
+      required: [id, sourceAssetId, mediaKind, state, timeline, version, createdBy, createdAt, updatedAt]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
         sourceAssetId: { $ref: '#/components/schemas/Ulid' }
@@ -1115,6 +1115,7 @@ components:
         state: { type: string, enum: [draft, rendering, rendered, failed] }
         timeline:
           type: object
+          required: [clips]
           properties:
             clips:
               type: array
@@ -1127,6 +1128,12 @@ components:
                   outSec: { type: number }
                   transitionIn: { type: string }
                   filters: { type: array, items: { type: string } }
+        outputProfile: { type: string, description: 'MTS profile (Tier-1 registry) a render encodes with; settable on the project or given at render.' }
+        renderJobId: { $ref: '#/components/schemas/Ulid' }
+        outputAssetId: { $ref: '#/components/schemas/Ulid' }
+        version: { type: integer, description: 'Compare-and-set token; every save bumps it.' }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     VocabularyName:
       type: string

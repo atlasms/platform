@@ -460,14 +460,14 @@ export interface CastEntry {
 
 export type InheritedCastEntry = CastEntry & { from: InheritedFrom };
 
-/** A media-editor timeline over one source asset (basic-NLE, D3). Full model in ../services/media-editor.md. */
+/** A media-editor timeline over one source asset (basic-NLE, D3). Full model in ../services/media-editor.md. On a PATCH only `timeline` and `outputProfile` are read; the rest are server-managed. `version` is the compare-and-set token — pass the version you read as `?version=` when saving. */
 export interface EditProject {
-  id?: Ulid;
+  id: Ulid;
   sourceAssetId: Ulid;
   mediaKind: 'video' | 'audio' | 'photo';
-  state?: 'draft' | 'rendering' | 'rendered' | 'failed';
-  timeline?: {
-    clips?: {
+  state: 'draft' | 'rendering' | 'rendered' | 'failed';
+  timeline: {
+    clips: {
       renditionRef: string;
       inSec: number;
       outSec: number;
@@ -475,7 +475,15 @@ export interface EditProject {
       filters?: string[];
     }[];
   };
-  updatedAt?: string;
+  /** MTS profile (Tier-1 registry) a render encodes with; settable on the project or given at render. */
+  outputProfile?: string;
+  renderJobId?: Ulid;
+  outputAssetId?: Ulid;
+  /** Compare-and-set token; every save bumps it. */
+  version: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** The flat vocabularies MAM manages (EP-28.3). The SET is code-known; the terms are data. Categories and tags have their own resources. */

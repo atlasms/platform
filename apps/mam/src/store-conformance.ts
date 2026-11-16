@@ -15,6 +15,7 @@ import type { Category } from './category.ts';
 import {
   CategoryPathTaken,
   StaleCategory,
+  StaleEditProject,
   StalePerson,
   StaleTerm,
   StaleWrite,
@@ -22,6 +23,7 @@ import {
   type AssetStore,
 } from './store.ts';
 import type { VocabularyTerm } from './vocabulary.ts';
+import type { EditProject } from './edit-project.ts';
 
 export interface StoreHarness {
   /** A clean, empty store. */
@@ -53,6 +55,23 @@ function asset(overrides: Partial<Asset> = {}): Asset {
     state: 'created',
     version: 1,
     hasRenditions: false,
+    createdBy: 'user-1',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function editProjectFixture(overrides: Partial<EditProject> = {}): EditProject {
+  const id = `E${(seq++).toString().padStart(24, '0')}`;
+  return {
+    id,
+    channelId: 'ch12',
+    sourceAssetId: 'A-src',
+    mediaKind: 'video',
+    state: 'draft',
+    timeline: { clips: [] },
+    version: 1,
     createdBy: 'user-1',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -185,6 +204,42 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
         ['F', '/sports/football/'],
         ['N', '/news/'],
       ]);
+    });
+  });
+
+  test(`${name}: EDIT PROJECTS (EP-26.2) — a timeline round-trips by id, writes compare-and-set`, async () => {
+    await withFixture(async ({ store }) => {
+      const clip = { renditionRef: 'r1', inSec: 0, outSec: 5 };
+      const p = editProjectFixture({ id: 'EP1', sourceAssetId: 'A1' });
+      await store.transaction((tx) => tx.putEditProject(p));
+      assert.deepEqual(
+        [
+          (await store.editProject('EP1'))?.sourceAssetId,
+          (await store.editProject('EP1'))?.version,
+        ],
+        ['A1', 1],
+      );
+      // A duplicate id is a StaleEditProject (the insert conflicts), and nothing of the tx lands.
+      await assert.rejects(
+        store.transaction((tx) => tx.putEditProject(editProjectFixture({ id: 'EP1' }))),
+        StaleEditProject,
+      );
+      // CAS: a stale base is rejected; the version the writer read commits and bumps.
+      await assert.rejects(
+        store.transaction((tx) =>
+          tx.putEditProject({ ...p, version: 3, timeline: { clips: [clip] } }, 7),
+        ),
+        StaleEditProject,
+      );
+      await store.transaction((tx) =>
+        tx.putEditProject({ ...p, version: 2, state: 'rendering', timeline: { clips: [clip] } }, 1),
+      );
+      const after = await store.editProject('EP1');
+      assert.deepEqual(
+        [after?.version, after?.state, after?.timeline.clips.length],
+        [2, 'rendering', 1],
+      );
+      assert.equal(await store.editProject('nope'), undefined);
     });
   });
 
