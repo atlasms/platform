@@ -1,15 +1,13 @@
 # ADR-0011 — The editing proxy is short-GOP H.264, scrubbed with `requestVideoFrameCallback`
 
-- **Status:** Proposed — the approach was chosen on the design's case 2026-10-12
+- **Status:** Accepted (2026-11-16) — the approach was chosen on the design's case 2026-10-12
   ([media-editor §7](../architecture/services/media-editor.md#7-dependencies)); this spike (EP-26.1)
-  **validates** it and **sets the GOP length**. Measured below: the size-at-constant-quality cost, and
-  **Chrome + Firefox** accuracy/latency. Chrome scrubs frame-exact; Firefox exposed a **constant
-  one-frame offset in the harness's `round()` frame mapping** (not a browser limitation), now fixed to
-  `floor()`. The one open item before Accepted is a short **re-run of both browsers under the fixed
-  harness** to confirm frame-exactness — it needs a real browser (CI and the spike environment have
-  none), so a human runs it and the numbers land here. Only if `floor` fails to make Firefox exact
-  does v1 fall back to WebCodecs (its own ADR).
-- **Date:** 2026-11-15
+  **validated** it and **set the GOP length**. Measured below: the size-at-constant-quality cost, and
+  **Chrome + Firefox** accuracy/latency. Short-GOP H.264 scrubbed through `requestVideoFrameCallback`
+  is **frame-exact in both browsers** with the `floor(mediaTime·fps)` mapping (confirmed after the
+  `round()` version exposed a Firefox one-frame offset), and interactive up to GOP 30. **GOP 12** is
+  chosen. WebCodecs stays the fallback if a future browser breaks this, as its own ADR.
+- **Date:** 2026-11-15 (Proposed); 2026-11-16 (Accepted, after the `floor` confirmation run)
 - **Stories:** EP-26.1 (this ADR); built by EP-26.2 – EP-26.8
   ([#26](https://github.com/atlasms/platform/issues/26))
 - **Design:** [Media Editor](../architecture/services/media-editor.md) (§7 dependencies, §11 the
@@ -145,31 +143,31 @@ Reading the Chrome run:
   `n+0.5`), so `round(n+0.5)` lands on `n+1`. `round` was the wrong mapping — it baked in Chrome's
   reporting convention.
 
-**The fix, and the remaining step.** The on-screen frame is the one whose interval
-`[n/fps, (n+1)/fps)` contains `mediaTime` — i.e. **`floor(mediaTime·fps)`**, which is `n` under
-*either* browser's reporting point. `measure.js` now uses `floor(mediaTime·fps + ε)` and also reports
-a signed `deltaCounts` / `modalDelta`, so a residual offset (if any) is unmistakable rather than
-hidden inside an unsigned `maxAbsDelta`. Re-run **both** browsers under the fixed harness to confirm
-frame-exactness (`modalDelta` 0, 0 off) in each — that is the one step left before Accepted:
+**The fix.** The on-screen frame is the one whose interval `[n/fps, (n+1)/fps)` contains `mediaTime` —
+i.e. **`floor(mediaTime·fps)`**, which is `n` under *either* browser's reporting point. `measure.js`
+now uses `floor(mediaTime·fps + ε)` and also reports a signed `deltaCounts` / `modalDelta`, so a
+residual offset would be unmistakable rather than hidden inside an unsigned `maxAbsDelta`.
 
-```sh
-npm run proxies -w @atlas/editor-scrubbing-spike   # needs ffmpeg; writes ./out (git-ignored)
-npm run serve   -w @atlas/editor-scrubbing-spike   # → http://localhost:8126
-# open http://localhost:8126/run-all.html in Chrome AND Firefox, let each finish (~1–2 min),
-# paste back the JSON each prints (window.__spikeAll). Saved as <browser>-floor.json.
-```
+**Confirmed (2026-11-16): `floor` makes both browsers frame-exact.** Re-running the full sweep under
+the fixed harness ([`results/chrome-157-floor.json`](../../spikes/editor-scrubbing/results/chrome-157-floor.json),
+[`results/firefox-157-floor.json`](../../spikes/editor-scrubbing/results/firefox-157-floor.json)):
 
-If `floor` does **not** bring Firefox to frame-exact (the next run's `deltaCounts` still shows an
-offset that will not calibrate out), *that* is the finding that sends v1 to the **WebCodecs
-fallback** — a new decision, its own ADR. On this evidence the approach looks sound in both browsers
-and the offset a one-line mapping fix; the re-run settles it.
+| Browser | accuracy, every GOP | latency ≤ GOP 30 (median) | GOP 250 (median) | rVFC misses |
+|---|---|---|---|---|
+| Chrome 157 | **0 off, `modalDelta` 0** (`deltaCounts {"0": …}`) | ~17 ms | 75–105 ms | 2 across the sweep (GOP 12, 30) |
+| Firefox 157 | **0 off, `modalDelta` 0** (`allAccurate: true`) | ~17 ms | 81–103 ms | 0 |
 
-## Decision (provisional — holds once the `floor` re-run confirms both browsers exact)
+Every delta fell in the `0` bucket in both browsers — the Firefox one-frame offset is gone and Chrome
+is unchanged. The only non-exact rows are Chrome's two random-seek **timeouts** (callback never fired
+within 3 s), the same non-monotonic rVFC-miss seen before and already handled by the player
+requirement (point 4). The approach is sound in both browsers; WebCodecs was not needed.
+
+## Decision
 
 1. **The editing proxy is H.264/MP4, closed short GOP**, played in a plain `<video>`; the displayed
-   frame is identified from **`requestVideoFrameCallback`'s `mediaTime`**. No WebCodecs in v1. rVFC
-   fires reliably in both browsers (Firefox had zero misses); Chrome is already frame-exact. Firefox's
-   one-frame offset is a mapping bug now fixed (point 2), to be confirmed by the re-run before Accepted.
+   frame is identified from **`requestVideoFrameCallback`'s `mediaTime`**. No WebCodecs in v1. Confirmed
+   frame-exact in both Chrome and Firefox with the mapping in point 2 (Evidence §2); rVFC fires
+   reliably in both (Firefox had zero misses).
 2. **The frame mapping is `floor(mediaTime · fps)`, not `round`.** `round` encodes Chrome's
    reporting point and lands a frame late in Firefox (Evidence §2). `floor` gives the frame whose
    interval contains `mediaTime` under either browser's convention; EP-26's player must use it, with a
@@ -207,7 +205,10 @@ and the offset a one-line mapping fix; the re-run settles it.
 
 ## Revisit when
 
-- The `floor` re-run confirms both browsers frame-exact — record it, settle GOP 12 vs 30, and move
-  this ADR to **Accepted** (or to the WebCodecs fallback ADR if `floor` does not make Firefox exact).
-- A target browser drops or breaks `requestVideoFrameCallback`.
-- Real-footage size numbers replace the `testsrc2` ratios and shift the knee of the curve.
+- A target browser drops or breaks `requestVideoFrameCallback`, or reports `mediaTime` such that
+  `floor(mediaTime·fps)` is no longer the on-screen frame — re-run the harness; that is the trigger
+  for the WebCodecs fallback ADR.
+- Real-footage size numbers replace the `testsrc2` ratios and shift the knee of the curve enough to
+  reopen GOP 12 vs 30.
+- A low-end target device decodes a cold GOP-12 random seek too slowly to feel interactive (the spike
+  ran on dev hardware) — shorten the GOP toward all-intra, which the harness already brackets.

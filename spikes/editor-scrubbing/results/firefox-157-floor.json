@@ -1,0 +1,176 @@
+{
+  "browser": "Firefox 157",
+  "fps": 25,
+  "steps": 150,
+  "allAccurate": true,
+  "rows": [
+    {
+      "gop": 1,
+      "fps": 25,
+      "totalFrames": 500,
+      "sequential": {
+        "n": 148,
+        "exactPct": 100,
+        "maxAbsDelta": 0,
+        "modalDelta": 0,
+        "deltaCounts": { "0": 148 },
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 17,
+        "latMax": 18
+      },
+      "random": {
+        "n": 148,
+        "exactPct": 100,
+        "maxAbsDelta": 0,
+        "modalDelta": 0,
+        "deltaCounts": { "0": 148 },
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 18,
+        "latMax": 85
+      },
+      "accurate": true
+    },
+    {
+      "gop": 5,
+      "fps": 25,
+      "totalFrames": 500,
+      "sequential": {
+        "n": 148,
+        "exactPct": 100,
+        "maxAbsDelta": 0,
+        "modalDelta": 0,
+        "deltaCounts": { "0": 148 },
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 17,
+        "latMax": 18
+      },
+      "random": {
+        "n": 148,
+        "exactPct": 100,
+        "maxAbsDelta": 0,
+        "modalDelta": 0,
+        "deltaCounts": { "0": 148 },
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 18,
+        "latMax": 55
+      },
+      "accurate": true
+    },
+    {
+      "gop": 12,
+      "fps": 25,
+      "totalFrames": 500,
+      "sequential": {
+        "n": 148,
+        "exactPct": 100,
+        "maxAbsDelta": 0,
+        "modalDelta": 0,
+        "deltaCounts": { "0": 148 },
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 18,
+        "latMax": 18
+      },
+      "random": {
+        "n": 148,
+        "exactPct": 100,
+        "maxAbsDelta": 0,
+        "modalDelta": 0,
+        "deltaCounts": { "0": 148 },
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 17,
+        "latMax": 18
+      },
+      "accurate": true
+    },
+    {
+      "gop": 30,
+      "fps": 25,
+      "totalFrames": 500,
+      "sequential": {
+        "n": 148,
+        "exactPct": 100,
+        "maxAbsDelta": 0,
+        "modalDelta": 0,
+        "deltaCounts": { "0": 148 },
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 17,
+        "latMax": 18
+      },
+      "random": {
+        "n": 148,
+        "exactPct": 100,
+        "maxAbsDelta": 0,
+        "modalDelta": 0,
+        "deltaCounts": { "0": 148 },
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 17,
+        "latMax": 18
+      },
+      "accurate": true
+    },
+    {
+      "gop": 60,
+      "fps": 25,
+      "totalFrames": 500,
+      "sequential": {
+        "n": 148,
+        "exactPct": 100,
+        "maxAbsDelta": 0,
+        "modalDelta": 0,
+        "deltaCounts": { "0": 148 },
+        "timeouts": 0,
+        "latMedian": 17,
+        "latP95": 34,
+        "latMax": 35
+      },
+      "random": {
+        "n": 148,
+        "exactPct": 100,
+        "maxAbsDelta": 0,
+        "modalDelta": 0,
+        "deltaCounts": { "0": 148 },
+        "timeouts": 0,
+        "latMedian": 18,
+        "latP95": 33,
+        "latMax": 85
+      },
+      "accurate": true
+    },
+    {
+      "gop": 250,
+      "fps": 25,
+      "totalFrames": 500,
+      "sequential": {
+        "n": 148,
+        "exactPct": 100,
+        "maxAbsDelta": 0,
+        "modalDelta": 0,
+        "deltaCounts": { "0": 148 },
+        "timeouts": 0,
+        "latMedian": 103,
+        "latP95": 140,
+        "latMax": 144
+      },
+      "random": {
+        "n": 148,
+        "exactPct": 100,
+        "maxAbsDelta": 0,
+        "modalDelta": 0,
+        "deltaCounts": { "0": 148 },
+        "timeouts": 0,
+        "latMedian": 81,
+        "latP95": 139,
+        "latMax": 163
+      },
+      "accurate": true
+    }
+  ]
+}

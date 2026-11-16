@@ -28,4 +28,4 @@ disagree with data.
 | [0007](0007-recorders.md) | Recorders: padded, overlapping hour files captured by two alternating workers from IP feeds, handed to ingest by upload | Accepted |
 | [0009](0009-hsm-storage-and-placement.md) | HSM: filesystem + S3 drivers behind one port; producers push bytes to HSM, signed over the file's checksum | Accepted (paired review owed) |
 | [0010](0010-bms-durable-runtime.md) | BMS runs workflows on Temporal, self-hosted on the platform's Postgres, behind the `Effects` boundary | Accepted (all four checks passed; BMS on `node:24-slim`) |
-| [0011](0011-editing-proxy-scrubbing.md) | The editing proxy is short-GOP H.264, scrubbed with `requestVideoFrameCallback` (no WebCodecs in v1) | Proposed (Chrome + Firefox measured; `round`→`floor` mapping fix to confirm) |
+| [0011](0011-editing-proxy-scrubbing.md) | The editing proxy is short-GOP H.264, scrubbed with `requestVideoFrameCallback` (no WebCodecs in v1) | Accepted (Chrome + Firefox frame-exact via `floor` mapping; GOP 12) |
