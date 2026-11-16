@@ -17,12 +17,14 @@ import {
 } from '@atlas/data-pg';
 import type { Asset } from './asset.ts';
 import type { Category } from './category.ts';
+import type { EditProject } from './edit-project.ts';
 import type { FieldSchema } from './field-schema.ts';
 import type { FileRef } from './file.ts';
 import type { Verdict } from './verdict.ts';
 import {
   CategoryPathTaken,
   StaleCategory,
+  StaleEditProject,
   StalePerson,
   StaleSchema,
   StaleTerm,
@@ -300,6 +302,20 @@ export const pgShotlistMigration: Migration = {
          ON shotlist_items (asset_id, start_ms, end_ms, id);`,
 };
 
+/** EP-26.2: a media-editor project — a timeline over one source asset, the whole document in `data`. */
+export const pgEditProjectsMigration: Migration = {
+  id: 'mam_edit_projects',
+  up: `CREATE TABLE IF NOT EXISTS edit_projects (
+         id              text PRIMARY KEY,
+         channel_id      text NOT NULL,
+         source_asset_id text NOT NULL,
+         version         integer NOT NULL,
+         data            jsonb NOT NULL
+       );
+       CREATE INDEX IF NOT EXISTS edit_projects_asset_idx
+         ON edit_projects (channel_id, source_asset_id, id);`,
+};
+
 export const mamMigrations: Migration[] = [
   outboxMigration,
   pgAssetsMigration,
@@ -321,6 +337,7 @@ export const mamMigrations: Migration[] = [
   pgVerdictsMigration,
   pgShotlistMigration,
   pgSchemaVersionMigration,
+  pgEditProjectsMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
@@ -694,6 +711,26 @@ export function pgAssetStore(pool: PgPool): AssetStore {
                   );
             if (written.rowCount !== 1) throw new StalePerson(person.id, ifVersion);
           },
+          async putEditProject(project, ifVersion) {
+            const written =
+              ifVersion === undefined
+                ? await client.query(
+                    `INSERT INTO edit_projects (id, channel_id, source_asset_id, version, data)
+                     VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
+                    [
+                      project.id,
+                      project.channelId,
+                      project.sourceAssetId,
+                      project.version,
+                      JSON.stringify(project),
+                    ],
+                  )
+                : await client.query(
+                    `UPDATE edit_projects SET version = $2, data = $3 WHERE id = $1 AND version = $4`,
+                    [project.id, project.version, JSON.stringify(project), ifVersion],
+                  );
+            if (written.rowCount !== 1) throw new StaleEditProject(project.id, ifVersion);
+          },
           async putTerm(term, ifVersion) {
             try {
               const written =
@@ -817,6 +854,14 @@ export function pgAssetStore(pool: PgPool): AssetStore {
     async term(id) {
       const { rows } = await pool.query<{ data: VocabularyTerm }>(
         'SELECT data FROM vocabulary_terms WHERE id = $1',
+        [id],
+      );
+      return rows[0]?.data;
+    },
+
+    async editProject(id) {
+      const { rows } = await pool.query<{ data: EditProject }>(
+        'SELECT data FROM edit_projects WHERE id = $1',
         [id],
       );
       return rows[0]?.data;
