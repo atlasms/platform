@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EP-26.1 — editing-proxy scrubbing (one GOP)</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 16px;
+      }
+      video {
+        width: 100%;
+        background: #000;
+        border-radius: 8px;
+      }
+      h1 {
+        font-size: 1rem;
+        margin: 0 0 8px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.85rem;
+      }
+      th,
+      td {
+        border: 1px solid #8884;
+        padding: 4px 8px;
+        text-align: right;
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+      #status {
+        font-weight: 600;
+      }
+      .ok {
+        color: #16794b;
+      }
+      .bad {
+        color: #c0362c;
+      }
+      code {
+        font-family: ui-monospace, monospace;
+      }
+      p a {
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div>
+      <h1>Editing proxy — <code id="src"></code></h1>
+      <video id="v" muted playsinline preload="auto"></video>
+      <p id="status">loading…</p>
+      <p>Measure every GOP at once on the <a href="run-all.html">run-all page</a>.</p>
+    </div>
+    <div>
+      <h1>Measurement</h1>
+      <div id="out">
+        Seeks run automatically. Results are also on <code>window.__spikeResults</code>.
+      </div>
+    </div>
+
+    <script type="module">
+      import { hasRvfc, measureProxy, browserTag } from './measure.js';
+
+      const params = new URLSearchParams(location.search);
+      const gop = Number(params.get('gop') ?? 12);
+      const fps = Number(params.get('fps') ?? 25);
+      const steps = Number(params.get('steps') ?? 150);
+
+      const v = document.getElementById('v');
+      const statusEl = document.getElementById('status');
+      const outEl = document.getElementById('out');
+      document.getElementById('src').textContent = `proxy-g${gop}.mp4 @ ${fps}fps`;
+      v.src = `out/proxy-g${gop}.mp4`;
+
+      async function run() {
+        if (!hasRvfc()) {
+          statusEl.textContent = 'requestVideoFrameCallback NOT supported in this browser';
+          statusEl.className = 'bad';
+          window.__spikeResults = { gop, fps, error: 'no-rvfc' };
+          window.__spikeDone = true;
+          return;
+        }
+        statusEl.textContent = 'measuring…';
+        const r = await measureProxy(v, { gop, fps, steps });
+        r.browser = browserTag();
+        window.__spikeResults = r;
+        window.__spikeDone = true;
+
+        statusEl.textContent = r.accurate
+          ? `frame-accurate ✓  (seq p95 ${r.sequential.latP95}ms · random p95 ${r.random.latP95}ms)`
+          : `NOT frame-accurate ✗  (max off-by seq ${r.sequential.maxAbsDelta}, random ${r.random.maxAbsDelta})`;
+        statusEl.className = r.accurate ? 'ok' : 'bad';
+
+        const row = (label, s) => `
+          <tr><td>${label}</td><td>${s.n}</td><td>${s.exactPct}%</td><td>${s.maxAbsDelta}</td>
+          <td>${s.timeouts}</td><td>${s.latMedian}</td><td>${s.latP95}</td><td>${s.latMax}</td></tr>`;
+        outEl.innerHTML = `
+          <table>
+            <thead><tr><th>gesture</th><th>n</th><th>exact</th><th>max off-by</th><th>timeouts</th>
+            <th>lat median</th><th>lat p95</th><th>lat max</th></tr></thead>
+            <tbody>${row('sequential', r.sequential)}${row('random', r.random)}</tbody>
+          </table>
+          <p>${r.browser} · GOP <code>${gop}</code>, ${fps}fps. Latency in ms, deltas in frames.</p>`;
+      }
+
+      run();
+    </script>
+  </body>
+</html>

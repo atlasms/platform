@@ -488,7 +488,7 @@ Source: [media-editor.md](../architecture/services/media-editor.md) (D3: basic N
 
 | ID | Story | Est |
 |----|-------|:---:|
-| 26.1 | Spike: confirm frame-accurate scrubbing on a **short-GOP H.264 editing proxy** in `<video>` + `requestVideoFrameCallback` (approach decided 2026-10-12, [media-editor §7](../architecture/services/media-editor.md#7-dependencies)); set the GOP length — a spike, its report the artifact | 3 |
+| 26.1 | ✅ Spike: frame-accurate scrubbing on a **short-GOP H.264 editing proxy** in `<video>` + `requestVideoFrameCallback` confirmed in Chrome + Firefox (frame-exact via `floor(mediaTime·fps)`), **GOP 12** set ([ADR-0011](../adr/0011-editing-proxy-scrubbing.md); harness `spikes/editor-scrubbing`) | 3 |
 | 26.2 | `EditProject` persistence (MAM document store) + API | 5 |
 | 26.3 | Timeline UI — trim and arrange | 8 |
 | 26.4 | Proxy scrubbing on the VTT filmstrip (with EP-29.3) | 3 |

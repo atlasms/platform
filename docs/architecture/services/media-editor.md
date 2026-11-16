@@ -128,12 +128,16 @@ MAM (EditProject persistence, version attach), MTS (render), HSM (place output),
 (scrub-time preview + progress). Studio needs **proxy** renditions to scrub against — the editor
 works off proxies and renders against the **source/broadcast** rendition.
 
-**Playback (decided 2026-10-12, EP-26.1).** The editor plays an **editing proxy**: H.264 in MP4
-with a short GOP (a keyframe every few frames, so a seek lands on or next to the frame asked for),
-written by MTS as its own preset beside the browse proxy. Studio plays it in a plain `<video>` and
-identifies the frame on screen with `requestVideoFrameCallback`; WebCodecs is not used in v1. The
-EP-26.1 spike confirms frame accuracy in Chromium and Firefox and sets the GOP length; if it cannot,
-WebCodecs decoding is the next option and a new decision.
+**Playback (decided 2026-10-12, confirmed by the EP-26.1 spike — [ADR-0011](../../adr/0011-editing-proxy-scrubbing.md)).**
+The editor plays an **editing proxy**: H.264 in MP4 with a **GOP of 12 (~0.5 s at 25 fps)**, written
+by MTS as its own preset beside the browse proxy. Studio plays it in a plain `<video>` and identifies
+the frame on screen with `requestVideoFrameCallback`; WebCodecs is not used in v1. The spike measured
+scrubbing in Chrome and Firefox: frame-exact in both, and interactive (~17 ms median seek) up to
+GOP 30, degrading by GOP 250 — GOP 12 for decode headroom (GOP 30 a cheaper alternative). **Two
+implementation requirements the spike surfaced:** the frame index is `floor(mediaTime·fps)`, not
+`round` (which is browser-dependent and lands a frame late in Firefox — a one-frame-late in/out point
+is a wrong edit); and the player must **bound the wait on a seek** and retry / fall back to the
+`seeked` event, because `requestVideoFrameCallback` occasionally fires no callback for a seek.
 
 ## 8. Scaling & performance
 
