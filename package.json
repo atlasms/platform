@@ -56,12 +56,12 @@
     "@nx/devkit": "^24.0.5",
     "@types/node": "^24.19.2",
     "angular-eslint": "^22.6.0",
-    "eslint": "^10.14.0",
+    "eslint": "^10.15.0",
     "nx": "^24.0.5",
     "prettier": "^3.9.10",
     "tsx": "^4.23.13",
     "typescript": "^5.7.0",
-    "typescript-eslint": "^8.72.1",
+    "typescript-eslint": "^8.72.2",
     "yaml": "^2.9.1"
   },
   "overrides": {
