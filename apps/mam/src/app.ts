@@ -522,6 +522,48 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     })),
   );
 
+  // The media editor (EP-26.2): an EditProject is a re-openable timeline over one asset's
+  // renditions. Create over the asset (201); then load, save (compare-and-set on ?version), and
+  // render (202 — the result arrives later as a new version via transcode.completed, EP-26.6).
+  app.post('/api/v1/assets/:id/edit-projects', async (req, reply) =>
+    handle(req, reply, async () => {
+      const project = await options.service.createEditProject(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+      );
+      return reply.code(201).send(project);
+    }),
+  );
+  app.get('/api/v1/edit-projects/:id', async (req, reply) =>
+    handle(req, reply, async () =>
+      options.service.editProject(await callerOf(req), (req.params as { id: string }).id),
+    ),
+  );
+  app.patch('/api/v1/edit-projects/:id', async (req, reply) =>
+    handle(req, reply, async () => {
+      const version = Number((req.query as { version?: string }).version);
+      if (!Number.isInteger(version) || version < 1) {
+        throw new ValidationError('version is required — the version of the edit project as read');
+      }
+      return options.service.updateEditProject(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+        version,
+        req.body,
+      );
+    }),
+  );
+  app.post('/api/v1/edit-projects/:id/render', async (req, reply) =>
+    handle(req, reply, async () => {
+      const project = await options.service.renderEditProject(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+        req.body,
+      );
+      return reply.code(202).send(project);
+    }),
+  );
+
   // Free-form tags (EP-17.3). PUT, not PATCH: the body is the asset's complete tag set, which is
   // what a tag input hands back — there is no partial form of "these are the keywords".
   app.get('/api/v1/assets/:id/tags', async (req, reply) =>

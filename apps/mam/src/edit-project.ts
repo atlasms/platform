@@ -1,0 +1,277 @@
+// The media editor's durable artifact (EP-26.2; media-editor.md §3, data-model §1.10): an
+// EDIT DECISION LIST over one source asset's renditions — not new media. Pure here: the types, the
+// validation of a timeline a client sends, and the small state machine; persistence is the store,
+// the write (authz + audit + outbox) is the service.
+//
+// Non-destructive (normative): a clip references a source rendition by id with in/out points in
+// SECONDS; the editor never rewrites source bytes. A render (EP-26.6) flattens the timeline into a
+// NEW file. The timeline is the re-openable artifact; the rendered file is derived from it.
+
+import { isUlid, ulid } from '@atlas/contracts';
+
+/** What the editor can open. Derived from the asset's `mediaType`; `live-event` is not editable. */
+export type MediaKind = 'video' | 'audio' | 'photo';
+
+/** draft → rendering → rendered / failed. `rendering` is entered by a render, left by MTS's outcome. */
+export type EditProjectState = 'draft' | 'rendering' | 'rendered' | 'failed';
+
+/** One clip on the timeline: a span of a source rendition, with optional transition-in and filters. */
+export interface Clip {
+  /** A file/rendition of the source asset this clip draws from. */
+  renditionRef: string;
+  /** In/out points into that rendition, in seconds (not frames — the proxy fps is the edit grid). */
+  inSec: number;
+  outSec: number;
+  /** An allowlisted transition name (the set is EP-26.5's; here any non-empty string is stored). */
+  transitionIn?: string;
+  /** Allowlisted filter names (EP-26.5); stored as sent for now. */
+  filters?: string[];
+}
+
+/** The edit decision list. */
+export interface Timeline {
+  clips: Clip[];
+}
+
+/** The project. Owned by MAM's document store, audited like any asset edit (entity `edit-project`). */
+export interface EditProject {
+  id: string;
+  channelId: string;
+  sourceAssetId: string;
+  mediaKind: MediaKind;
+  state: EditProjectState;
+  timeline: Timeline;
+  /** MTS profile (Tier-1 registry) a render encodes with; set on the project or given at render. */
+  outputProfile?: string;
+  /** Set when a render is issued / completes. */
+  renderJobId?: string;
+  outputAssetId?: string;
+  /** Compare-and-set guard — every save bumps it; the audit record is keyed on it. */
+  version: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A problem at its path in the request — `timeline/clips/2/outSec`. */
+export interface EditProjectProblem {
+  path: string;
+  message: string;
+}
+
+export const MAX_CLIPS = 500;
+export const MAX_FILTERS_PER_CLIP = 16;
+
+/** The editable kinds, by the asset's `mediaType` vocabulary key. `live-event` and the rest: no. */
+export function editableMediaKind(mediaType: string): MediaKind | undefined {
+  switch (mediaType) {
+    case 'video':
+      return 'video';
+    case 'audio':
+      return 'audio';
+    case 'photo':
+    case 'image':
+      return 'photo';
+    default:
+      return undefined;
+  }
+}
+
+/** A fresh draft project over an asset — empty timeline, version 1. */
+export function newEditProject(args: {
+  channelId: string;
+  sourceAssetId: string;
+  mediaKind: MediaKind;
+  createdBy: string;
+  at: string;
+}): EditProject {
+  return {
+    id: ulid(),
+    channelId: args.channelId,
+    sourceAssetId: args.sourceAssetId,
+    mediaKind: args.mediaKind,
+    state: 'draft',
+    timeline: { clips: [] },
+    version: 1,
+    createdBy: args.createdBy,
+    createdAt: args.at,
+    updatedAt: args.at,
+  };
+}
+
+/**
+ * Validate a timeline a client sent, whole — every problem at once, each at its path. Clips keep
+ * their order (a timeline IS ordered); in/out are seconds, `outSec` strictly after `inSec`.
+ */
+export function parseTimeline(raw: unknown): {
+  timeline: Timeline;
+  problems: EditProjectProblem[];
+} {
+  const problems: EditProjectProblem[] = [];
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return {
+      timeline: { clips: [] },
+      problems: [{ path: 'timeline', message: 'must be an object' }],
+    };
+  }
+  const clipsRaw = (raw as Record<string, unknown>)['clips'];
+  if (!Array.isArray(clipsRaw)) {
+    return {
+      timeline: { clips: [] },
+      problems: [{ path: 'timeline/clips', message: 'must be an array' }],
+    };
+  }
+  if (clipsRaw.length > MAX_CLIPS) {
+    problems.push({ path: 'timeline/clips', message: `at most ${MAX_CLIPS} clips` });
+  }
+  const clips: Clip[] = [];
+  clipsRaw.forEach((entry, i) => {
+    const at = (field: string) => `timeline/clips/${i}${field ? `/${field}` : ''}`;
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      problems.push({ path: at(''), message: 'must be an object' });
+      return;
+    }
+    const e = entry as Record<string, unknown>;
+    for (const key of Object.keys(e)) {
+      if (!['renditionRef', 'inSec', 'outSec', 'transitionIn', 'filters'].includes(key)) {
+        problems.push({ path: at(key), message: 'is not a clip field' });
+      }
+    }
+    const before = problems.length;
+    const renditionRef = e['renditionRef'];
+    if (typeof renditionRef !== 'string' || renditionRef.trim() === '') {
+      problems.push({ path: at('renditionRef'), message: 'is required' });
+    }
+    const sec = (field: 'inSec' | 'outSec'): number => {
+      const v = e[field];
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+        problems.push({ path: at(field), message: 'must be a number of seconds ≥ 0' });
+        return NaN;
+      }
+      return v;
+    };
+    const inSec = sec('inSec');
+    const outSec = sec('outSec');
+    if (!Number.isNaN(inSec) && !Number.isNaN(outSec) && outSec <= inSec) {
+      problems.push({ path: at('outSec'), message: 'must be after inSec' });
+    }
+    let transitionIn: string | undefined;
+    if (e['transitionIn'] !== undefined) {
+      if (typeof e['transitionIn'] !== 'string' || e['transitionIn'].trim() === '') {
+        problems.push({ path: at('transitionIn'), message: 'must be a non-empty string' });
+      } else {
+        transitionIn = e['transitionIn'];
+      }
+    }
+    let filters: string[] | undefined;
+    if (e['filters'] !== undefined) {
+      if (
+        !Array.isArray(e['filters']) ||
+        e['filters'].some((f) => typeof f !== 'string' || f.trim() === '')
+      ) {
+        problems.push({ path: at('filters'), message: 'must be an array of non-empty strings' });
+      } else if (e['filters'].length > MAX_FILTERS_PER_CLIP) {
+        problems.push({ path: at('filters'), message: `at most ${MAX_FILTERS_PER_CLIP} filters` });
+      } else {
+        filters = e['filters'] as string[];
+      }
+    }
+    if (problems.length === before) {
+      clips.push({
+        renditionRef: (renditionRef as string).trim(),
+        inSec,
+        outSec,
+        ...(transitionIn !== undefined ? { transitionIn } : {}),
+        ...(filters !== undefined ? { filters } : {}),
+      });
+    }
+  });
+  return { timeline: { clips }, problems };
+}
+
+/** Two timelines the same, clip by clip — a re-sent timeline is no change (no revision bump). */
+export function sameTimeline(a: Timeline, b: Timeline): boolean {
+  return (
+    a.clips.length === b.clips.length &&
+    a.clips.every((x, i) => {
+      const y = b.clips[i]!;
+      return (
+        x.renditionRef === y.renditionRef &&
+        x.inSec === y.inSec &&
+        x.outSec === y.outSec &&
+        x.transitionIn === y.transitionIn &&
+        (x.filters ?? []).length === (y.filters ?? []).length &&
+        (x.filters ?? []).every((f, j) => f === (y.filters ?? [])[j])
+      );
+    })
+  );
+}
+
+/** A PATCH body: the timeline (required), and optionally the output profile to render with. */
+export function parseEditProjectPatch(raw: unknown): {
+  timeline: Timeline;
+  outputProfile?: string;
+  problems: EditProjectProblem[];
+} {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return { timeline: { clips: [] }, problems: [{ path: '', message: 'body must be an object' }] };
+  }
+  const r = raw as Record<string, unknown>;
+  const { timeline, problems } = parseTimeline(r['timeline']);
+  let outputProfile: string | undefined;
+  if (r['outputProfile'] !== undefined) {
+    if (typeof r['outputProfile'] !== 'string' || r['outputProfile'].trim() === '') {
+      problems.push({ path: 'outputProfile', message: 'must be a non-empty string' });
+    } else {
+      outputProfile = r['outputProfile'].trim();
+    }
+  }
+  return { timeline, ...(outputProfile !== undefined ? { outputProfile } : {}), problems };
+}
+
+/** A render request body: an optional output profile and an optional target asset to version. */
+export function parseRenderInput(raw: unknown): {
+  outputProfile?: string;
+  targetAssetId?: string;
+  problems: EditProjectProblem[];
+} {
+  if (raw === undefined || raw === null) return { problems: [] };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { problems: [{ path: '', message: 'body must be an object' }] };
+  }
+  const r = raw as Record<string, unknown>;
+  const problems: EditProjectProblem[] = [];
+  let outputProfile: string | undefined;
+  if (r['outputProfile'] !== undefined) {
+    if (typeof r['outputProfile'] !== 'string' || r['outputProfile'].trim() === '') {
+      problems.push({ path: 'outputProfile', message: 'must be a non-empty string' });
+    } else {
+      outputProfile = r['outputProfile'].trim();
+    }
+  }
+  let targetAssetId: string | undefined;
+  if (r['targetAssetId'] !== undefined) {
+    if (typeof r['targetAssetId'] !== 'string' || !isUlid(r['targetAssetId'])) {
+      problems.push({ path: 'targetAssetId', message: 'must be a ULID' });
+    } else {
+      targetAssetId = r['targetAssetId'];
+    }
+  }
+  return {
+    ...(outputProfile !== undefined ? { outputProfile } : {}),
+    ...(targetAssetId !== undefined ? { targetAssetId } : {}),
+    problems,
+  };
+}
+
+/** A render needs a non-empty, renderable timeline and a project not already mid-render. */
+export function renderProblem(project: EditProject): string | undefined {
+  if (project.state === 'rendering') return 'a render is already in progress';
+  if (project.timeline.clips.length === 0) return 'the timeline is empty';
+  return undefined;
+}
+
+/** Guard for a path parameter that must be a ULID. */
+export function isEditProjectId(id: string): boolean {
+  return isUlid(id);
+}
