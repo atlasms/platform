@@ -75,6 +75,28 @@ export interface AuditIndex extends LogBrowser {
   trim(channelId: string, before: string, belowSeq: number): Promise<number>;
 }
 
+/**
+ * The last seq per channel. Channels number in the tens or hundreds; a composite aggregation is
+ * the change if a deployment ever has more than this page.
+ *
+ * Cast, and the cast is the client's fault: from 3.9.0 `@opensearch-project/opensearch`'s
+ * generated typings dropped `field` (and `script`) from `TermsAggregationFields` and
+ * `MetricAggregationBase`, so no `terms` or `max` aggregation can be typed at all — while the
+ * server still requires `field` (3.6.0 had both). Remove the cast, and inline this again, when
+ * the typings carry `field` again; until then this is the one place the request is unchecked.
+ */
+const HEADS_AGGS = {
+  channels: {
+    terms: { field: 'channel_id', size: 10_000 },
+    aggs: { head: { max: { field: 'seq' } } },
+  },
+} as unknown as SearchAggs;
+
+/** The request's `aggs`, taken from the client we are handed — no direct dep on its package. */
+type SearchAggs = NonNullable<
+  NonNullable<NonNullable<Parameters<OpenSearchClient['search']>[0]>['body']>['aggs']
+>;
+
 export function openSearchAuditIndex(
   client: OpenSearchClient,
   options: { index?: string } = {},
@@ -105,17 +127,7 @@ export function openSearchAuditIndex(
       const { body } = await guard(() =>
         client.search({
           index,
-          body: {
-            size: 0,
-            aggs: {
-              // Channels number in the tens or hundreds; a composite aggregation is the change if
-              // a deployment ever has more than this page.
-              channels: {
-                terms: { field: 'channel_id', size: 10_000 },
-                aggs: { head: { max: { field: 'seq' } } },
-              },
-            },
-          },
+          body: { size: 0, aggs: HEADS_AGGS },
         }),
       );
       const buckets =
