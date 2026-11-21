@@ -22,6 +22,16 @@ import {
   type EventPayloads,
 } from '@atlas/contracts';
 import { durationMsOf, parseShotList, sameShotList, type ShotListItem } from './shotlist.ts';
+import {
+  editableMediaKind,
+  newEditProject,
+  parseEditProjectPatch,
+  parseRenderInput,
+  renderProblem,
+  sameTimeline,
+  type EditProject,
+  type EditProjectProblem,
+} from './edit-project.ts';
 import { deriveInto, dismissDerived, stampedBy, userWrote } from './provenance.ts';
 import { cloneOnto, mergeExtended, mergeTagLabels, versionProblem } from './versions.ts';
 import type { Message } from '@atlas/messaging';
@@ -2631,6 +2641,181 @@ export class MamService {
       (tx) => tx.setShotlist(asset.id, asset.channelId, items),
     );
     return { assetId: asset.id, items };
+  }
+
+  // --- the media editor (EP-26.2; edit-project.ts, media-editor.md §3–5) ------
+  //
+  // An EditProject is MAM's OWN document — its own id and audit entity (`edit-project`), not an
+  // asset revision — so it writes through `store.transaction` with its own audit record, the way a
+  // category does, not through `commitWith` (which moves an asset). Authorization is the SOURCE
+  // asset's: editing a project edits that asset's renditions (asset:write); reading it is asset:read.
+
+  /** Start a draft project over an asset's renditions (FR-EDT-1). Scope: asset:write. */
+  async createEditProject(caller: Caller, assetId: string): Promise<EditProject> {
+    const asset = await this.fresh(caller, assetId);
+    // Editing an asset's renditions is a `core` editorial act, like making a version (createVersion):
+    // the render produces a new version of the asset, so the write belongs to the same group.
+    this.authorize(caller, 'asset:write', await this.scopeOf(asset), 'core');
+    const mediaKind = editableMediaKind(asset.mediaType);
+    if (mediaKind === undefined) {
+      throw new ValidationError(
+        `${asset.mediaType} media cannot be edited — the editor handles video, audio and photo`,
+      );
+    }
+    const project = newEditProject({
+      channelId: caller.channelId,
+      sourceAssetId: asset.id,
+      mediaKind,
+      createdBy: caller.userId,
+      at: this.now().toISOString(),
+    });
+    await this.options.store.transaction(async (tx) => {
+      await tx.putEditProject(project);
+      await tx.enqueue(this.editProjectAudit(caller, project, undefined, 'edit-project.created'));
+    });
+    return project;
+  }
+
+  /** Load a project's timeline (FR-EDT-2). Scope: asset:read on the source asset. */
+  async editProject(caller: Caller, id: string): Promise<EditProject> {
+    const project = await this.editProjectInChannel(caller, id);
+    this.authorize(caller, 'asset:read', await this.sourceScopeOf(project));
+    return project;
+  }
+
+  /**
+   * Save the timeline, and optionally the output profile (FR-EDT-3). Compare-and-set on the
+   * `version` the client read, so two editors never silently overwrite each other; a re-sent
+   * timeline is no change; a project mid-render is refused.
+   */
+  async updateEditProject(
+    caller: Caller,
+    id: string,
+    version: number,
+    body: unknown,
+  ): Promise<EditProject> {
+    const existing = await this.editProjectInChannel(caller, id);
+    this.authorize(caller, 'asset:write', await this.sourceScopeOf(existing), 'core');
+    if (existing.state === 'rendering') {
+      throw new Conflict(`edit project ${id} is rendering — wait for it to finish before editing`);
+    }
+    const { timeline, outputProfile, problems } = parseEditProjectPatch(body);
+    this.refuseEditProject(problems);
+    const profile = outputProfile ?? existing.outputProfile;
+    if (
+      existing.state === 'draft' &&
+      sameTimeline(existing.timeline, timeline) &&
+      profile === existing.outputProfile
+    ) {
+      return existing;
+    }
+    const updated: EditProject = {
+      ...existing,
+      timeline,
+      state: 'draft',
+      ...defined({ outputProfile: profile }),
+      version: existing.version + 1,
+      updatedAt: this.now().toISOString(),
+    };
+    await this.options.store.transaction(async (tx) => {
+      await tx.putEditProject(updated, version);
+      await tx.enqueue(this.editProjectAudit(caller, updated, existing, 'edit-project.updated'));
+    });
+    return updated;
+  }
+
+  /**
+   * Flatten the timeline into a render (FR-EDT-4): issue `editor.render.requested` to MTS and move
+   * the project to `rendering`, in ONE transaction — the command and the state change commit
+   * together or neither does. The rendered file arrives later as a new version (EP-26.6). Scope:
+   * asset:write.
+   */
+  async renderEditProject(caller: Caller, id: string, body: unknown): Promise<EditProject> {
+    const existing = await this.editProjectInChannel(caller, id);
+    this.authorize(caller, 'asset:write', await this.sourceScopeOf(existing), 'core');
+    const { outputProfile, targetAssetId, problems } = parseRenderInput(body);
+    this.refuseEditProject(problems);
+    const profile = outputProfile ?? existing.outputProfile;
+    if (profile === undefined) {
+      throw new ValidationError(
+        'a render needs an outputProfile — pass one or set it on the project first',
+      );
+    }
+    const problem = renderProblem(existing);
+    if (problem) throw new ValidationError(`cannot render edit project ${id}: ${problem}`);
+    const updated: EditProject = {
+      ...existing,
+      state: 'rendering',
+      outputProfile: profile,
+      version: existing.version + 1,
+      updatedAt: this.now().toISOString(),
+    };
+    const command: EventPayloads['editor.render.requested'] = {
+      editProjectId: updated.id,
+      sourceAssetId: updated.sourceAssetId,
+      ...(targetAssetId !== undefined ? { targetAssetId } : {}),
+      mediaKind: updated.mediaKind,
+      timeline: updated.timeline,
+      outputProfile: profile,
+      requestedBy: caller.userId,
+    };
+    await this.options.store.transaction(async (tx) => {
+      await tx.putEditProject(updated, existing.version);
+      await tx.enqueue(
+        this.eventRecord(caller, caller.channelId, 'editor.render.requested', command),
+      );
+      await tx.enqueue(
+        this.editProjectAudit(caller, updated, existing, 'edit-project.render-requested'),
+      );
+    });
+    return updated;
+  }
+
+  /** Load a project, confined to the caller's channel (a cross-tenant id reads as not found). */
+  private async editProjectInChannel(caller: Caller, id: string): Promise<EditProject> {
+    const project = await this.options.store.editProject(id);
+    if (!project || project.channelId !== caller.channelId) {
+      throw new NotFound(`no edit project ${id}`);
+    }
+    return project;
+  }
+
+  /** The source asset's scope for authorization — channel-only if the asset is gone. */
+  private async sourceScopeOf(project: EditProject): Promise<AssetScope> {
+    const asset = await this.options.store.get(project.sourceAssetId);
+    return asset && asset.channelId === project.channelId ? this.scopeOf(asset) : {};
+  }
+
+  /** One ValidationError naming every edit-project problem at its path. */
+  private refuseEditProject(problems: readonly EditProjectProblem[]): void {
+    if (problems.length === 0) return;
+    throw new ValidationError(
+      `the edit project has ${problems.length} problem${
+        problems.length === 1 ? '' : 's'
+      }: ${problems.map((p) => `${p.path} ${p.message}`).join('; ')}`,
+      { problems },
+    );
+  }
+
+  /** The audit record of one edit-project revision: entity `edit-project`, revision its version. */
+  private editProjectAudit(
+    caller: Caller,
+    project: EditProject,
+    before: EditProject | undefined,
+    action: string,
+  ): ReturnType<MamService['eventRecord']> {
+    const payload: EventPayloads['audit.recorded'] = {
+      entityType: 'edit-project',
+      entityId: project.id,
+      revision: project.version,
+      action,
+      origin: { service: 'mam' },
+      delta: delta(
+        before as unknown as Record<string, unknown> | undefined,
+        project as unknown as Record<string, unknown>,
+      ),
+    };
+    return this.eventRecord(caller, project.channelId, 'audit.recorded', payload);
   }
 
   // --- simple search (EP-17.4) -----------------------------------------------
