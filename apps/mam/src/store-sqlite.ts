@@ -16,6 +16,7 @@ import {
   type Migration,
 } from '@atlas/data';
 import type { ShotListItem } from './shotlist.ts';
+import type { EditProject } from './edit-project.ts';
 import type { Asset } from './asset.ts';
 import type { Category } from './category.ts';
 import type { FieldSchema } from './field-schema.ts';
@@ -24,6 +25,7 @@ import type { Verdict } from './verdict.ts';
 import {
   CategoryPathTaken,
   StaleCategory,
+  StaleEditProject,
   StalePerson,
   StaleSchema,
   StaleTerm,
@@ -230,6 +232,20 @@ export const sqliteApprovedMigration: Migration = {
   up: `CREATE INDEX IF NOT EXISTS assets_approved_idx ON assets (id) WHERE state = 'approved';`,
 };
 
+/** EP-26.2: a media-editor project — a timeline over one source asset, the whole document in `data`. */
+export const sqliteEditProjectsMigration: Migration = {
+  id: 'mam_edit_projects',
+  up: `CREATE TABLE IF NOT EXISTS edit_projects (
+         id              TEXT PRIMARY KEY,
+         channel_id      TEXT NOT NULL,
+         source_asset_id TEXT NOT NULL,
+         version         INTEGER NOT NULL,
+         data            TEXT NOT NULL
+       );
+       CREATE INDEX IF NOT EXISTS edit_projects_asset_idx
+         ON edit_projects (channel_id, source_asset_id, id);`,
+};
+
 export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
   const db = openDb(path);
   migrate(db, [
@@ -253,6 +269,7 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     sqliteVerdictsMigration,
     sqliteShotlistMigration,
     sqliteSchemaVersionMigration,
+    sqliteEditProjectsMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
   const seen = new SqliteSeenStore(db);
@@ -444,6 +461,28 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
               )
               .run(JSON.stringify(person), person.id, ifVersion);
       if (Number(written.changes) !== 1) throw new StalePerson(person.id, ifVersion);
+    },
+    async putEditProject(project, ifVersion) {
+      const written =
+        ifVersion === undefined
+          ? db
+              .prepare(
+                `INSERT INTO edit_projects (id, channel_id, source_asset_id, version, data)
+                 VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+              )
+              .run(
+                project.id,
+                project.channelId,
+                project.sourceAssetId,
+                project.version,
+                JSON.stringify(project),
+              )
+          : db
+              .prepare(
+                `UPDATE edit_projects SET version = ?, data = ? WHERE id = ? AND version = ?`,
+              )
+              .run(project.version, JSON.stringify(project), project.id, ifVersion);
+      if (Number(written.changes) !== 1) throw new StaleEditProject(project.id, ifVersion);
     },
     async putTerm(term, ifVersion) {
       try {
@@ -765,6 +804,11 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
       const row = db.prepare('SELECT data FROM vocabulary_terms WHERE id = ?').get(id) as
         { data: string } | undefined;
       return row ? (JSON.parse(row.data) as VocabularyTerm) : undefined;
+    },
+    async editProject(id) {
+      const row = db.prepare('SELECT data FROM edit_projects WHERE id = ?').get(id) as
+        { data: string } | undefined;
+      return row ? (JSON.parse(row.data) as EditProject) : undefined;
     },
     async categoryPaths(ids) {
       const unique = [...new Set(ids)];

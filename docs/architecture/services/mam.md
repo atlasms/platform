@@ -112,6 +112,7 @@ built, the expiry half (EP-24.5, §13z); the purge half is EP-24.6, owed by peop
 | `GET` | `/assets/{id}/verdicts` | Retained review-verdict history for the asset. ✅ EP-24.4 (§13y): `{ items }`, newest first — manual and automatic, append-only by the database. | `asset:read` |
 | `GET` / `PUT` | `/assets/{id}/shotlist` | The asset's notable segments, read in timeline order and replaced whole. ✅ EP-27.3 (§13v) | `asset:read` / `asset:write`, both on the `shotlist` field group |
 | `DELETE` | `/assets/{id}/derived/{field}` | Drop a value MAM held beside a field a person set, unused — taking it is a PATCH of the field. ✅ EP-27.5 (§13u) | `asset:write` on the field's group |
+| `POST` / `GET` / `PATCH` / `POST` | `/assets/{id}/edit-projects` · `/edit-projects/{id}` · `…?version=` · `/edit-projects/{id}/render` | The media editor's `EditProject` — a re-openable timeline over one asset's renditions (basic-NLE, D3). Create a draft over the asset; load; save the timeline compare-and-set on `?version=`; render (flatten → `editor.render.requested` to MTS, state → `rendering`; the result arrives later as a new version, EP-26.6). ✅ EP-26.2 (§13aa) | `asset:read` (read) / `asset:write` on `core` (create, save, render) |
 | `GET` | `/search?q=…` | Simple search. | `asset:read` |
 | `POST` | `/search` | Advanced **faceted** search (category + subject + tag + person). | `asset:read` |
 | `GET` / `PUT` | `/field-schemas` | Define type/category custom fields. ✅ EP-27.4 (§13w): `PUT` without `?version=` is a NEW schema, with it a compare-and-set replacement; validated whole (422 `details.problems` by path); audited. (This row said `GET/POST` under `metadata:admin`. The authorization model's §3 catalogues `metadata:admin` for field schemas, but no starter role grants it and MAM never enforced it — the read was always `asset:read`, the write `taxonomy:admin`. Which of the two governs a schema is an open product question; until it is answered the code's `taxonomy:admin` stands.) | `asset:read` / `taxonomy:admin` |
@@ -628,6 +629,45 @@ Evidence: `test/expiry.test.ts` (once, idempotent, the approver named, re-approv
 longest-lapsed first, in batches, an offset read as a time), the store conformance case on sqlite and
 Postgres, and smoke on kind: an asset approved to expire in seconds is `expired` on the next tick,
 audited, and its approver finds a re-review notification in their inbox.
+
+## 13aa. As built — EP-26.2, the media editor's EditProject persistence + API
+
+The media editor's durable artifact (data-model §1.10, media-editor.md §3–5): an **edit decision
+list** over one source asset's renditions — its own document, `{ id, channelId, sourceAssetId,
+mediaKind, state, timeline{clips[]}, outputProfile?, renderJobId?, outputAssetId?, version,
+createdBy, createdAt, updatedAt }` — one row in `edit_projects` (channel-scoped, indexed by source
+asset), the whole record in `data`. `edit-project.ts` is the pure half; the store round-trip and
+compare-and-set are the conformance suite's, on sqlite and Postgres.
+
+- **Its own entity, not an asset revision.** An EditProject has its own id and its own audit entity
+  (`entityType: edit-project`), so it writes through `store.transaction` with its own
+  `audit.recorded` (like a category), not `commitWith` (which moves an asset). The create and every
+  save/render commit the row and the audit delta together.
+- **Non-destructive, keyed in seconds.** A clip is `{ renditionRef, inSec, outSec, transitionIn?,
+  filters[] }` — a span of a source rendition, never source bytes. In/out are **seconds** (the proxy
+  fps is the edit grid, ADR-0011), `outSec` strictly after `inSec`; validated whole, a 422 names every
+  problem by path (`details.problems`, `timeline/clips/1/outSec`). The transition/filter allowlist is
+  EP-26.5's; here any non-empty string is stored.
+- **Create** (`POST /assets/{id}/edit-projects`) starts a `draft` over the asset, deriving `mediaKind`
+  from its `mediaType` (`video`/`audio`/`photo`; `live-event` and the rest are refused 422).
+- **Save** (`PATCH /edit-projects/{id}?version=`) replaces the timeline (and optional
+  `outputProfile`) **compare-and-set** on the version read — two editors never silently overwrite each
+  other (a stale base is 409); a re-sent timeline on the current version changes nothing and emits
+  nothing. A project mid-render is refused.
+- **Render** (`POST /edit-projects/{id}/render`) flattens: in ONE transaction it issues
+  `editor.render.requested` (the EDL + `outputProfile` + optional `targetAssetId`) and moves the
+  project to `rendering` — the command and the state change commit together or neither does. MTS
+  consuming it and the result arriving as a new version are **EP-26.6**. An empty timeline, or no
+  output profile, is refused.
+- **Authorization is the source asset's.** Reading a project is `asset:read`; creating, saving and
+  rendering are `asset:write` on **`core`** — editing an asset's renditions is a core editorial act,
+  the same group `createVersion` uses, since a render produces a new version. A cross-tenant id reads
+  as 404.
+
+Evidence: `test/edit-project.test.ts` (create/derive/audit, save compare-and-set with the delta and
+a re-sent no-op, validation by path, render issuing the command and the rendering guard, the `core`
+group refusing a reader and a Librarian, and the routes' 201/200/200/202) and the store conformance
+case on both adapters. Studio's editor UI is EP-26.3; the render pipeline is EP-26.6.
 
 ## 14. Open questions / future
 

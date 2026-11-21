@@ -18,6 +18,7 @@ import type { FileRef } from './file.ts';
 import type { Verdict } from './verdict.ts';
 import type { ParsedQuery, SearchHit } from './search.ts';
 import type { ShotListItem } from './shotlist.ts';
+import type { EditProject } from './edit-project.ts';
 import type { Tag, TagCandidate } from './tag.ts';
 
 /** The extensible per-asset document (EP-17.2). Shape is whatever the FieldSchema defines. */
@@ -171,6 +172,9 @@ export interface AssetStore {
   /** Every verdict the asset was given (EP-24.4), newest first — the retained history. */
   verdictsOf(assetId: string): Promise<Verdict[]>;
 
+  /** An edit project by id (EP-26.2), or `undefined` — the service scopes it to the channel. */
+  editProject(id: string): Promise<EditProject | undefined>;
+
   /** A channel's whole category tree, deprecated nodes included, in path order (#260). */
   categories(channelId: string): Promise<Category[]>;
   category(id: string): Promise<Category | undefined>;
@@ -216,6 +220,17 @@ export class StaleCategory extends Conflict {
       ifVersion === undefined
         ? `category ${id} already exists`
         : `category ${id} changed since version ${ifVersion} was read — reload it`,
+    );
+  }
+}
+
+/** A write to an edit project whose base is no longer the stored row (EP-26.2), or a duplicate id. */
+export class StaleEditProject extends Conflict {
+  constructor(id: string, ifVersion: number | undefined) {
+    super(
+      ifVersion === undefined
+        ? `edit project ${id} already exists`
+        : `edit project ${id} changed since version ${ifVersion} was read — reload it`,
     );
   }
 }
@@ -306,6 +321,12 @@ export interface AssetTx {
   putTerm(term: VocabularyTerm, ifVersion?: number): Promise<void>;
   /** Write a person — compare-and-set like the rest ({@link StalePerson}). */
   putPerson(person: Person, ifVersion?: number): Promise<void>;
+  /**
+   * Write an edit project (EP-26.2) — compare-and-set like the rest ({@link StaleEditProject}):
+   * with `ifVersion` only over that version, without it a new project is inserted. Whole-document;
+   * the service owns the merge and bumps the version.
+   */
+  putEditProject(project: EditProject, ifVersion?: number): Promise<void>;
   /**
    * Replace an asset's extensible document.
    *
