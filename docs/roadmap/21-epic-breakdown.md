@@ -489,9 +489,9 @@ Source: [media-editor.md](../architecture/services/media-editor.md) (D3: basic N
 | ID | Story | Est |
 |----|-------|:---:|
 | 26.1 | ✅ Spike: frame-accurate scrubbing on a **short-GOP H.264 editing proxy** in `<video>` + `requestVideoFrameCallback` confirmed in Chrome + Firefox (frame-exact via `floor(mediaTime·fps)`), **GOP 12** set ([ADR-0011](../adr/0011-editing-proxy-scrubbing.md); harness `spikes/editor-scrubbing`) | 3 |
-| 26.2 | `EditProject` persistence (MAM document store) + API | 5 |
+| 26.2 | ✅ `EditProject` persistence (MAM document store) + API — channel-scoped, compare-and-set save, render issues `editor.render.requested` + `rendering` in one transaction ([mam.md §13aa](../architecture/services/mam.md#13aa-as-built--ep-262-the-media-editors-editproject-persistence--api), #592) | 5 |
 | 26.3 | Timeline UI — trim and arrange | 8 |
-| 26.4 | Proxy scrubbing on the VTT filmstrip (with EP-29.3) | 3 |
+| 26.4 | Proxy scrubbing on the VTT filmstrip (with EP-29.4/29.5's filmstrip + hover-preview renditions, #586) | 3 |
 | 26.5 | Transitions and filters from an allowlist (never raw FFmpeg — the profile-registry rule) | 5 |
 | 26.6 | `editor.render.requested` → MTS render job | 5 |
 | 26.7 | Render to a new version (with EP-27.6's version chain — the render arrives as its own asset and is linked by `POST /assets/{id}/versions`) | 3 |
