@@ -34,6 +34,25 @@ export interface RenditionResult extends Rendition {
   fallback?: boolean;
 }
 
+/** One clip of a render: a span of the source file, in seconds (media-editor.md §5.1). */
+export interface RenderClip {
+  renditionRef: string;
+  inSec: number;
+  outSec: number;
+}
+
+/**
+ * What makes a job a RENDER (EP-26.6): an edit decision list cut from the source asset's file. The
+ * job's `assetId` is the asset the render BECOMES (the command's `outputAssetId`); its one preset is
+ * the output profile; its output is that asset's `original`.
+ */
+export interface RenderSpec {
+  editProjectId: string;
+  sourceAssetId: string;
+  mediaKind: 'video' | 'audio';
+  clips: RenderClip[];
+}
+
 export interface TranscodeJob {
   id: string;
   channelId: string;
@@ -47,6 +66,8 @@ export interface TranscodeJob {
   inputPath: string;
   /** The input is the asset's live file of this kind in HSM (EP-14.7; ADR-0009), fetched at run time. */
   inputFile?: { kind: string; variant?: string };
+  /** Present on a render job (EP-26.6); `inputPath` is then the scratch path the source is fetched to. */
+  render?: RenderSpec;
   state: JobState;
   /** Delivery attempts made. 1 while the first one runs — an attempt is counted when it starts. */
   attempts: number;

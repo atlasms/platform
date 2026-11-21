@@ -5,9 +5,18 @@ export {
   canTransition,
   renditionsFor,
   type JobState,
+  type RenderClip,
+  type RenderSpec,
   type RenditionResult,
   type TranscodeJob,
 } from './job.ts';
+export {
+  RENDER_SOURCE_KINDS,
+  parseRenditionRef,
+  renderArgs,
+  renderRefusal,
+  timelineSec,
+} from './render.ts';
 export {
   BUILT_IN_PRESETS,
   presetById,
@@ -39,7 +48,9 @@ export {
   runWorker,
   startJobConsumer,
   startIngestConsumer,
+  startRenderConsumer,
   INGEST_ACCEPTED_PATTERN,
+  RENDER_REQUESTED_PATTERN,
   type IngestConsumerOptions,
   type JobConsumerOptions,
   type WorkerOptions,
@@ -54,6 +65,7 @@ export {
   ffmpegTranscoder,
   type FfmpegOptions,
   type Transcoder,
+  type TranscodeInput,
   type TranscodeOutput,
   type TranscodeSpec,
 } from './transcoder.ts';

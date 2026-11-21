@@ -6,7 +6,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validatePayload, type Envelope, type EventPayloads } from '@atlas/contracts';
+import {
+  buildEnvelope,
+  ulid,
+  validatePayload,
+  type Envelope,
+  type EventPayloads,
+} from '@atlas/contracts';
 import { SqliteOutboxStore } from '@atlas/data';
 import { InMemoryBroker, OutboxRelay } from '@atlas/messaging';
 import { compile, type Rule } from '@atlas/policy';
@@ -52,6 +58,26 @@ function harness() {
 }
 
 const VIDEO = { title: 'Match', mediaType: 'video', fileType: 'mxf', durationSec: 90 };
+
+/** Give an asset a file of `kind`, as MTS's `transcode.completed` would — a render cuts from it. */
+async function withFile(service: MamService, assetId: string, kind: 'proxy' | 'original') {
+  const envelope = buildEnvelope({
+    type: 'transcode.completed',
+    channelId: CHANNEL,
+    payload: {
+      assetId,
+      jobId: ulid(),
+      renditions: [
+        {
+          kind,
+          path: `${CHANNEL}/${assetId}/${kind}/b1`,
+          checksum: { algorithm: 'sha256', value: 'a'.repeat(64) },
+        },
+      ],
+    },
+  });
+  await service.mirrorTranscode({ id: envelope.messageId, subject: 'x', body: envelope });
+}
 const clip = (ref: string, inSec: number, outSec: number) => ({ renditionRef: ref, inSec, outSec });
 
 test('create starts a draft over the asset, deriving the media kind, and audits it', async () => {
@@ -150,6 +176,7 @@ test('a clip is validated whole — every problem at its path', async () => {
 test('render issues editor.render.requested and moves the project to rendering', async () => {
   const { service, caller, drain } = harness();
   const asset = await service.create(caller(), VIDEO);
+  await withFile(service, asset.id, 'proxy');
   const project = await service.createEditProject(caller(), asset.id);
   await service.updateEditProject(caller(), project.id, project.version, {
     timeline: { clips: [clip('proxy', 0, 12)] },
@@ -218,6 +245,7 @@ test('editing is a `core` write: a reader and a Librarian are refused, a reader 
 test('over HTTP: POST creates (201), GET loads, PATCH saves with ?version, POST render (202)', async () => {
   const { service, caller } = harness();
   const asset = await service.create(caller(), VIDEO);
+  await withFile(service, asset.id, 'proxy');
   const app = await buildMamApp({ service, policyFor: () => caller().policy });
   const headers = { 'x-atlas-user': 'user-1', 'x-atlas-channel': CHANNEL };
 

@@ -61,6 +61,10 @@ export function fakeTranscoder(options: { available?: boolean } = {}): FakeTrans
     async encoderUsable(encoder) {
       return !/nvenc|qsv/.test(encoder);
     },
+    // By name, like the rest: a source named `silent` has no audio stream.
+    async hasAudio(inputPath) {
+      return !inputPath.toLowerCase().includes('silent');
+    },
     async probeDuration(inputPath) {
       return inputPath.toLowerCase().includes('noduration') ? undefined : 12.5;
     },

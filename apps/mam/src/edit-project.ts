@@ -43,9 +43,21 @@ export interface EditProject {
   timeline: Timeline;
   /** MTS profile (Tier-1 registry) a render encodes with; set on the project or given at render. */
   outputProfile?: string;
-  /** Set when a render is issued / completes. */
+  /** The MTS job that rendered it — set when MTS answers (media-editor.md §5.1). */
   renderJobId?: string;
+  /**
+   * The asset the last render BECOMES — minted when the render is requested, so its progress can
+   * be followed at once (`transcode.progress.assetId`); the asset exists once `rendered`.
+   */
   outputAssetId?: string;
+  /** The asset the last render was asked to become the next version of (the version chain). */
+  targetAssetId?: string;
+  /** Who asked for the last render: the rendered asset's creator, and so its owner. */
+  renderRequestedBy?: string;
+  /** Why the last render failed (`failed`). Cleared by the next render. */
+  failure?: { code: string; message: string };
+  /** A rendered project whose asset could not be linked as `targetAssetId`'s next version: why. */
+  versionRefused?: string;
   /** Compare-and-set guard — every save bumps it; the audit record is keyed on it. */
   version: number;
   createdBy: string;
@@ -264,10 +276,41 @@ export function parseRenderInput(raw: unknown): {
   };
 }
 
-/** A render needs a non-empty, renderable timeline and a project not already mid-render. */
+/** The files of the source a clip may be cut from (media-editor.md §5.1) — MTS holds the same rule. */
+export const RENDER_SOURCE_KINDS = ['original', 'broadcast', 'proxy'] as const;
+
+/** A clip's `renditionRef` as a FileRef key: `kind` or `kind/variant`, a media kind only. */
+export function parseRenditionRef(ref: string): { kind: string; variant?: string } | undefined {
+  const match = /^([a-z][a-z0-9-]*)(?:\/([A-Za-z0-9][A-Za-z0-9._-]*))?$/.exec(ref.trim());
+  if (!match) return undefined;
+  const kind = match[1]!;
+  if (!(RENDER_SOURCE_KINDS as readonly string[]).includes(kind)) return undefined;
+  return match[2] !== undefined ? { kind, variant: match[2] } : { kind };
+}
+
+/**
+ * Why this project cannot be rendered now, or undefined (media-editor.md §5.1). A v1 render is a
+ * video or audio timeline cut from ONE file of the source, with no transitions or filters (EP-26.5
+ * renders those) — refused here, at the request, rather than by MTS a moment later.
+ */
 export function renderProblem(project: EditProject): string | undefined {
   if (project.state === 'rendering') return 'a render is already in progress';
+  if (project.mediaKind === 'photo') return 'a photo is not rendered in v1 — video and audio only';
   if (project.timeline.clips.length === 0) return 'the timeline is empty';
+  const refs = new Set(project.timeline.clips.map((c) => c.renditionRef));
+  if (refs.size > 1) {
+    return `every clip of a v1 render must draw from the same file — the timeline uses ${[...refs].join(', ')}`;
+  }
+  const [ref] = refs;
+  if (parseRenditionRef(ref!) === undefined) {
+    return `renditionRef ${ref} is not a file a render can cut from (${RENDER_SOURCE_KINDS.join(', ')}, optionally kind/variant)`;
+  }
+  const decorated = project.timeline.clips.findIndex(
+    (c) => c.transitionIn !== undefined || (c.filters?.length ?? 0) > 0,
+  );
+  if (decorated >= 0) {
+    return `clip ${decorated} has a transition or filter, which is not rendered before EP-26.5`;
+  }
   return undefined;
 }
 

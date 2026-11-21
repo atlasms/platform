@@ -477,8 +477,18 @@ export interface EditProject {
   };
   /** MTS profile (Tier-1 registry) a render encodes with; settable on the project or given at render. */
   outputProfile?: string;
+  /** The MTS job that rendered it — set when MTS answers (media-editor.md §5.1). */
   renderJobId?: Ulid;
+  /** The asset the last render becomes — minted when the render is requested, so its progress can be followed (transcode.progress carries it as assetId); the asset exists once the project is rendered. */
   outputAssetId?: Ulid;
+  /** The asset the last render was asked to become the next version of (the version chain). */
+  targetAssetId?: Ulid;
+  /** Who asked for the last render — the rendered asset's creator. */
+  renderRequestedBy?: string;
+  /** Why the last render failed (state failed) — MTS's words. Cleared by the next render. */
+  failure?: { code: string; message: string };
+  /** Set on a rendered project whose asset could NOT be linked as the next version of targetAssetId (someone versioned it first): the asset stands alone, and this says why. */
+  versionRefused?: string;
   /** Compare-and-set token; every save bumps it. */
   version: number;
   createdBy: string;

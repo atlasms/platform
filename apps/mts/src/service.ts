@@ -31,7 +31,14 @@ import {
 import type { Message, OutboxRecord } from '@atlas/messaging';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, Forbidden, NotFound, ValidationError } from '@atlas/service-kit';
-import { canTransition, renditionsFor, type RenditionResult, type TranscodeJob } from './job.ts';
+import {
+  canTransition,
+  renditionsFor,
+  type RenderSpec,
+  type RenditionResult,
+  type TranscodeJob,
+} from './job.ts';
+import { parseRenditionRef, renderArgs, renderRefusal, timelineSec } from './render.ts';
 import { presetById, type Preset } from './preset.ts';
 import { planFilmstrip, filmstripFilter, filmstripVtt, type FilmstripSpec } from './filmstrip.ts';
 import {
@@ -342,28 +349,17 @@ export class MtsService {
    */
   async consumeIngestAccepted(msg: Message): Promise<'applied' | 'duplicate' | 'skipped'> {
     const envelope = this.envelopeOf<EventPayloads['ingest.accepted']>(msg, 'ingest.accepted');
-    const presetIds = FIRST_RENDITIONS[envelope.payload.mediaType ?? 'other'] ?? [];
-    if (presetIds.length === 0 || !this.options.files) return 'skipped';
-    const id = ulid();
-    const at = this.now().toISOString();
+    if (!this.options.files) return 'skipped';
     const correlationId = envelope.correlationId ?? envelope.messageId;
-    const job: TranscodeJob = {
-      id,
+    const job = this.firstRenditionsJob({
       channelId: envelope.channelId,
       assetId: envelope.payload.assetId,
-      presetIds: [...presetIds],
-      inputPath: join(this.options.workRoot, 'inputs', id, 'original'),
-      inputFile: { kind: 'original' },
-      state: 'queued',
-      attempts: 0,
-      priority: 0,
+      mediaType: envelope.payload.mediaType ?? 'other',
       createdBy: envelope.actor?.id ?? 'rim',
-      createdAt: at,
-      updatedAt: at,
-      version: 1,
       correlationId,
       causationId: envelope.messageId,
-    };
+    });
+    if (!job) return 'skipped';
     const caller: Caller = {
       userId: job.createdBy,
       channelId: envelope.channelId,
@@ -381,6 +377,230 @@ export class MtsService {
       await tx.enqueue(this.audit(caller, job, undefined, job, 'transcode.queued'));
     });
     return outcome;
+  }
+
+  /**
+   * The first renditions of an asset whose `original` is in HSM — a new ingest's (EP-15.5) or a
+   * render's (EP-26.6): one queued job, its input that original. Undefined for a media type with
+   * none (`FIRST_RENDITIONS`).
+   */
+  private firstRenditionsJob(from: {
+    channelId: string;
+    assetId: string;
+    mediaType: string;
+    createdBy: string;
+    correlationId?: string;
+    causationId?: string;
+  }): TranscodeJob | undefined {
+    const presetIds = FIRST_RENDITIONS[from.mediaType] ?? [];
+    if (presetIds.length === 0) return undefined;
+    const id = ulid();
+    const at = this.now().toISOString();
+    return {
+      id,
+      channelId: from.channelId,
+      assetId: from.assetId,
+      presetIds: [...presetIds],
+      inputPath: join(this.options.workRoot, 'inputs', id, 'original'),
+      inputFile: { kind: 'original' },
+      state: 'queued',
+      attempts: 0,
+      priority: 0,
+      createdBy: from.createdBy,
+      createdAt: at,
+      updatedAt: at,
+      version: 1,
+      ...(from.correlationId !== undefined ? { correlationId: from.correlationId } : {}),
+      ...(from.causationId !== undefined ? { causationId: from.causationId } : {}),
+    };
+  }
+
+  // --- the render (EP-26.6; media-editor.md §5.1) ----------------------------
+
+  /**
+   * `editor.render.requested`: MAM's command to flatten an edit decision list into a new asset's
+   * `original`. Queued as a job like any other — the same lease, retry, progress, heartbeat and
+   * dead-letter — whose `render` says what to cut, and whose `assetId` is the asset the render
+   * becomes (`outputAssetId`, minted by MAM). A command MTS cannot carry out (a photo, two source
+   * files, an output profile that makes a still, no HSM to read the source from) is ANSWERED
+   * `transcode.failed` naming the project, as `transcode.job.create`'s refusals are (EP-22.4): MAM
+   * fails the project at once instead of leaving it `rendering` forever.
+   */
+  async consumeRenderRequested(msg: Message): Promise<'applied' | 'duplicate' | 'refused'> {
+    const envelope = this.envelopeOf<EventPayloads['editor.render.requested']>(
+      msg,
+      'editor.render.requested',
+    );
+    const correlationId = envelope.correlationId ?? envelope.messageId;
+    const caller: Caller = {
+      userId: envelope.payload.requestedBy ?? envelope.actor?.id ?? 'mam',
+      channelId: envelope.channelId,
+      actorKind: 'service',
+      correlationId,
+      causationId: envelope.messageId,
+    };
+
+    let job: TranscodeJob;
+    try {
+      job = await this.jobFromRender(envelope, caller);
+    } catch (err) {
+      if (!(err instanceof ValidationError)) throw err;
+      return this.refuseRender(msg, envelope, err);
+    }
+
+    let outcome: 'applied' | 'duplicate' = 'applied';
+    await this.options.store.transaction(async (tx) => {
+      if (!(await tx.markSeen(msg.id))) {
+        outcome = 'duplicate';
+        return;
+      }
+      await tx.putJob(job);
+      await tx.enqueue(this.audit(caller, job, undefined, job, 'transcode.queued'));
+    });
+    return outcome;
+  }
+
+  /** The render job a command asks for — or a ValidationError naming why it cannot be one. */
+  private async jobFromRender(
+    envelope: Envelope<EventPayloads['editor.render.requested']>,
+    caller: Caller,
+  ): Promise<TranscodeJob> {
+    const command = envelope.payload;
+    if (!this.options.files) {
+      throw new ValidationError(
+        'a render reads its source from HSM, and this MTS has none configured',
+      );
+    }
+    const clips = command.timeline.clips.map((c) => ({
+      renditionRef: c.renditionRef,
+      inSec: c.inSec,
+      outSec: c.outSec,
+      ...(c.transitionIn !== undefined ? { transitionIn: c.transitionIn } : {}),
+      ...(c.filters !== undefined ? { filters: c.filters } : {}),
+    }));
+    const preset = await this.resolvePreset(envelope.channelId, command.outputProfile);
+    const refusal = renderRefusal(
+      { mediaKind: command.mediaKind, clips },
+      preset,
+      command.outputProfile,
+    );
+    if (refusal) throw new ValidationError(refusal);
+
+    const id = ulid();
+    const at = this.now().toISOString();
+    const render: RenderSpec = {
+      editProjectId: command.editProjectId,
+      sourceAssetId: command.sourceAssetId,
+      // renderRefusal admitted only these two.
+      mediaKind: command.mediaKind as RenderSpec['mediaKind'],
+      clips: clips.map(({ renditionRef, inSec, outSec }) => ({
+        renditionRef: renditionRef.trim(),
+        inSec,
+        outSec,
+      })),
+    };
+    return {
+      id,
+      channelId: envelope.channelId,
+      assetId: command.outputAssetId,
+      presetIds: [command.outputProfile],
+      // The source is fetched here at run time, named by the job, as an `inputFile` is.
+      inputPath: join(this.options.workRoot, 'inputs', id, 'source'),
+      render,
+      state: 'queued',
+      attempts: 0,
+      priority: 0,
+      createdBy: caller.userId,
+      createdAt: at,
+      updatedAt: at,
+      version: 1,
+      ...(caller.correlationId !== undefined ? { correlationId: caller.correlationId } : {}),
+      ...(caller.causationId !== undefined ? { causationId: caller.causationId } : {}),
+    };
+  }
+
+  /** A refused render, answered once: `transcode.failed` naming the project, nothing queued. */
+  private async refuseRender(
+    msg: Message,
+    envelope: Envelope<EventPayloads['editor.render.requested']>,
+    why: ValidationError,
+  ): Promise<'refused' | 'duplicate'> {
+    const answer: Caller = {
+      userId: 'mts',
+      channelId: envelope.channelId,
+      actorKind: 'service',
+      correlationId: envelope.correlationId ?? envelope.messageId,
+      causationId: envelope.messageId,
+    };
+    const requestedBy = envelope.payload.requestedBy ?? envelope.actor?.id;
+    let outcome: 'refused' | 'duplicate' = 'refused';
+    await this.options.store.transaction(async (tx) => {
+      if (!(await tx.markSeen(msg.id))) {
+        outcome = 'duplicate';
+        return;
+      }
+      await tx.enqueue(
+        this.record(answer, envelope.channelId, 'transcode.failed', {
+          assetId: envelope.payload.outputAssetId,
+          editProjectId: envelope.payload.editProjectId,
+          ...(requestedBy !== undefined ? { requestedBy } : {}),
+          error: { code: 'COMMAND_REFUSED', message: why.message, retryable: false },
+        } satisfies EventPayloads['transcode.failed']),
+      );
+    });
+    return outcome;
+  }
+
+  /**
+   * Cut the render's clips from the source and encode them with the output profile into one file:
+   * the rendered asset's `original`, checksummed and placed in HSM like every rendition.
+   */
+  private async produceRender(
+    job: TranscodeJob & { render: RenderSpec },
+    signal?: AbortSignal,
+  ): Promise<RenditionResult> {
+    const presetId = job.presetIds[0]!;
+    // Resolved again at run time, as every preset is: the channel's CURRENT definition.
+    const preset = await this.resolvePreset(job.channelId, presetId);
+    if (!preset) throw new TranscodeRefusal(`unknown output profile ${presetId}`);
+    const sourceHasAudio = await this.options.transcoder.hasAudio(job.inputPath).catch(() => false);
+    if (job.render.mediaKind === 'audio' && !sourceHasAudio) {
+      throw new TranscodeRefusal('an audio render needs a source with an audio stream');
+    }
+    const { inputs, args } = renderArgs(job.render.clips, job.inputPath, preset.args, {
+      mediaKind: job.render.mediaKind,
+      sourceHasAudio,
+    });
+    const outputPath = join(
+      this.options.workRoot,
+      'renditions',
+      job.id,
+      `render.${preset.extension}`,
+    );
+    await mkdir(dirname(outputPath), { recursive: true });
+    const output = await this.options.transcoder.run(
+      {
+        inputPath: job.inputPath,
+        inputs,
+        outputPath,
+        args,
+        durationSec: timelineSec(job.render.clips),
+      },
+      {
+        ...(signal ? { signal } : {}),
+        onProgress: (percent, speed) => void this.progress(job, preset, percent, speed),
+      },
+    );
+    return this.placeRendition(job, outputPath, {
+      kind: 'original',
+      profileId: preset.id,
+      still: false,
+      fileType: preset.extension,
+      producedBy: 'editor',
+      ...(output.durationSec !== undefined ? { durationSec: output.durationSec } : {}),
+      ...('encoder' in preset && preset.encoder !== undefined ? { encoder: preset.encoder } : {}),
+      ...('fallback' in preset && preset.fallback ? { fallback: true } : {}),
+    });
   }
 
   // --- reads -----------------------------------------------------------------
@@ -508,16 +728,36 @@ export class MtsService {
           job.inputPath,
         );
       }
+      if (job.render !== undefined) {
+        // A render's source is the SOURCE asset's file, not the job's asset (the one the render
+        // becomes, which has no file yet) — fetched under the job's channel all the same (#577).
+        if (!this.options.files) throw new Error('a render needs HSM, and none is configured');
+        const ref = parseRenditionRef(job.render.clips[0]!.renditionRef);
+        if (!ref) throw new TranscodeRefusal('the render names no file it can cut from');
+        await this.options.files.fetch(
+          job.channelId,
+          job.render.sourceAssetId,
+          ref.kind,
+          ref.variant,
+          job.inputPath,
+        );
+      }
     } catch (err) {
       return this.fail(job, err);
     }
-    // Once per job, before the first preset: what turns FFmpeg's `out_time` into a percentage.
-    // Unreadable is not a failure — the job runs without a progress bar.
-    const durationSec = await this.options.transcoder
-      .probeDuration(job.inputPath)
-      .catch(() => undefined);
     try {
-      for (const presetId of job.presetIds) {
+      if (job.render !== undefined) {
+        renditions.push(await this.produceRender({ ...job, render: job.render }, signal));
+      }
+      // Once per job, before the first preset: what turns FFmpeg's `out_time` into a percentage.
+      // Unreadable is not a failure — the job runs without a progress bar. (A render knows its
+      // length from the timeline, and has no presets left to run here.)
+      const presetIds = job.render !== undefined ? [] : job.presetIds;
+      const durationSec =
+        presetIds.length === 0
+          ? undefined
+          : await this.options.transcoder.probeDuration(job.inputPath).catch(() => undefined);
+      for (const presetId of presetIds) {
         // Resolved again at RUN time, not trusted from the enqueue: a profile can be edited or
         // disabled between the two, and the job uses the channel's CURRENT definition — as a
         // re-run would. One that no longer resolves is a refusal, not a TypeError in the loop.
@@ -546,10 +786,23 @@ export class MtsService {
       updatedAt: at,
       version: job.version + 1,
     };
-    if (job.inputFile !== undefined) {
+    if (job.inputFile !== undefined || job.render !== undefined) {
       // The fetched input was scratch; the renditions are HSM's now.
       await rm(dirname(job.inputPath), { recursive: true, force: true }).catch(() => undefined);
     }
+    // A render's asset is new media with nothing but its original: its first renditions are
+    // queued from that original in the same transaction, exactly as an ingest's are (EP-15.5).
+    const followUp =
+      job.render !== undefined
+        ? this.firstRenditionsJob({
+            channelId: job.channelId,
+            assetId: job.assetId,
+            mediaType: job.render.mediaKind,
+            createdBy: job.createdBy,
+            ...(job.correlationId !== undefined ? { correlationId: job.correlationId } : {}),
+            ...(job.causationId !== undefined ? { causationId: job.causationId } : {}),
+          })
+        : undefined;
     await this.options.store.transaction(async (tx) => {
       // Guarded by THIS lease, not only the state: a job swept and leased by another worker is
       // `running` again, and this completion must not land on that worker's lease.
@@ -558,12 +811,19 @@ export class MtsService {
         this.record(this.callerFor(job), job.channelId, 'transcode.completed', {
           jobId: completed.id,
           assetId: completed.assetId,
+          ...(job.render !== undefined ? { editProjectId: job.render.editProjectId } : {}),
           renditions: renditionsFor(completed),
         } satisfies EventPayloads['transcode.completed']),
       );
       await tx.enqueue(
         this.audit(this.callerFor(job), completed, job, completed, 'transcode.completed'),
       );
+      if (followUp) {
+        await tx.putJob(followUp);
+        await tx.enqueue(
+          this.audit(this.callerFor(job), followUp, undefined, followUp, 'transcode.queued'),
+        );
+      }
     });
     return 'completed';
   }
@@ -611,6 +871,7 @@ export class MtsService {
         kind: preset.kind,
         profileId: preset.id,
         still: preset.still === true,
+        fileType: preset.extension,
         // A still has no duration, and reporting 0 for one would put a zero-length clip in MAM.
         ...(!preset.still && output.durationSec !== undefined
           ? { durationSec: output.durationSec }
@@ -662,6 +923,7 @@ export class MtsService {
       kind: 'vtt-filmstrip',
       profileId: preset.id,
       still: true,
+      fileType: preset.extension,
       variant: 'sprite',
     });
 
@@ -673,6 +935,7 @@ export class MtsService {
       kind: 'vtt-filmstrip',
       profileId: preset.id,
       still: true,
+      fileType: 'vtt',
       variant: 'cues',
     });
     return [sprite, cues];
@@ -690,10 +953,14 @@ export class MtsService {
       kind: RenditionKind;
       profileId: string;
       still: boolean;
+      /** The container, as the extension MTS wrote — `Rendition.fileType`. */
+      fileType: string;
       variant?: string;
       durationSec?: number;
       encoder?: string;
       fallback?: boolean;
+      /** What made it, for HSM's provenance: a render's original is the editor's (EP-26.6). */
+      producedBy?: 'transcode' | 'editor';
     },
   ): Promise<RenditionResult> {
     const checksum = await sha256(localPath);
@@ -709,6 +976,7 @@ export class MtsService {
           kind: desc.kind,
           jobId: job.id,
           profile: desc.profileId,
+          ...(desc.producedBy !== undefined ? { producedBy: desc.producedBy } : {}),
           ...(desc.variant !== undefined ? { variant: desc.variant } : {}),
           ...(!desc.still && desc.durationSec !== undefined
             ? { technical: { durationSec: desc.durationSec } }
@@ -725,6 +993,7 @@ export class MtsService {
       presetId: desc.profileId,
       kind: desc.kind,
       ...(desc.variant !== undefined ? { variant: desc.variant } : {}),
+      fileType: desc.fileType,
       path,
       checksum: { algorithm: 'sha256', value: checksum },
       sizeBytes,
@@ -846,6 +1115,7 @@ export class MtsService {
           this.record(this.callerFor(job), job.channelId, 'transcode.failed', {
             jobId: after.id,
             assetId: after.assetId,
+            ...(job.render !== undefined ? { editProjectId: job.render.editProjectId } : {}),
             attempts: after.attempts,
             requestedBy: after.createdBy,
             error: {

@@ -29,6 +29,7 @@ import {
   runWorker,
   startIngestConsumer,
   startJobConsumer,
+  startRenderConsumer,
 } from './index.ts';
 
 const config = loadConfig({
@@ -235,6 +236,21 @@ async function startBroker(): Promise<void> {
     onOutcome: (subject, outcome) => log.info('ingest consumed', { subject, outcome }),
     onError: (err, msg) =>
       log.warn('ingest event refused', {
+        subject: msg.subject,
+        messageId: msg.id,
+        error: (err as Error).message,
+      }),
+  });
+
+  // EP-26.6: the media editor's renders, from MAM — queued as jobs, answered when refused.
+  startRenderConsumer({
+    broker,
+    service,
+    onQueued: (subject) => log.info('render queued', { subject }),
+    onDuplicate: (subject) => log.info('render command redelivered', { subject }),
+    onRefused: (subject) => log.warn('render refused, answered transcode.failed', { subject }),
+    onError: (err, msg) =>
+      log.warn('render command refused', {
         subject: msg.subject,
         messageId: msg.id,
         error: (err as Error).message,

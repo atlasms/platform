@@ -25,6 +25,7 @@ import {
   startCacheInvalidation,
   startFileMirror,
   startIngestConsumer,
+  startRenderOutcomeConsumer,
   startFacetProjector,
 } from './index.ts';
 import { PolicyClient } from '@atlas/policy/client';
@@ -227,6 +228,22 @@ async function startRelay(): Promise<void> {
     onApplied: (subject, outcome) => log.info('ingest consumed', { subject, outcome }),
     onError: (err, msg) =>
       log.warn('ingest consumer refused a message', {
+        subject: msg.subject,
+        messageId: msg.id,
+        error: (err as Error).message,
+      }),
+  });
+
+  // EP-26.8: a render MTS refused or gave up on fails its edit project (its success is a
+  // transcode.completed, which the file mirror above already routes to the render path).
+  startRenderOutcomeConsumer({
+    broker,
+    service,
+    onOutcome: (subject, outcome) => {
+      if (outcome !== 'skipped') log.info('render outcome consumed', { subject, outcome });
+    },
+    onError: (err, msg) =>
+      log.warn('render outcome consumer refused a message', {
         subject: msg.subject,
         messageId: msg.id,
         error: (err as Error).message,

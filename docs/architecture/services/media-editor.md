@@ -68,7 +68,9 @@ conform against camera-native formats. Live editing-while-ingest is an
 | `state` | `draft` → `rendering` → `rendered` / `failed` |
 | `timeline.clips[]` | ordered: `{ renditionRef, inSec, outSec, transitionIn?, filters[] }` — the **edit decision list** |
 | `outputProfile?` | MTS profile ([Tier-1 registry](../configuration-and-reference-data.md#22-tier-1--registries-the-important-middle)) for the render |
-| `renderJobId?`, `outputAssetId?` | set once a render is issued/completes |
+| `renderJobId?`, `outputAssetId?` | `outputAssetId` minted when a render is requested; `renderJobId` once MTS answers (§5.1) |
+| `targetAssetId?` | the asset the render becomes the next version of, when one was asked for (§5.1) |
+| `failure?`, `versionRefused?` | why the last render failed; why its version link could not be made (§5.1) |
 
 **Non-destructive (normative).** A clip references a source **rendition by id with in/out points**;
 the editor never rewrites source bytes. Rendering always **creates** a file (a new version of
@@ -116,6 +118,52 @@ sequenceDiagram
     MTS->>MAM: transcode.completed (new rendition + checksum)
     MAM->>MAM: attach as new version; EditProject.state = rendered
 ```
+
+### 5.1 The render, as decided in building it (EP-26.6 / EP-26.7)
+
+The sketch above left five things open. Decided here, built in MTS ([mts.md §13](mts.md#ep-266--rendering-an-edit-decision-list))
+and MAM ([mam.md §13ab](mam.md#13ab-as-built--ep-266--267-a-render-becomes-an-asset-of-its-own)):
+
+- **The render is new media, so it is an asset of its own.** This is the version chain's model
+  ([mam.md §13t](mam.md#13t-as-built--ep-276-the-version-chain)): new media is a new asset id. MAM
+  **mints that id when the render is requested** (`outputAssetId`, on the project and in the command),
+  because MAM owns asset ids, and because Studio can then follow the render's progress
+  (`transcode.progress.assetId`) the moment it asks. A render after a failure mints a fresh one. The
+  rendered file is that asset's **`original`**, placed in HSM under its id like an upload's. In the
+  same transaction that completes the render, MTS queues the new asset's first renditions from that
+  original (`FIRST_RENDITIONS`, as for an ingest), so the asset gets a proxy and a thumbnail like any other.
+- **A clip names a file of the source asset by kind:** `renditionRef` is `original`, `broadcast` or
+  `proxy`, optionally `kind/variant`. Studio scrubs the editing proxy and writes `original`: the
+  render is cut from the master (§7). **In v1 every clip draws from the same file.** A concat of
+  files with different picture sizes is not a cut, it is an FFmpeg error. The source must have that
+  file (422 at render otherwise).
+- **The output profile** is any MTS preset or profile (Tier-1) that is not a still, whose `requires`
+  matches the media kind: `broadcast` or `proxy` for video, `audio-proxy` for audio. **A photo is
+  not rendered in v1** (422), and neither is a clip with a transition or filter **until EP-26.5**
+  brings the allowlist (422): until then MAM would store a name MTS cannot render.
+- **The FFmpeg shape:** one input per clip, input-seeked (`-ss in -t (out−in)`). Accurate on a
+  re-encode, it decodes nothing before the in-point, unlike a `trim` filter. The clips are joined
+  by the `concat` filter, and the profile's own `-vf` is applied after the join. Audio is carried
+  only when the source has an audio stream; a silent source renders a silent video, never an error.
+- **The result, in ONE MAM transaction:** `transcode.completed` carries `editProjectId`, and MAM
+  then creates the asset (state `created`, its file row, `asset.created`) and moves the project to
+  `rendered` with `renderJobId`/`outputAssetId`, with both audit deltas and the seen-mark.
+  - **With `targetAssetId`** (Studio passes the source), the new asset is made that asset's next
+    version: the version chain's copy and link (`replacesId`/`replacedById`, `asset.replaced`),
+    committed together.
+  - **Without it**, the asset stands alone. It takes the source's metadata, title suffixed
+    `(edit)`, so it inherits the source's category scope (§10) rather than landing unscoped.
+  - **A link that became impossible** while the render ran (someone versioned the target first) is
+    no reason to lose the render: the asset is created unlinked, and the project says why
+    (`versionRefused`).
+- **Failure** (26.8's backend): `transcode.failed` with `editProjectId` covers a refused command,
+  a refused input and exhausted retries alike. It moves the project to `failed` with the reason
+  (`failure: { code, message }`). The timeline is kept, a save returns the project to `draft`, and
+  Notifications already tells `requestedBy` (EP-25.5).
+- **Authorization is taken when the render is requested.** That needs `asset:write` on `core` of
+  the source and, with a `targetAssetId`, of the target too. The target is also checked there: it
+  must be the newest in its chain and of the same media type. A doomed link is a 409/422 at the
+  request, not a failed render minutes later. The completion is the platform's own write.
 
 ## 6. Key flows
 

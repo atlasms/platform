@@ -9,6 +9,7 @@
   "properties": {
     "assetId": { "$ref": "../common.schema.json#/$defs/Ulid" },
     "jobId": { "$ref": "../common.schema.json#/$defs/Ulid" },
+    "editProjectId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "the render (EP-26.6) that failed: present only when the failed job or refused command was an `editor.render.requested`, where `assetId` is the command's `outputAssetId`. MAM moves the project to `failed` (media-editor.md §5.1)." },
     "attempts": { "type": "integer", "minimum": 1 },
     "requestedBy": { "type": "string", "description": "Who asked for the transcode — the job's creator: a user, or a service (bms, rim). Notifications tells a user that it failed (EP-25.5); a service is told nothing." },
     "error": { "$ref": "../common.schema.json#/$defs/Error" }

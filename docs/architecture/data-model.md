@@ -198,12 +198,14 @@ airings would exceed it) — a rights guard alongside the approved-and-not-expir
 The [media editor](services/media-editor.md)'s durable artifact — an **edit decision list** over one
 asset's renditions, not a new mechanism. `id, channelId, sourceAssetId, mediaKind (video/audio/photo),
 state (draft→rendering→rendered/failed), timeline{ clips[]: {renditionRef, inSec, outSec, transitionIn?,
-filters[]} }, outputProfile?, renderJobId?, outputAssetId?` in MAM's **document store** beside
-`AssetExtended`.
+filters[]} }, outputProfile?, renderJobId?, outputAssetId?, targetAssetId?, renderRequestedBy?,
+failure?, versionRefused?` in MAM's **document store** beside `AssetExtended`.
 
-**Non-destructive:** clips reference source renditions by id + in/out; a **render** produces a
-**new** file (a new [version](#17-versions-media-file-changes-vs-metadata-edits) of `sourceAssetId`,
-or a new asset), via `editor.render.requested → MTS → transcode.completed`. The timeline is
+**Non-destructive:** clips reference a file of the source by kind (`renditionRef`) + in/out; a
+**render** produces a **new asset** — its id (`outputAssetId`) minted at the request, the rendered
+file its `original` — standing alone or made the next
+[version](#17-versions-media-file-changes-vs-metadata-edits) of `targetAssetId`, via
+`editor.render.requested → MTS → transcode.completed` ([media-editor.md §5.1](services/media-editor.md#51-the-render-as-decided-in-building-it-ep-266--ep-267)). The timeline is
 re-openable; the rendered file is derived from it. Participates in the normal audit/diff history.
 
 ## 2. The Category aggregate

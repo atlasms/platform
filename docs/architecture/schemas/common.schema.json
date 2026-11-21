@@ -44,6 +44,7 @@
         },
         "path": { "type": "string", "description": "HSM-resolved logical path." },
         "checksum": { "$ref": "#/$defs/Checksum" },
+        "fileType": { "type": "string", "pattern": "^[a-z0-9]{1,10}$", "description": "The container, as a file extension (`mp4`, `mxf`, `m4a`, `jpg`, `vtt`) — what MTS wrote. HSM's path names no format, and an asset made from a rendition (a render, EP-26.6) takes its `fileType` from here." },
         "sizeBytes": { "type": "integer", "minimum": 0 },
         "durationSec": { "type": "number", "minimum": 0 }
       }

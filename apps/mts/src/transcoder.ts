@@ -18,8 +18,22 @@
 import { spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 
+/** One input of a multi-input run, seeked at the INPUT (`-ss`/`-t` before `-i`). */
+export interface TranscodeInput {
+  path: string;
+  /** Where to start reading, in seconds. Accurate on a re-encode, and nothing before it is decoded. */
+  seekSec?: number;
+  /** How much of it to read, in seconds. */
+  durationSec?: number;
+}
+
 export interface TranscodeSpec {
   inputPath: string;
+  /**
+   * Several inputs instead of `inputPath` (a render, EP-26.6: one per clip). The `args` then name
+   * them by index — `-filter_complex` and `-map` — and `inputPath` is only what the error says.
+   */
+  inputs?: readonly TranscodeInput[];
   outputPath: string;
   /** The arguments between input and output — the preset's. */
   args: readonly string[];
@@ -63,6 +77,12 @@ export interface Transcoder {
    * a progress bar is still a transcode.
    */
   probeDuration(inputPath: string): Promise<number | undefined>;
+  /**
+   * Does the input carry an audio stream? A render (EP-26.6) joins clips with the `concat` filter,
+   * which must be told how many audio streams each segment has — and a silent source asked for one
+   * is an FFmpeg error, not a silent output. Unreadable reads as no audio.
+   */
+  hasAudio(inputPath: string): Promise<boolean>;
   /**
    * Can this node actually encode with `encoder` (e.g. `h264_nvenc`)? Decided by a one-frame test
    * encode, not by `-encoders`: a build that LISTS NVENC on a node without the card is the normal
@@ -128,8 +148,7 @@ export function ffmpegTranscoder(options: FfmpegOptions = {}): Transcoder {
         'error',
         '-progress',
         'pipe:1',
-        '-i',
-        spec.inputPath,
+        ...inputArgs(spec),
         ...spec.args,
         spec.outputPath,
       ];
@@ -250,6 +269,31 @@ export function ffmpegTranscoder(options: FfmpegOptions = {}): Transcoder {
       });
     },
 
+    async hasAudio(inputPath) {
+      return new Promise<boolean>((resolve) => {
+        let out = '';
+        const child = spawn(
+          probeBinary,
+          [
+            '-v',
+            'error',
+            '-select_streams',
+            'a',
+            '-show_entries',
+            'stream=index',
+            '-of',
+            'csv=p=0',
+            inputPath,
+          ],
+          { stdio: ['ignore', 'pipe', 'ignore'] },
+        );
+        child.stdout?.setEncoding('utf8');
+        child.stdout?.on('data', (chunk: string) => (out += chunk));
+        child.on('error', () => resolve(false));
+        child.on('close', (code) => resolve(code === 0 && out.trim() !== ''));
+      });
+    },
+
     encoderUsable(encoder) {
       let answer = usable.get(encoder);
       if (!answer) {
@@ -290,4 +334,23 @@ export function ffmpegTranscoder(options: FfmpegOptions = {}): Transcoder {
       });
     },
   };
+}
+
+/** The `-i` arguments: one input, or several, each seeked at the input (a render's clips). */
+export function inputArgs(spec: Pick<TranscodeSpec, 'inputPath' | 'inputs'>): string[] {
+  if (spec.inputs === undefined || spec.inputs.length === 0) return ['-i', spec.inputPath];
+  return spec.inputs.flatMap((input) => [
+    ...(input.seekSec !== undefined ? ['-ss', seconds(input.seekSec)] : []),
+    ...(input.durationSec !== undefined ? ['-t', seconds(input.durationSec)] : []),
+    '-i',
+    input.path,
+  ]);
+}
+
+/**
+ * Seconds as FFmpeg reads them: fixed to the microsecond, never exponent notation — `1e-7` is not
+ * a time FFmpeg parses, and a float's shortest string can be one.
+ */
+function seconds(value: number): string {
+  return value.toFixed(6);
 }

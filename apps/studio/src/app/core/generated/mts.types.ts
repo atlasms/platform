@@ -18,6 +18,13 @@ export interface Job {
     kind: 'original' | 'proxy' | 'broadcast' | 'thumbnail' | 'vtt-filmstrip' | 'hover-preview';
     variant?: string;
   };
+  /** Present on a RENDER job (EP-26.6; media-editor.md §5.1) — created from `editor.render.requested`, never over HTTP. Its `assetId` is the rendered asset (the command's `outputAssetId`), its one preset the output profile, and its output that asset's `original`; the clips are cut from the source asset's file named by `renditionRef`. */
+  render?: {
+    editProjectId: Ulid;
+    sourceAssetId: Ulid;
+    mediaKind: 'video' | 'audio';
+    clips: { renditionRef: string; inSec: number; outSec: number }[];
+  };
   state: 'queued' | 'running' | 'completed' | 'failed' | 'dead-letter';
   /** Attempts started. An attempt interrupted by a drain is given back. */
   attempts: number;
@@ -40,7 +47,7 @@ export interface Job {
   version: number;
   /** The request or message chain the job belongs to. Every event the job causes carries it, including the ones the worker emits minutes later. */
   correlationId?: string;
-  /** The transcode.job.create message that created the job. Absent for a job created over HTTP, which no message caused. */
+  /** The message that created the job — a transcode.job.create, an ingest.accepted, an editor.render.requested, or for the first renditions of a render the render job's own cause. Absent for a job created over HTTP, which no message caused. */
   causationId?: string;
 }
 
