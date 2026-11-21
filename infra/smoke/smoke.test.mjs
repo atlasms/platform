@@ -3835,7 +3835,7 @@ test('smoke: EP-26.6/26.7 — an edit is rendered by FFmpeg into the source’s 
   assert.ok(Math.abs(made.durationSec - 1.2) < 0.1, `the edit's length: ${made.durationSec}`);
   const chain = json(await get(`/api/v1/assets/${outputAssetId}/versions`, { headers: fresh }));
   assert.deepEqual(
-    chain.map((a) => a.id),
+    chain.items.map((a) => a.id),
     [sourceId, outputAssetId],
   );
   const location = json(await get(`/api/v1/assets/${outputAssetId}/location`, { headers }));
