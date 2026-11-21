@@ -21,7 +21,7 @@
     "@atlas/policy": "*",
     "@atlas/service-kit": "*",
     "fastify": "^5.12.8",
-    "jose": "^6.2.16"
+    "jose": "^6.2.17"
   },
   "devDependencies": {
     "tsx": "^4.23.13"
