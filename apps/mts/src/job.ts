@@ -39,6 +39,12 @@ export interface RenderClip {
   renditionRef: string;
   inSec: number;
   outSec: number;
+  /** The transition in from the clip before (EP-26.5; Tier 0) — absent is a cut. */
+  transitionIn?: string;
+  /** How long it overlaps the clip before; 0.5 s when absent. */
+  transitionSec?: number;
+  /** Filters on this clip, in order (EP-26.5; Tier 0). */
+  filters?: string[];
 }
 
 /**

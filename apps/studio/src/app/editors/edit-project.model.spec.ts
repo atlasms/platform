@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { EditProject, FileRef } from '../core/generated/mam.types.ts';
 import {
   changed,
+  filtersFor,
   lengthMs,
   moved,
   newRow,
@@ -9,6 +10,8 @@ import {
   refsOf,
   rowsOf,
   timelineOf,
+  toggled,
+  transitionsFor,
 } from './edit-project.model.ts';
 
 const project = (clips: EditProject['timeline']['clips'], outputProfile?: string): EditProject =>
@@ -61,7 +64,7 @@ describe('edit-project.model', () => {
     ]);
     expect(timelineOf(rows)).toEqual({ timeline: p.timeline });
     expect(changed(rows, undefined, p)).toBe(false);
-    expect(lengthMs(rows)).toBe(61_750);
+    expect(lengthMs(rows)).toBe(61_750 - 500); // the dissolve overlaps its clips by 0.5 s
   });
 
   it('refuses a timecode that is not one, and an out before its in, at MAM’s paths', () => {
@@ -94,9 +97,44 @@ describe('edit-project.model', () => {
       renditionRef: 'proxy',
       in: '00:00:08.000',
       out: '',
+      transitionSec: '',
+      filters: [],
     });
     expect(newRow([], ['original', 'proxy'], 'n').renditionRef).toBe('original');
     expect(moved(['a', 'b', 'c'], 0, -1)).toEqual(['a', 'b', 'c']);
     expect(moved(['a', 'b', 'c'], 2, -1)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('EP-26.5: offers the Tier-0 transitions and filters the media can take — sound only for audio', () => {
+    expect(transitionsFor('video')).toEqual(['dissolve', 'fade-black', 'wipe-left', 'wipe-right']);
+    expect(transitionsFor('audio')).toEqual(['dissolve', 'fade-black']);
+    expect(filtersFor('video')).toContain('grayscale');
+    expect(filtersFor('audio')).toEqual(['mute']);
+    expect(toggled(['sepia'], 'blur')).toEqual(['sepia', 'blur']);
+    expect(toggled(['sepia', 'blur'], 'sepia')).toEqual(['blur']);
+  });
+
+  it('EP-26.5: sends a transition, its overlap and filters; shortens the length by the overlap; dirty on each', () => {
+    const p = project([
+      { renditionRef: 'original', inSec: 0, outSec: 4, filters: ['sepia'] },
+      {
+        renditionRef: 'original',
+        inSec: 10,
+        outSec: 14,
+        transitionIn: 'dissolve',
+        transitionSec: 1,
+      },
+    ]);
+    const rows = rowsOf(p, (i) => `k${i}`);
+    expect(rows[1]!.transitionSec).toBe('1');
+    expect(timelineOf(rows)).toEqual({ timeline: p.timeline });
+    expect(changed(rows, undefined, p)).toBe(false);
+    expect(lengthMs(rows)).toBe(7_000);
+    expect(lengthMs([rows[0]!, { ...rows[1]!, transitionSec: '' }])).toBe(7_500);
+    expect(changed([{ ...rows[0]!, filters: [] }, rows[1]!], undefined, p)).toBe(true);
+    expect(changed([rows[0]!, { ...rows[1]!, transitionSec: '0.5' }], undefined, p)).toBe(true);
+    expect(timelineOf([rows[0]!, { ...rows[1]!, transitionSec: 'soon' }])).toEqual({
+      problems: { 'timeline/clips/1/transitionSec': 'seconds' },
+    });
   });
 });

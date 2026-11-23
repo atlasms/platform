@@ -2,7 +2,13 @@
 // what is sent, what is offered. A clip is a span of one file of the source asset: in and out typed
 // as timecodes (HH:MM:SS.mmm, MM:SS, or seconds), kept by MAM in SECONDS (the proxy's frames are the
 // edit grid, ADR-0011 — 26.4's scrubbing snaps to them; typing is to the millisecond).
+//
+// EP-26.5: each clip may also take a transition in from the clip before (overlapping it for a
+// number of seconds) and filters, both from the Tier-0 sets in `@atlas/contracts` — the very values
+// MAM validates and MTS renders (media-editor.md §5.3). The form offers only what the media can
+// take: an audio timeline gets the transitions and filters that act on sound.
 
+import { ClipFilterValues, TransitionValues } from '@atlas/contracts/events';
 import type { EditProject, FileRef } from '../core/generated/mam.types.ts';
 import { formatTimecode, parseTimecode } from './shotlist.model.ts';
 
@@ -15,9 +21,39 @@ export interface ClipRow {
   renditionRef: string;
   in: string;
   out: string;
-  /** Kept as they were: transitions and filters are EP-26.5's, never dropped by a save here. */
-  transitionIn?: string;
-  filters?: string[];
+  /** The transition in from the clip before; absent is a cut (EP-26.5). */
+  transitionIn?: Transition;
+  /** Its overlap in seconds, as typed; empty is MAM's default (0.5 s). */
+  transitionSec: string;
+  /** Filters on this clip, in the order they apply. */
+  filters: Filter[];
+}
+
+type Transition = NonNullable<Clip['transitionIn']>;
+type Filter = NonNullable<Clip['filters']>[number];
+
+/** The overlap a transition takes when none is typed — MAM's and MTS's default (media-editor.md §5.3). */
+export const DEFAULT_TRANSITION_SEC = 0.5;
+const AUDIO_TRANSITIONS: readonly string[] = ['dissolve', 'fade-black'];
+const AUDIO_FILTERS: readonly string[] = ['mute'];
+
+/** The transitions this kind of media can take, in the Tier-0 set's order. */
+export function transitionsFor(mediaKind: EditProject['mediaKind']): Transition[] {
+  return TransitionValues.filter(
+    (t) => mediaKind !== 'audio' || AUDIO_TRANSITIONS.includes(t),
+  ) as Transition[];
+}
+
+/** The filters this kind of media can take, in the Tier-0 set's order. */
+export function filtersFor(mediaKind: EditProject['mediaKind']): Filter[] {
+  return ClipFilterValues.filter(
+    (f) => mediaKind !== 'audio' || AUDIO_FILTERS.includes(f),
+  ) as Filter[];
+}
+
+/** A filter added at the end, or removed — the order of the others kept. */
+export function toggled(filters: readonly Filter[], filter: Filter): Filter[] {
+  return filters.includes(filter) ? filters.filter((f) => f !== filter) : [...filters, filter];
 }
 
 /** The files a render can cut from, in the order offered (media-editor.md §5.1). */
@@ -54,7 +90,8 @@ export function rowsOf(project: EditProject, key: (i: number) => string): ClipRo
     in: formatTimecode(Math.round(c.inSec * 1000)),
     out: formatTimecode(Math.round(c.outSec * 1000)),
     ...(c.transitionIn !== undefined ? { transitionIn: c.transitionIn } : {}),
-    ...(c.filters !== undefined ? { filters: c.filters } : {}),
+    transitionSec: c.transitionSec !== undefined ? String(c.transitionSec) : '',
+    filters: [...(c.filters ?? [])],
   }));
 }
 
@@ -67,6 +104,8 @@ export function newRow(rows: readonly ClipRow[], refs: readonly string[], key: s
     renditionRef: last?.renditionRef ?? refs[0] ?? 'original',
     in: formatTimecode(from),
     out: '',
+    transitionSec: '',
+    filters: [],
   };
 }
 
@@ -94,6 +133,13 @@ export function timelineOf(
     const outMs = parseTimecode(r.out);
     if (inMs === undefined) problems[`timeline/clips/${i}/inSec`] = 'timecode';
     if (outMs === undefined) problems[`timeline/clips/${i}/outSec`] = 'timecode';
+    // An overlap is seconds, typed: empty is the default; anything else must be a number.
+    let transitionSec: number | undefined;
+    if (r.transitionIn !== undefined && r.transitionSec.trim() !== '') {
+      transitionSec = Number(r.transitionSec);
+      if (!Number.isFinite(transitionSec))
+        problems[`timeline/clips/${i}/transitionSec`] = 'seconds';
+    }
     if (inMs !== undefined && outMs !== undefined) {
       if (outMs <= inMs) problems[`timeline/clips/${i}/outSec`] = 'order';
       clips.push({
@@ -101,19 +147,31 @@ export function timelineOf(
         inSec: inMs / 1000,
         outSec: outMs / 1000,
         ...(r.transitionIn !== undefined ? { transitionIn: r.transitionIn } : {}),
-        ...(r.filters !== undefined ? { filters: r.filters } : {}),
+        ...(transitionSec !== undefined && Number.isFinite(transitionSec) ? { transitionSec } : {}),
+        ...(r.filters.length > 0 ? { filters: [...r.filters] } : {}),
       });
     }
   });
   return Object.keys(problems).length > 0 ? { problems } : { timeline: { clips } };
 }
 
-/** The timeline's length in milliseconds, from what parses — the running total the form shows. */
+/**
+ * The timeline's length in milliseconds, from what parses — the running total the form shows. A
+ * transition overlaps two clips, so it shortens the timeline by its overlap, as the render will.
+ */
 export function lengthMs(rows: readonly ClipRow[]): number {
-  return rows.reduce((sum, r) => {
+  return rows.reduce((sum, r, i) => {
     const a = parseTimecode(r.in);
     const b = parseTimecode(r.out);
-    return a !== undefined && b !== undefined && b > a ? sum + (b - a) : sum;
+    if (a === undefined || b === undefined || b <= a) return sum;
+    const typed = Number(r.transitionSec);
+    const overlap =
+      i > 0 && r.transitionIn !== undefined
+        ? (r.transitionSec.trim() !== '' && Number.isFinite(typed)
+            ? typed
+            : DEFAULT_TRANSITION_SEC) * 1000
+        : 0;
+    return sum + (b - a) - overlap;
   }, 0);
 }
 
@@ -134,7 +192,10 @@ export function changed(
       (c, i) =>
         c.renditionRef !== b[i]!.renditionRef ||
         Math.abs(c.inSec - b[i]!.inSec) > 0.0005 ||
-        Math.abs(c.outSec - b[i]!.outSec) > 0.0005,
+        Math.abs(c.outSec - b[i]!.outSec) > 0.0005 ||
+        c.transitionIn !== b[i]!.transitionIn ||
+        c.transitionSec !== b[i]!.transitionSec ||
+        (c.filters ?? []).join(',') !== (b[i]!.filters ?? []).join(','),
     )
   );
 }

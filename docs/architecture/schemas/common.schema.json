@@ -117,6 +117,8 @@
       "enum": ["user", "technical", "ai"],
       "description": "Who or what set an asset field (FR-MAM-8, EP-27.5): a person, a measurement of the media (the probe, a transcode), or AI enrichment. Ranked user > technical > ai: a lower-ranked value never replaces a higher one, it is held beside it (mam.md §13u)."
     },
+    "Transition": { "enum": ["dissolve", "fade-black", "wipe-left", "wipe-right"], "description": "A media-editor clip's transition in from the clip before it (EP-26.5; media-editor.md §5.3). Absent is a cut. Tier 0: each value is an FFmpeg graph MTS implements — never raw FFmpeg." },
+    "ClipFilter": { "enum": ["grayscale", "sepia", "brighten", "darken", "contrast", "blur", "sharpen", "mute"], "description": "A filter on one media-editor clip (EP-26.5; media-editor.md §5.3), applied in the order listed. `mute` is the only one an audio timeline takes. Tier 0: each value is an FFmpeg filter MTS implements — never raw FFmpeg." },
     "AiTier": {
       "enum": ["online", "offline"],
       "description": "Which AI tier ran: online (interactive, bounded latency) or offline (batch). Not the HSM storage Tier."

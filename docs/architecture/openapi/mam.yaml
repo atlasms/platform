@@ -1143,8 +1143,9 @@ components:
                   renditionRef: { type: string }
                   inSec: { type: number }
                   outSec: { type: number }
-                  transitionIn: { type: string }
-                  filters: { type: array, items: { type: string } }
+                  transitionIn: { type: string, enum: [dissolve, fade-black, wipe-left, wipe-right], description: 'The transition in from the clip before (EP-26.5; media-editor.md §5.3) — absent is a cut, never on the first clip. The set is ../schemas/common.schema.json#/$defs/Transition (Tier 0).' }
+                  transitionSec: { type: number, minimum: 0.04, maximum: 5, description: 'How long the transition overlaps the clip before; shorter than both clips; 0.5 when absent.' }
+                  filters: { type: array, uniqueItems: true, description: 'Applied in order. The set is ../schemas/common.schema.json#/$defs/ClipFilter (Tier 0); an audio timeline takes only mute.', items: { type: string, enum: [grayscale, sepia, brighten, darken, contrast, blur, sharpen, mute] } }
         outputProfile: { type: string, description: 'MTS profile (Tier-1 registry) a render encodes with; settable on the project or given at render.' }
         renderJobId: { allOf: [{ $ref: '#/components/schemas/Ulid' }], description: 'The MTS job that rendered it — set when MTS answers (media-editor.md §5.1).' }
         outputAssetId: { allOf: [{ $ref: '#/components/schemas/Ulid' }], description: 'The asset the last render becomes — minted when the render is requested, so its progress can be followed (transcode.progress carries it as assetId); the asset exists once the project is rendered.' }
