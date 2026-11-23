@@ -21,6 +21,8 @@ import { WebSocketService } from '../core/websocket.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
 import {
   changed,
+  DEFAULT_TRANSITION_SEC,
+  filtersFor,
   lengthMs,
   moved,
   newRow,
@@ -29,6 +31,8 @@ import {
   refsOf,
   rowsOf,
   timelineOf,
+  toggled,
+  transitionsFor,
   type ClipRow,
 } from './edit-project.model.ts';
 import { formatTimecode } from './shotlist.model.ts';
@@ -117,6 +121,8 @@ import { formatTimecode } from './shotlist.model.ts';
                 <th>{{ locale.t('editProject.file') }}</th>
                 <th>{{ locale.t('editProject.in') }}</th>
                 <th>{{ locale.t('editProject.out') }}</th>
+                <th>{{ locale.t('editProject.transition') }}</th>
+                <th>{{ locale.t('editProject.filters') }}</th>
                 <th>
                   <span class="sr-only">{{ locale.t('editProject.arrange') }}</span>
                 </th>
@@ -163,6 +169,63 @@ import { formatTimecode } from './shotlist.model.ts';
                       (input)="edit(i, 'out', $any($event.target).value)"
                     />
                     @if (problem(i, 'outSec'); as p) {
+                      <p class="field-error">{{ p }}</p>
+                    }
+                  </td>
+                  <td class="transition">
+                    <!-- The first clip has nothing to transition from (media-editor.md §5.3). -->
+                    <select
+                      [attr.aria-label]="locale.t('editProject.transition')"
+                      [disabled]="first && !row.transitionIn"
+                      (change)="setTransition(i, $any($event.target).value)"
+                    >
+                      <option value="" [selected]="!row.transitionIn">
+                        {{ locale.t('editProject.cut') }}
+                      </option>
+                      @for (t of transitions(); track t) {
+                        <option [value]="t" [selected]="t === row.transitionIn">
+                          {{ locale.t('editProject.transitions.' + t) }}
+                        </option>
+                      }
+                    </select>
+                    @if (row.transitionIn) {
+                      <input
+                        class="secs"
+                        inputmode="decimal"
+                        [attr.aria-label]="locale.t('editProject.transitionSec')"
+                        [placeholder]="defaultSec"
+                        [value]="row.transitionSec"
+                        [attr.aria-invalid]="problem(i, 'transitionSec') ? 'true' : null"
+                        (input)="setTransitionSec(i, $any($event.target).value)"
+                      />
+                      <span class="muted">s</span>
+                    }
+                    @if (problem(i, 'transitionIn'); as p) {
+                      <p class="field-error">{{ p }}</p>
+                    }
+                    @if (problem(i, 'transitionSec'); as p) {
+                      <p class="field-error">{{ p }}</p>
+                    }
+                  </td>
+                  <td class="filters">
+                    <details>
+                      <summary>
+                        {{
+                          row.filters.length > 0 ? filterNames(row) : locale.t('editProject.none')
+                        }}
+                      </summary>
+                      @for (f of filterChoices(); track f) {
+                        <label>
+                          <input
+                            type="checkbox"
+                            [checked]="row.filters.includes(f)"
+                            (change)="toggleFilter(i, f)"
+                          />
+                          {{ locale.t('editProject.filterNames.' + f) }}
+                        </label>
+                      }
+                    </details>
+                    @if (problem(i, 'filters'); as p) {
                       <p class="field-error">{{ p }}</p>
                     }
                   </td>
@@ -296,6 +359,17 @@ import { formatTimecode } from './shotlist.model.ts';
       width: 8.5rem;
       font-family: ui-monospace, monospace;
     }
+    .secs {
+      width: 3.5rem;
+      margin-inline-start: var(--space-1);
+    }
+    .filters details {
+      font-size: 0.8125rem;
+    }
+    .filters label {
+      display: block;
+      white-space: nowrap;
+    }
     .arrange {
       white-space: nowrap;
     }
@@ -358,6 +432,14 @@ export class EditProjectEditor {
   protected readonly loadError = signal('');
 
   protected readonly refs = computed(() => refsOf(this.files()));
+  /** EP-26.5: what this media can take — the Tier-0 sets, less what has no meaning for audio. */
+  protected readonly transitions = computed(() =>
+    transitionsFor(this.project()?.mediaKind ?? 'video'),
+  );
+  protected readonly filterChoices = computed(() =>
+    filtersFor(this.project()?.mediaKind ?? 'video'),
+  );
+  protected readonly defaultSec = String(DEFAULT_TRANSITION_SEC);
   protected readonly profiles = computed(() =>
     profilesFor(this.project()?.mediaKind ?? 'video', this.project()?.outputProfile),
   );
@@ -429,11 +511,45 @@ export class EditProjectEditor {
     return refs.includes(row.renditionRef) ? refs : [row.renditionRef, ...refs];
   }
 
-  protected problem(i: number, field: 'renditionRef' | 'inSec' | 'outSec'): string | undefined {
+  protected problem(
+    i: number,
+    field: 'renditionRef' | 'inSec' | 'outSec' | 'transitionIn' | 'transitionSec' | 'filters',
+  ): string | undefined {
     const p = this.problems()[`timeline/clips/${i}/${field}`];
     if (p === 'timecode') return this.locale.t('editProject.badTimecode');
     if (p === 'order') return this.locale.t('editProject.outBeforeIn');
+    if (p === 'seconds') return this.locale.t('editProject.badSeconds');
     return p;
+  }
+
+  /** EP-26.5: a transition in from the clip before, or a cut (''). */
+  protected setTransition(i: number, value: string): void {
+    this.rows.update((rows) =>
+      rows!.map((r, j) => {
+        if (j !== i) return r;
+        const { transitionIn: _t, ...rest } = r;
+        return value === ''
+          ? { ...rest, transitionSec: '' }
+          : { ...rest, transitionIn: value as NonNullable<ClipRow['transitionIn']> };
+      }),
+    );
+    this.markDirty();
+  }
+
+  protected setTransitionSec(i: number, value: string): void {
+    this.rows.update((rows) => rows!.map((r, j) => (j === i ? { ...r, transitionSec: value } : r)));
+    this.markDirty();
+  }
+
+  protected toggleFilter(i: number, filter: ClipRow['filters'][number]): void {
+    this.rows.update((rows) =>
+      rows!.map((r, j) => (j === i ? { ...r, filters: toggled(r.filters, filter) } : r)),
+    );
+    this.markDirty();
+  }
+
+  protected filterNames(row: ClipRow): string {
+    return row.filters.map((f) => this.locale.t('editProject.filterNames.' + f)).join(', ');
   }
 
   protected edit(i: number, field: 'renditionRef' | 'in' | 'out', value: string): void {

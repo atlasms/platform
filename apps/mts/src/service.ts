@@ -477,6 +477,7 @@ export class MtsService {
       inSec: c.inSec,
       outSec: c.outSec,
       ...(c.transitionIn !== undefined ? { transitionIn: c.transitionIn } : {}),
+      ...(c.transitionSec !== undefined ? { transitionSec: c.transitionSec } : {}),
       ...(c.filters !== undefined ? { filters: c.filters } : {}),
     }));
     const preset = await this.resolvePreset(envelope.channelId, command.outputProfile);
@@ -494,10 +495,13 @@ export class MtsService {
       sourceAssetId: command.sourceAssetId,
       // renderRefusal admitted only these two.
       mediaKind: command.mediaKind as RenderSpec['mediaKind'],
-      clips: clips.map(({ renditionRef, inSec, outSec }) => ({
+      clips: clips.map(({ renditionRef, inSec, outSec, transitionIn, transitionSec, filters }) => ({
         renditionRef: renditionRef.trim(),
         inSec,
         outSec,
+        ...(transitionIn !== undefined ? { transitionIn } : {}),
+        ...(transitionSec !== undefined ? { transitionSec } : {}),
+        ...(filters !== undefined && filters.length > 0 ? { filters } : {}),
       })),
     };
     return {

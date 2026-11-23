@@ -13,6 +13,7 @@
 //  - audio carried only when the source HAS it: `concat` must be told each segment's stream count,
 //    and asking a silent source for an audio stream is an error, not silence.
 
+import { ClipFilterValues, TransitionValues } from '@atlas/contracts';
 import type { RenderClip } from './job.ts';
 import type { Preset } from './preset.ts';
 import type { TranscodeInput } from './transcoder.ts';
@@ -32,10 +33,79 @@ export function parseRenditionRef(ref: string): { kind: string; variant?: string
   return match[2] !== undefined ? { kind, variant: match[2] } : { kind };
 }
 
-/** The clip fields a v1 render cannot honour yet: transitions and filters are EP-26.5's. */
-export interface ClipIn extends RenderClip {
-  transitionIn?: string;
-  filters?: string[];
+/** A clip as a command carries it — the same shape as a job's. */
+export type ClipIn = RenderClip;
+
+/** A transition's overlap when none is given, and its bounds (media-editor.md §5.3). */
+export const DEFAULT_TRANSITION_SEC = 0.5;
+const MIN_TRANSITION_SEC = 0.04;
+const MAX_TRANSITION_SEC = 5;
+
+/**
+ * Each Tier-0 transition as FFmpeg draws it (media-editor.md §5.3): the `xfade` transition for the
+ * picture; the sound always crossfades (`acrossfade`). A wipe has no meaning for audio.
+ */
+export const TRANSITION_XFADE: Readonly<Record<string, string>> = {
+  dissolve: 'dissolve',
+  'fade-black': 'fadeblack',
+  'wipe-left': 'wipeleft',
+  'wipe-right': 'wiperight',
+};
+const AUDIO_TRANSITIONS: readonly string[] = ['dissolve', 'fade-black'];
+
+/** Each Tier-0 filter as a FIXED FFmpeg filter — on the picture, or (`mute`) on the sound. */
+export const FILTER_GRAPH: Readonly<Record<string, { video?: string; audio?: string }>> = {
+  grayscale: { video: 'hue=s=0' },
+  sepia: { video: 'colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131' },
+  brighten: { video: 'eq=brightness=0.08' },
+  darken: { video: 'eq=brightness=-0.08' },
+  contrast: { video: 'eq=contrast=1.2' },
+  blur: { video: 'gblur=sigma=4' },
+  sharpen: { video: 'unsharp=5:5:1.0' },
+  mute: { audio: 'volume=0' },
+};
+
+/** The overlap a clip's transition takes; 0 for a cut. */
+const overlapOf = (c: RenderClip): number =>
+  c.transitionIn === undefined ? 0 : (c.transitionSec ?? DEFAULT_TRANSITION_SEC);
+
+/**
+ * What a command's transitions and filters cannot be (media-editor.md §5.3) — MAM's rule, applied
+ * again here so a render can never run one: names from the Tier-0 sets only, no transition on the
+ * first clip, an overlap shorter than both clips it joins, and only sound on an audio timeline.
+ */
+function effectsRefusal(mediaKind: string, clips: readonly ClipIn[]): string | undefined {
+  for (const [i, clip] of clips.entries()) {
+    if (clip.transitionIn !== undefined) {
+      if (!(TransitionValues as readonly string[]).includes(clip.transitionIn)) {
+        return `clip ${i}: ${clip.transitionIn} is not a transition (${TransitionValues.join(', ')})`;
+      }
+      if (i === 0) return 'clip 0: the first clip has nothing to transition from';
+      const d = overlapOf(clip);
+      if (d < MIN_TRANSITION_SEC || d > MAX_TRANSITION_SEC) {
+        return `clip ${i}: a transition lasts ${MIN_TRANSITION_SEC}–${MAX_TRANSITION_SEC} s`;
+      }
+      const before = clips[i - 1]!;
+      if (d >= clip.outSec - clip.inSec || d >= before.outSec - before.inSec) {
+        return `clip ${i}: a ${d} s transition must be shorter than both clips it joins`;
+      }
+      if (mediaKind === 'audio' && !AUDIO_TRANSITIONS.includes(clip.transitionIn)) {
+        return `clip ${i}: ${clip.transitionIn} has no meaning for audio`;
+      }
+    } else if (clip.transitionSec !== undefined) {
+      return `clip ${i}: transitionSec is only for a clip with a transition`;
+    }
+    const filters = clip.filters ?? [];
+    const unknown = filters.find((f) => !(ClipFilterValues as readonly string[]).includes(f));
+    if (unknown !== undefined) {
+      return `clip ${i}: ${unknown} is not a filter (${ClipFilterValues.join(', ')})`;
+    }
+    if (new Set(filters).size !== filters.length) return `clip ${i}: a filter named twice`;
+    if (mediaKind === 'audio' && filters.some((f) => FILTER_GRAPH[f]!.audio === undefined)) {
+      return `clip ${i}: a picture filter on an audio timeline`;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -62,10 +132,9 @@ export function renderRefusal(
   }
   for (const [i, clip] of command.clips.entries()) {
     if (!(clip.outSec > clip.inSec)) return `clip ${i}: outSec must be after inSec`;
-    if (clip.transitionIn !== undefined || (clip.filters?.length ?? 0) > 0) {
-      return `clip ${i}: transitions and filters are not rendered before EP-26.5`;
-    }
   }
+  const effects = effectsRefusal(command.mediaKind, command.clips);
+  if (effects) return effects;
   if (!preset) return `unknown output profile ${outputProfile}`;
   if (preset.still || preset.filmstrip || !RENDER_OUTPUT_KINDS.includes(preset.kind)) {
     return `output profile ${preset.id} makes a ${preset.kind}, not media a render can become`;
@@ -76,10 +145,16 @@ export function renderRefusal(
   return undefined;
 }
 
-/** The whole timeline's length — what turns the encoder's `out_time` into a percentage. */
+/**
+ * The whole timeline's length — what turns the encoder's `out_time` into a percentage. A transition
+ * overlaps two clips, so each one shortens the timeline by its overlap.
+ */
 export function timelineSec(clips: readonly RenderClip[]): number {
-  return clips.reduce((sum, c) => sum + (c.outSec - c.inSec), 0);
+  return clips.reduce((sum, c) => sum + (c.outSec - c.inSec) - overlapOf(c), 0);
 }
+
+/** Seconds as a graph option: fixed to the microsecond, never exponent notation. */
+const sec = (v: number): string => String(Number(v.toFixed(6)));
 
 /**
  * The inputs and the arguments between them and the output: the clips joined, then the profile's
@@ -114,14 +189,65 @@ export function renderArgs(
   // A profile that drops the audio (`-an`) says so; a source without any cannot supply it.
   const audio = options.sourceHasAudio && !rest.includes('-an');
   const n = clips.length;
-  const segments = clips
-    .map((_, i) => `${video ? `[${i}:v:0]` : ''}${audio ? `[${i}:a:0]` : ''}`)
-    .join('');
-  const outs = `${video ? '[cv]' : ''}${audio ? '[ca]' : ''}`;
-  const graph = [
-    `${segments}concat=n=${n}:v=${video ? 1 : 0}:a=${audio ? 1 : 0}${outs}`,
-    ...(video && vf !== undefined ? [`[cv]${vf}[v]`] : []),
-  ].join(';');
+  const steps: string[] = [];
+
+  // Each clip's own streams: its filters (EP-26.5) applied first, or the input's stream as it is.
+  const prepared = (i: number, kind: 'v' | 'a'): string => {
+    const graphs = (clips[i]!.filters ?? [])
+      .map((f) => FILTER_GRAPH[f]?.[kind === 'v' ? 'video' : 'audio'])
+      .filter((g): g is string => g !== undefined);
+    if (graphs.length === 0) return `[${i}:${kind}:0]`;
+    steps.push(`[${i}:${kind}:0]${graphs.join(',')}[${kind}f${i}]`);
+    return `[${kind}f${i}]`;
+  };
+  const v = video ? clips.map((_, i) => prepared(i, 'v')) : [];
+  const a = audio ? clips.map((_, i) => prepared(i, 'a')) : [];
+
+  if (clips.every((c) => c.transitionIn === undefined)) {
+    // Cuts only: one n-way concat, as before EP-26.5.
+    const segments = clips.map((_, i) => `${v[i] ?? ''}${a[i] ?? ''}`).join('');
+    const outs = `${video ? '[cv]' : ''}${audio ? '[ca]' : ''}`;
+    steps.push(`${segments}concat=n=${n}:v=${video ? 1 : 0}:a=${audio ? 1 : 0}${outs}`);
+  } else {
+    // A transition overlaps two clips, so the timeline is joined PAIRWISE, left to right: an
+    // `xfade` (picture) or `acrossfade` (sound) where a clip has a transition, a two-way concat
+    // where it is a cut. xfade's offset is where the overlap starts on the joined-so-far timeline:
+    // its length so far less the overlap.
+    let accV = v[0];
+    let accA = a[0];
+    let length = clips[0]!.outSec - clips[0]!.inSec;
+    for (let i = 1; i < n; i++) {
+      const clip = clips[i]!;
+      const d = overlapOf(clip);
+      const last = i === n - 1;
+      const outV = last ? '[cv]' : `[vx${i}]`;
+      const outA = last ? '[ca]' : `[ax${i}]`;
+      if (video) {
+        steps.push(
+          clip.transitionIn === undefined
+            ? `${accV}${v[i]}concat=n=2:v=1:a=0${outV}`
+            : `${accV}${v[i]}xfade=transition=${TRANSITION_XFADE[clip.transitionIn]}:duration=${sec(d)}:offset=${sec(length - d)}${outV}`,
+        );
+        accV = outV;
+      }
+      if (audio) {
+        steps.push(
+          clip.transitionIn === undefined
+            ? `${accA}${a[i]}concat=n=2:v=0:a=1${outA}`
+            : `${accA}${a[i]}acrossfade=d=${sec(d)}${outA}`,
+        );
+        accA = outA;
+      }
+      length += clip.outSec - clip.inSec - d;
+    }
+    if (n === 1) {
+      // Unreachable — the first clip takes no transition — but a graph must always end labelled.
+      if (video) steps.push(`${accV}null[cv]`);
+      if (audio) steps.push(`${accA}anull[ca]`);
+    }
+  }
+  if (video && vf !== undefined) steps.push(`[cv]${vf}[v]`);
+  const graph = steps.join(';');
 
   const maps = [
     ...(video ? ['-map', vf !== undefined ? '[v]' : '[cv]'] : []),

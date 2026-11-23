@@ -66,7 +66,7 @@ test('a render the command makes impossible is refused, each for its own reason'
   );
   assert.match(
     renderRefusal({ ...video, clips: [{ ...clip, transitionIn: 'dissolve' }] }, proxy, 'p')!,
-    /EP-26\.5/,
+    /first clip has nothing to transition from/,
   );
   assert.match(renderRefusal(video, undefined, 'nope')!, /unknown output profile nope/);
   assert.match(renderRefusal(video, presetById('thumbnail')!, 'thumbnail')!, /makes a thumbnail/);
@@ -419,6 +419,118 @@ test('real ffmpeg: a two-clip render is frame-exact at every cut, with and witho
         }
       }
     }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// --- EP-26.5: transitions and filters ---------------------------------------------------------
+
+test('EP-26.5: a transition or filter outside the Tier-0 set, or one that cannot be, is refused', () => {
+  const proxy = presetById('proxy')!;
+  const two = (second: object, first: object = {}) => ({
+    mediaKind: 'video',
+    clips: [
+      { renditionRef: 'original', inSec: 0, outSec: 2, ...first },
+      { renditionRef: 'original', inSec: 5, outSec: 7, ...second },
+    ],
+  });
+  const why = (cmd: { mediaKind: string; clips: object[] }) =>
+    renderRefusal(cmd as Parameters<typeof renderRefusal>[0], proxy, 'proxy');
+  assert.equal(why(two({ transitionIn: 'dissolve', filters: ['sepia', 'mute'] })), undefined);
+  assert.match(why(two({ transitionIn: 'spin' }))!, /not a transition/);
+  assert.match(why(two({ filters: ['ffmpeg -vf x'] }))!, /not a filter/);
+  assert.match(why(two({ filters: ['blur', 'blur'] }))!, /named twice/);
+  assert.match(why(two({ transitionIn: 'dissolve', transitionSec: 2 }))!, /shorter than both/);
+  assert.match(why(two({ transitionSec: 1 }))!, /only for a clip with a transition/);
+  const audio = presetById('audio-proxy')!;
+  const sound = (second: object) =>
+    renderRefusal(
+      { ...two(second), mediaKind: 'audio' } as Parameters<typeof renderRefusal>[0],
+      audio,
+      'audio-proxy',
+    );
+  assert.match(sound({ transitionIn: 'wipe-left' })!, /no meaning for audio/);
+  assert.match(sound({ filters: ['grayscale'] })!, /picture filter on an audio timeline/);
+  assert.equal(sound({ transitionIn: 'fade-black', filters: ['mute'] }), undefined);
+});
+
+test('EP-26.5: the graph — per-clip filters first, then pairwise xfade/acrossfade at the running offset, a cut a concat', () => {
+  const clips = [
+    { renditionRef: 'original', inSec: 1, outSec: 3, filters: ['grayscale'] },
+    { renditionRef: 'original', inSec: 4, outSec: 6, transitionIn: 'dissolve' },
+    { renditionRef: 'original', inSec: 7, outSec: 9 },
+    {
+      renditionRef: 'original',
+      inSec: 10,
+      outSec: 12,
+      transitionIn: 'fade-black',
+      transitionSec: 1,
+      filters: ['mute'],
+    },
+  ];
+  assert.equal(timelineSec(clips), 8 - 0.5 - 1, 'each transition overlaps two clips');
+  const { args } = renderArgs(clips, '/s', presetById('broadcast')!.args, {
+    mediaKind: 'video',
+    sourceHasAudio: true,
+  });
+  const graph = args[1]!.split(';');
+  assert.deepEqual(graph.slice(0, 2), ['[0:v:0]hue=s=0[vf0]', '[3:a:0]volume=0[af3]']);
+  assert.deepEqual(graph.slice(2, 8), [
+    '[vf0][1:v:0]xfade=transition=dissolve:duration=0.5:offset=1.5[vx1]',
+    '[0:a:0][1:a:0]acrossfade=d=0.5[ax1]',
+    '[vx1][2:v:0]concat=n=2:v=1:a=0[vx2]',
+    '[ax1][2:a:0]concat=n=2:v=0:a=1[ax2]',
+    '[vx2][3:v:0]xfade=transition=fadeblack:duration=1:offset=4.5[cv]',
+    '[ax2][af3]acrossfade=d=1[ca]',
+  ]);
+  assert.match(graph[8]!, /^\[cv\]scale=1920:1080/, 'the profile’s -vf after the join');
+});
+
+test('real ffmpeg: transitions shorten the timeline by their overlaps, and a filter reaches the frames it covers', async (t) => {
+  if (!(await haveFfmpeg(t))) return;
+  const dir = await mkdtemp(join(tmpdir(), 'mts-effects-real-'));
+  try {
+    const src = join(dir, 'src.mp4');
+    await run('ffmpeg', [
+      '-nostdin', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=25:duration=10',
+      '-f', 'lavfi', '-i', 'sine=frequency=440:duration=10',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-shortest', src,
+    ]); // prettier-ignore
+    const clips = [
+      { renditionRef: 'original', inSec: 1, outSec: 3, filters: ['grayscale'] },
+      { renditionRef: 'original', inSec: 4, outSec: 6, transitionIn: 'dissolve' },
+      {
+        renditionRef: 'original',
+        inSec: 7,
+        outSec: 9,
+        transitionIn: 'fade-black',
+        filters: ['mute'],
+      },
+    ];
+    const out = join(dir, 'out.mp4');
+    const transcoder = ffmpegTranscoder();
+    const { inputs, args } = renderArgs(clips, src, presetById('proxy')!.args, {
+      mediaKind: 'video',
+      sourceHasAudio: true,
+    });
+    await transcoder.run({ inputPath: src, inputs, outputPath: out, args });
+    const duration = (await transcoder.probeDuration(out))!;
+    assert.ok(Math.abs(duration - 5) < 0.06, `6 s of clips less two 0.5 s overlaps: ${duration}`);
+
+    /** Mean saturation of the frame at `atSec` — 0 for grayscale, well above for testsrc's colours. */
+    const saturation = async (atSec: number) => {
+      const { stderr } = await run('ffmpeg', [
+        '-hide_banner', '-ss', String(atSec), '-i', out, '-frames:v', '1',
+        '-vf', 'signalstats,metadata=print:key=lavfi.signalstats.SATAVG', '-f', 'null', '-',
+      ]); // prettier-ignore
+      const m = /SATAVG=([0-9.]+)/.exec(stderr);
+      assert.ok(m, stderr);
+      return Number(m[1]);
+    };
+    assert.ok((await saturation(0.4)) < 1, 'the first clip is grayscale');
+    assert.ok((await saturation(2.6)) > 20, 'the second is in colour');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

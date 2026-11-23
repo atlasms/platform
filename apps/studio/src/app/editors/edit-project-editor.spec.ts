@@ -149,7 +149,9 @@ describe('EditProjectEditor', () => {
     const t = setup();
     t.answer(project());
     expect(t.inputs().map((i) => i.value)).toEqual(['00:00:01.000', '00:00:05.000']);
-    const options = [...t.root.querySelectorAll('tbody select option')].map((o) => o.textContent);
+    const options = [...t.root.querySelectorAll('tbody td:nth-child(2) select option')].map(
+      (o) => o.textContent,
+    );
     expect(options.map((o) => o?.trim())).toEqual(['original', 'proxy/edit']);
     expect(t.root.textContent).toContain('Evening bulletin');
     expect(t.subscribed).toEqual(['live.ch12.transcode.progress']);
@@ -263,5 +265,43 @@ describe('EditProjectEditor', () => {
     t.answer(project());
     expect(t.root.querySelector('button.save')).toBeNull();
     expect((t.root.querySelector('fieldset') as HTMLFieldSetElement).disabled).toBe(true);
+  });
+
+  it('EP-26.5: a transition in, its overlap and a filter, chosen per clip and saved with the timeline', () => {
+    const t = setup();
+    t.answer(
+      project({
+        timeline: {
+          clips: [
+            { renditionRef: 'original', inSec: 1, outSec: 5 },
+            { renditionRef: 'original', inSec: 8, outSec: 12 },
+          ],
+        },
+      }),
+    );
+    const transitions = () =>
+      [...t.root.querySelectorAll('td.transition select')] as HTMLSelectElement[];
+    expect(transitions()[0]!.disabled).toBe(true); // nothing before the first clip
+    const pick = transitions()[1]!;
+    pick.value = 'fade-black';
+    pick.dispatchEvent(new Event('change'));
+    t.fixture.detectChanges();
+    t.type(t.root.querySelector('input.secs') as HTMLInputElement, '0.75');
+    const grayscale = [
+      ...t.root.querySelectorAll('td.filters input[type=checkbox]'),
+    ][0] as HTMLInputElement;
+    grayscale.click();
+    t.fixture.detectChanges();
+    t.click('button.save');
+    expect(t.projects.saves[0]!.body.timeline.clips).toEqual([
+      { renditionRef: 'original', inSec: 1, outSec: 5, filters: ['grayscale'] },
+      {
+        renditionRef: 'original',
+        inSec: 8,
+        outSec: 12,
+        transitionIn: 'fade-black',
+        transitionSec: 0.75,
+      },
+    ]);
   });
 });

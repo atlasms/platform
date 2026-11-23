@@ -27,8 +27,9 @@
               "renditionRef": { "type": "string", "description": "The file of the source asset this clip draws from, by FileRef kind — `original`, `broadcast` or `proxy` — optionally `kind/variant` (media-editor.md §5.1). In v1 every clip of a render names the same file." },
               "inSec": { "type": "number", "minimum": 0 },
               "outSec": { "type": "number", "minimum": 0 },
-              "transitionIn": { "type": "string", "description": "An allowlisted transition (EP-26.5). Not rendered before EP-26.5: MAM refuses a render that carries one." },
-              "filters": { "type": "array", "items": { "type": "string" }, "description": "Allowlisted filters (EP-26.5). Not rendered before EP-26.5, as transitionIn." }
+              "transitionIn": { "$ref": "../common.schema.json#/$defs/Transition", "description": "The transition in from the clip before (EP-26.5); absent is a cut. Never on the first clip." },
+              "transitionSec": { "type": "number", "minimum": 0.04, "maximum": 5, "description": "How long the transition overlaps the clip before — shorter than both clips; 0.5 when absent." },
+              "filters": { "type": "array", "items": { "$ref": "../common.schema.json#/$defs/ClipFilter" }, "uniqueItems": true, "description": "Filters on this clip, applied in order (EP-26.5)." }
             }
           }
         }

@@ -7,7 +7,14 @@
 // SECONDS; the editor never rewrites source bytes. A render (EP-26.6) flattens the timeline into a
 // NEW file. The timeline is the re-openable artifact; the rendered file is derived from it.
 
-import { isUlid, ulid } from '@atlas/contracts';
+import {
+  ClipFilterValues,
+  isUlid,
+  TransitionValues,
+  ulid,
+  type ClipFilter,
+  type Transition,
+} from '@atlas/contracts';
 
 /** What the editor can open. Derived from the asset's `mediaType`; `live-event` is not editable. */
 export type MediaKind = 'video' | 'audio' | 'photo';
@@ -22,10 +29,12 @@ export interface Clip {
   /** In/out points into that rendition, in seconds (not frames — the proxy fps is the edit grid). */
   inSec: number;
   outSec: number;
-  /** An allowlisted transition name (the set is EP-26.5's; here any non-empty string is stored). */
-  transitionIn?: string;
-  /** Allowlisted filter names (EP-26.5); stored as sent for now. */
-  filters?: string[];
+  /** The transition in from the clip before (EP-26.5; Tier 0, media-editor.md §5.3); absent is a cut. */
+  transitionIn?: Transition;
+  /** How long that transition overlaps the clip before, in seconds; 0.5 when absent. */
+  transitionSec?: number;
+  /** Filters on this clip, applied in order (EP-26.5; Tier 0). */
+  filters?: ClipFilter[];
 }
 
 /** The edit decision list. */
@@ -73,6 +82,13 @@ export interface EditProjectProblem {
 
 export const MAX_CLIPS = 500;
 export const MAX_FILTERS_PER_CLIP = 16;
+/** A transition's overlap when none is given, and its bounds (media-editor.md §5.3). */
+export const DEFAULT_TRANSITION_SEC = 0.5;
+export const MIN_TRANSITION_SEC = 0.04;
+export const MAX_TRANSITION_SEC = 5;
+/** What an AUDIO timeline takes: a wipe or a picture filter has nothing to act on. */
+const AUDIO_TRANSITIONS: readonly string[] = ['dissolve', 'fade-black'];
+const AUDIO_FILTERS: readonly string[] = ['mute'];
 
 /** The editable kinds, by the asset's `mediaType` vocabulary key. `live-event` and the rest: no. */
 export function editableMediaKind(mediaType: string): MediaKind | undefined {
@@ -145,7 +161,11 @@ export function parseTimeline(raw: unknown): {
     }
     const e = entry as Record<string, unknown>;
     for (const key of Object.keys(e)) {
-      if (!['renditionRef', 'inSec', 'outSec', 'transitionIn', 'filters'].includes(key)) {
+      if (
+        !['renditionRef', 'inSec', 'outSec', 'transitionIn', 'transitionSec', 'filters'].includes(
+          key,
+        )
+      ) {
         problems.push({ path: at(key), message: 'is not a clip field' });
       }
     }
@@ -167,25 +187,56 @@ export function parseTimeline(raw: unknown): {
     if (!Number.isNaN(inSec) && !Number.isNaN(outSec) && outSec <= inSec) {
       problems.push({ path: at('outSec'), message: 'must be after inSec' });
     }
-    let transitionIn: string | undefined;
+    let transitionIn: Transition | undefined;
     if (e['transitionIn'] !== undefined) {
-      if (typeof e['transitionIn'] !== 'string' || e['transitionIn'].trim() === '') {
-        problems.push({ path: at('transitionIn'), message: 'must be a non-empty string' });
+      if (!(TransitionValues as readonly unknown[]).includes(e['transitionIn'])) {
+        problems.push({
+          path: at('transitionIn'),
+          message: `must be one of ${TransitionValues.join(', ')}`,
+        });
       } else {
-        transitionIn = e['transitionIn'];
+        transitionIn = e['transitionIn'] as Transition;
       }
     }
-    let filters: string[] | undefined;
-    if (e['filters'] !== undefined) {
+    let transitionSec: number | undefined;
+    if (e['transitionSec'] !== undefined) {
+      const v = e['transitionSec'];
       if (
-        !Array.isArray(e['filters']) ||
-        e['filters'].some((f) => typeof f !== 'string' || f.trim() === '')
+        typeof v !== 'number' ||
+        !Number.isFinite(v) ||
+        v < MIN_TRANSITION_SEC ||
+        v > MAX_TRANSITION_SEC
       ) {
-        problems.push({ path: at('filters'), message: 'must be an array of non-empty strings' });
-      } else if (e['filters'].length > MAX_FILTERS_PER_CLIP) {
-        problems.push({ path: at('filters'), message: `at most ${MAX_FILTERS_PER_CLIP} filters` });
+        problems.push({
+          path: at('transitionSec'),
+          message: `must be ${MIN_TRANSITION_SEC}–${MAX_TRANSITION_SEC} seconds`,
+        });
+      } else if (e['transitionIn'] === undefined) {
+        problems.push({
+          path: at('transitionSec'),
+          message: 'is only for a clip with a transition',
+        });
       } else {
-        filters = e['filters'] as string[];
+        transitionSec = v;
+      }
+    }
+    let filters: ClipFilter[] | undefined;
+    if (e['filters'] !== undefined) {
+      const f = e['filters'];
+      if (
+        !Array.isArray(f) ||
+        f.some((x) => !(ClipFilterValues as readonly unknown[]).includes(x))
+      ) {
+        problems.push({
+          path: at('filters'),
+          message: `must be a list of ${ClipFilterValues.join(', ')}`,
+        });
+      } else if (f.length > MAX_FILTERS_PER_CLIP) {
+        problems.push({ path: at('filters'), message: `at most ${MAX_FILTERS_PER_CLIP} filters` });
+      } else if (new Set(f).size !== f.length) {
+        problems.push({ path: at('filters'), message: 'names a filter twice' });
+      } else {
+        filters = f as ClipFilter[];
       }
     }
     if (problems.length === before) {
@@ -194,11 +245,59 @@ export function parseTimeline(raw: unknown): {
         inSec,
         outSec,
         ...(transitionIn !== undefined ? { transitionIn } : {}),
+        ...(transitionSec !== undefined ? { transitionSec } : {}),
         ...(filters !== undefined ? { filters } : {}),
       });
     }
   });
   return { timeline: { clips }, problems };
+}
+
+/**
+ * What a timeline's transitions and filters cannot be, given what kind of media it is
+ * (media-editor.md §5.3): the first clip takes no transition (nothing is before it); a transition
+ * overlaps the clip before for `transitionSec`, which must be shorter than both clips it joins; and
+ * an AUDIO timeline takes only the transitions and filters that act on sound. Each problem at its
+ * path. The same rule MTS applies to a render command.
+ */
+export function effectsProblems(timeline: Timeline, mediaKind: MediaKind): EditProjectProblem[] {
+  const problems: EditProjectProblem[] = [];
+  timeline.clips.forEach((clip, i) => {
+    const at = (field: string) => `timeline/clips/${i}/${field}`;
+    if (clip.transitionIn !== undefined) {
+      if (i === 0) {
+        problems.push({
+          path: at('transitionIn'),
+          message: 'the first clip has nothing to transition from',
+        });
+      } else {
+        const overlap = clip.transitionSec ?? DEFAULT_TRANSITION_SEC;
+        const before = timeline.clips[i - 1]!;
+        if (overlap >= clip.outSec - clip.inSec || overlap >= before.outSec - before.inSec) {
+          problems.push({
+            path: at(clip.transitionSec !== undefined ? 'transitionSec' : 'transitionIn'),
+            message: `a ${overlap} s transition must be shorter than both clips it joins`,
+          });
+        }
+      }
+      if (mediaKind === 'audio' && !AUDIO_TRANSITIONS.includes(clip.transitionIn)) {
+        problems.push({
+          path: at('transitionIn'),
+          message: `${clip.transitionIn} has no meaning for audio`,
+        });
+      }
+    }
+    if (mediaKind === 'audio') {
+      const visual = (clip.filters ?? []).filter((f) => !AUDIO_FILTERS.includes(f));
+      if (visual.length > 0) {
+        problems.push({
+          path: at('filters'),
+          message: `${visual.join(', ')} acts on pictures, and this is audio`,
+        });
+      }
+    }
+  });
+  return problems;
 }
 
 /** Two timelines the same, clip by clip — a re-sent timeline is no change (no revision bump). */
@@ -212,6 +311,7 @@ export function sameTimeline(a: Timeline, b: Timeline): boolean {
         x.inSec === y.inSec &&
         x.outSec === y.outSec &&
         x.transitionIn === y.transitionIn &&
+        x.transitionSec === y.transitionSec &&
         (x.filters ?? []).length === (y.filters ?? []).length &&
         (x.filters ?? []).every((f, j) => f === (y.filters ?? [])[j])
       );
@@ -305,12 +405,8 @@ export function renderProblem(project: EditProject): string | undefined {
   if (parseRenditionRef(ref!) === undefined) {
     return `renditionRef ${ref} is not a file a render can cut from (${RENDER_SOURCE_KINDS.join(', ')}, optionally kind/variant)`;
   }
-  const decorated = project.timeline.clips.findIndex(
-    (c) => c.transitionIn !== undefined || (c.filters?.length ?? 0) > 0,
-  );
-  if (decorated >= 0) {
-    return `clip ${decorated} has a transition or filter, which is not rendered before EP-26.5`;
-  }
+  const effects = effectsProblems(project.timeline, project.mediaKind);
+  if (effects.length > 0) return `${effects[0]!.path} — ${effects[0]!.message}`;
   return undefined;
 }
 

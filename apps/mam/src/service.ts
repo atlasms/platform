@@ -24,6 +24,7 @@ import {
 import { durationMsOf, parseShotList, sameShotList, type ShotListItem } from './shotlist.ts';
 import {
   editableMediaKind,
+  effectsProblems,
   newEditProject,
   parseEditProjectPatch,
   parseRenderInput,
@@ -2904,7 +2905,11 @@ export class MamService {
       throw new Conflict(`edit project ${id} is rendering — wait for it to finish before editing`);
     }
     const { timeline, outputProfile, problems } = parseEditProjectPatch(body);
-    this.refuseEditProject(problems);
+    // EP-26.5: transitions and filters that cannot be, for THIS media — refused at the save, so the
+    // timeline never holds one (media-editor.md §5.3).
+    this.refuseEditProject(
+      problems.length > 0 ? problems : effectsProblems(timeline, existing.mediaKind),
+    );
     const profile = outputProfile ?? existing.outputProfile;
     if (
       existing.state === 'draft' &&

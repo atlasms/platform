@@ -30,6 +30,17 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- **`$defs/Transition`** (`dissolve`, `fade-black`, `wipe-left`, `wipe-right`) and **`$defs/ClipFilter`**
+  (`grayscale`, `sepia`, `brighten`, `darken`, `contrast`, `blur`, `sharpen`, `mute`) in
+  `common.schema.json` (EP-26.5): the media editor's Tier-0 sets, each value an FFmpeg graph MTS
+  implements (media-editor.md §5.3). `editor.render.requested`'s clips now `$ref` them, which
+  **tightens** `transitionIn` and `filters` from any string to the set. Only MAM produces the command,
+  and it validates against the same set at the save. A clip also gains **`transitionSec`** (0.04–5,
+  0.5 when absent).
+- **`@atlas/contracts/events`**: the generated event and shared types (`TransitionValues`,
+  `ClipFilterValues`, …) on a subpath of their own. That file imports nothing, so it is
+  browser-safe, and Studio offers the editor's sets from the same values MAM and MTS validate with.
+
 - **`editProjectId`** on `transcode.completed` and `transcode.failed` (EP-26.6): present only on the
   answer to an `editor.render.requested`. A consumer that ignores it is unaffected. MAM routes
   on it: the completion of a render creates an asset, and its failure fails the project.

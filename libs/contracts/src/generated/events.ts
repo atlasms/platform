@@ -100,6 +100,23 @@ export type RoleClass = (typeof RoleClassValues)[number];
 export const MetadataSourceValues = ['user', 'technical', 'ai'] as const;
 export type MetadataSource = (typeof MetadataSourceValues)[number];
 
+/** A media-editor clip's transition in from the clip before it (EP-26.5; media-editor.md §5.3). Absent is a cut. Tier 0: each value is an FFmpeg graph MTS implements — never raw FFmpeg. */
+export const TransitionValues = ['dissolve', 'fade-black', 'wipe-left', 'wipe-right'] as const;
+export type Transition = (typeof TransitionValues)[number];
+
+/** A filter on one media-editor clip (EP-26.5; media-editor.md §5.3), applied in the order listed. `mute` is the only one an audio timeline takes. Tier 0: each value is an FFmpeg filter MTS implements — never raw FFmpeg. */
+export const ClipFilterValues = [
+  'grayscale',
+  'sepia',
+  'brighten',
+  'darken',
+  'contrast',
+  'blur',
+  'sharpen',
+  'mute',
+] as const;
+export type ClipFilter = (typeof ClipFilterValues)[number];
+
 /** Which AI tier ran: online (interactive, bounded latency) or offline (batch). Not the HSM storage Tier. */
 export const AiTierValues = ['online', 'offline'] as const;
 export type AiTier = (typeof AiTierValues)[number];
@@ -344,8 +361,9 @@ export interface EditorRenderRequestedPayload {
       renditionRef: string;
       inSec: number;
       outSec: number;
-      transitionIn?: string;
-      filters?: string[];
+      transitionIn?: Transition;
+      transitionSec?: number;
+      filters?: ClipFilter[];
     }[];
   };
   /** MTS profile id (Tier-1 registry) to encode the flattened result with. */

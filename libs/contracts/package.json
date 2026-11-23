@@ -11,7 +11,8 @@
     "./workflow-correlate": "./src/workflow/correlate.ts",
     "./workflow-review": "./src/workflow/review.ts",
     "./bpmn": "./src/bpmn/index.ts",
-    "./workflow-feel": "./src/workflow/feel.ts"
+    "./workflow-feel": "./src/workflow/feel.ts",
+    "./events": "./src/generated/events.ts"
   },
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts",

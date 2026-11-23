@@ -471,8 +471,11 @@ export interface EditProject {
       renditionRef: string;
       inSec: number;
       outSec: number;
-      transitionIn?: string;
-      filters?: string[];
+      transitionIn?: 'dissolve' | 'fade-black' | 'wipe-left' | 'wipe-right';
+      transitionSec?: number;
+      filters?: (
+        'grayscale' | 'sepia' | 'brighten' | 'darken' | 'contrast' | 'blur' | 'sharpen' | 'mute'
+      )[];
     }[];
   };
   /** MTS profile (Tier-1 registry) a render encodes with; settable on the project or given at render. */
