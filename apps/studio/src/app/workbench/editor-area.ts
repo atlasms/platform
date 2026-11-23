@@ -13,6 +13,7 @@ import { RightsWindowEditor } from '../editors/rights-window-editor.ts';
 import { CategoryEditor } from '../editors/category-editor.ts';
 import { WorkflowEditor } from '../editors/workflow-editor.ts';
 import { FieldSchemaEditor } from '../editors/field-schema-editor.ts';
+import { EditProjectEditor } from '../editors/edit-project-editor.ts';
 import { Dashboard } from '../panels/dashboard.ts';
 import { LocaleService } from '../core/locale.service.ts';
 import { EditorStore } from './editor.store.ts';
@@ -52,6 +53,7 @@ import { EditorStore } from './editor.store.ts';
     CategoryEditor,
     WorkflowEditor,
     FieldSchemaEditor,
+    EditProjectEditor,
   ],
   template: `
     @if (store.isEmpty()) {
@@ -207,6 +209,15 @@ import { EditorStore } from './editor.store.ts';
                     @case ('category') {
                       @defer (on immediate) {
                         <atlas-category-editor [categoryId]="tab.resourceId" [tabId]="tab.id" />
+                      } @placeholder {
+                        <p class="muted">{{ locale.t('editor.loading') }}</p>
+                      } @error {
+                        <p class="error" role="alert">{{ locale.t('editor.loadFailed') }}</p>
+                      }
+                    }
+                    @case ('edit-project') {
+                      @defer (on immediate) {
+                        <atlas-edit-project-editor [projectId]="tab.resourceId" [tabId]="tab.id" />
                       } @placeholder {
                         <p class="muted">{{ locale.t('editor.loading') }}</p>
                       } @error {

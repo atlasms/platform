@@ -165,6 +165,24 @@ and MAM ([mam.md §13ab](mam.md#13ab-as-built--ep-266--267-a-render-becomes-an-a
   must be the newest in its chain and of the same media type. A doomed link is a 409/422 at the
   request, not a failed render minutes later. The completion is the platform's own write.
 
+### 5.2 The editor in Studio, as built (EP-26.3 / EP-26.8)
+
+The asset editor's **Edits** section lists the asset's projects (`GET /assets/{id}/edit-projects`,
+newest first: a timeline is reopened rather than started again) and opens each in an
+**edit-project tab** ([studio-frontend.md](../studio-frontend.md)). There the timeline is a table of
+clips: the file each cuts from, in/out as timecodes (to the millisecond, kept in seconds), reordered
+by ↑/↓, saved compare-and-set. Render flattens the SAVED timeline, so it is offered only with
+nothing unsaved. The editor defaults to the source's next version, and follows the render live:
+`transcode.progress` under `outputAssetId` plus a poll for the outcome (26.8's editor half).
+
+**Not yet:** playing and scrubbing the editing proxy in the timeline (EP-26.4). Studio has no
+media path to a browser: HSM's content reads are internal signed calls, and a `<video src>`
+cannot carry the bearer token. **Decided 2026-11-21: signed short-lived URLs.** MAM authorizes
+`asset:read` and returns `{ url, expiresAt }`; HSM serves that URL with HTTP Range, verifying an HMAC
+from a MAM→HSM key pair; the gateway passes the path through without a bearer, because the
+signature is the credential. That is an ADR of its own, and 26.4 starts with it. The editing proxy
+it will play already exists: every video gets one at ingest (mts.md §13, EP-26.3).
+
 ## 6. Key flows
 
 Covered by §5. The essential property: **render reuses the transcode pipeline**, so progress,

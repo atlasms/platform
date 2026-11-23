@@ -3733,7 +3733,7 @@ test('smoke: EP-15.5 — an accepted upload becomes an asset: its original in HS
   assert.deepEqual(kinds.sort(), ['original', 'proxy']);
 });
 
-test('smoke: EP-26.6/26.7 — an edit is rendered by FFmpeg into the source’s next version; a render MTS refuses fails its project', async () => {
+test('smoke: EP-26.3/26.6/26.7 — an edit is listed, rendered by FFmpeg into the source’s next version; a render MTS refuses fails its project', async () => {
   // The render path on a live cluster (media-editor.md §5.1). A real video is uploaded and
   // becomes an asset with its original in HSM. An edit project cuts two spans of that original;
   // the render — asked to be the source's next version — is MTS cutting them out of HSM's copy with
@@ -3794,6 +3794,13 @@ test('smoke: EP-26.6/26.7 — an edit is rendered by FFmpeg into the source’s 
   });
   assert.equal(created.status, 201, created.text);
   const project = json(created);
+  // EP-26.3: the asset's projects are listed, so the editor reopens this one rather than starting
+  // another.
+  const listed = json(await get(`/api/v1/assets/${sourceId}/edit-projects`, { headers: fresh }));
+  assert.deepEqual(
+    listed.items.map((p) => p.id),
+    [project.id],
+  );
   const saved = await get(`/api/v1/edit-projects/${project.id}?version=${project.version}`, {
     method: 'PATCH',
     headers,
@@ -3849,6 +3856,17 @@ test('smoke: EP-26.6/26.7 — an edit is rendered by FFmpeg into the source’s 
     (kinds) => kinds.includes('proxy') && kinds.includes('thumbnail'),
     90_000,
     'the rendered asset never got its proxy and thumbnail',
+  );
+
+  // EP-26.3: every video's first renditions include the editing proxy — the source's too.
+  await poll(
+    async () =>
+      json(await get(`/api/v1/assets/${sourceId}/location`, { headers })).map((f) =>
+        f.variant ? `${f.kind}/${f.variant}` : f.kind,
+      ),
+    (kinds) => kinds.includes('proxy/edit'),
+    90_000,
+    'the source never got its editing proxy',
   );
 
   // A profile that makes a still: MTS refuses the command, and the project fails with why.

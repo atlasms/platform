@@ -331,10 +331,23 @@ the media kind and the clips (`src/render.ts`, pure).
   media kind, and no HSM. A render that fails at run time (the source not in HSM, FFmpeg) is retried
   like any job, and its final `transcode.failed` names the project too.
 
+### EP-26.3 — the editing proxy
+
+The media editor's proxy ([ADR-0011](../../adr/0011-editing-proxy-scrubbing.md)) is a built-in
+preset, **`edit-proxy`**: kind `proxy`, **`variant: edit`**. It is a second proxy beside the browse
+proxy, told apart by the FileRef key `(assetId, kind, variant)`. Presets can now carry a variant,
+and the job passes it to HSM and onto the rendition. The encoding is H.264 High at CRF 23, 720p
+at most, the **source's frame rate** (the proxy's frames ARE the edit grid), AAC, `+faststart`.
+The GOP is **closed and fixed at 12**: `-g 12 -keyint_min 12 -x264-params scenecut=0:open_gop=0`,
+so a seek anywhere decodes at most 11 frames. A real-binary test checks a keyframe at every 12th
+frame and nowhere else, at 25/1. It is in `FIRST_RENDITIONS` for video (`proxy`, `edit-proxy`,
+`thumbnail`), so every video, and every video render, is editable from ingest. That costs one
+more rendition at about the browse proxy's size (~9% more bytes than a long GOP).
+
 ### EP-15.5 — the first renditions of an ingested asset
 
 MTS consumes `ingest.accepted` and queues the asset's first renditions from its `original` in HSM:
-`proxy` + `thumbnail` for video, `audio-proxy` for audio, `thumbnail` for an image, nothing for a
+`proxy` + `thumbnail` for video (and since EP-26.3 the `edit-proxy`), `audio-proxy` for audio, `thumbnail` for an image, nothing for a
 file the probe could not describe (`FIRST_RENDITIONS`). One job, its input an `inputFile`, its
 seen-mark in the transaction. Without HSM configured there is no input to read and the event is
 acknowledged with nothing queued. BMS takes this decision over when it exists — a workflow's first

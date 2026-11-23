@@ -867,6 +867,16 @@ export function pgAssetStore(pool: PgPool): AssetStore {
       return rows[0]?.data;
     },
 
+    async editProjectsOf(channelId, sourceAssetId) {
+      const { rows } = await pool.query<{ data: EditProject }>(
+        `SELECT data FROM edit_projects
+          WHERE channel_id = $1 AND source_asset_id = $2
+          ORDER BY id DESC`,
+        [channelId, sourceAssetId],
+      );
+      return rows.map((r) => r.data);
+    },
+
     async category(id) {
       const { rows } = await pool.query<{ data: Category }>(
         'SELECT data FROM categories WHERE id = $1',

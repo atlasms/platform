@@ -810,6 +810,15 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         { data: string } | undefined;
       return row ? (JSON.parse(row.data) as EditProject) : undefined;
     },
+    async editProjectsOf(channelId, sourceAssetId) {
+      // Newest first by id: a ULID sorts by creation time. The (channel, source, id) index serves it.
+      const rows = db
+        .prepare(
+          'SELECT data FROM edit_projects WHERE channel_id = ? AND source_asset_id = ? ORDER BY id DESC',
+        )
+        .all(channelId, sourceAssetId) as { data: string }[];
+      return rows.map((r) => JSON.parse(r.data) as EditProject);
+    },
     async categoryPaths(ids) {
       const unique = [...new Set(ids)];
       if (unique.length === 0) return new Map();

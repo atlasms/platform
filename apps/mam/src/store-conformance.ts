@@ -243,6 +243,24 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  test(`${name}: EDIT PROJECTS (EP-26.3) — an asset's projects, newest first, never another channel's`, async () => {
+    await withFixture(async ({ store }) => {
+      const older = editProjectFixture({ sourceAssetId: 'A9' });
+      const newer = editProjectFixture({ sourceAssetId: 'A9' });
+      await store.transaction(async (tx) => {
+        await tx.putEditProject(older);
+        await tx.putEditProject(newer);
+        await tx.putEditProject(editProjectFixture({ sourceAssetId: 'A8' }));
+        await tx.putEditProject(editProjectFixture({ sourceAssetId: 'A9', channelId: 'ch99' }));
+      });
+      assert.deepEqual(
+        (await store.editProjectsOf('ch12', 'A9')).map((p) => p.id),
+        [newer.id, older.id],
+      );
+      assert.deepEqual(await store.editProjectsOf('ch12', 'nope'), []);
+    });
+  });
+
   test(`${name}: VOCABULARIES (EP-28.3) — terms by sortOrder then key, a key unique per vocabulary and channel, writes compare-and-set`, async () => {
     const term = (id: string, key: string, over: Partial<VocabularyTerm> = {}): VocabularyTerm => ({
       id,

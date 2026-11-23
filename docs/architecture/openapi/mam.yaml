@@ -537,6 +537,23 @@ paths:
         '409': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
   /assets/{id}/edit-projects:
+    get:
+      operationId: listEditProjects
+      tags: [editor]
+      summary: "The asset's edit projects, newest first (scope asset:read) — EP-26.3: what the asset editor lists so a timeline is reopened rather than started again."
+      parameters:
+        - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      responses:
+        '200':
+          description: The projects
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/EditProject' } }
+        '404': { description: No such asset in the caller's channel, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
     post:
       operationId: createEditProject
       tags: [editor]

@@ -247,7 +247,7 @@ test('a render: queued from the command, cut from the source, placed as the NEW 
     // The new asset's first renditions, from that original — like an ingest's.
     const followUp = (await h.store.jobs({ channelId: CH })).find((j) => j.id !== job!.id)!;
     assert.equal(followUp.assetId, command.outputAssetId);
-    assert.deepEqual(followUp.presetIds, ['proxy', 'thumbnail']);
+    assert.deepEqual(followUp.presetIds, ['proxy', 'edit-proxy', 'thumbnail']);
     assert.deepEqual(followUp.inputFile, { kind: 'original' });
     assert.equal(followUp.state, 'queued');
     assert.equal(followUp.correlationId, job!.correlationId, 'the same chain');

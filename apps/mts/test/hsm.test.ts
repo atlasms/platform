@@ -191,7 +191,7 @@ test('ingest.accepted queues a new asset’s first renditions from its HSM origi
     ]);
     assert.deepEqual(jobs.sort(), [
       ['audio-proxy', 'original', true],
-      ['proxy+thumbnail', 'original', true],
+      ['proxy+edit-proxy+thumbnail', 'original', true],
     ]);
   } finally {
     await h.cleanup();
