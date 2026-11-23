@@ -1045,7 +1045,29 @@
     "outBeforeIn": "Out must be after in",
     "refused": "MAM refused the edit.",
     "writeError": "The edit could not be saved — try again.",
-    "loadError": "This edit could not be loaded."
+    "loadError": "This edit could not be loaded.",
+    "transition": "Transition in",
+    "filters": "Filters",
+    "cut": "Cut",
+    "transitionSec": "Transition length, seconds",
+    "none": "None",
+    "badSeconds": "Not a number of seconds",
+    "transitions": {
+      "dissolve": "Dissolve",
+      "fade-black": "Dip to black",
+      "wipe-left": "Wipe left",
+      "wipe-right": "Wipe right"
+    },
+    "filterNames": {
+      "grayscale": "Grayscale",
+      "sepia": "Sepia",
+      "brighten": "Brighten",
+      "darken": "Darken",
+      "contrast": "More contrast",
+      "blur": "Blur",
+      "sharpen": "Sharpen",
+      "mute": "Mute sound"
+    }
   },
   "edits": {
     "none": "No edits of this asset yet.",

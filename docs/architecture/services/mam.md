@@ -648,8 +648,10 @@ compare-and-set are the conformance suite's, on sqlite and Postgres.
 - **Non-destructive, keyed in seconds.** A clip is `{ renditionRef, inSec, outSec, transitionIn?,
   filters[] }` — a span of a source rendition, never source bytes. In/out are **seconds** (the proxy
   fps is the edit grid, ADR-0011), `outSec` strictly after `inSec`; validated whole, a 422 names every
-  problem by path (`details.problems`, `timeline/clips/1/outSec`). The transition/filter allowlist is
-  EP-26.5's; here any non-empty string is stored.
+  problem by path (`details.problems`, `timeline/clips/1/outSec`). Transitions and filters are
+  the Tier-0 sets (EP-26.5, media-editor.md §5.3), checked at the save with `effectsProblems`:
+  names from the sets, no transition on the first clip, an overlap (`transitionSec`, 0.5 s when
+  absent) shorter than both clips it joins, and only sound on an audio timeline.
 - **Create** (`POST /assets/{id}/edit-projects`) starts a `draft` over the asset, deriving `mediaKind`
   from its `mediaType` (`video`/`audio`/`photo`; `live-event` and the rest are refused 422).
 - **Save** (`PATCH /edit-projects/{id}?version=`) replaces the timeline (and optional
@@ -681,7 +683,8 @@ MTS's is [mts.md §13](mts.md#ep-266--rendering-an-edit-decision-list)). New med
   asset the render becomes, records it with `renderRequestedBy` and the optional `targetAssetId`,
   and carries it in `editor.render.requested`. What would doom the render is refused here (422):
   a photo, clips from two files, a `renditionRef` that is not a media file (`original`/`broadcast`/
-  `proxy`[`/variant`]), a source that **has no such file**, a transition or filter before EP-26.5.
+  `proxy`[`/variant`]), a source that **has no such file**, or transitions and filters the media
+  cannot take (EP-26.5: the same rule as the save).
   With a target, `asset:write` on the target's `core` is needed too, and so is a target that is
   still the newest in its chain (409) and of the source's media type (422). A new render clears
   the last one's `renderJobId`, `failure` and `versionRefused`; one straight from `failed` is

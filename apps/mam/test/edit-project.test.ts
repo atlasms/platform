@@ -284,6 +284,8 @@ test('an asset’s projects are listed newest first — a reader may list them; 
   const { service, caller } = harness();
   const asset = await service.create(caller(), VIDEO);
   const first = await service.createEditProject(caller(), asset.id);
+  // A ULID is ordered by its millisecond only: two made in the same one have no order to test.
+  await new Promise((resolve) => setTimeout(resolve, 2));
   const second = await service.createEditProject(caller(), asset.id);
   const other = await service.create(caller(), VIDEO);
   await service.createEditProject(caller(), other.id);
@@ -309,4 +311,93 @@ test('an asset’s projects are listed newest first — a reader may list them; 
     [second.id, first.id],
   );
   await app.close();
+});
+
+test('EP-26.5: transitions and filters come from the Tier-0 set, and what cannot be is refused at the save', async () => {
+  const { service, caller } = harness();
+  const asset = await service.create(caller(), VIDEO);
+  const project = await service.createEditProject(caller(), asset.id);
+  const save = (clips: unknown[]) =>
+    service.updateEditProject(caller(), project.id, project.version, { timeline: { clips } });
+  const problems = async (clips: unknown[]) => {
+    try {
+      await save(clips);
+      return [];
+    } catch (err) {
+      return ((err as { details?: { problems?: { path: string }[] } }).details?.problems ?? []).map(
+        (p) => p.path,
+      );
+    }
+  };
+
+  assert.deepEqual(
+    await problems([
+      clip('original', 0, 4),
+      { ...clip('original', 10, 14), transitionIn: 'spin' },
+      { ...clip('original', 20, 24), filters: ['grayscale', 'grayscale'] },
+      { ...clip('original', 30, 34), filters: ['ffmpeg -vf evil'] },
+      { ...clip('original', 40, 44), transitionSec: 1 },
+    ]),
+    [
+      'timeline/clips/1/transitionIn',
+      'timeline/clips/2/filters',
+      'timeline/clips/3/filters',
+      'timeline/clips/4/transitionSec',
+    ],
+    'a name outside the set, a filter twice, raw FFmpeg, an overlap with no transition',
+  );
+  assert.deepEqual(
+    await problems([
+      { ...clip('original', 0, 4), transitionIn: 'dissolve' },
+      { ...clip('original', 10, 11), transitionIn: 'dissolve', transitionSec: 2 },
+    ]),
+    ['timeline/clips/0/transitionIn', 'timeline/clips/1/transitionSec'],
+    'nothing before the first clip; an overlap longer than a clip it joins',
+  );
+
+  const saved = await save([
+    { ...clip('original', 0, 4), filters: ['sepia', 'brighten'] },
+    {
+      ...clip('original', 10, 14),
+      transitionIn: 'fade-black',
+      transitionSec: 1,
+      filters: ['mute'],
+    },
+  ]);
+  assert.deepEqual(saved.timeline.clips[1], {
+    renditionRef: 'original',
+    inSec: 10,
+    outSec: 14,
+    transitionIn: 'fade-black',
+    transitionSec: 1,
+    filters: ['mute'],
+  });
+});
+
+test('EP-26.5: an audio timeline takes only what acts on sound', async () => {
+  const { service, caller } = harness();
+  const asset = await service.create(caller(), { ...VIDEO, mediaType: 'audio', fileType: 'wav' });
+  const project = await service.createEditProject(caller(), asset.id);
+  await assert.rejects(
+    service.updateEditProject(caller(), project.id, project.version, {
+      timeline: {
+        clips: [
+          { ...clip('original', 0, 4), filters: ['grayscale'] },
+          { ...clip('original', 10, 14), transitionIn: 'wipe-left' },
+        ],
+      },
+    }),
+    (e: Error & { details?: { problems?: { path: string }[] } }) =>
+      JSON.stringify(e.details?.problems?.map((p) => p.path)) ===
+      JSON.stringify(['timeline/clips/0/filters', 'timeline/clips/1/transitionIn']),
+  );
+  const saved = await service.updateEditProject(caller(), project.id, project.version, {
+    timeline: {
+      clips: [
+        { ...clip('original', 0, 4), filters: ['mute'] },
+        { ...clip('original', 10, 14), transitionIn: 'dissolve' },
+      ],
+    },
+  });
+  assert.equal(saved.timeline.clips.length, 2);
 });

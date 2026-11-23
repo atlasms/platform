@@ -3807,9 +3807,17 @@ test('smoke: EP-26.3/26.6/26.7 + ADR-0012 — an edit is listed, its proxy read 
     headers,
     body: JSON.stringify({
       timeline: {
+        // EP-26.5: a filter on the first clip and a 0.2 s dissolve into the second — rendered by MTS's
+        // xfade graph, so the edit is 0.8 + 0.4 − 0.2 = 1.0 s long.
         clips: [
-          { renditionRef: 'original', inSec: 0.4, outSec: 1.2 },
-          { renditionRef: 'original', inSec: 2, outSec: 2.4 },
+          { renditionRef: 'original', inSec: 0.4, outSec: 1.2, filters: ['grayscale'] },
+          {
+            renditionRef: 'original',
+            inSec: 2,
+            outSec: 2.4,
+            transitionIn: 'dissolve',
+            transitionSec: 0.2,
+          },
         ],
       },
       outputProfile: 'proxy',
@@ -3840,7 +3848,7 @@ test('smoke: EP-26.3/26.6/26.7 + ADR-0012 — an edit is listed, its proxy read 
     [sourceId, 'video', 'mp4', 'created'],
     JSON.stringify(made),
   );
-  assert.ok(Math.abs(made.durationSec - 1.2) < 0.1, `the edit's length: ${made.durationSec}`);
+  assert.ok(Math.abs(made.durationSec - 1.0) < 0.1, `the edit's length: ${made.durationSec}`);
   const chain = json(await get(`/api/v1/assets/${outputAssetId}/versions`, { headers: fresh }));
   assert.deepEqual(
     chain.items.map((a) => a.id),

@@ -159,7 +159,7 @@ test('a render the source or the target dooms is refused at the request', async 
     h.service.renderEditProject(h.caller(), project.id, { targetAssetId: ulid() }),
     status(404),
   );
-  // Two files on one timeline, and a transition, before EP-26.5.
+  // Two files on one timeline.
   await h.service.updateEditProject(h.caller(), project.id, project.version, {
     timeline: {
       clips: [
@@ -167,11 +167,6 @@ test('a render the source or the target dooms is refused at the request', async 
         { renditionRef: 'proxy', inSec: 0, outSec: 1 },
       ],
     },
-  });
-  await assert.rejects(h.service.renderEditProject(h.caller(), project.id, {}), status(422));
-  const again = await h.service.editProject(h.caller(), project.id);
-  await h.service.updateEditProject(h.caller(), project.id, again.version, {
-    timeline: { clips: [{ renditionRef: 'original', inSec: 0, outSec: 1, transitionIn: 'wipe' }] },
   });
   await assert.rejects(h.service.renderEditProject(h.caller(), project.id, {}), status(422));
 });

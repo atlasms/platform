@@ -13,6 +13,8 @@
   "common.schema.json#/$defs/PublishKind": "Each kind is its own outbound connector implementation; the TARGETS are a Tier-1 registry.",
   "common.schema.json#/$defs/RoleClass": "Studio groups cast into on-screen and crew, and search facets by class; a role's class is fixed by the code that reads it.",
   "common.schema.json#/$defs/MetadataSource": "User, technical and AI values are ranked when they meet on one field: MAM applies a higher-ranked value and holds a lower-ranked one beside it (EP-27.5).",
+  "common.schema.json#/$defs/Transition": "MTS compiles each transition to its own FFmpeg graph (xfade/acrossfade) and MAM validates against the set: a name is an implementation, never data an operator could extend (media-editor.md §5.3).",
+  "common.schema.json#/$defs/ClipFilter": "MTS compiles each filter to a fixed FFmpeg filter, and MAM/MTS refuse a video-only one on an audio timeline: a name is an implementation, never raw FFmpeg (media-editor.md §5.3).",
 
   "envelope.schema.json#/properties/actor/properties/kind": "Discriminates a service actor from a user actor for audit and authorization.",
   "file.schema.json#/properties/storage/properties/status": "Gates whether a file may be exported to air.",

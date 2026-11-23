@@ -186,6 +186,41 @@ video gets one at ingest, mts.md §13), frames identified by `requestVideoFrameC
 `floor(mediaTime·fps)`, a bounded seek wait (ADR-0011), a fresh URL when the old one expires, and
 scrubbing on the VTT filmstrip.
 
+### 5.3 Transitions and filters, as decided in building them (EP-26.5)
+
+§11 makes them a small **code-known set (Tier 0)**: each name maps to an FFmpeg filter the render
+worker implements, and never to raw FFmpeg. The project-wide rule is that a person never writes an
+FFmpeg graph (the profile registry's rule, mts.md §11.1). One `$def` each in `common.schema.json`,
+inventoried in `tier0-enums.json`:
+
+| Transition (`transitionIn`) | Video | Audio |
+|---|---|---|
+| *(absent)* | a cut | a cut |
+| `dissolve` | `xfade=dissolve` | `acrossfade` |
+| `fade-black` | `xfade=fadeblack` (a dip to black) | `acrossfade` |
+| `wipe-left`, `wipe-right` | `xfade=wipeleft` / `wiperight` | — (refused on an audio timeline) |
+
+| Filter (`filters[]`, applied in the order listed) | What it does |
+|---|---|
+| `grayscale` | `hue=s=0` |
+| `sepia` | a fixed `colorchannelmixer` matrix |
+| `brighten`, `darken` | `eq=brightness=±0.08` |
+| `contrast` | `eq=contrast=1.2` |
+| `blur` | `gblur=sigma=4` |
+| `sharpen` | `unsharp=5:5:1.0` |
+| `mute` | the clip's audio silenced (`volume=0`); the only filter an audio timeline takes |
+
+- **A transition overlaps the clip with the one before it** for `transitionSec` (default 0.5 s,
+  0.04–5 s). The timeline is therefore shorter than its clips by the sum of its transitions. The
+  overlap must be shorter than both clips it joins. The **first clip takes no transition**, since
+  there is nothing before it; a fade from black at the start is a filter's job, not a transition's.
+- **Validated twice by one rule:** MAM refuses a name outside the set, a duplicate filter, a
+  video-only name on an audio timeline, or an impossible overlap. It refuses at the save (422 by
+  path, `timeline/clips/2/transitionIn`), so the timeline can never hold one. MTS refuses the same
+  in a render command (`COMMAND_REFUSED`), so a render can never run one. The set itself is read
+  from `@atlas/contracts` by both, and by Studio.
+- **Which of them a channel exposes** can become a Tier-3 setting later (§11). The SET stays code.
+
 ## 6. Key flows
 
 Covered by §5. The essential property: **render reuses the transcode pipeline**, so progress,

@@ -327,9 +327,29 @@ the media kind and the clips (`src/render.ts`, pure).
 - **Refused at once, answered** (as `transcode.job.create`'s refusals are, EP-22.4):
   `transcode.failed` with `editProjectId` and `COMMAND_REFUSED`, for a render v1 cannot carry out.
   That covers a photo, clips from two files, a `renditionRef` that is not a media file, a transition
-  or filter before EP-26.5, an output profile that makes a still or a filmstrip or needs the other
+  or filter outside the Tier-0 sets or one the media cannot take (EP-26.5), an output profile that
+  makes a still or a filmstrip or needs the other
   media kind, and no HSM. A render that fails at run time (the source not in HSM, FFmpeg) is retried
   like any job, and its final `transcode.failed` names the project too.
+
+### EP-26.5 — transitions and filters in a render
+
+The set is Tier 0 ([media-editor.md §5.3](media-editor.md#53-transitions-and-filters-as-decided-in-building-them-ep-265)).
+Each name compiles to a FIXED FFmpeg graph in `render.ts` (`TRANSITION_XFADE`, `FILTER_GRAPH`); a
+request can never carry raw FFmpeg.
+
+- A clip's **filters** run first, on its own streams: `hue=s=0`, `eq=…`, `gblur`, `unsharp`, a
+  sepia `colorchannelmixer`, and `volume=0` for `mute`.
+- A timeline with only cuts is the one n-way `concat` it was before 26.5.
+- A timeline with a **transition** is joined **pairwise**, left to right. Where a clip has a
+  transition, the picture gets `xfade=transition=…:duration=d:offset=(length so far − d)` and the
+  sound gets `acrossfade=d=d`; where it doesn't, a two-way `concat`.
+- So the timeline is shorter than its clips by the sum of the overlaps, and `timelineSec`, which
+  measures progress, says so.
+- A real-binary test renders three clips with a dissolve, a dip to black, grayscale and mute: the
+  output is exactly 6 s − 2 × 0.5 s, grayscale on the first clip's frames (signalstats saturation
+  ≈ 0) and colour on the second's. The command is refused when it breaks §5.3's rules, the same as
+  MAM's save.
 
 ### EP-26.3 — the editing proxy
 
