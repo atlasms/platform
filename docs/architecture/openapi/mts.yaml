@@ -148,6 +148,28 @@ components:
           properties:
             kind: { type: string, enum: [original, proxy, broadcast, thumbnail, vtt-filmstrip, hover-preview] }
             variant: { type: string }
+        render:
+          type: object
+          description: >-
+            Present on a RENDER job (EP-26.6; media-editor.md §5.1) — created from
+            `editor.render.requested`, never over HTTP. Its `assetId` is the rendered asset (the
+            command's `outputAssetId`), its one preset the output profile, and its output that asset's
+            `original`; the clips are cut from the source asset's file named by `renditionRef`.
+          required: [editProjectId, sourceAssetId, mediaKind, clips]
+          properties:
+            editProjectId: { $ref: '#/components/schemas/Ulid' }
+            sourceAssetId: { $ref: '#/components/schemas/Ulid' }
+            mediaKind: { type: string, enum: [video, audio] }
+            clips:
+              type: array
+              minItems: 1
+              items:
+                type: object
+                required: [renditionRef, inSec, outSec]
+                properties:
+                  renditionRef: { type: string }
+                  inSec: { type: number, minimum: 0 }
+                  outSec: { type: number, minimum: 0 }
         state: { type: string, enum: [queued, running, completed, failed, dead-letter] }
         attempts: { type: integer, minimum: 0, description: 'Attempts started. An attempt interrupted by a drain is given back.' }
         percent: { type: number, minimum: 0, maximum: 100, description: Best-effort progress across the job's presets. Never a state. }
@@ -166,7 +188,7 @@ components:
         finishedAt: { type: string, format: date-time }
         version: { type: integer, minimum: 1 }
         correlationId: { type: string, description: 'The request or message chain the job belongs to. Every event the job causes carries it, including the ones the worker emits minutes later.' }
-        causationId: { type: string, description: 'The transcode.job.create message that created the job. Absent for a job created over HTTP, which no message caused.' }
+        causationId: { type: string, description: 'The message that created the job — a transcode.job.create, an ingest.accepted, an editor.render.requested, or for the first renditions of a render the render job''s own cause. Absent for a job created over HTTP, which no message caused.' }
     ProfileInput:
       type: object
       required: [id, name, kind, container, enabled]

@@ -86,6 +86,8 @@ Deliberately thin — MTS is queue-driven, not user-facing:
   to the DLQ, having nobody to answer. The input is `inputPath` (under the work root) or `inputFile`
   (`{ kind, variant? }`, the asset's file in HSM, fetched at run time) — exactly one, over the broker
   as over HTTP.
+- **`editor.render.requested` is a job too** (EP-26.6, §13): its answers carry `editProjectId`, and
+  its `assetId` is the asset the render becomes, not the source.
 
 See [Messaging §Transcode](../04-messaging-and-data.md#transcode).
 
@@ -296,6 +298,38 @@ completing the default rendition set (FR-MTS-3).
   Both files are checksummed and placed through the one `placeRendition` path, so the sprite, the
   cues and every ordinary output reach HSM the same way. Neither is in `FIRST_RENDITIONS`: like
   `broadcast`, they are produced when named (a profile, a workflow step), not automatically at ingest.
+
+### EP-26.6 — rendering an edit decision list
+
+The media editor's render ([media-editor.md §5.1](media-editor.md#51-the-render-as-decided-in-building-it-ep-266--ep-267)).
+`editor.render.requested` (from MAM) becomes a **job like any other**: the same queue row, lease,
+heartbeat, progress, retry and dead-letter. What makes it a render is its `render`: the source asset,
+the media kind and the clips (`src/render.ts`, pure).
+
+- **Whose asset.** The job's `assetId` is the asset the render BECOMES: the command's
+  `outputAssetId`, minted by MAM. So `transcode.progress`, `transcode.completed` and
+  `transcode.failed` all carry the id Studio already holds. The source is fetched from HSM as the
+  **source** asset's file named by the clips' `renditionRef` (`original`, `broadcast`, `proxy`,
+  optionally `kind/variant`), under the job's channel (#577) like every fetch.
+- **The FFmpeg shape.** One input per clip, input-seeked (`-ss in -t (out−in) -i source`), joined by
+  the `concat` filter, with the output profile's `-vf` folded into the graph after the join and its
+  encoder arguments unchanged. Input seeking is accurate on a re-encode and decodes nothing before
+  the in-point. A real-binary test cuts at 6.04 s on a GOP-50 source and checks by PSNR that every
+  boundary frame is the source frame it should be, not a neighbour. Audio is carried only when the
+  source has an audio stream (`Transcoder.hasAudio`, an ffprobe of the streams); an audio render
+  of a silent source is a refusal of the input.
+- **The output** is placed in HSM as the new asset's **`original`** (`producedBy: editor`, the
+  profile recorded), and `transcode.completed` carries `editProjectId`. Every rendition now names
+  its container (`Rendition.fileType`, the preset's extension), because HSM's path names none and
+  MAM makes an asset's `fileType` from it. In the SAME transaction, the new asset's first renditions
+  are queued from that original (`FIRST_RENDITIONS` by media kind, as for an ingest), so it gets a
+  proxy and thumbnail of its own.
+- **Refused at once, answered** (as `transcode.job.create`'s refusals are, EP-22.4):
+  `transcode.failed` with `editProjectId` and `COMMAND_REFUSED`, for a render v1 cannot carry out.
+  That covers a photo, clips from two files, a `renditionRef` that is not a media file, a transition
+  or filter before EP-26.5, an output profile that makes a still or a filmstrip or needs the other
+  media kind, and no HSM. A render that fails at run time (the source not in HSM, FFmpeg) is retried
+  like any job, and its final `transcode.failed` names the project too.
 
 ### EP-15.5 — the first renditions of an ingested asset
 

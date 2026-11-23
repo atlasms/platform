@@ -4,12 +4,13 @@
   "title": "editor.render.requested payload (command)",
   "description": "Command issued by the Studio-hosted media editor (via the BFF) to flatten an edit timeline into a new rendition. Consumed by MTS, which renders it and emits transcode.completed. Design: docs/architecture/services/media-editor.md.",
   "type": "object",
-  "required": ["editProjectId", "sourceAssetId", "mediaKind", "timeline", "outputProfile"],
+  "required": ["editProjectId", "sourceAssetId", "outputAssetId", "mediaKind", "timeline", "outputProfile"],
   "additionalProperties": false,
   "properties": {
     "editProjectId": { "$ref": "../common.schema.json#/$defs/Ulid" },
     "sourceAssetId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "Asset whose renditions the timeline references." },
-    "targetAssetId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "Existing asset to add the rendered result to as a new version; absent = create a new asset." },
+    "outputAssetId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "The id of the asset the render BECOMES, minted by MAM when the render is requested (media-editor.md §5.1). MTS places the rendered file as this asset's `original` and announces transcode.completed/progress/failed under it; MAM creates the asset on completion." },
+    "targetAssetId": { "$ref": "../common.schema.json#/$defs/Ulid", "description": "Existing asset the rendered asset becomes the next version of (the version chain, mam.md §13t); absent = the rendered asset stands alone." },
     "mediaKind": { "enum": ["video", "audio", "photo"], "description": "The editor operates on video, audio, or image (basic-NLE, D3)." },
     "timeline": {
       "type": "object",
@@ -23,9 +24,11 @@
             "type": "object",
             "required": ["renditionRef", "inSec", "outSec"],
             "properties": {
-              "renditionRef": { "type": "string", "description": "File/rendition of the source asset this clip draws from." },
+              "renditionRef": { "type": "string", "description": "The file of the source asset this clip draws from, by FileRef kind — `original`, `broadcast` or `proxy` — optionally `kind/variant` (media-editor.md §5.1). In v1 every clip of a render names the same file." },
               "inSec": { "type": "number", "minimum": 0 },
-              "outSec": { "type": "number", "minimum": 0 }
+              "outSec": { "type": "number", "minimum": 0 },
+              "transitionIn": { "type": "string", "description": "An allowlisted transition (EP-26.5). Not rendered before EP-26.5: MAM refuses a render that carries one." },
+              "filters": { "type": "array", "items": { "type": "string" }, "description": "Allowlisted filters (EP-26.5). Not rendered before EP-26.5, as transitionIn." }
             }
           }
         }

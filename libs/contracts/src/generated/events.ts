@@ -39,6 +39,8 @@ export interface Rendition {
   /** HSM-resolved logical path. */
   path: string;
   checksum: Checksum;
+  /** The container, as a file extension (`mp4`, `mxf`, `m4a`, `jpg`, `vtt`) — what MTS wrote. HSM's path names no format, and an asset made from a rendition (a render, EP-26.6) takes its `fileType` from here. */
+  fileType?: string;
   sizeBytes?: number;
   durationSec?: number;
 }
@@ -330,12 +332,22 @@ export interface EditorRenderRequestedPayload {
   editProjectId: Ulid;
   /** Asset whose renditions the timeline references. */
   sourceAssetId: Ulid;
-  /** Existing asset to add the rendered result to as a new version; absent = create a new asset. */
+  /** The id of the asset the render BECOMES, minted by MAM when the render is requested (media-editor.md §5.1). MTS places the rendered file as this asset's `original` and announces transcode.completed/progress/failed under it; MAM creates the asset on completion. */
+  outputAssetId: Ulid;
+  /** Existing asset the rendered asset becomes the next version of (the version chain, mam.md §13t); absent = the rendered asset stands alone. */
   targetAssetId?: Ulid;
   /** The editor operates on video, audio, or image (basic-NLE, D3). */
   mediaKind: 'video' | 'audio' | 'photo';
   /** The edit decision list: an ordered set of clips (source in/out → timeline position) plus optional transitions and filters. Interpreted by the render worker; the authoritative shape is the EditProject timeline (media-editor.md §3). */
-  timeline: { clips: { renditionRef: string; inSec: number; outSec: number }[] };
+  timeline: {
+    clips: {
+      renditionRef: string;
+      inSec: number;
+      outSec: number;
+      transitionIn?: string;
+      filters?: string[];
+    }[];
+  };
   /** MTS profile id (Tier-1 registry) to encode the flattened result with. */
   outputProfile: string;
   /** User id who triggered the render. */
@@ -717,6 +729,8 @@ export interface TaxonomyUpdatedPayload {
 export interface TranscodeCompletedPayload {
   assetId: Ulid;
   jobId?: Ulid;
+  /** the render (EP-26.6) whose output this is: present only on the completion of an `editor.render.requested`, where `assetId` is the rendered asset (the command's `outputAssetId`) and the one rendition is its `original`. MAM creates that asset from it (media-editor.md §5.1). */
+  editProjectId?: Ulid;
   renditions: Rendition[];
 }
 
@@ -724,6 +738,8 @@ export interface TranscodeCompletedPayload {
 export interface TranscodeFailedPayload {
   assetId: Ulid;
   jobId?: Ulid;
+  /** the render (EP-26.6) that failed: present only when the failed job or refused command was an `editor.render.requested`, where `assetId` is the command's `outputAssetId`. MAM moves the project to `failed` (media-editor.md §5.1). */
+  editProjectId?: Ulid;
   attempts?: number;
   /** Who asked for the transcode — the job's creator: a user, or a service (bms, rim). Notifications tells a user that it failed (EP-25.5); a service is told nothing. */
   requestedBy?: string;

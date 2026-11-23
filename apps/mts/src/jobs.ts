@@ -73,6 +73,32 @@ export function startIngestConsumer(options: IngestConsumerOptions): Subscriptio
   );
 }
 
+/** Every channel's render commands, from MAM's media editor (EP-26.6). */
+export const RENDER_REQUESTED_PATTERN = 'atlas.*.editor.render.requested';
+
+/**
+ * `editor.render.requested` → a queued render job, acked at once like `transcode.job.create`; a
+ * well-formed command MTS cannot carry out is answered (`refused`), and only a message that is not
+ * one goes to the broker's retry and dead-letter.
+ */
+export function startRenderConsumer(options: JobConsumerOptions): Subscription {
+  return options.broker.subscribe(
+    RENDER_REQUESTED_PATTERN,
+    async (msg: Message) => {
+      try {
+        const outcome = await options.service.consumeRenderRequested(msg);
+        if (outcome === 'applied') options.onQueued?.(msg.subject);
+        else if (outcome === 'refused') options.onRefused?.(msg.subject);
+        else options.onDuplicate?.(msg.subject);
+      } catch (err) {
+        options.onError?.(err, msg);
+        throw err;
+      }
+    },
+    { maxAttempts: options.maxAttempts ?? 5 },
+  );
+}
+
 export interface WorkerOptions {
   service: MtsService;
   /** How long to wait after finding nothing to do. Default 1s. */

@@ -3733,6 +3733,149 @@ test('smoke: EP-15.5 — an accepted upload becomes an asset: its original in HS
   assert.deepEqual(kinds.sort(), ['original', 'proxy']);
 });
 
+test('smoke: EP-26.6/26.7 — an edit is rendered by FFmpeg into the source’s next version; a render MTS refuses fails its project', async () => {
+  // The render path on a live cluster (media-editor.md §5.1). A real video is uploaded and
+  // becomes an asset with its original in HSM. An edit project cuts two spans of that original;
+  // the render — asked to be the source's next version — is MTS cutting them out of HSM's copy with
+  // FFmpeg and placing the result as a NEW asset's original. MAM makes that asset, linked into the
+  // source's version chain, and MTS then gives it its own first renditions. A second render with a
+  // profile that makes a still is refused by MTS and fails its project with the reason.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const fresh = { ...headers, 'cache-control': 'no-cache' };
+  const poll = async (fn, done, budgetMs, what) => {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const value = await fn();
+      if (done(value)) return value;
+      assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(value)?.slice(0, 600)}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+
+  // The source: 3 s of real video, ingested.
+  const file = y4m(3);
+  const upload = json(
+    await get('/api/v1/uploads', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ filename: 'Smoke Edit Source.y4m', sizeBytes: file.length }),
+    }),
+  );
+  const put = await get(`/api/v1/uploads/${upload.uploadId}/parts/1`, {
+    method: 'PUT',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' },
+    body: file,
+  });
+  assert.equal(put.status, 204, put.text);
+  const ingest = json(
+    await get(`/api/v1/uploads/${upload.uploadId}/complete`, { method: 'POST', headers }),
+  );
+  const job = await poll(
+    async () => json(await get(`/api/v1/ingest/${ingest.id}`, { headers })),
+    (j) => ['registered', 'rejected', 'quarantined'].includes(j.state),
+    60_000,
+    'the source was never registered',
+  );
+  assert.equal(job.state, 'registered', JSON.stringify(job));
+  const sourceId = job.assetId;
+  await poll(
+    async () => get(`/api/v1/assets/${sourceId}/files`, { headers: fresh }),
+    (res) => res.status === 200 && json(res).some((f) => f.kind === 'original'),
+    60_000,
+    'MAM never recorded the source’s original',
+  );
+
+  // The edit: two spans of the original, rendered as the source's next version.
+  const created = await get(`/api/v1/assets/${sourceId}/edit-projects`, {
+    method: 'POST',
+    headers,
+  });
+  assert.equal(created.status, 201, created.text);
+  const project = json(created);
+  const saved = await get(`/api/v1/edit-projects/${project.id}?version=${project.version}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({
+      timeline: {
+        clips: [
+          { renditionRef: 'original', inSec: 0.4, outSec: 1.2 },
+          { renditionRef: 'original', inSec: 2, outSec: 2.4 },
+        ],
+      },
+      outputProfile: 'proxy',
+    }),
+  });
+  assert.equal(saved.status, 200, saved.text);
+  const rendering = await get(`/api/v1/edit-projects/${project.id}/render`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ targetAssetId: sourceId }),
+  });
+  assert.equal(rendering.status, 202, rendering.text);
+  const outputAssetId = json(rendering).outputAssetId;
+  assert.ok(outputAssetId, 'the asset the render becomes is named at once');
+
+  const done = await poll(
+    async () => json(await get(`/api/v1/edit-projects/${project.id}`, { headers: fresh })),
+    (p) => p.state === 'rendered' || p.state === 'failed',
+    120_000,
+    'the render never finished',
+  );
+  assert.equal(done.state, 'rendered', JSON.stringify(done));
+  assert.equal(done.versionRefused, undefined, JSON.stringify(done));
+
+  const made = json(await get(`/api/v1/assets/${outputAssetId}`, { headers: fresh }));
+  assert.deepEqual(
+    [made.replacesId, made.mediaType, made.fileType, made.state],
+    [sourceId, 'video', 'mp4', 'created'],
+    JSON.stringify(made),
+  );
+  assert.ok(Math.abs(made.durationSec - 1.2) < 0.1, `the edit's length: ${made.durationSec}`);
+  const chain = json(await get(`/api/v1/assets/${outputAssetId}/versions`, { headers: fresh }));
+  assert.deepEqual(
+    chain.items.map((a) => a.id),
+    [sourceId, outputAssetId],
+  );
+  const location = json(await get(`/api/v1/assets/${outputAssetId}/location`, { headers }));
+  const original = location.find((f) => f.kind === 'original');
+  assert.ok(original, `no original in HSM: ${JSON.stringify(location)}`);
+  assert.equal(original.provenance?.producedBy, 'editor');
+  // …and its own first renditions, from that original.
+  await poll(
+    async () =>
+      json(await get(`/api/v1/assets/${outputAssetId}/location`, { headers })).map((f) => f.kind),
+    (kinds) => kinds.includes('proxy') && kinds.includes('thumbnail'),
+    90_000,
+    'the rendered asset never got its proxy and thumbnail',
+  );
+
+  // A profile that makes a still: MTS refuses the command, and the project fails with why.
+  const again = json(await get(`/api/v1/edit-projects/${project.id}`, { headers: fresh }));
+  const stillSave = await get(`/api/v1/edit-projects/${project.id}?version=${again.version}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ timeline: again.timeline, outputProfile: 'thumbnail' }),
+  });
+  assert.equal(stillSave.status, 200, stillSave.text);
+  const refused = await get(`/api/v1/edit-projects/${project.id}/render`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({}),
+  });
+  assert.equal(refused.status, 202, refused.text);
+  const failed = await poll(
+    async () => json(await get(`/api/v1/edit-projects/${project.id}`, { headers: fresh })),
+    (p) => p.state !== 'rendering',
+    60_000,
+    'the refused render never failed its project',
+  );
+  assert.equal(failed.state, 'failed', JSON.stringify(failed));
+  assert.equal(failed.failure?.code, 'COMMAND_REFUSED', JSON.stringify(failed));
+  assert.match(failed.failure.message, /thumbnail/);
+});
+
 test('smoke: EP-16 — a real transcode: enqueued through the gateway, run by FFmpeg, announced, and mirrored into the asset’s files by MAM', async () => {
   // The path the FileRef mirror (EP-17.8) had never run on in a deployment, because nothing
   // produced `transcode.completed`: an asset in MAM, a job in MTS over its sample clip (the dev

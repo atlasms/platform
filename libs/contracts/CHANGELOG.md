@@ -21,7 +21,23 @@ release is a statement of what changed, not a deploy step.
 
 ## [Unreleased]
 
+### Breaking
+
+- **`outputAssetId` is required on `editor.render.requested`** (EP-26.6): the id of the asset the
+  render becomes, minted by MAM when the render is requested (media-editor.md §5.1). MAM is the only
+  producer and MTS the only consumer, and both change in the same release; a command without it
+  is now off its schema.
+
 ### Added
+
+- **`editProjectId`** on `transcode.completed` and `transcode.failed` (EP-26.6): present only on the
+  answer to an `editor.render.requested`. A consumer that ignores it is unaffected. MAM routes
+  on it: the completion of a render creates an asset, and its failure fails the project.
+- **`fileType`** on the `Rendition` `$def` (EP-26.6): the container as a file extension (`mp4`, `mxf`,
+  `m4a`, `jpg`, `vtt`), set by MTS on every rendition it produces. HSM's path names no format, and
+  the asset a render becomes takes its `fileType` from its original's. Optional and additive.
+- **`transitionIn` and `filters`** declared on `editor.render.requested`'s clips (EP-26.5 renders
+  them), and `renditionRef` now says what it names: a file of the source asset by kind.
 
 - **`variant`** on the `Rendition` `$def` (EP-29.4): an optional string disambiguating files of one
   kind, carried on `transcode.completed`'s renditions. A VTT filmstrip is two renditions of kind

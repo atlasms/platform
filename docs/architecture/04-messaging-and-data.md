@@ -174,7 +174,7 @@ Grouped by domain; payload keys abbreviated. Machine-readable **[JSON Schema pay
 | `workflow.task.created` | BMS | taskId, assignee, assetId, reviewPointId | Notifications |
 | `workflow.task.resolved` | BMS | taskId, workflowInstanceId, outcome, by | Notifications |
 | `workflow.completed` | BMS | instanceId, outcome | Notifications, Logging |
-| `editor.render.requested` (cmd) | Studio/BFF | editProjectId, timeline, outputProfile | MTS |
+| `editor.render.requested` (cmd) | MAM (the editor's render) | editProjectId, sourceAssetId, outputAssetId, targetAssetId?, timeline, outputProfile | MTS — answered `transcode.completed`/`failed` with `editProjectId`, which MAM consumes |
 | `schedule.updated` | Scheduling | scheduleId, items | Integration (EPG), WebSocket |
 | `schedule.validated` | Scheduling | scheduleId, valid, issues[] | WebSocket, Logging |
 | `schedule.sent-to-air` | Scheduling | scheduleId | HSM, Logging |

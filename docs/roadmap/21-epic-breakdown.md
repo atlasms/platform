@@ -493,9 +493,9 @@ Source: [media-editor.md](../architecture/services/media-editor.md) (D3: basic N
 | 26.3 | Timeline UI — trim and arrange | 8 |
 | 26.4 | Proxy scrubbing on the VTT filmstrip (with EP-29.4/29.5's filmstrip + hover-preview renditions, #586) | 3 |
 | 26.5 | Transitions and filters from an allowlist (never raw FFmpeg — the profile-registry rule) | 5 |
-| 26.6 | `editor.render.requested` → MTS render job | 5 |
-| 26.7 | Render to a new version (with EP-27.6's version chain — the render arrives as its own asset and is linked by `POST /assets/{id}/versions`) | 3 |
-| 26.8 | Render progress + failure handling in the editor | 2 |
+| 26.6 | ✅ `editor.render.requested` → MTS render job — one input-seeked input per clip, `concat`, the profile's `-vf` after the join, frame-exact by PSNR on the real binary; placed as the NEW asset's `original` (`outputAssetId`, minted by MAM), its first renditions queued; refusals answered ([mts.md §13](../architecture/services/mts.md#ep-266--rendering-an-edit-decision-list)) | 5 |
+| 26.7 | ✅ Render to a new version (with EP-27.6's version chain) — the render arrives as its own asset in ONE MAM transaction: linked as `targetAssetId`'s next version, or standing alone with the source's metadata and scope; a target versioned mid-render lands standalone with `versionRefused` ([mam.md §13ab](../architecture/services/mam.md#13ab-as-built--ep-266--267-a-render-becomes-an-asset-of-its-own)) | 3 |
+| 26.8 | Render progress + failure handling in the editor — 🔨 the backend is built with 26.6/26.7 (`transcode.failed` → project `failed` with the reason; progress is `transcode.progress` under the `outputAssetId` the project names at once); the editor's half waits for 26.3 | 2 |
 
 **Spike first:** 26.1 — the approach is decided (short-GOP editing proxy); the spike confirms it and its report is the artifact.
 

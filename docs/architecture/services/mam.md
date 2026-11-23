@@ -112,7 +112,7 @@ built, the expiry half (EP-24.5, §13z); the purge half is EP-24.6, owed by peop
 | `GET` | `/assets/{id}/verdicts` | Retained review-verdict history for the asset. ✅ EP-24.4 (§13y): `{ items }`, newest first — manual and automatic, append-only by the database. | `asset:read` |
 | `GET` / `PUT` | `/assets/{id}/shotlist` | The asset's notable segments, read in timeline order and replaced whole. ✅ EP-27.3 (§13v) | `asset:read` / `asset:write`, both on the `shotlist` field group |
 | `DELETE` | `/assets/{id}/derived/{field}` | Drop a value MAM held beside a field a person set, unused — taking it is a PATCH of the field. ✅ EP-27.5 (§13u) | `asset:write` on the field's group |
-| `POST` / `GET` / `PATCH` / `POST` | `/assets/{id}/edit-projects` · `/edit-projects/{id}` · `…?version=` · `/edit-projects/{id}/render` | The media editor's `EditProject` — a re-openable timeline over one asset's renditions (basic-NLE, D3). Create a draft over the asset; load; save the timeline compare-and-set on `?version=`; render (flatten → `editor.render.requested` to MTS, state → `rendering`; the result arrives later as a new version, EP-26.6). ✅ EP-26.2 (§13aa) | `asset:read` (read) / `asset:write` on `core` (create, save, render) |
+| `POST` / `GET` / `PATCH` / `POST` | `/assets/{id}/edit-projects` · `/edit-projects/{id}` · `…?version=` · `/edit-projects/{id}/render` | The media editor's `EditProject` — a re-openable timeline over one asset's renditions (basic-NLE, D3). Create a draft over the asset; load; save the timeline compare-and-set on `?version=`; render (flatten → `editor.render.requested` to MTS under a minted `outputAssetId`, state → `rendering`; the result arrives as an asset of its own, optionally the `targetAssetId`'s next version, and the project goes `rendered` or `failed`). ✅ EP-26.2 (§13aa), EP-26.6/26.7 (§13ab) | `asset:read` (read) / `asset:write` on `core` (create, save, render; and on the target's `core`) |
 | `GET` | `/search?q=…` | Simple search. | `asset:read` |
 | `POST` | `/search` | Advanced **faceted** search (category + subject + tag + person). | `asset:read` |
 | `GET` / `PUT` | `/field-schemas` | Define type/category custom fields. ✅ EP-27.4 (§13w): `PUT` without `?version=` is a NEW schema, with it a compare-and-set replacement; validated whole (422 `details.problems` by path); audited. (This row said `GET/POST` under `metadata:admin`. The authorization model's §3 catalogues `metadata:admin` for field schemas, but no starter role grants it and MAM never enforced it — the read was always `asset:read`, the write `taxonomy:admin`. Which of the two governs a schema is an open product question; until it is answered the code's `taxonomy:admin` stands.) | `asset:read` / `taxonomy:admin` |
@@ -668,6 +668,55 @@ Evidence: `test/edit-project.test.ts` (create/derive/audit, save compare-and-set
 a re-sent no-op, validation by path, render issuing the command and the rendering guard, the `core`
 group refusing a reader and a Librarian, and the routes' 201/200/200/202) and the store conformance
 case on both adapters. Studio's editor UI is EP-26.3; the render pipeline is EP-26.6.
+
+## 13ab. As built — EP-26.6 / 26.7, a render becomes an asset of its own
+
+The render's MAM half ([media-editor.md §5.1](media-editor.md#51-the-render-as-decided-in-building-it-ep-266--ep-267);
+MTS's is [mts.md §13](mts.md#ep-266--rendering-an-edit-decision-list)). New media is a new asset id
+(§13t), so a render produces an asset, never a file of the source.
+
+- **The request** (`POST /edit-projects/{id}/render`, extended) mints **`outputAssetId`**, the
+  asset the render becomes, records it with `renderRequestedBy` and the optional `targetAssetId`,
+  and carries it in `editor.render.requested`. What would doom the render is refused here (422):
+  a photo, clips from two files, a `renditionRef` that is not a media file (`original`/`broadcast`/
+  `proxy`[`/variant`]), a source that **has no such file**, a transition or filter before EP-26.5.
+  With a target, `asset:write` on the target's `core` is needed too, and so is a target that is
+  still the newest in its chain (409) and of the source's media type (422). A new render clears
+  the last one's `renderJobId`, `failure` and `versionRefused`; one straight from `failed` is
+  allowed.
+- **The completion** is a `transcode.completed` naming the project (`editProjectId`). The file
+  mirror routes it to `renderCompleted` rather than mirroring files onto an asset that does not
+  exist yet. In ONE transaction (`commitWith`): the asset is created under `outputAssetId` (state
+  `created`, `asset.created`; `fileType` and `durationSec` from the rendition, stamped `technical`
+  by `editor`; owner = whoever rendered), together with its file row(s), its tags and extended
+  document, the project's move to `rendered` with `renderJobId`, the audit deltas of the asset,
+  each file and the project, and the seen-mark.
+  - **With a target**: the version chain's copy of the TARGET's metadata and the link, in the same
+    transaction (`replacesId`/`replacedById`, `asset.replaced`, the target's audit).
+  - **Without one**: the SOURCE's metadata is copied by the same rule, without a link, and the
+    title becomes `<source> (edit)`. The output inherits the source's category, so it is scoped as
+    the source was (media-editor.md §10).
+  - **A target versioned while the render ran** is not a lost render: the asset is created
+    standalone and the project records `versionRefused`.
+  - **A completion this project no longer waits for** (applied already, or for a render since
+    superseded) changes nothing.
+  - **HSM's `file.placed` for the original comes FIRST**, when MTS places the file, before
+    `transcode.completed`. The mirror refuses it for an asset that does not exist yet and the broker
+    redelivers it, as it does an ingest's original. The completion writes the same file row itself,
+    so a placement that exhausts its redeliveries (about 3 s) costs a DLQ entry, not the file.
+- **The failure** (EP-26.8's backend): MAM now consumes `transcode.failed`
+  (`atlas.*.transcode.failed`, `renders.ts`). One naming a project in `rendering` for that
+  `outputAssetId` moves it to `failed` with `failure: { code, message }`, MTS's words, audited
+  `edit-project.render-failed` with the seen-mark. Any other failure is `skipped`, because it is
+  Notifications' to tell. The timeline is kept; a save returns the project to `draft`.
+
+Evidence: `test/render.test.ts` (the request minting and carrying the id; each refusal; standing
+alone with the source's description, category and tags and the render's own length, once; linked
+as the target's next version and read back as a chain of two; a target versioned mid-render
+landing standalone with the reason; a failure, a retry under a new id, and the superseded render's
+late completion making nothing). The smoke suite renders a real upload through the gateway into
+the source's next version, sees the new asset's original in HSM (`producedBy: editor`) and its own
+proxy and thumbnail, and fails a second render that MTS refuses.
 
 ## 14. Open questions / future
 

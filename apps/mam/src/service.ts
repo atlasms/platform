@@ -27,6 +27,7 @@ import {
   newEditProject,
   parseEditProjectPatch,
   parseRenderInput,
+  parseRenditionRef,
   renderProblem,
   sameTimeline,
   type EditProject,
@@ -1276,6 +1277,8 @@ export class MamService {
       msg,
       'transcode.completed',
     );
+    // A render's completion is not a rendition of an asset MAM has: it IS the asset (EP-26.6).
+    if (envelope.payload.editProjectId !== undefined) return this.renderCompleted(msg, envelope);
     const { assetId, renditions, jobId } = envelope.payload;
     const existing = await this.assetInChannel(assetId, envelope.channelId);
     const current = new Map(
@@ -1353,6 +1356,197 @@ export class MamService {
       for (const a of fileAudits) await tx.enqueue(a);
     });
     if (updated) await this.evictCached(assetId);
+    return outcome;
+  }
+
+  /**
+   * A render's `transcode.completed` (EP-26.6 / 26.7; media-editor.md §5.1): the rendered file is
+   * the `original` of a NEW asset, under the id minted when the render was requested. In ONE
+   * transaction: the asset (state `created`, its metadata the source's — or, with a target, the
+   * version chain's copy of the target's, and the link), its file rows, the project `rendered`, the
+   * audit deltas of all three and the seen-mark. Every one of them or none.
+   *
+   * A completion this project is not waiting for — applied already, or a render a later one
+   * superseded — changes nothing. A target that cannot be linked any more (someone versioned it
+   * while the render ran) does not lose the render: the asset stands alone, and the project says
+   * why. The write is the platform's own: the render was authorized when it was requested.
+   */
+  private async renderCompleted(
+    msg: Message,
+    envelope: Envelope<EventPayloads['transcode.completed']>,
+  ): Promise<MirrorOutcome> {
+    const { assetId, renditions, jobId, editProjectId } = envelope.payload;
+    const project = await this.options.store.editProject(editProjectId!);
+    if (!project || project.channelId !== envelope.channelId) {
+      throw new NotFound(`no edit project ${editProjectId} in channel ${envelope.channelId}`);
+    }
+    if (project.state !== 'rendering' || project.outputAssetId !== assetId) return 'duplicate';
+    if (await this.options.store.get(assetId)) return 'duplicate';
+    const original = renditions.find((r) => r.kind === 'original');
+    if (!original) {
+      throw new ValidationError(`render ${jobId ?? '?'} of ${editProjectId} carried no original`);
+    }
+
+    const at = this.now().toISOString();
+    const source = await this.options.store.get(project.sourceAssetId);
+    const sourceHere = source && source.channelId === project.channelId ? source : undefined;
+    const received: Asset = {
+      id: assetId,
+      channelId: project.channelId,
+      title: sourceHere?.title ?? `Edit of ${project.sourceAssetId}`,
+      mediaType: sourceHere?.mediaType ?? project.mediaKind,
+      fileType: original.fileType ?? 'bin',
+      state: 'created',
+      version: 1,
+      hasRenditions: false,
+      createdBy: project.renderRequestedBy ?? project.createdBy,
+      createdAt: at,
+      updatedAt: at,
+      ...defined({ durationSec: original.durationSec }),
+    };
+    // What the platform says of new media: the editor's measure, outranked by any person's word.
+    const derivation = { source: 'technical', by: 'editor', at, ...defined({ jobId }) } as const;
+    const base = stampedBy(received, ['title', 'mediaType', 'fileType', 'durationSec'], derivation);
+
+    // The next version of the target, when one was asked for and can still be made.
+    let target: Asset | undefined;
+    let versionRefused: string | undefined;
+    if (project.targetAssetId !== undefined) {
+      const found = await this.options.store.get(project.targetAssetId);
+      const problem =
+        !found || found.channelId !== project.channelId
+          ? `asset ${project.targetAssetId} is gone`
+          : versionProblem(found, base)?.message;
+      if (problem) versionRefused = problem;
+      else target = found;
+    }
+    // The metadata it takes: the target's by the version chain's rule, or — standing alone — the
+    // source's, so the render inherits the source's category scope (§10) rather than landing
+    // unscoped; titled as the edit it is.
+    const from = target ?? sourceHere;
+    let asset: Asset = base;
+    if (from) asset = cloneOnto(from, base).asset;
+    if (!target) {
+      const { replacesId: _replaces, ...standalone } = asset;
+      asset = sourceHere
+        ? stampedBy({ ...standalone, title: `${sourceHere.title} (edit)` }, ['title'], derivation)
+        : standalone;
+    }
+    const [fromTags, fromDoc] = from
+      ? await Promise.all([
+          this.options.store.tagsOf(from.id),
+          this.options.store.extended(from.id),
+        ])
+      : [[], undefined];
+    const tags = mergeTagLabels(fromTags, []);
+    const doc = mergeExtended(fromDoc ?? {}, {});
+
+    const superseded: Asset | undefined = target
+      ? { ...target, replacedById: asset.id, version: target.version + 1, updatedAt: at }
+      : undefined;
+    const files = renditions.map((r) =>
+      fileFromRendition(r, { channelId: project.channelId, assetId, messageId: msg.id, now: at }),
+    );
+    const rendered: EditProject = {
+      ...project,
+      state: 'rendered',
+      ...defined({ renderJobId: jobId, versionRefused }),
+      version: project.version + 1,
+      updatedAt: at,
+    };
+    const caller = systemCaller(envelope.channelId, envelope);
+    const duplicate = new Error('duplicate');
+    try {
+      await this.commitWith(
+        caller,
+        asset,
+        undefined,
+        {
+          type: 'asset.created',
+          payload: {
+            assetId: asset.id,
+            core: {
+              title: asset.title,
+              fileType: asset.fileType,
+              ...defined({ durationSec: asset.durationSec }),
+            },
+          },
+        },
+        async (tx) => {
+          if (!(await tx.markSeen(msg.id))) throw duplicate;
+          if (tags.labels.length > 0) {
+            await tx.setTags(
+              asset.id,
+              asset.channelId,
+              tags.labels.map((t) => ({ id: ulid(), ...t })),
+            );
+          }
+          if (Object.keys(doc.merged).length > 0) {
+            await tx.putExtended(asset.id, asset.channelId, doc.merged);
+          }
+          for (const f of files) {
+            await tx.putFile(f);
+            await tx.enqueue(this.fileAudit(caller, f, undefined, 'transcode.completed'));
+          }
+          if (superseded && target) {
+            await tx.put(superseded, target.version);
+            await tx.enqueue(
+              this.eventRecord(caller, superseded.channelId, 'asset.replaced', {
+                oldId: superseded.id,
+                newId: asset.id,
+              } satisfies EventPayloads['asset.replaced']),
+            );
+            await tx.enqueue(this.auditRecord(caller, superseded, target, 'asset.replaced'));
+          }
+          await tx.putEditProject(rendered, project.version);
+          await tx.enqueue(
+            this.editProjectAudit(caller, rendered, project, 'edit-project.rendered'),
+          );
+        },
+        { tagLabels: tags.labels.map((t) => t.label), extended: doc.merged },
+      );
+    } catch (err) {
+      if (err === duplicate) return 'duplicate';
+      throw err;
+    }
+    if (superseded) await this.evictCached(superseded.id);
+    return 'applied';
+  }
+
+  /**
+   * A render's `transcode.failed` (EP-26.8's backend; media-editor.md §5.1): the project moves to
+   * `failed` with MTS's reason, its timeline kept for the next attempt. Any other transcode's
+   * failure is not MAM's to record (`skipped`): Notifications tells whoever asked.
+   */
+  async renderFailed(msg: Message): Promise<MirrorOutcome | 'skipped'> {
+    const envelope = this.envelopeOf<EventPayloads['transcode.failed']>(msg, 'transcode.failed');
+    const { editProjectId, assetId, jobId, error } = envelope.payload;
+    if (editProjectId === undefined) return 'skipped';
+    const project = await this.options.store.editProject(editProjectId);
+    if (!project || project.channelId !== envelope.channelId) {
+      throw new NotFound(`no edit project ${editProjectId} in channel ${envelope.channelId}`);
+    }
+    if (project.state !== 'rendering' || project.outputAssetId !== assetId) return 'duplicate';
+    const failed: EditProject = {
+      ...project,
+      state: 'failed',
+      failure: { code: error.code, message: error.message },
+      ...defined({ renderJobId: jobId }),
+      version: project.version + 1,
+      updatedAt: this.now().toISOString(),
+    };
+    const caller = systemCaller(envelope.channelId, envelope);
+    let outcome: MirrorOutcome = 'applied';
+    await this.options.store.transaction(async (tx) => {
+      if (!(await tx.markSeen(msg.id))) {
+        outcome = 'duplicate';
+        return;
+      }
+      await tx.putEditProject(failed, project.version);
+      await tx.enqueue(
+        this.editProjectAudit(caller, failed, project, 'edit-project.render-failed'),
+      );
+    });
     return outcome;
   }
 
@@ -2727,8 +2921,12 @@ export class MamService {
   /**
    * Flatten the timeline into a render (FR-EDT-4): issue `editor.render.requested` to MTS and move
    * the project to `rendering`, in ONE transaction — the command and the state change commit
-   * together or neither does. The rendered file arrives later as a new version (EP-26.6). Scope:
-   * asset:write.
+   * together or neither does. The rendered file arrives later as an asset of its own, under the id
+   * minted HERE (`outputAssetId`), and — with a `targetAssetId` — as that asset's next version
+   * (media-editor.md §5.1). Scope: asset:write on `core` of the source, and of the target.
+   *
+   * Everything that would doom the render is refused here rather than minutes later: a source that
+   * lacks the file the clips name, a target already replaced or of another media type.
    */
   async renderEditProject(caller: Caller, id: string, body: unknown): Promise<EditProject> {
     const existing = await this.editProjectInChannel(caller, id);
@@ -2743,16 +2941,61 @@ export class MamService {
     }
     const problem = renderProblem(existing);
     if (problem) throw new ValidationError(`cannot render edit project ${id}: ${problem}`);
+
+    const source = await this.options.store.get(existing.sourceAssetId);
+    if (!source || source.channelId !== existing.channelId) {
+      throw new ValidationError(
+        `cannot render edit project ${id}: its source asset ${existing.sourceAssetId} is gone`,
+      );
+    }
+    const ref = parseRenditionRef(existing.timeline.clips[0]!.renditionRef)!;
+    const files = await this.options.store.filesOf(source.id);
+    if (!files.some((f) => f.kind === ref.kind && f.variant === ref.variant)) {
+      throw new ValidationError(
+        `cannot render edit project ${id}: asset ${source.id} has no ${existing.timeline.clips[0]!.renditionRef} file to cut from`,
+      );
+    }
+    if (targetAssetId !== undefined) {
+      const target = await this.options.store.get(targetAssetId);
+      if (!target || target.channelId !== caller.channelId) {
+        throw new NotFound(`no asset ${targetAssetId}`);
+      }
+      // Superseding the target is an editorial act on IT (mam.md §13t), checked where it is.
+      this.authorize(caller, 'asset:write', await this.scopeOf(target), 'core');
+      if (target.replacedById !== undefined) {
+        throw new Conflict(
+          `asset ${target.id} is already replaced by ${target.replacedById} — render as the next version of the newest`,
+        );
+      }
+      if (target.mediaType !== source.mediaType) {
+        throw new ValidationError(
+          `the render is ${source.mediaType}, and asset ${target.id} is ${target.mediaType}`,
+        );
+      }
+    }
+
+    // What the LAST render left (its job, its failure, its link) is not this render's.
+    const {
+      renderJobId: _job,
+      failure: _failure,
+      versionRefused: _refused,
+      targetAssetId: _target,
+      ...rest
+    } = existing;
     const updated: EditProject = {
-      ...existing,
+      ...rest,
       state: 'rendering',
       outputProfile: profile,
+      outputAssetId: ulid(),
+      renderRequestedBy: caller.userId,
+      ...defined({ targetAssetId }),
       version: existing.version + 1,
       updatedAt: this.now().toISOString(),
     };
     const command: EventPayloads['editor.render.requested'] = {
       editProjectId: updated.id,
       sourceAssetId: updated.sourceAssetId,
+      outputAssetId: updated.outputAssetId!,
       ...(targetAssetId !== undefined ? { targetAssetId } : {}),
       mediaKind: updated.mediaKind,
       timeline: updated.timeline,

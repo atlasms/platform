@@ -93,6 +93,11 @@ export {
   type IngestConsumerOptions,
 } from './ingest.ts';
 export {
+  TRANSCODE_FAILED_PATTERN,
+  startRenderOutcomeConsumer,
+  type RenderOutcomeOptions,
+} from './renders.ts';
+export {
   MAX_TAGS_PER_ASSET,
   MAX_TAG_LENGTH,
   normalizeTag,
