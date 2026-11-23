@@ -192,7 +192,9 @@ requirement (point 4). The approach is sound in both browsers; WebCodecs was not
 ## Consequences
 
 - MTS gains an **editing-proxy rendition** profile (short-GOP H.264, `+faststart` so the browser can
-  seek before the whole file loads), produced alongside the existing playback proxy. Its GOP and fps
+  seek before the whole file loads), produced alongside the existing playback proxy. **Built in
+  EP-26.3:** the `edit-proxy` preset, `proxy`/`variant: edit`, closed GOP 12, in every video's first
+  renditions ([mts.md §13](../architecture/services/mts.md#ep-263--the-editing-proxy)). Its GOP and fps
   are fixed by this ADR and carried in the rendition's metadata.
 - The proxy is **~9% larger** than a playback proxy at the same quality (at GOP 12) — storage and the
   sizing profile account for one extra rendition at roughly playback-proxy size.

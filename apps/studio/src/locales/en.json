@@ -225,7 +225,8 @@
     "addCast": "Add",
     "review": "Review",
     "shotlist": "Shot list",
-    "versions": "Versions"
+    "versions": "Versions",
+    "edits": "Edits"
   },
   "editor": {
     "close": "Close",
@@ -1009,5 +1010,50 @@
     "from": "New media",
     "create": "Make it the new version",
     "failed": "The new version could not be made."
+  },
+  "editProject": {
+    "title": "Edit of",
+    "state": {
+      "draft": "Draft",
+      "rendering": "Rendering",
+      "rendered": "Rendered",
+      "failed": "Failed"
+    },
+    "rendering": "Rendering…",
+    "failed": "The render failed:",
+    "rendered": "Rendered as an asset of its own.",
+    "openRendered": "Open the rendered asset",
+    "versionRefused": "It could not be made the next version:",
+    "conflict": "Someone changed this edit since you opened it.",
+    "reload": "Reload",
+    "empty": "No clips yet — add one to start the timeline.",
+    "file": "File",
+    "in": "In",
+    "out": "Out",
+    "arrange": "Arrange",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "remove": "Remove clip",
+    "clips": "clips",
+    "add": "Add clip",
+    "profile": "Output profile",
+    "asVersion": "Render as the next version of the source",
+    "save": "Save",
+    "render": "Render",
+    "saveFirst": "Save before rendering — a render flattens the saved timeline.",
+    "badTimecode": "Not a timecode — HH:MM:SS.mmm, MM:SS or seconds",
+    "outBeforeIn": "Out must be after in",
+    "refused": "MAM refused the edit.",
+    "writeError": "The edit could not be saved — try again.",
+    "loadError": "This edit could not be loaded."
+  },
+  "edits": {
+    "none": "No edits of this asset yet.",
+    "project": "Edit of",
+    "new": "New edit",
+    "tab": "Edit",
+    "notEditable": "Only video and audio can be edited.",
+    "createError": "The edit could not be started.",
+    "loadError": "The edits could not be loaded."
   }
 }

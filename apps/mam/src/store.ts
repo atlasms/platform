@@ -174,6 +174,11 @@ export interface AssetStore {
 
   /** An edit project by id (EP-26.2), or `undefined` — the service scopes it to the channel. */
   editProject(id: string): Promise<EditProject | undefined>;
+  /**
+   * The edit projects over one asset in one channel (EP-26.3), newest first — what the asset editor
+   * lists so an editor reopens a timeline rather than starting another.
+   */
+  editProjectsOf(channelId: string, sourceAssetId: string): Promise<EditProject[]>;
 
   /** A channel's whole category tree, deprecated nodes included, in path order (#260). */
   categories(channelId: string): Promise<Category[]>;

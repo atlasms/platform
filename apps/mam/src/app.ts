@@ -534,6 +534,14 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
       return reply.code(201).send(project);
     }),
   );
+  app.get('/api/v1/assets/:id/edit-projects', async (req, reply) =>
+    handle(req, reply, async () => ({
+      items: await options.service.editProjectsOf(
+        await callerOf(req),
+        (req.params as { id: string }).id,
+      ),
+    })),
+  );
   app.get('/api/v1/edit-projects/:id', async (req, reply) =>
     handle(req, reply, async () =>
       options.service.editProject(await callerOf(req), (req.params as { id: string }).id),

@@ -23,6 +23,12 @@ export interface Preset {
   requires: PresetRequires;
   /** The output file's extension, which also decides the container. */
   extension: string;
+  /**
+   * Which file of its kind this is, when the kind has more than one: the editing proxy is a `proxy`
+   * beside the browse proxy, told apart by `variant: edit` — the FileRef key `(assetId, kind,
+   * variant)` (data-model §1.5). Absent for the one file of a kind.
+   */
+  variant?: string;
   /** Whether the output is a still. A still has no duration, and its progress is one step. */
   still?: boolean;
   /** The encoder arguments between the input and the output path. */
@@ -63,6 +69,45 @@ export const BUILT_IN_PRESETS: readonly Preset[] = [
       '128k',
       // The index at the FRONT: a proxy is scrubbed in a browser, and a player that has to read
       // the whole file before it can seek is a proxy that feels broken.
+      '-movflags',
+      '+faststart',
+    ],
+  },
+  {
+    // The EDITING proxy (EP-26.3; ADR-0011): what the media editor plays and scrubs. Short, CLOSED
+    // GOP — a keyframe every 12 frames, no scene-cut keyframes in between, no open GOPs — so a seek
+    // anywhere decodes at most 11 frames: frame-exact and interactive in Chrome and Firefox (the
+    // spike measured ~17 ms median at GOP ≤ 30), at ~9% more bytes than a long-GOP proxy. The frame
+    // rate is the source's: the proxy's frames ARE the edit grid. 720p at most, AAC, and the index at
+    // the front so a browser can seek before the whole file has loaded.
+    id: 'edit-proxy',
+    kind: 'proxy',
+    variant: 'edit',
+    requires: 'video',
+    extension: 'mp4',
+    args: [
+      '-vf',
+      'scale=-2:min(720\\,ih)',
+      '-c:v',
+      'libx264',
+      '-profile:v',
+      'high',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '23',
+      '-g',
+      '12',
+      '-keyint_min',
+      '12',
+      '-x264-params',
+      'scenecut=0:open_gop=0',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '128k',
       '-movflags',
       '+faststart',
     ],

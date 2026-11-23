@@ -279,3 +279,34 @@ test('over HTTP: POST creates (201), GET loads, PATCH saves with ?version, POST 
   assert.equal(rendered.json<{ state: string }>().state, 'rendering');
   await app.close();
 });
+
+test('an asset’s projects are listed newest first — a reader may list them; an unknown asset is 404', async () => {
+  const { service, caller } = harness();
+  const asset = await service.create(caller(), VIDEO);
+  const first = await service.createEditProject(caller(), asset.id);
+  const second = await service.createEditProject(caller(), asset.id);
+  const other = await service.create(caller(), VIDEO);
+  await service.createEditProject(caller(), other.id);
+
+  assert.deepEqual(
+    (await service.editProjectsOf(caller(READER), asset.id)).map((p) => p.id),
+    [second.id, first.id],
+  );
+  await assert.rejects(
+    service.editProjectsOf(caller(), '01ARZ3NDEKTSV4RRFFQ69G5FAV'),
+    (e: Error & { status?: number }) => e.status === 404,
+  );
+
+  const app = await buildMamApp({ service, policyFor: () => caller(READER).policy });
+  const listed = await app.inject({
+    method: 'GET',
+    url: `/api/v1/assets/${asset.id}/edit-projects`,
+    headers: { 'x-atlas-user': 'user-1', 'x-atlas-channel': CHANNEL },
+  });
+  assert.equal(listed.statusCode, 200, listed.body);
+  assert.deepEqual(
+    listed.json<{ items: { id: string }[] }>().items.map((p) => p.id),
+    [second.id, first.id],
+  );
+  await app.close();
+});

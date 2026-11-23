@@ -40,9 +40,10 @@ import { TranscodeJobs } from './transcode-jobs.ts';
 import { AssetReview } from './asset-review.ts';
 import { AssetShotList } from './asset-shotlist.ts';
 import { AssetVersions } from './asset-versions.ts';
+import { AssetEdits } from './asset-edits.ts';
 import { FieldOrigin } from './field-origin.ts';
 
-type EditorSection = 'basic' | 'files' | 'review' | 'shotlist' | 'versions';
+type EditorSection = 'basic' | 'files' | 'review' | 'shotlist' | 'versions' | 'edits';
 
 /** After a transcode completes: how often, and how many times, to look for its rows in MAM. */
 const RENDITION_WAIT_MS = 1_000;
@@ -89,7 +90,7 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
 @Component({
   selector: 'atlas-asset-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranscodeJobs, AssetReview, AssetShotList, AssetVersions, FieldOrigin],
+  imports: [TranscodeJobs, AssetReview, AssetShotList, AssetVersions, AssetEdits, FieldOrigin],
   template: `
     @if (loading()) {
       <div class="state">
@@ -156,6 +157,15 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
           (click)="section.set('versions')"
         >
           {{ locale.t('assetEditor.versions') }}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          [attr.aria-selected]="section() === 'edits'"
+          [class.active]="section() === 'edits'"
+          (click)="section.set('edits')"
+        >
+          {{ locale.t('assetEditor.edits') }}
         </button>
       </nav>
 
@@ -679,6 +689,8 @@ const FIELD_GROUP: Readonly<Record<EditableField, FieldGroup>> = {
           [canEdit]="canEdit('core')"
           (changed)="reload({ fresh: true })"
         />
+      } @else if (section() === 'edits') {
+        <atlas-asset-edits [asset]="current" [canEdit]="canEdit('core')" />
       } @else if (section() === 'files') {
         <section class="files">
           <div class="file-summary">

@@ -2871,6 +2871,16 @@ export class MamService {
   }
 
   /** Load a project's timeline (FR-EDT-2). Scope: asset:read on the source asset. */
+  /**
+   * The edit projects over an asset, newest first (EP-26.3) — what the asset editor lists so an
+   * editor reopens a timeline rather than starting another. Scope: asset:read on the asset; another
+   * channel's asset, or one that does not exist, is a 404 like any read of it.
+   */
+  async editProjectsOf(caller: Caller, assetId: string): Promise<EditProject[]> {
+    const asset = await this.get(caller, assetId);
+    return this.options.store.editProjectsOf(caller.channelId, asset.id);
+  }
+
   async editProject(caller: Caller, id: string): Promise<EditProject> {
     const project = await this.editProjectInChannel(caller, id);
     this.authorize(caller, 'asset:read', await this.sourceScopeOf(project));

@@ -138,7 +138,8 @@ export type RunOutcome = 'idle' | 'completed' | 'failed' | 'dead-letter' | 'canc
 
 /** The first renditions of a newly ingested asset, by MAM's mediaType (EP-15.5). */
 export const FIRST_RENDITIONS: Readonly<Record<string, readonly string[]>> = {
-  video: ['proxy', 'thumbnail'],
+  // The editing proxy beside the browse proxy (EP-26.3; ADR-0011): every video is editable.
+  video: ['proxy', 'edit-proxy', 'thumbnail'],
   audio: ['audio-proxy'],
   image: ['thumbnail'],
 };
@@ -872,6 +873,7 @@ export class MtsService {
         profileId: preset.id,
         still: preset.still === true,
         fileType: preset.extension,
+        ...(preset.variant !== undefined ? { variant: preset.variant } : {}),
         // A still has no duration, and reporting 0 for one would put a zero-length clip in MAM.
         ...(!preset.still && output.durationSec !== undefined
           ? { durationSec: output.durationSec }

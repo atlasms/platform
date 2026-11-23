@@ -245,7 +245,7 @@ test('MVP acceptance — one file: upload → validate → transcode → metadat
         assert.ok(auto, `the first renditions failed: ${JSON.stringify(first)}`);
         assert.deepEqual(
           [auto.presetIds, auto.inputFile?.kind],
-          [['proxy', 'thumbnail'], 'original'],
+          [['proxy', 'edit-proxy', 'thumbnail'], 'original'],
           'queued by MTS itself, from the original HSM holds',
         );
 
@@ -272,20 +272,20 @@ test('MVP acceptance — one file: upload → validate → transcode → metadat
           await call(`/api/v1/assets/${journey.assetId}/location`, { headers: auth })
         ).body;
         assert.deepEqual(
-          location.map((f) => f.kind).sort(),
-          ['broadcast', 'original', 'proxy', 'thumbnail'],
-          'all four files, in HSM',
+          location.map((f) => (f.variant ? `${f.kind}/${f.variant}` : f.kind)).sort(),
+          ['broadcast', 'original', 'proxy', 'proxy/edit', 'thumbnail'],
+          'all five files, in HSM — the editing proxy (EP-26.3) a proxy of its own variant',
         );
         journey.fileIds = location.map((f) => f.id);
         // MAM's file rows are HSM's word (file.placed), with HSM's checksums.
         const files = await until(
           async () =>
             (await call(`/api/v1/assets/${journey.assetId}/files`, { headers: fresh })).body,
-          (list) => Array.isArray(list) && list.length >= 4,
+          (list) => Array.isArray(list) && list.length >= 5,
           "MAM's mirror never took every placement",
         );
         for (const placed of location) {
-          const row = files.find((f) => f.kind === placed.kind);
+          const row = files.find((f) => f.kind === placed.kind && f.variant === placed.variant);
           assert.equal(row?.checksum?.value, placed.checksum.value, `${placed.kind} mirrored`);
         }
       },

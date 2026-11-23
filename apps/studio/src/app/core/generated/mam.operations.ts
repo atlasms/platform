@@ -93,6 +93,8 @@ export const MamOperations = {
   getPerson: { method: 'GET', path: '/api/v1/people/{id}', params: ['id'] },
   /** Rename, change the image reference, deprecate or restore, over the version read (compare-and-set; scope people:admin; audited) */
   updatePerson: { method: 'PATCH', path: '/api/v1/people/{id}', params: ['id'] },
+  /** The asset's edit projects, newest first (scope asset:read) — EP-26.3: what the asset editor lists so a timeline is reopened rather than started again. */
+  listEditProjects: { method: 'GET', path: '/api/v1/assets/{id}/edit-projects', params: ['id'] },
   /** Start a media-editor project over an asset's renditions (scope asset:write). See ../services/media-editor.md. */
   createEditProject: { method: 'POST', path: '/api/v1/assets/{id}/edit-projects', params: ['id'] },
   /** Get an edit project (timeline) (scope asset:read) */

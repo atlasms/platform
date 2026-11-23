@@ -98,6 +98,53 @@ test('every built-in preset produces a non-empty output from a real clip, with p
   });
 });
 
+test('the editing proxy is closed GOP 12 (ADR-0011): a keyframe every 12 frames and nowhere else, at the source’s rate', async (t) => {
+  if (!(await haveFfmpeg(t))) return;
+  await withDir(async (dir) => {
+    // 4 s at 25 fps: 100 frames — keyframes at 0, 12, 24 … 96.
+    const input = await clip(dir, 'clip.mp4', 4);
+    const output = join(dir, 'edit.mp4');
+    await ffmpegTranscoder().run({
+      inputPath: input,
+      outputPath: output,
+      args: presetById('edit-proxy')!.args,
+    });
+    const frames = await run('ffprobe', [
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'frame=key_frame',
+      '-of',
+      'csv=p=0',
+      output,
+    ]);
+    const keys = frames.stdout
+      .trim()
+      .split('\n')
+      .map((line, i) => (line.trim().startsWith('1') ? i : -1))
+      .filter((i) => i >= 0);
+    assert.deepEqual(
+      keys,
+      Array.from({ length: 9 }, (_, k) => k * 12),
+      'no scene-cut keyframes between',
+    );
+    const rate = await run('ffprobe', [
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'stream=r_frame_rate',
+      '-of',
+      'csv=p=0',
+      output,
+    ]);
+    assert.equal(rate.stdout.trim(), '25/1', 'the proxy’s frames are the source’s: the edit grid');
+  });
+});
+
 test('the input’s duration comes from ffprobe, and speed rides along with progress', async (t) => {
   if (!(await haveFfmpeg(t))) return;
   await withDir(async (dir) => {
