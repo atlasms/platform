@@ -18,13 +18,23 @@ export interface StorageDriver {
   readonly kind: 'fs' | 's3';
   /** Stream `source` to `key`, replacing anything there; resolves once the bytes are durable. */
   write(key: string, source: Readable): Promise<Written>;
-  /** The bytes at `key`; `StorageMissing` if there are none. */
-  read(key: string): Promise<Readable>;
+  /**
+   * The bytes at `key`; `StorageMissing` if there are none. With `range`, only bytes `start` to
+   * `end` INCLUSIVE (HTTP's convention) — what a browser seeking a proxy asks for (ADR-0012). The
+   * caller has checked the range against the file's size.
+   */
+  read(key: string, range?: ByteRange): Promise<Readable>;
   stat(key: string): Promise<{ sizeBytes: number } | undefined>;
   /** Idempotent: removing what is not there is not an error. */
   remove(key: string): Promise<void>;
   /** Readiness: can this target be written right now? Throws with the reason if not. */
   probe(): Promise<void>;
+}
+
+/** An inclusive byte range, `start` ≤ `end` < the file's size. */
+export interface ByteRange {
+  start: number;
+  end: number;
 }
 
 /** The bytes a key names are not in storage. */

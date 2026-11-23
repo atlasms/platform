@@ -5,7 +5,8 @@
 //   - a write that fails part-way leaves NOTHING under its key (not a prefix of the bytes);
 //   - a large write streams (several parts / chunks) and still hashes right;
 //   - a missing key is `StorageMissing` on read and `undefined` on stat; remove is idempotent;
-//   - a key that is not plain is refused before anything touches storage.
+//   - a key that is not plain is refused before anything touches storage;
+//   - a byte range reads exactly those bytes, first and last included (ADR-0012).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -98,6 +99,27 @@ export function storageDriverConformance(name: string, harness: DriverHarness): 
       assert.equal(written.sizeBytes, whole.length);
       assert.equal(written.sha256, sha(whole));
       assert.equal(sha(await bytesOf(await driver.read(k))), sha(whole));
+    });
+  });
+
+  test(`[${name}] a byte range reads exactly those bytes, first and last included (ADR-0012)`, async () => {
+    await withDriver(async (driver) => {
+      const k = key();
+      const body = Buffer.from(Array.from({ length: 1000 }, (_, i) => i % 251));
+      await driver.write(k, Readable.from([body]));
+      assert.deepEqual(
+        await bytesOf(await driver.read(k, { start: 100, end: 199 })),
+        body.subarray(100, 200),
+      );
+      assert.deepEqual(
+        await bytesOf(await driver.read(k, { start: 0, end: 0 })),
+        body.subarray(0, 1),
+      );
+      assert.deepEqual(
+        await bytesOf(await driver.read(k, { start: 990, end: 999 })),
+        body.subarray(990),
+      );
+      await assert.rejects(driver.read(key(), { start: 0, end: 9 }), StorageMissing);
     });
   });
 

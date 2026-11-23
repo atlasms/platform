@@ -52,6 +52,8 @@ const config = loadConfig({
   internalKeys: { env: 'ATLAS_HSM_INTERNAL_KEYS', type: 'string', default: '' },
   // The keys READERS sign with (hsm-read-keys; EP-31): accepted on the availability route only.
   readKeys: { env: 'ATLAS_HSM_READ_KEYS', type: 'string', default: '' },
+  // The keys MAM signs media URLs with (media-url-keys; ADR-0012). Unset: /media/ refuses everything.
+  mediaUrlKeys: { env: 'ATLAS_MEDIA_URL_KEYS', type: 'string', default: '' },
   workerIntervalMs: { env: 'ATLAS_HSM_WORKER_INTERVAL_MS', type: 'number', default: 1_000 },
   // 250 ms, not 1 s (EP-21.4): an idle relay holds a committed event for up to one interval, and
   // NFR-PERF-3 gives a change one second to reach Studio. At 1 s the perf sanity measured p95 at
@@ -161,6 +163,8 @@ const app = await buildHsmApp({
   policyFor: (userId) => policies.policyFor(userId),
   internalKeys: internalKeys(config.internalKeys),
   readKeys: internalKeys(config.readKeys),
+  mediaKeys: internalKeys(config.mediaUrlKeys),
+  onMediaRefused: (reason, ctx) => log.warn('media URL refused', { ...ctx, reason }),
   onInternalRefused: (reason, ctx) => log.warn('internal request refused', { ...ctx, reason }),
   fsBase: config.fsBase,
   health,

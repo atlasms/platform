@@ -1,6 +1,14 @@
 // The service's public surface — what a test imports, and what `main.ts` wires.
 export { buildHsmApp, callerOf, INTERNAL_HEADERS, type Caller, type HsmAppOptions } from './app.ts';
-export { checkKey, Hashing, StorageMissing, type StorageDriver, type Written } from './driver.ts';
+export {
+  checkKey,
+  Hashing,
+  StorageMissing,
+  type ByteRange,
+  type StorageDriver,
+  type Written,
+} from './driver.ts';
+export { loggablePath, parseRange, SANDBOX_CSP, type RangeAnswer } from './media.ts';
 export { fsDriver } from './driver-fs.ts';
 export { s3Driver, type S3DriverOptions } from './driver-s3.ts';
 export { storageDriverConformance, type DriverHarness } from './driver-conformance.ts';

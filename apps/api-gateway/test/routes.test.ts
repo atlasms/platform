@@ -85,15 +85,18 @@ test('every path a deployed service’s contract declares reaches that service t
   assert.deepEqual(wrong, [], 'add the prefix to productionRoutes in src/routing.ts');
 });
 
-test('no /internal/ path is reachable, and only /auth is public', () => {
+test('no /internal/ path is reachable, and only /auth and /media/ are public', () => {
   for (const file of Object.keys(DEPLOYED)) {
     for (const path of servedPaths(file).filter((p) => p.includes('/internal/'))) {
       assert.equal(matchRoute(table, path), undefined, `${path} must not be routed`);
     }
   }
+  // `/media/` is public on purpose (ADR-0012): a `<video src>` carries no bearer, so the signed URL
+  // is the credential and HSM verifies it on every request. A third public prefix is a decision,
+  // not a route added in passing — this list is where it is noticed.
   assert.deepEqual(
     table.filter((r) => r.public).map((r) => r.prefix),
-    ['/auth'],
+    ['/auth', '/media/'],
   );
 });
 

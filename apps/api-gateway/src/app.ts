@@ -3,6 +3,8 @@
 //
 // Spec: docs/architecture/services/api-gateway.md
 
+import { Readable } from 'node:stream';
+import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { isUlid, ulid } from '@atlas/contracts';
 import {
@@ -126,6 +128,21 @@ const BEARER = /^Bearer (.+)$/i;
  * where the key is the account rather than the building.
  */
 const DEFAULT_ADDRESS_LIMIT: RateLimitPolicy = { limit: 600, windowMs: 60_000 };
+/**
+ * What a streaming route relays back (ADR-0012): the byte-range answer, and the headers that keep a
+ * media URL on the platform's origin from ever being a page.
+ */
+const STREAMED_HEADERS = [
+  'content-type',
+  'content-length',
+  'content-range',
+  'accept-ranges',
+  'etag',
+  'cache-control',
+  'content-disposition',
+  'content-security-policy',
+  'x-content-type-options',
+] as const;
 const DEFAULT_PRINCIPAL_LIMIT: RateLimitPolicy = { limit: 300, windowMs: 60_000 };
 
 /** Fastify's own default, restated so the value is visible rather than inherited silently. */
@@ -271,8 +288,9 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
       requestId: req.correlationId,
       method: req.method,
       // The RAW path, and here that is right: the gateway is the edge, and what the outside world
-      // actually asked for is the thing an operator wants when reading the edge log.
-      path: req.url,
+      // actually asked for is the thing an operator wants when reading the edge log. Except a media
+      // URL's QUERY, which is its credential (ADR-0012): that path is logged without it.
+      path: req.url.startsWith('/media/') ? (req.url.split('?')[0] ?? req.url) : req.url,
       // The matched ROUTE as well (#245), so the gateway's records aggregate alongside every other
       // service's. Fastify's own template is the catch-all `/*` for everything proxied, so the
       // useful bounded value is the routing table's prefix — which `req.matchedRoute` records once
@@ -466,6 +484,41 @@ export function buildGateway(options: GatewayOptions): FastifyInstance {
     for (const h of ['content-type', 'accept', 'if-none-match', 'cache-control']) {
       const v = req.headers[h];
       if (typeof v === 'string') headers[h] = v;
+    }
+
+    // Bytes (ADR-0012): forwarded, piped and relayed as they are — see RouteTarget.stream.
+    if (route.stream) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        const problem = toProblem(
+          new AppError('VALIDATION', 405, `${req.method} is not served here`),
+          req.correlationId,
+        );
+        return reply
+          .code(405)
+          .header('allow', 'GET, HEAD')
+          .type(PROBLEM_CONTENT_TYPE)
+          .send(problem);
+      }
+      for (const h of ['range', 'if-range']) {
+        const v = req.headers[h];
+        if (typeof v === 'string') headers[h] = v;
+      }
+      try {
+        const upstream = await doFetch(route.origin + req.url, { method: req.method, headers });
+        void reply.code(upstream.status);
+        for (const h of STREAMED_HEADERS) {
+          const value = upstream.headers.get(h);
+          if (value !== null) void reply.header(h, value);
+        }
+        if (req.method === 'HEAD' || upstream.body === null) return reply.send();
+        return reply.send(Readable.fromWeb(upstream.body as WebReadableStream<Uint8Array>));
+      } catch {
+        const problem = toProblem(
+          new AppError('INTERNAL', 502, `upstream "${route.service}" unreachable`),
+          req.correlationId,
+        );
+        return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
+      }
     }
 
     // A Buffer, thanks to the catch-all parser above. Forwarded verbatim; an EMPTY one is omitted

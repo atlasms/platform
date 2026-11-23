@@ -94,6 +94,14 @@ spec:
                   name: hsm-read-keys
                   key: keys
                   optional: true
+            # ADR-0012: media URLs for browsers — MAM signs (the first key), HSM verifies (any).
+            # Optional: without it MAM answers a media URL 503 and HSM refuses every /media/ request.
+            - name: ATLAS_MEDIA_URL_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: media-url-keys
+                  key: keys
+                  optional: true
           volumeMounts:
             - name: storage
               mountPath: /storage

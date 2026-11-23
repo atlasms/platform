@@ -17,7 +17,14 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { checkKey, Hashing, StorageMissing, type StorageDriver, type Written } from './driver.ts';
+import {
+  checkKey,
+  Hashing,
+  StorageMissing,
+  type ByteRange,
+  type StorageDriver,
+  type Written,
+} from './driver.ts';
 
 export interface S3DriverOptions {
   endpoint?: string;
@@ -80,9 +87,15 @@ export function s3Driver(options: S3DriverOptions): StorageDriver & {
       return { sizeBytes: hashing.bytes, sha256: hashing.digest() };
     },
 
-    async read(key: string): Promise<Readable> {
+    async read(key: string, range?: ByteRange): Promise<Readable> {
       try {
-        const out = await client.send(new GetObjectCommand({ Bucket, Key: objectKey(key) }));
+        const out = await client.send(
+          new GetObjectCommand({
+            Bucket,
+            Key: objectKey(key),
+            ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
+          }),
+        );
         if (!(out.Body instanceof Readable)) throw new Error('S3 returned no stream body');
         return out.Body;
       } catch (err) {

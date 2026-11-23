@@ -152,6 +152,41 @@ paths:
         '200': { description: The bytes, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
         '401': { description: Not a correctly signed request }
         '404': { $ref: '#/components/responses/Error' }
+  /media/v1/{assetId}/{kind}:
+    servers:
+      - url: https://{host}
+        variables:
+          host: { default: atlas.example }
+    get:
+      operationId: readMedia
+      tags: [location]
+      summary: "A file's bytes for a BROWSER, through a URL MAM signed — ADR-0012"
+      description: >-
+        Reached through the gateway's PUBLIC, streaming `/media/` route: no bearer — the URL is the
+        credential, minted by MAM's `GET /assets/{id}/files/{kind}/url` after it authorized the read.
+        Every request is verified (signature, expiry, the 4-hour ceiling) and the ledger re-checked:
+        the file live, in the SIGNED channel (another channel's is answered 404, as a missing one —
+        #577), online and available (409 otherwise: restore first). `Accept-Ranges: bytes`; one
+        `Range` is a 206, anything else the whole file, past the end a 416. Served with `nosniff`, a
+        sandboxing CSP and `inline`, so the URL can never be a page that runs script.
+      security: []
+      parameters:
+        - { name: assetId, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+        - { name: kind, in: path, required: true, schema: { $ref: '#/components/schemas/FileKind' } }
+        - { name: ch, in: query, required: true, schema: { type: string }, description: The channel the URL grants. }
+        - { name: v, in: query, schema: { type: string }, description: The variant. }
+        - { name: ct, in: query, required: true, schema: { type: string }, description: The content type it is served as. }
+        - { name: exp, in: query, required: true, schema: { type: integer }, description: Unix seconds it expires at. }
+        - { name: sig, in: query, required: true, schema: { type: string, pattern: '^[0-9a-f]{64}$' } }
+        - { name: Range, in: header, schema: { type: string }, description: '`bytes=start-end`, `bytes=start-` or `bytes=-n`.' }
+      responses:
+        '200': { description: The whole file, content: { '*/*': { schema: { type: string, format: binary } } } }
+        '206': { description: 'The range asked for, with Content-Range', content: { '*/*': { schema: { type: string, format: binary } } } }
+        '304': { description: Not modified (If-None-Match matched the ETag — the file's checksum) }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '416': { $ref: '#/components/responses/Error' }
   /internal/v1/availability:
     servers:
       - url: http://hsm:3000

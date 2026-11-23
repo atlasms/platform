@@ -175,13 +175,16 @@ by ↑/↓, saved compare-and-set. Render flattens the SAVED timeline, so it is 
 nothing unsaved. The editor defaults to the source's next version, and follows the render live:
 `transcode.progress` under `outputAssetId` plus a poll for the outcome (26.8's editor half).
 
-**Not yet:** playing and scrubbing the editing proxy in the timeline (EP-26.4). Studio has no
-media path to a browser: HSM's content reads are internal signed calls, and a `<video src>`
-cannot carry the bearer token. **Decided 2026-11-21: signed short-lived URLs.** MAM authorizes
-`asset:read` and returns `{ url, expiresAt }`; HSM serves that URL with HTTP Range, verifying an HMAC
-from a MAM→HSM key pair; the gateway passes the path through without a bearer, because the
-signature is the credential. That is an ADR of its own, and 26.4 starts with it. The editing proxy
-it will play already exists: every video gets one at ingest (mts.md §13, EP-26.3).
+**The media path ([ADR-0012](../../adr/0012-signed-media-urls.md), EP-26.4's first half).** Studio
+had no way to give a browser media: HSM's content reads are internal signed calls, and a
+`<video src>` cannot carry the bearer token. Decided 2026-11-21 and built: **signed short-lived
+URLs**. MAM's `GET /assets/{id}/files/{kind}/url` authorizes `asset:read` on `files` and returns
+`{ url, expiresAt }`; HSM serves that URL with HTTP Range, verifying an HMAC from `media-url-keys`;
+the gateway's `/media/` route is public and streamed, because the signature is the credential.
+**Still to come in 26.4:** the player in the timeline. A `<video>` on the editing proxy (every
+video gets one at ingest, mts.md §13), frames identified by `requestVideoFrameCallback` with
+`floor(mediaTime·fps)`, a bounded seek wait (ADR-0011), a fresh URL when the old one expires, and
+scrubbing on the VTT filmstrip.
 
 ## 6. Key flows
 

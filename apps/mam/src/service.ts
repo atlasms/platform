@@ -42,6 +42,8 @@ import {
   currentTraceparent,
   Forbidden,
   NotFound,
+  signMediaUrl,
+  Unavailable,
   ValidationError,
 } from '@atlas/service-kit';
 import {
@@ -161,6 +163,11 @@ export interface MamOptions {
   cache?: AssetCache;
   /** One call per cached read, for the hit-rate counter. `family`, never an id, is the label. */
   onCacheRead?: (family: CacheFamily, outcome: CacheOutcome) => void;
+  /**
+   * Signing media URLs (ADR-0012): the first of `media-url-keys`, and how long a URL lives. Absent,
+   * a media URL is a 503 — the platform is not configured to serve media to browsers.
+   */
+  mediaUrls?: { key: string; ttlSeconds: number };
   now?: () => Date;
 }
 
@@ -1255,6 +1262,50 @@ export class MamService {
   // exists, and if not the broker's dead-letter queue shows it to a person.
 
   /** The asset's files as last mirrored. `files` is the Librarian's group (§3.1), read here. */
+  /**
+   * A short-lived URL a BROWSER reads one file of the asset through (ADR-0012) — a `<video src>`
+   * cannot carry a bearer, so the authorization is answered HERE and signed into the URL, and HSM
+   * serves it. The same grant `files` asks: `asset:read` on the asset's `files` group, in the
+   * caller's channel (another channel's asset is a 404). The file must be in the mirror, online and
+   * available — a near-line or offline file is a 409: a restore comes first. The content type is
+   * MAM's choice, from a fixed map (`mediaTypeOf`), and is signed with the rest.
+   */
+  async mediaUrl(
+    caller: Caller,
+    assetId: string,
+    kind: string,
+    variant?: string,
+  ): Promise<{ url: string; expiresAt: string }> {
+    const asset = await this.get(caller, assetId);
+    this.authorize(caller, 'asset:read', await this.scopeOf(asset), 'files');
+    const signing = this.options.mediaUrls;
+    if (!signing) throw new Unavailable('media URLs are not configured on this platform');
+    const file = (await this.options.store.filesOf(asset.id)).find(
+      (f) => f.kind === kind && f.variant === variant,
+    );
+    if (!file) {
+      throw new NotFound(`asset ${asset.id} has no ${variant ? `${kind}/${variant}` : kind} file`);
+    }
+    if (file.storage.tier !== 'online' || file.storage.status !== 'available') {
+      throw new Conflict(
+        `the ${kind} file of asset ${asset.id} is ${file.storage.tier}/${file.storage.status} — restore it first`,
+      );
+    }
+    const contentType = mediaTypeOf(
+      file.fileType ?? (kind === 'original' ? asset.fileType : undefined),
+    );
+    const exp = Math.floor(this.now().getTime() / 1000) + signing.ttlSeconds;
+    const url = signMediaUrl(signing.key, {
+      channelId: asset.channelId,
+      assetId: asset.id,
+      kind,
+      ...(variant !== undefined ? { variant } : {}),
+      contentType,
+      exp,
+    });
+    return { url, expiresAt: new Date(exp * 1000).toISOString() };
+  }
+
   async files(caller: Caller, assetId: string): Promise<FileRef[]> {
     const asset = await this.get(caller, assetId);
     this.authorize(caller, 'asset:read', await this.scopeOf(asset), 'files');
@@ -3867,4 +3918,28 @@ function verdictOf(
       ? defined({ expiresAt: asset.expiresAt, expirySource: asset.expirySource })
       : defined({ retainUntil: asset.retainUntil })),
   };
+}
+
+/**
+ * The media type a URL serves a file as (ADR-0012), from its container — a FIXED map, so a content
+ * type a browser would run (`text/html`) can never be chosen. Anything unknown is an octet stream.
+ */
+const MEDIA_TYPES: Readonly<Record<string, string>> = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  mxf: 'application/mxf',
+  m4a: 'audio/mp4',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  aac: 'audio/aac',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  vtt: 'text/vtt',
+};
+
+export function mediaTypeOf(fileType: string | undefined): string {
+  return (fileType && MEDIA_TYPES[fileType.toLowerCase()]) || 'application/octet-stream';
 }

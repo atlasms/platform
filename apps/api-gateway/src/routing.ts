@@ -37,6 +37,14 @@ export interface RouteTarget {
    * raising the cap everywhere to admit them would hand every JSON route the same slack.
    */
   bodyLimit?: number;
+  /**
+   * The response is BYTES, streamed through untouched (ADR-0012: `/media/`). Every other route's
+   * body is read whole and relayed as text — right for JSON, and fatal for a video: binary would be
+   * mangled, the whole file buffered, and a `Range` request answered with the whole file. A streaming
+   * route forwards `Range`/`If-Range`, pipes the body, relays the byte-range headers, and takes GET
+   * and HEAD only.
+   */
+  stream?: boolean;
 }
 
 export type RoutingTable = RouteTarget[];
@@ -145,6 +153,18 @@ export function productionRoutes(o: ProductionOrigins): RoutingTable {
     // of /api/v1/assets is MAM's), an operation's progress, the storage targets, playout exports.
     { service: 'hsm', origin: o.hsm, prefix: '/api/v1/assets/', suffix: '/location' },
     { service: 'hsm', origin: o.hsm, prefix: '/api/v1/assets/', suffix: '/restore' },
+    // ADR-0012: media for BROWSERS — a URL MAM signed, served by HSM with Range. PUBLIC, because a
+    // `<video src>` carries no bearer: the signature is the credential, and HSM checks it on every
+    // request. STREAMED, because it is bytes. Its own address budget: one scrub is dozens of range
+    // requests, and a newsroom shares one address.
+    {
+      service: 'hsm',
+      origin: o.hsm,
+      prefix: '/media/',
+      public: true,
+      stream: true,
+      rateLimit: { limit: 6_000, windowMs: 60_000 },
+    },
     ...to('hsm', ['/api/v1/operations', '/api/v1/storage-targets', '/api/v1/playout']),
     // NEVER a route for `/internal/`: those are services calling each other, signed (ADR-0008),
     // and must be unreachable from outside. Each refuses them unsigned anyway.

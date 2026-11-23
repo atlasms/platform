@@ -127,11 +127,20 @@ export interface FileRef {
   checksum: { algorithm: string; value: string };
   sizeBytes?: number;
   durationSec?: number;
+  /** The container as MTS named it (`mp4`, `mxf`, …) — absent on a row no transcode announced. A media URL takes its content type from it (ADR-0012). */
+  fileType?: string;
   /** The event that last wrote this row — the ledger entry it mirrors. */
   sourceMessageId: Ulid;
   /** Bumped on every write to the row; the audit revision. */
   version: number;
   updatedAt: string;
+}
+
+/** A signed URL for one file (ADR-0012). A bearer capability until `expiresAt`: kept in memory, never logged. Relative to the platform origin. */
+export interface MediaUrl {
+  /** `/media/v1/{assetId}/{kind}?ch=…&v=…&ct=…&exp=…&sig=…` — served by HSM, no bearer. */
+  url: string;
+  expiresAt: string;
 }
 
 export interface Tag {

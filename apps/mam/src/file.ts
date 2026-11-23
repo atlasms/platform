@@ -35,6 +35,12 @@ export interface FileRef {
   checksum: Checksum;
   sizeBytes?: number;
   durationSec?: number;
+  /**
+   * The container, as MTS named it (`Rendition.fileType`; EP-26.6) — what a media URL's content type
+   * is chosen from (ADR-0012). Absent on a row no transcode announced (an original: the asset's own
+   * `fileType` says).
+   */
+  fileType?: string;
   technical?: TechnicalMetadata;
   /** The message that last wrote this row — the ledger entry it mirrors. */
   sourceMessageId: string;
@@ -73,6 +79,7 @@ export function fileFromRendition(
     checksum: rendition.checksum,
     ...(rendition.sizeBytes !== undefined ? { sizeBytes: rendition.sizeBytes } : {}),
     ...(rendition.durationSec !== undefined ? { durationSec: rendition.durationSec } : {}),
+    ...(rendition.fileType !== undefined ? { fileType: rendition.fileType } : {}),
     sourceMessageId: context.messageId,
     version: (context.existing?.version ?? 0) + 1,
     updatedAt: context.now,
@@ -109,6 +116,7 @@ export function fileFromPlacement(
         ? { sizeBytes: existing.sizeBytes }
         : {}),
     ...(existing?.durationSec !== undefined ? { durationSec: existing.durationSec } : {}),
+    ...(existing?.fileType !== undefined ? { fileType: existing.fileType } : {}),
     ...(existing?.technical !== undefined ? { technical: existing.technical } : {}),
     sourceMessageId: context.messageId,
     version: (existing?.version ?? 0) + 1,

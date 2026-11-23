@@ -68,7 +68,14 @@ services trust the established identity without re-parsing the JWT.
 deployed service's OpenAPI contract declares, to that service — including the ones it does not
 serve yet, which then answer the owner's own 404 rather than the gateway's `no route`.
 `test/routes.test.ts` reads the contracts and fails on a declared path no route reaches, on any
-`/internal/` path a route does reach (ADR-0008), and on a public route other than `/auth`. The
+`/internal/` path a route does reach (ADR-0008), and on a public route other than `/auth` and
+`/media/`. **`/media/` is public and STREAMED** ([ADR-0012](../../adr/0012-signed-media-urls.md)): a
+browser's `<video src>` carries no bearer, so the URL MAM signed is the credential and HSM checks
+it on every request. Its body is bytes, piped rather than read as text (which mangled binary and
+buffered whole files). `Range`/`If-Range` are forwarded; `Content-Range`, `Accept-Ranges`,
+`Content-Length` and the safety headers are relayed. Only GET and HEAD are served. It has its own
+per-address budget (6 000 a minute; one scrub is dozens of ranges). Its query, the signature, is
+kept out of the edge log. The
 exceptions are written down with a reason: `/api/v1/reference` is the gateway's own aggregate
 (EP-08.5), and IAM's JWKS is read by the gateway, never proxied. The table used to be written by
 hand in `main.ts`, one service at a time, and silently lacked MAM's `/search`, `/tags` and

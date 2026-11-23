@@ -76,6 +76,12 @@ secretGenerator:
       - keys=dev-only-hsm-read-signing-key-000000000000000
     options:
       disableNameSuffixHash: true
+  # ADR-0012: what MAM signs a browser's media URL with, and HSM verifies. Dev only.
+  - name: media-url-keys
+    literals:
+      - keys=dev-only-media-url-signing-key-0000000000000
+    options:
+      disableNameSuffixHash: true
   # IAM's READ key (EP-25.3): what Notifications signs its principals question with. Dev only.
   - name: iam-read-keys
     literals:

@@ -15,7 +15,14 @@ import { dirname, join, resolve, sep } from 'node:path';
 import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { ulid } from '@atlas/contracts';
-import { checkKey, Hashing, StorageMissing, type StorageDriver, type Written } from './driver.ts';
+import {
+  checkKey,
+  Hashing,
+  StorageMissing,
+  type ByteRange,
+  type StorageDriver,
+  type Written,
+} from './driver.ts';
 
 export function fsDriver(root: string): StorageDriver {
   const base = resolve(root);
@@ -55,7 +62,7 @@ export function fsDriver(root: string): StorageDriver {
       return { sizeBytes: hashing.bytes, sha256: hashing.digest() };
     },
 
-    async read(key: string): Promise<Readable> {
+    async read(key: string, range?: ByteRange): Promise<Readable> {
       const path = pathOf(key);
       try {
         await inside(dirname(path));
@@ -64,7 +71,7 @@ export function fsDriver(root: string): StorageDriver {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw new StorageMissing(key);
         throw err;
       }
-      return createReadStream(path);
+      return createReadStream(path, range ? { start: range.start, end: range.end } : undefined);
     },
 
     async stat(key: string) {
