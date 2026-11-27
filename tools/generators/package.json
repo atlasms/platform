@@ -11,7 +11,7 @@
     "lint": "eslint src test"
   },
   "dependencies": {
-    "@nx/devkit": "24.0.6"
+    "@nx/devkit": "24.1.0"
   },
   "devDependencies": {
     "tsx": "^4.23.13"

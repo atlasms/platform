@@ -53,11 +53,11 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@nx/devkit": "^24.0.6",
+    "@nx/devkit": "^24.1.0",
     "@types/node": "^24.19.2",
     "angular-eslint": "^22.8.0",
     "eslint": "^10.15.0",
-    "nx": "^24.0.6",
+    "nx": "^24.1.0",
     "prettier": "^3.10.1",
     "tsx": "^4.23.13",
     "typescript": "^5.7.0",
@@ -68,7 +68,7 @@
     "nx": {
       "axios": "^1.20.0",
       "brace-expansion": "^5.0.9",
-      "smol-toml": "^1.7.1"
+      "smol-toml": "^1.9.0"
     },
     "@angular/core": "22.3.0",
     "@angular/common": "22.3.0",
