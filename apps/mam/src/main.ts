@@ -26,6 +26,7 @@ import {
   MemoryAssetCache,
   pgAssetStore,
   startCacheInvalidation,
+  startSettingsInvalidation,
   startFileMirror,
   startIngestConsumer,
   startRenderOutcomeConsumer,
@@ -210,6 +211,10 @@ async function startRelay(): Promise<void> {
       ttlMs: config.cacheTtlMs,
     });
   }
+
+  // EP-33.2: another replica's settings write reaches this one's settings cache.
+  startSettingsInvalidation({ broker, service });
+  log.info('settings invalidation started');
 
   // EP-17.8: the FileRef mirror — MAM's first consumer. Durable per subject, so a restart resumes
   // where it left off; a message the mirror keeps refusing goes to the dead-letter queue.

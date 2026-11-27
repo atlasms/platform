@@ -61,6 +61,17 @@ shape, and same reason, as `outbox.enqueue` — this is the outbox pattern run b
 broker's maximum redelivery age**, not from disk comfort: a mark pruned while its message can still
 arrive lets the duplicate through.
 
+## `SqliteSettingsTable` — Tier-3 setting values (EP-33.2)
+
+`settingsMigration` gives a service the `settings` table: one value per `(area, key, level,
+scope_id)`, as JSON, with a `version`. Every method takes the handle to write through, so a write
+commits inside the service's own unit of work with its outbox records. `put` is compare-and-set:
+without `ifVersion` it inserts a first value only, and with one it replaces exactly that version.
+Anything else is a `StaleSetting`. A reset is a `put` with `set: false`: the row stays, so its
+version (the audit revision) carries on. `@atlas/data-pg`'s `PgSettingsTable` passes the same
+`settingsConformance` (`@atlas/data/conformance`). The rules above it (levels, permissions,
+events) are `@atlas/settings`.
+
 ## Run
 
 ```bash

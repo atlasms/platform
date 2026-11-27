@@ -621,6 +621,59 @@ paths:
           headers: { ETag: { schema: { type: string } } }
           content: { application/json: { schema: { $ref: '#/components/schemas/ReferenceSnapshot' } } }
         '304': { description: Not modified }
+  # EP-33.2 — Tier-3 settings MAM acts on (configuration-and-reference-data.md §2.4–2.5, §8). The
+  # area is in the PATH: every owning service serves /settings/<its area>, so the gateway routes a
+  # prefix to its owner and no two services claim one path.
+  /settings/mam:
+    get:
+      operationId: getMamSettings
+      tags: [settings]
+      summary: >-
+        Every MAM setting — its descriptor, what it resolves to for the caller (their channel, then
+        their own user value) and from which level, the rows behind it at the levels the caller
+        sees, and the levels the caller may write (scope config:read or config:admin in the
+        channel). A sensitive value is never shown.
+      responses:
+        '200': { description: The settings, content: { application/json: { schema: { $ref: '#/components/schemas/SettingsView' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+  /settings/mam/{key}:
+    parameters:
+      - { name: key, in: path, required: true, schema: { type: string }, description: 'The setting key within the area, e.g. review.rejectedRetention.' }
+    put:
+      operationId: putMamSetting
+      tags: [settings]
+      summary: >-
+        Set the value at one level (EP-33.2). config:admin scoped to the level — the caller's
+        channel for `channel`, an UNSCOPED grant for `deployment`; a `user` value is the caller's
+        own and needs no permission. Validated from the descriptor (422 with details.problems).
+        Compare-and-set: a first value at a level sends no version, and a row that exists must be
+        named by its version (409 otherwise, with details.version). Commits the row,
+        audit.recorded (entity `setting`) and config.changed in one transaction.
+      parameters:
+        - { name: version, in: query, required: false, schema: { type: integer, minimum: 1 }, description: The version of the row at this level being replaced. }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SettingWriteInput' } } } }
+      responses:
+        '200': { description: The setting after the write, content: { application/json: { schema: { $ref: '#/components/schemas/SettingView' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: resetMamSetting
+      tags: [settings]
+      summary: >-
+        Reset one level to inherited — the next level up, or the code default. The same
+        permission as a write, compare-and-set on `version`, audited and announced like one. A
+        level with nothing set is already inherited and answers the setting unchanged.
+      parameters:
+        - { name: level, in: query, required: true, schema: { $ref: '#/components/schemas/SettingLevel' } }
+        - { name: version, in: query, required: false, schema: { type: integer, minimum: 1 }, description: The version of the row at this level being reset. }
+      responses:
+        '200': { description: The setting after the reset, content: { application/json: { schema: { $ref: '#/components/schemas/SettingView' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /vocabularies/{vocabulary}:
     parameters:
       - { name: vocabulary, in: path, required: true, schema: { $ref: '#/components/schemas/VocabularyName' } }
@@ -688,31 +741,6 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
-  /settings:
-    get:
-      operationId: listSettings
-      tags: [config]
-      summary: Resolved settings for this service with their descriptors and origin level (scope config:read)
-      responses:
-        '200': { description: Settings }
-    patch:
-      operationId: updateSetting
-      tags: [config]
-      summary: Set a setting value at a scope level within its descriptor bounds (scope config:admin, scoped by level). Emits config.changed.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [key, value]
-              properties:
-                key: { type: string }
-                value: {}
-                scopeLevel: { type: string, enum: [deployment, channel, category, user] }
-                scopeId: { type: string }
-      responses:
-        '200': { description: Updated }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
@@ -1250,7 +1278,97 @@ components:
       properties:
         configVersion: { type: integer }
         vocabularies: { type: object, additionalProperties: { type: array, items: { $ref: '#/components/schemas/VocabularyTerm' } } }
-        settings: { type: object, additionalProperties: true }
+        settings:
+          type: object
+          description: "Resolved values for the caller's channel by qualified key (mam.review.rejectedRetention): null when unset with no default. Sensitive settings are left out. EP-33.2."
+          additionalProperties: true
+    # EP-33.2 — settings (configuration-and-reference-data.md §2.4). The descriptor's contract is
+    # ../schemas/setting-descriptor.schema.json; it ships with the code that reads the setting.
+    SettingLevel:
+      type: string
+      enum: [deployment, channel, category, user]
+      description: 'A level a value is written at. Nearest wins: code default, deployment, channel, category, user.'
+    SettingOrigin:
+      type: string
+      enum: [default, deployment, channel, category, user]
+      description: "Where a resolved value came from. `default` is the descriptor's own: no row at any level."
+    SettingDescriptor:
+      type: object
+      description: One setting as declared in code (../schemas/setting-descriptor.schema.json).
+      required: [key, area, type, scope]
+      properties:
+        key: { type: string }
+        area: { type: string }
+        type: { type: string, enum: [string, text, int, number, boolean, duration, cron, date-time, oneOf, manyOf, json, template, reference] }
+        label: { type: string }
+        description: { type: string }
+        group: { type: string }
+        default: {}
+        required: { type: boolean }
+        scope: { $ref: '#/components/schemas/SettingLevel' }
+        min: { type: number }
+        max: { type: number }
+        minLength: { type: integer }
+        maxLength: { type: integer }
+        pattern: { type: string }
+        options: { type: array, items: { type: object, required: [value], properties: { value: {}, label: { type: string }, description: { type: string } } } }
+        refTarget: { type: string }
+        sensitive: { type: boolean }
+        restart: { type: boolean }
+        permission: { type: string }
+        deprecated: { type: boolean }
+        replacedBy: { type: string }
+        since: { type: string }
+    SettingLevelValue:
+      type: object
+      description: 'The row at one level. value is absent when the level was reset (set false) or the setting is sensitive (redacted).'
+      required: [set, version, updatedBy, updatedAt]
+      properties:
+        value: { description: The value at this level. }
+        set: { type: boolean, description: 'False after a reset: the row is kept, so its version (the audit revision) carries on.' }
+        version: { type: integer, minimum: 1, description: Send it back as ?version= to change or reset this level. }
+        updatedBy: { type: string }
+        updatedAt: { type: string, format: date-time }
+        redacted: { type: boolean }
+    SettingView:
+      type: object
+      required: [key, descriptor, resolved, levels, writable]
+      properties:
+        key: { type: string }
+        descriptor: { $ref: '#/components/schemas/SettingDescriptor' }
+        resolved:
+          type: object
+          required: [origin, overridable]
+          properties:
+            value: { description: 'What the caller gets now: null when nothing is set and there is no default; absent when redacted.' }
+            origin: { $ref: '#/components/schemas/SettingOrigin' }
+            scopeId: { type: string }
+            overridable: { type: boolean, description: A nearer level could still override it. }
+            redacted: { type: boolean }
+        levels:
+          type: object
+          description: "The rows behind it, by level: the platform's, the caller's channel's and the caller's own."
+          properties:
+            deployment: { $ref: '#/components/schemas/SettingLevelValue' }
+            channel: { $ref: '#/components/schemas/SettingLevelValue' }
+            category: { $ref: '#/components/schemas/SettingLevelValue' }
+            user: { $ref: '#/components/schemas/SettingLevelValue' }
+        writable: { type: array, items: { $ref: '#/components/schemas/SettingLevel' }, description: The levels this caller may write. }
+    SettingsView:
+      type: object
+      required: [area, configVersion, settings]
+      properties:
+        area: { type: string }
+        configVersion: { type: integer, description: "The service's reference-data version, the snapshot's." }
+        settings: { type: array, items: { $ref: '#/components/schemas/SettingView' } }
+    SettingWriteInput:
+      type: object
+      required: [level, value]
+      additionalProperties: false
+      properties:
+        level: { $ref: '#/components/schemas/SettingLevel' }
+        scopeId: { type: string, description: "The channel or user id. Defaults to the caller's own, and must be it; none at deployment." }
+        value: { description: 'The value, valid against the descriptor.' }
     Error:
       description: >-
         RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept:

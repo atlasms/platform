@@ -109,8 +109,16 @@ const IAM_DOMAINS: ReadonlySet<string> = new Set(['user', 'group', 'role', 'perm
 const GOVERNANCE: ReadonlySet<string> = new Set(['retention-policy']);
 // HSM's storage targets (ADR-0009) are the storage administrators', as a transcode profile is the
 // configuration administrators': under the default they read as `storage-target:read`, held by no one.
-// EP-25.5: the notification-type registry is configuration too.
-const CONFIG_REGISTRIES: ReadonlySet<string> = new Set(['transcode-profile', 'notification-type']);
+// EP-25.5: the notification-type registry is configuration too; EP-33.2: so is every Tier-3
+// setting value (`setting`, entity `<area>.<key>@<level>[:<scopeId>]`), from any owning service —
+// and the `config.changed` that announces one (domain `config`), which under the default read as
+// `config:read`: no role holds it, so the announcement would have been readable by nobody.
+const CONFIG_REGISTRIES: ReadonlySet<string> = new Set([
+  'transcode-profile',
+  'notification-type',
+  'setting',
+  'config',
+]);
 const STORAGE_ADMINISTRATION: ReadonlySet<string> = new Set(['storage-target']);
 const INGEST_ADMINISTRATION: ReadonlySet<string> = new Set([
   'acceptance-rule-set',

@@ -108,3 +108,9 @@ drift report come for free.
 ```bash
 npx nx test @atlas/reference   # 33 tests
 ```
+
+## Durations (EP-33.2)
+
+`addDuration(at, 'P30D')` adds an ISO-8601 duration to an instant, in UTC. Calendar units are
+calendar units: `P1M` from 31 January is the last day of February. Days, weeks and the time part
+are exact. Browser-safe, so Studio can show "kept until …" with the arithmetic the service uses.

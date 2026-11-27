@@ -9,3 +9,4 @@ export {
 } from './db.ts';
 export { PgOutboxStore, outboxMigration, outboxHeadersMigration } from './outbox.ts';
 export { PgSeenStore, seenMigration } from './seen.ts';
+export { PgSettingsTable, settingsMigration } from './settings.ts';

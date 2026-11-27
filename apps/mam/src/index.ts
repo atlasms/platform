@@ -45,6 +45,9 @@ export {
   CACHE_INVALIDATION_PATTERN,
   assetOf,
   startCacheInvalidation,
+  CONFIG_CHANGED_PATTERN,
+  isMamConfigChange,
+  startSettingsInvalidation,
   type CacheInvalidationOptions,
 } from './cache-invalidation.ts';
 export {
@@ -186,3 +189,4 @@ export {
   type MediaDefaultField,
   type MediaDefaults,
 } from './inheritance.ts';
+export { mamSettings, mamSettingsAdmin } from './settings.ts';

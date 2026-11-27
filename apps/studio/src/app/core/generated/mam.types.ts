@@ -572,7 +572,102 @@ export interface UpdateTermInput {
 export interface ReferenceSnapshot {
   configVersion: number;
   vocabularies?: Record<string, VocabularyTerm[]>;
+  /** Resolved values for the caller's channel by qualified key (mam.review.rejectedRetention): null when unset with no default. Sensitive settings are left out. EP-33.2. */
   settings?: Record<string, unknown>;
+}
+
+/** A level a value is written at. Nearest wins: code default, deployment, channel, category, user. */
+export type SettingLevel = 'deployment' | 'channel' | 'category' | 'user';
+
+/** Where a resolved value came from. `default` is the descriptor's own: no row at any level. */
+export type SettingOrigin = 'default' | 'deployment' | 'channel' | 'category' | 'user';
+
+/** One setting as declared in code (../schemas/setting-descriptor.schema.json). */
+export interface SettingDescriptor {
+  key: string;
+  area: string;
+  type:
+    | 'string'
+    | 'text'
+    | 'int'
+    | 'number'
+    | 'boolean'
+    | 'duration'
+    | 'cron'
+    | 'date-time'
+    | 'oneOf'
+    | 'manyOf'
+    | 'json'
+    | 'template'
+    | 'reference';
+  label?: string;
+  description?: string;
+  group?: string;
+  default?: unknown;
+  required?: boolean;
+  scope: SettingLevel;
+  min?: number;
+  max?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  options?: { value: unknown; label?: string; description?: string }[];
+  refTarget?: string;
+  sensitive?: boolean;
+  restart?: boolean;
+  permission?: string;
+  deprecated?: boolean;
+  replacedBy?: string;
+  since?: string;
+}
+
+/** The row at one level. value is absent when the level was reset (set false) or the setting is sensitive (redacted). */
+export interface SettingLevelValue {
+  /** The value at this level. */
+  value?: unknown;
+  /** False after a reset: the row is kept, so its version (the audit revision) carries on. */
+  set: boolean;
+  /** Send it back as ?version= to change or reset this level. */
+  version: number;
+  updatedBy: string;
+  updatedAt: string;
+  redacted?: boolean;
+}
+
+export interface SettingView {
+  key: string;
+  descriptor: SettingDescriptor;
+  resolved: {
+    value?: unknown;
+    origin: SettingOrigin;
+    scopeId?: string;
+    overridable: boolean;
+    redacted?: boolean;
+  };
+  /** The rows behind it, by level: the platform's, the caller's channel's and the caller's own. */
+  levels: {
+    deployment?: SettingLevelValue;
+    channel?: SettingLevelValue;
+    category?: SettingLevelValue;
+    user?: SettingLevelValue;
+  };
+  /** The levels this caller may write. */
+  writable: SettingLevel[];
+}
+
+export interface SettingsView {
+  area: string;
+  /** The service's reference-data version, the snapshot's. */
+  configVersion: number;
+  settings: SettingView[];
+}
+
+export interface SettingWriteInput {
+  level: SettingLevel;
+  /** The channel or user id. Defaults to the caller's own, and must be it; none at deployment. */
+  scopeId?: string;
+  /** The value, valid against the descriptor. */
+  value: unknown;
 }
 
 /** RFC 9457 Problem Details, served as application/problem+json, with the platform's keys kept: `code` is the machine key (a closed enum — VALIDATION, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, UNAVAILABLE, INTERNAL), `message` the text. The RFC members are derived from them: `type` is https://atlas.example/problems/<code>, `title` is constant per code, `detail` equals `message`, `instance` is urn:atlas:correlation:<correlationId>. */

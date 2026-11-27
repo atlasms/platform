@@ -610,7 +610,7 @@ Source: [configuration-and-reference-data.md](../architecture/configuration-and-
 | ID | Story | Est |
 |----|-------|:---:|
 | 33.1 | ✅ Vocabulary admin (deprecate / merge) (#415) | 3 |
-| 33.2 | Settings rows + `config.changed` in the service template, wiring `@atlas/reference` (built, unwired since EP-06.6) | 5 |
+| 33.2 | ✅ Settings rows + `config.changed` in the service template, wiring `@atlas/reference`: the `settings` table every service is given (`@atlas/data`/`-pg`, one suite), `@atlas/settings` (who writes a level, the view, the audit + `config.changed` each write commits), `/settings/<area>` per owner; MAM first — `review.rejectedRetention` (FR-APP-8, unset keeps rejected media; decided 2026-11-27) — [configuration §11](../architecture/configuration-and-reference-data.md) | 5 |
 | 33.3 | Generated settings UI from descriptors, origin level + reset to inherited (FR-CFG-5) | 5 |
 | 33.4 | Registry admin — a generic Tier-1 registry view | 5 |
 | 33.5 | Seed bundle export/import CLI | 3 |

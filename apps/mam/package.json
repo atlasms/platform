@@ -20,7 +20,9 @@
     "@atlas/messaging": "*",
     "@atlas/messaging-nats": "*",
     "@atlas/policy": "*",
+    "@atlas/reference": "*",
     "@atlas/service-kit": "*",
+    "@atlas/settings": "*",
     "fastify": "^5.12.8"
   },
   "devDependencies": {

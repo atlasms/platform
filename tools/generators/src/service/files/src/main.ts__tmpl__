@@ -7,7 +7,7 @@
 // This file is the only one that reads the environment or touches real infrastructure. Everything
 // it wires is injected into `build<%= className %>App`, so the tests never see any of it.
 
-<% if (db) { %>import { migrate, openPool<% if (broker) { %>, outboxHeadersMigration, outboxMigration, PgOutboxStore<% } %> } from '@atlas/data-pg';
+<% if (db) { %>import { migrate, openPool<% if (broker) { %>, outboxHeadersMigration, outboxMigration, PgOutboxStore, settingsMigration<% } %> } from '@atlas/data-pg';
 <% } %><% if (broker && db) { %>import { OutboxRelay } from '@atlas/messaging';
 <% } %><% if (broker) { %>import { NatsBroker } from '@atlas/messaging-nats';
 <% } %>import {
@@ -65,8 +65,10 @@ async function migrateWithRetry(budgetMs = 120_000, intervalMs = 2_000): Promise
   for (let attempt = 1; ; attempt++) {
     try {
       // Migrations go here, in order, once written: `migrate(pool, [ownTablesMigration, ...])`.
-      // Every table carries channel_id (AGENTS.md §5.3); the outbox table is the exception.
-      const { applied } = await migrate(pool, [<% if (broker) { %>outboxMigration, outboxHeadersMigration<% } %>]);
+      // Every table carries channel_id (AGENTS.md §5.3); the outbox table is the exception.<% if (broker) { %>
+      // `settings` holds this service's Tier-3 setting values (EP-33.2) — declare a knob with
+      // `defineSettings` and serve it with @atlas/settings' `SettingsAdmin` (see the README).<% } %>
+      const { applied } = await migrate(pool, [<% if (broker) { %>outboxMigration, outboxHeadersMigration, settingsMigration<% } %>]);
       if (applied.length > 0) log.info('migrations applied', { applied });
       return;
     } catch (err) {

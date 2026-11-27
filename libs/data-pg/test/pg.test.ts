@@ -8,7 +8,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { outboxConformance } from '@atlas/data/conformance';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { outboxConformance, settingsConformance } from '@atlas/data/conformance';
 import { seenStoreConformance } from '@atlas/messaging/conformance';
 import {
   migrate,
@@ -17,8 +18,10 @@ import {
   outboxMigration,
   PgOutboxStore,
   PgSeenStore,
+  PgSettingsTable,
   schemaOf,
   seenMigration,
+  settingsMigration,
   withTransaction,
   type PgClient,
 } from '../src/index.ts';
@@ -337,5 +340,37 @@ if (!URL) {
 
     await pool.query(`DROP SCHEMA ${schema} CASCADE`);
     await pool.end();
+  });
+  // --- Tier-3 settings rows (EP-33.2) ----------------------------------------------------------
+  // The SAME suite the sqlite table passes. The race case is the one only this run can mean: two
+  // transactions on two connections, one row lock between them.
+
+  settingsConformance('PgSettingsTable', {
+    setup: async () => {
+      const schema = `settings_${Date.now().toString(36)}_${n++}`;
+      const pool = openPool({ connectionString });
+      await pool.query(`CREATE SCHEMA ${schema}`);
+      pool.on('connect', (c) => void c.query(`SET search_path TO ${schema}`));
+      await pool.query(`SET search_path TO ${schema}`);
+      await migrate(pool, [settingsMigration]);
+      const table = new PgSettingsTable();
+      // Per async context, not one variable: the race case runs two transactions at once.
+      const current = new AsyncLocalStorage<PgClient>();
+      return {
+        transaction: <T>(fn: () => Promise<T>): Promise<T> =>
+          withTransaction(pool, (client) => current.run(client, fn)),
+        put: async (row, ifVersion) => {
+          const client = current.getStore();
+          if (!client) throw new Error('put must run inside a transaction');
+          await table.put(client, row, ifVersion);
+        },
+        list: (filter) => table.list(pool, filter),
+        get: (area, key, level, scopeId) => table.get(pool, area, key, level, scopeId),
+        cleanup: async () => {
+          await pool.query(`DROP SCHEMA ${schema} CASCADE`).catch(() => undefined);
+          await pool.end();
+        },
+      };
+    },
   });
 }

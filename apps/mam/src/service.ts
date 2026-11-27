@@ -37,6 +37,15 @@ import {
 import { deriveInto, dismissDerived, stampedBy, userWrote } from './provenance.ts';
 import { cloneOnto, mergeExtended, mergeTagLabels, versionProblem } from './versions.ts';
 import type { Message } from '@atlas/messaging';
+import { StaleSetting } from '@atlas/data';
+import { addDuration, type SettingValue } from '@atlas/reference';
+import {
+  SettingsCache,
+  type SettingView,
+  type SettingWrite,
+  type SettingsView,
+} from '@atlas/settings';
+import { mamSettingsAdmin } from './settings.ts';
 import { can, canEnforce, compile, type EffectivePolicy } from '@atlas/policy';
 import {
   Conflict,
@@ -170,6 +179,11 @@ export interface MamOptions {
    */
   mediaUrls?: { key: string; ttlSeconds: number };
   now?: () => Date;
+  /**
+   * MAM's settings rows held per channel (EP-33.2) — cleared after a write here and on every
+   * `config.changed` for area `mam` (main.ts subscribes in broadcast mode). Omit for a fresh one.
+   */
+  settingsCache?: SettingsCache;
 }
 
 export type CacheOutcome = 'hit' | 'miss' | 'bypass';
@@ -343,6 +357,8 @@ export type MirrorOutcome = 'applied' | 'duplicate';
  */
 export interface MamReferenceSnapshot {
   configVersion: number;
+  /** MAM's settings resolved for the channel, by qualified key (EP-33.2); `null` = unset. */
+  settings: Record<string, SettingValue>;
   vocabularies: {
     tag: Array<{ id: string; key: string; label: string }>;
     /** The live tree (#260): what a client validates a `categoryId` against. */
@@ -373,7 +389,10 @@ export class MamService {
   constructor(options: MamOptions) {
     this.options = options;
     this.now = options.now ?? (() => new Date());
+    this.settingsCache = options.settingsCache ?? new SettingsCache();
   }
+
+  private readonly settingsCache: SettingsCache;
 
   // --- reads -----------------------------------------------------------------
 
@@ -1186,7 +1205,12 @@ export class MamService {
       state: result.next ?? existing.state,
       version: existing.version + 1,
       updatedAt: this.now().toISOString(),
-      ...defined({ retainUntil: options.retainUntil }),
+      ...defined({
+        retainUntil:
+          action === 'reject'
+            ? (options.retainUntil ?? (await this.defaultRetention(existing.channelId)))
+            : options.retainUntil,
+      }),
     };
     if (action === 'approve') {
       await this.expiryOnApproval(existing, updated, options.expiresAt);
@@ -2708,8 +2732,9 @@ export class MamService {
    */
   async referenceSnapshot(caller: Caller): Promise<MamReferenceSnapshot> {
     this.authorize(caller, 'taxonomy:read');
-    const [configVersion, tags, categories, ...terms] = await Promise.all([
+    const [configVersion, settingRows, tags, categories, ...terms] = await Promise.all([
       this.options.store.configVersion(),
+      this.options.store.settings({ channelId: caller.channelId }),
       this.options.store.listTags(caller.channelId),
       this.options.store.categories(caller.channelId),
       ...VOCABULARIES.map((v) => this.options.store.terms(caller.channelId, v)),
@@ -2742,7 +2767,130 @@ export class MamService {
         })),
         ...vocabularyTerms,
       },
+      // Resolved for the channel, qualified by area (configuration §5 step 1). Never a sensitive
+      // one — the snapshot is cached and handed to every reader of the channel.
+      settings: Object.fromEntries(
+        mamSettingsAdmin
+          .list()
+          .filter((d) => d.sensitive !== true)
+          .map((d) => [
+            `mam.${d.key}`,
+            mamSettingsAdmin.resolve(d.key, settingRows, { channel: caller.channelId }).value,
+          ]),
+      ),
     };
+  }
+
+  // --- settings (EP-33.2) -----------------------------------------------------
+  //
+  // configuration-and-reference-data.md §2.4–2.5, §8: the descriptor is code (settings.ts), the
+  // value a row at a level. @atlas/settings decides who may write a level and what each write
+  // commits with; this commits it — the row, the snapshot's version bump, `audit.recorded` and
+  // `config.changed` in ONE transaction.
+
+  /** `GET /settings/mam`: every setting, resolved for the caller, with the rows behind it. */
+  async settingsView(caller: Caller): Promise<SettingsView> {
+    mamSettingsAdmin.authorizeRead(caller);
+    const [rows, configVersion] = await Promise.all([
+      this.options.store.settings({ channelId: caller.channelId, userId: caller.userId }),
+      this.options.store.configVersion(),
+    ]);
+    return mamSettingsAdmin.view(caller, rows, configVersion);
+  }
+
+  /** `PUT /settings/mam/{key}`: set one level, compare-and-set on `version`. */
+  async putSetting(
+    caller: Caller,
+    key: string,
+    input: { level?: unknown; scopeId?: unknown; value?: unknown },
+    version: number | undefined,
+  ): Promise<SettingView> {
+    if (typeof input.level !== 'string') throw new ValidationError('level is required');
+    if (input.scopeId !== undefined && typeof input.scopeId !== 'string') {
+      throw new ValidationError('scopeId must be a string');
+    }
+    if (!('value' in input)) throw new ValidationError('value is required');
+    const scope = mamSettingsAdmin.scopeOf(caller, input.level, input.scopeId);
+    // Read BEFORE the transaction (AGENTS.md §6) — the compare-and-set catches a write in between.
+    const existing = await this.options.store.setting(key, scope.level, scope.scopeId);
+    const write = mamSettingsAdmin.planSet(
+      caller,
+      key,
+      scope,
+      input.value as SettingValue,
+      existing,
+      version,
+      this.now(),
+    );
+    await this.commitSetting(caller, write);
+    return this.settingOf(caller, key);
+  }
+
+  /** `DELETE /settings/mam/{key}?level=`: reset one level to inherited. */
+  async resetSetting(
+    caller: Caller,
+    key: string,
+    level: string,
+    version: number | undefined,
+  ): Promise<SettingView> {
+    const scope = mamSettingsAdmin.scopeOf(caller, level);
+    const existing = await this.options.store.setting(key, scope.level, scope.scopeId);
+    const write = mamSettingsAdmin.planReset(caller, key, scope, existing, version, this.now());
+    if (write) await this.commitSetting(caller, write);
+    return this.settingOf(caller, key);
+  }
+
+  private async commitSetting(caller: Caller, write: SettingWrite): Promise<void> {
+    try {
+      await this.options.store.transaction(async (tx) => {
+        const configVersion = await tx.putSetting(write.row, write.ifVersion);
+        await tx.enqueue(this.eventRecord(caller, caller.channelId, 'audit.recorded', write.audit));
+        await tx.enqueue(
+          this.eventRecord(
+            caller,
+            caller.channelId,
+            'config.changed',
+            write.changed(configVersion),
+          ),
+        );
+      });
+    } catch (err) {
+      // Another write reached this level between the read and the commit.
+      if (err instanceof StaleSetting) throw new Conflict(err.message);
+      throw err;
+    } finally {
+      // Before `config.changed` reaches this replica's own subscription: a read that follows this
+      // write in the same replica must not be served the value it replaced.
+      this.settingsCache.clear();
+    }
+  }
+
+  private async settingOf(caller: Caller, key: string): Promise<SettingView> {
+    const view = await this.settingsView(caller);
+    const one = view.settings.find((v) => v.key === key);
+    if (!one) throw new NotFound(`no setting "${key}" in mam`);
+    return one;
+  }
+
+  /** A `config.changed` for area `mam` from any replica: drop what is cached. */
+  onConfigChanged(): void {
+    this.settingsCache.clear();
+  }
+
+  /**
+   * A rejection's `retainUntil` when the request states none: rejectedAt + the channel's
+   * `review.rejectedRetention`, or none at all when it is unset (FR-APP-8; decided 2026-11-27).
+   */
+  private async defaultRetention(channelId: string): Promise<string | undefined> {
+    const rows = await this.settingsCache.get(channelId, () =>
+      this.options.store.settings({ channelId }),
+    );
+    const retention = mamSettingsAdmin.resolve('review.rejectedRetention', rows, {
+      channel: channelId,
+    }).value;
+    return typeof retention === 'string'
+      ? addDuration(this.now(), retention).toISOString()
+      : undefined;
   }
 
   /**

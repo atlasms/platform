@@ -643,7 +643,7 @@ Not one aggregate but **four tiers**, separated by a single test — *does code 
 | **0** | Contract enum (`Tier`, `RenditionKind`, node kinds, states, `effect`) | `@atlas/contracts` + JSON Schema — **not a row** | release only |
 | **1** | **RegistryEntry** — `id, channelId?, registry, kind (Tier-0), key, labels, enabled, sortOrder, config{…}, createdBy/At` | relational, **owned by the acting service** | entries + attributes |
 | **2** | **VocabularyTerm** — `id, vocabulary, channelId, key, labels{}, parentId?, sortOrder, external{}, deprecatedAt?, replacedById?, usageCount` — contract: [`vocabulary-term.schema.json`](schemas/vocabulary-term.schema.json) | relational (MAM) | full CRUD (deprecate/merge, **never delete in use**) |
-| **3** | **SettingValue** — `area, key, scopeLevel, scopeId?, value, updatedBy, updatedAt` against a code-shipped **SettingDescriptor** — contract: [`setting-descriptor.schema.json`](schemas/setting-descriptor.schema.json) | relational, owned by the acting service | value only, within declared bounds |
+| **3** | **SettingValue** — `area, key, scopeLevel, scopeId?, value, set, version, updatedBy, updatedAt` (as built, EP-33.2: `version` is the compare-and-set token and the audit revision; a reset keeps the row with `set: false`) against a code-shipped **SettingDescriptor** — contract: [`setting-descriptor.schema.json`](schemas/setting-descriptor.schema.json) | relational, owned by the acting service | value only, within declared bounds |
 
 ### 5.1 Resolution
 

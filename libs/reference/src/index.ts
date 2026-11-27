@@ -27,3 +27,4 @@ export type {
   ValidationResult,
   RegistryEntry,
 } from './types.ts';
+export { addDuration } from './duration.ts';

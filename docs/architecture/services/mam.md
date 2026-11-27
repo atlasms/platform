@@ -730,6 +730,22 @@ later `file.placed` or `file.moved` keeps it: the ledger moves bytes, not their 
 Studio player maps frames with (media-editor.md §5.2). No migration: a FileRef is a JSON document
 in `asset_files`. A row written before 26.4 has none until its rendition is produced again.
 
+## 13ad. As built — EP-33.2, MAM's settings and the retention a rejection gets
+
+MAM serves its Tier-3 settings at `/settings/mam` (configuration-and-reference-data.md §11). Its
+descriptors are `src/settings.ts`, beside the code that reads them. A write commits the settings
+row, the `mam_config` bump, `audit.recorded` and `config.changed` together, and the version
+`config.changed` names is the bump that transaction made.
+
+The first setting is **`review.rejectedRetention`**: an ISO-8601 duration at `channel` scope
+(FR-APP-8). A rejection that states no `retainUntil` gets `rejectedAt` plus the setting, on the
+asset and on `asset.rejected`. A rejection that states one keeps its own. **It has no default**
+(decided 2026-11-27): unset keeps rejected media, which is what every install did before. So an
+upgrade makes nothing purge-eligible, and a channel opts in by setting it. The purge itself is
+EP-24.6. The setting is read from the settings cache, never per request, and the cache is cleared
+by MAM's own writes and by every `config.changed` for area `mam` from any replica
+(`startSettingsInvalidation`, broadcast).
+
 ## 14. Open questions / future
 
 - Vocabulary governance/merge tooling as taxonomies grow.

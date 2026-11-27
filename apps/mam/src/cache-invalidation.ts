@@ -49,3 +49,37 @@ export function assetOf(msg: Message): string | undefined {
   }
   return typeof payload.entityId === 'string' ? payload.entityId : undefined;
 }
+
+/** Every channel's configuration changes (EP-33.2). */
+export const CONFIG_CHANGED_PATTERN = 'atlas.*.config.changed';
+
+/**
+ * MAM's settings cache, kept honest across replicas (EP-33.2, configuration §5 step 3): every
+ * replica hears every `config.changed` and drops its settings rows when the area is MAM's. The
+ * same reasoning as the read cache: BROADCAST, because each instance must hear it, not one of
+ * them; not durable, because a change before this instance started cannot concern its cache; and
+ * the settings cache's TTL covers what a broker outage loses.
+ */
+export function startSettingsInvalidation(options: {
+  broker: Broker;
+  service: MamService;
+  onClear?: () => void;
+}): Subscription {
+  return options.broker.subscribe(
+    CONFIG_CHANGED_PATTERN,
+    async (msg: Message) => {
+      if (!isMamConfigChange(msg)) return;
+      options.service.onConfigChanged();
+      options.onClear?.();
+    },
+    { broadcast: true },
+  );
+}
+
+/** A `config.changed` whose area is MAM's (`mam` or `mam.<collection>`). */
+export function isMamConfigChange(msg: Message): boolean {
+  const body = msg.body as Partial<Envelope<Partial<EventPayloads['config.changed']>>> | null;
+  if (!body || typeof body !== 'object' || body.type !== 'config.changed') return false;
+  const area = body.payload?.area;
+  return area === 'mam' || (typeof area === 'string' && area.startsWith('mam.'));
+}
