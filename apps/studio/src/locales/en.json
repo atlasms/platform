@@ -510,7 +510,8 @@
     "appliesTo": "Applies to",
     "wholeChannel": "the whole channel",
     "noSchemas": "No field schemas yet.",
-    "fieldsCount": "fields"
+    "fieldsCount": "fields",
+    "settings": "Settings"
   },
   "watchers": {
     "new": "New watcher",
@@ -1092,5 +1093,29 @@
     "scrub": "Playhead (frame)",
     "filmstrip": "Filmstrip — click or drag to scrub",
     "noRate": "frame rate not recorded — marks are to the millisecond"
+  },
+  "settings": {
+    "none": "No settings.",
+    "current": "In effect:",
+    "unset": "not set",
+    "restart": "takes effect after a restart",
+    "reset": "Reset to inherited",
+    "secret": "Enter a new value",
+    "empty": "Enter a value — or reset to inherited.",
+    "notJson": "Not valid JSON.",
+    "conflict": "Someone else changed this setting. It has been reloaded.",
+    "level": {
+      "deployment": "Platform",
+      "channel": "This channel",
+      "category": "Category",
+      "user": "Just me"
+    },
+    "origin": {
+      "default": "the default",
+      "deployment": "set for the platform",
+      "channel": "set for this channel",
+      "category": "set for the category",
+      "user": "set by you"
+    }
   }
 }

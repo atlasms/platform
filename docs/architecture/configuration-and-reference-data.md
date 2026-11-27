@@ -371,7 +371,17 @@ Step 2 of §10, decided and built 2026-11-27. What it settled:
   `config:admin`. The default `config:read` is held by no role.
 - **The first setting**: MAM's `review.rejectedRetention` (FR-APP-8; [mam.md §13ad](services/mam.md)).
 
-Not yet: Studio's generated settings UI (EP-33.3), `category` values, the vault reference behind
+**EP-33.3, the generated UI** (2026-11-27): Studio's Admin › Settings view renders every owner's
+settings from the descriptors in `GET /settings/<area>`, with no form written per setting. The
+type picks the control (a checkbox, a number with its bounds, a select of the options, JSON for
+`manyOf`/`json`, a password field for a sensitive one, text otherwise). The view shows the value
+in effect and its origin, and offers an editor for each level in `writable`. Each draft is
+validated in the browser by `validateWrite` from `@atlas/reference`, the function the owner runs
+(FR-CFG-4). Save sends the level's version, and Reset to inherited is offered where that level has
+a value (FR-CFG-5). A 409 reloads, and a 422 shows the owner's reason under its level. A new owner
+is one entry in Studio's `SETTINGS_AREAS`.
+
+Not yet: `category` values, the vault reference behind
 `sensitive`, and a `config.changed` from MAM's vocabulary writes (they still bump the version, so
 holders converge on their TTL).
 

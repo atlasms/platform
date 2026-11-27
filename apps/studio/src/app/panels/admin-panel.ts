@@ -8,11 +8,20 @@ import { PeopleView } from './admin/people-view.ts';
 import { ProfilesView } from './admin/profiles-view.ts';
 import { RolesView } from './admin/roles-view.ts';
 import { SchemasView } from './admin/schemas-view.ts';
+import { SettingsView } from './admin/settings-view.ts';
 import { UsersView } from './admin/users-view.ts';
 import { VocabulariesView } from './admin/vocabularies-view.ts';
 
 type AdminView =
-  'users' | 'groups' | 'roles' | 'profiles' | 'categories' | 'vocabularies' | 'schemas' | 'people';
+  | 'users'
+  | 'groups'
+  | 'roles'
+  | 'profiles'
+  | 'categories'
+  | 'vocabularies'
+  | 'schemas'
+  | 'people'
+  | 'settings';
 
 /** What reveals each view. The panel itself is revealed by any of these (panels.ts). */
 const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
@@ -28,6 +37,8 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
   { id: 'schemas', permissions: ['metadata:admin'] },
   // EP-28.5: the people register.
   { id: 'people', permissions: ['people:admin'] },
+  // EP-33.3: every owner's Tier-3 settings, generated from their descriptors.
+  { id: 'settings', permissions: ['config:read', 'config:admin'] },
 ];
 
 /**
@@ -54,6 +65,7 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
     VocabulariesView,
     SchemasView,
     PeopleView,
+    SettingsView,
   ],
   template: `
     <h2 class="panel-title">{{ locale.t('workbench.panels.admin') }}</h2>
@@ -94,6 +106,9 @@ const VIEWS: readonly { id: AdminView; permissions: readonly string[] }[] = [
       }
       @case ('people') {
         <atlas-people-view />
+      }
+      @case ('settings') {
+        <atlas-settings-view />
       }
     }
   `,
