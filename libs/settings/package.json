@@ -1,0 +1,25 @@
+{
+  "name": "@atlas/settings",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tier-3 settings served by the service that acts on them (EP-33.2): authorization by level, validation from the descriptor, the view with origins, and the audit + config.changed payloads a write commits with. Storage is @atlas/data's settings table.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@atlas/contracts": "*",
+    "@atlas/data": "*",
+    "@atlas/policy": "*",
+    "@atlas/reference": "*",
+    "@atlas/service-kit": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.13"
+  }
+}

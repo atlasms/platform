@@ -105,6 +105,8 @@ test('scaffolds the service and wires it into the build, the images and the clus
   assert.match(main, /migrateWithRetry\(/, '--db: waits for the database within a budget');
   assert.match(main, /new OutboxRelay\(outbox, broker\)/, '--db --broker: relays the outbox');
   assert.match(main, /NatsBroker\.connect\(/);
+  // EP-33.2: every service with an outbox is given the settings table — a knob is one descriptor.
+  assert.match(main, /outboxHeadersMigration, settingsMigration\]/);
 
   // THE WIRING — the list #298 fell out of.
   const root = JSON.parse(read(tree, 'package.json'));

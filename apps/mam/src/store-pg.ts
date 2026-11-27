@@ -11,7 +11,9 @@ import {
   outboxMigration,
   PgOutboxStore,
   PgSeenStore,
+  PgSettingsTable,
   seenMigration,
+  settingsMigration,
   withTransaction,
   type PgPool,
 } from '@atlas/data-pg';
@@ -338,11 +340,14 @@ export const mamMigrations: Migration[] = [
   pgShotlistMigration,
   pgSchemaVersionMigration,
   pgEditProjectsMigration,
+  // EP-33.2: the Tier-3 settings rows every service is given (@atlas/data-pg).
+  settingsMigration,
 ];
 
 export function pgAssetStore(pool: PgPool): AssetStore {
   const outbox = new PgOutboxStore(pool);
   const seen = new PgSeenStore(pool);
+  const settings = new PgSettingsTable();
 
   return {
     async get(id) {
@@ -495,6 +500,12 @@ export function pgAssetStore(pool: PgPool): AssetStore {
       return rows.map((r) => ({ assetId: r.asset_id, score: Number(r.score) }));
     },
 
+    async settings(filter) {
+      return settings.list(pool, { area: 'mam', ...filter });
+    },
+    async setting(key, level, scopeId) {
+      return settings.get(pool, 'mam', key, level, scopeId);
+    },
     async configVersion() {
       const { rows } = await pool.query<{ version: string }>(
         'SELECT version FROM mam_config WHERE id = 1',
@@ -768,6 +779,15 @@ export function pgAssetStore(pool: PgPool): AssetStore {
                 JSON.stringify(file),
               ],
             );
+          },
+          async putSetting(row, ifVersion) {
+            await settings.put(client, { ...row, area: 'mam' }, ifVersion);
+            // On THIS client: the bump commits with the row, and RETURNING reads it in the
+            // transaction that made it rather than from a connection that cannot see it yet.
+            const { rows } = await client.query<{ version: string }>(
+              'UPDATE mam_config SET version = version + 1 WHERE id = 1 RETURNING version',
+            );
+            return Number(rows[0]?.version);
           },
           async appendVerdict(verdict) {
             await client.query(

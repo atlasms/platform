@@ -111,6 +111,12 @@ export const MamOperations = {
   renderEditProject: { method: 'POST', path: '/api/v1/edit-projects/{id}/render', params: ['id'] },
   /** The cached reference snapshot MAM owns (vocabularies + resolved settings) with a configVersion (scope config:read). Supports If-None-Match. See ../configuration-and-reference-data.md §5. */
   getReferenceSnapshot: { method: 'GET', path: '/api/v1/reference', params: [] },
+  /** Every MAM setting — its descriptor, what it resolves to for the caller (their channel, then their own user value) and from which level, the rows behind it at the levels the caller sees, and the levels the caller may write (scope config:read or config:admin in the channel). A sensitive value is never shown. */
+  getMamSettings: { method: 'GET', path: '/api/v1/settings/mam', params: [] },
+  /** Set the value at one level (EP-33.2). config:admin scoped to the level — the caller's channel for `channel`, an UNSCOPED grant for `deployment`; a `user` value is the caller's own and needs no permission. Validated from the descriptor (422 with details.problems). Compare-and-set: a first value at a level sends no version, and a row that exists must be named by its version (409 otherwise, with details.version). Commits the row, audit.recorded (entity `setting`) and config.changed in one transaction. */
+  putMamSetting: { method: 'PUT', path: '/api/v1/settings/mam/{key}', params: ['key'] },
+  /** Reset one level to inherited — the next level up, or the code default. The same permission as a write, compare-and-set on `version`, audited and announced like one. A level with nothing set is already inherited and answers the setting unchanged. */
+  resetMamSetting: { method: 'DELETE', path: '/api/v1/settings/mam/{key}', params: ['key'] },
   /** A vocabulary's live terms by sortOrder then key — the deprecated and merged too with includeDeprecated (scope taxonomy:read; EP-28.3) */
   listVocabularyTerms: {
     method: 'GET',
@@ -141,10 +147,6 @@ export const MamOperations = {
     path: '/api/v1/vocabularies/{vocabulary}/{termId}/merge',
     params: ['vocabulary', 'termId'],
   },
-  /** Resolved settings for this service with their descriptors and origin level (scope config:read) */
-  listSettings: { method: 'GET', path: '/api/v1/settings', params: [] },
-  /** Set a setting value at a scope level within its descriptor bounds (scope config:admin, scoped by level). Emits config.changed. */
-  updateSetting: { method: 'PATCH', path: '/api/v1/settings', params: [] },
 } as const;
 
 export type MamOperation = keyof typeof MamOperations;

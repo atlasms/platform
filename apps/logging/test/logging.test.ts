@@ -348,6 +348,15 @@ test('visibility: an entry needs <domain>:read, and audit.recorded needs the ENT
     requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'transcode-profile' } }),
     { permission: 'config:admin' },
   );
+  // A setting's history (EP-33.2): the configuration administrators', from whichever service owns it.
+  assert.deepEqual(
+    requiredRule({ ...base, type: 'audit.recorded', payload: { entityType: 'setting' } }),
+    { permission: 'config:admin' },
+  );
+  // …and the config.changed that announces it — not `config:read`, which no role holds.
+  assert.deepEqual(requiredRule({ ...base, type: 'config.changed' }), {
+    permission: 'config:admin',
+  });
 });
 
 test('the file set is visible to a files reader and hidden from a core-only one', () => {

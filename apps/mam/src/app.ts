@@ -676,6 +676,47 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
     }),
   );
 
+  // --- settings (EP-33.2) --------------------------------------------------------
+  // `/settings/<area>` — the area in the path, so the gateway routes this prefix to MAM alone.
+  const versionOf = (req: { query: unknown }): number | undefined => {
+    const { version } = req.query as { version?: string };
+    if (version === undefined) return undefined;
+    if (!/^[1-9]d*$/.test(version)) throw new ValidationError('version must be a positive integer');
+    return Number(version);
+  };
+
+  app.get('/api/v1/settings/mam', async (req, reply) =>
+    handle(req, reply, async () => options.service.settingsView(await callerOf(req))),
+  );
+
+  app.put('/api/v1/settings/mam/:key', async (req, reply) =>
+    handle(req, reply, async () => {
+      const body = req.body;
+      if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+        throw new ValidationError('the body is { level, scopeId?, value }');
+      }
+      return options.service.putSetting(
+        await callerOf(req),
+        (req.params as { key: string }).key,
+        body as Record<string, unknown>,
+        versionOf(req),
+      );
+    }),
+  );
+
+  app.delete('/api/v1/settings/mam/:key', async (req, reply) =>
+    handle(req, reply, async () => {
+      const { level } = req.query as { level?: string };
+      if (level === undefined) throw new ValidationError('level is required');
+      return options.service.resetSetting(
+        await callerOf(req),
+        (req.params as { key: string }).key,
+        level,
+        versionOf(req),
+      );
+    }),
+  );
+
   // The versioned reference snapshot (EP-04.8, configuration-and-reference-data.md §5).
   //
   // Reference data is read from here, not queried row by row per request — which is what makes

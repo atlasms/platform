@@ -125,7 +125,8 @@ export function productionRoutes(o: ProductionOrigins): RoutingTable {
       '/api/v1/people',
       '/api/v1/vocabularies',
       '/api/v1/edit-projects',
-      '/api/v1/settings',
+      // EP-33.2: `/settings/<area>` — each owning service its own prefix.
+      '/api/v1/settings/mam',
     ]),
     // Logging (EP-19): the audit history, the log browse, retention; reports and visibility rules
     // are its later stories.

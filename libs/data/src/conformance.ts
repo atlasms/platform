@@ -188,3 +188,8 @@ export function outboxConformance(name: string, harness: OutboxHarness): void {
     });
   });
 }
+export {
+  settingsConformance,
+  type SettingsHarness,
+  type SettingsFixture,
+} from './settings-conformance.ts';

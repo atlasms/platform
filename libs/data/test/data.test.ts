@@ -11,9 +11,11 @@ import {
   outboxMigration,
   SqliteSeenStore,
   seenMigration,
+  SqliteSettingsTable,
+  settingsMigration,
 } from '../src/index.ts';
 import { withTransactionAsync } from '../src/db.ts';
-import { outboxConformance } from '../src/conformance.ts';
+import { outboxConformance, settingsConformance } from '../src/conformance.ts';
 import { seenStoreConformance } from '@atlas/messaging/conformance';
 import { InMemoryBroker, OutboxRelay, type OutboxRecord } from '@atlas/messaging';
 
@@ -187,4 +189,22 @@ test('SEEN: prune drops marks older than the cutoff and keeps the rest', async (
   assert.equal(seen.count(), 1);
   assert.equal(await seen.markSeen('recent'), false, 'the retained mark still dedupes');
   assert.equal(await seen.markSeen('old'), true, 'the pruned one no longer does');
+});
+
+// --- Tier-3 settings rows (EP-33.2) ---------------------------------------------------------------
+// The same suite the Postgres table passes (libs/data-pg/test/pg.test.ts).
+
+settingsConformance('SqliteSettingsTable', {
+  setup: async () => {
+    const db = openDb(':memory:');
+    migrate(db, [settingsMigration]);
+    const table = new SqliteSettingsTable();
+    return {
+      transaction: <T>(fn: () => Promise<T>): Promise<T> => withTransactionAsync(db, fn),
+      put: async (row, ifVersion) => table.put(db, row, ifVersion),
+      list: async (filter) => table.list(db, filter),
+      get: async (area, key, level, scopeId) => table.get(db, area, key, level, scopeId),
+      cleanup: async () => db.close(),
+    };
+  },
 });

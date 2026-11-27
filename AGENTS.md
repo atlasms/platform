@@ -87,6 +87,14 @@ INSIDE the handler's unit of work (the audit sink, MAM's FileRef mirror and MTS'
 are the precedents). The per-replica WebSocket bridge is the one exception — it fans out, so
 per-replica dedup is all it can use. See [`libs/messaging/README.md`](libs/messaging/README.md).
 
+**An admin-tunable knob is a descriptor, not a table** (EP-33.2). Declare it with `defineSettings`
+beside the code that reads it. The value then lives in the `settings` table every service with an
+outbox is given, and `@atlas/settings` decides who writes each level and what each write commits
+(the row, `audit.recorded`, `config.changed`). Serve it at `/settings/<area>`. Do not add a column,
+an env var or a bespoke route for something an operator should change at runtime. MAM's
+[`settings.ts`](apps/mam/src/settings.ts) is the precedent
+([configuration §11](docs/architecture/configuration-and-reference-data.md)).
+
 **Adapters are separate packages, held to shared conformance suites.** `@atlas/messaging` /
 `@atlas/data` define the rules with ~zero deps; `@atlas/messaging-nats` / `@atlas/data-pg` implement
 them against real servers. The suites run in CI against **both** the in-memory/sqlite doubles AND

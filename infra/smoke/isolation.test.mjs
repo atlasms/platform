@@ -879,6 +879,72 @@ test('isolation: logging — another channel’s history is empty, its log is no
   );
 });
 
+test('isolation: MAM settings (EP-33.2) — a channel value is its channel’s: not read, not written, not in the history, by another', async (t) => {
+  if (!present(t)) return;
+  const KEY = 'review.rejectedRetention';
+  const url = `/api/v1/settings/mam/${KEY}`;
+  const level = async (who) => {
+    const res = await who.get('/api/v1/settings/mam');
+    assert.equal(res.status, 200, res.text);
+    return res.body.settings.find((s) => s.key === KEY);
+  };
+  const versioned = (row) => (row ? `?version=${row.version}` : '');
+
+  // The owner sets ch12's retention (control); reset in `finally`, whatever happens.
+  const before = await level(owner);
+  const set = await owner.put(`${url}${versioned(before.levels.channel)}`, {
+    level: 'channel',
+    value: 'P12D',
+  });
+  assert.equal(set.status, 200, set.text);
+  const ownerRow = set.body.levels.channel;
+  try {
+    // The rival's view is its own channel's: never the owner's row or value.
+    const seen = await level(rival);
+    assert.notEqual(seen.levels.channel?.value, 'P12D', 'the rival reads another channel’s value');
+    assert.notEqual(seen.resolved.value, 'P12D');
+
+    // Naming the owner's channel is refused, at any version — and changes nothing.
+    for (const path of [url, `${url}?version=${ownerRow.version}`]) {
+      const planted = await rival.put(path, {
+        level: 'channel',
+        scopeId: owner.channelId,
+        value: 'P1D',
+      });
+      assert.equal(planted.status, 403, `${path}: ${planted.text}`);
+    }
+    const reset = await rival.del(`${url}?level=channel&version=${ownerRow.version}`);
+    // The rival's own channel has its own row (or none): never the owner's to reset.
+    assert.notEqual(reset.status, 500, reset.text);
+    assert.equal(
+      (await level(owner)).levels.channel.value,
+      'P12D',
+      'the owner’s value is untouched',
+    );
+
+    // And the history of the owner's value is not the rival's to read.
+    const entityId = encodeURIComponent(`mam.${KEY}@channel:${owner.channelId}`);
+    const control = await poll(
+      () => owner.get(`/api/v1/history/setting/${entityId}`),
+      (res) => res.body?.revisions?.some((r) => r.revision === ownerRow.version),
+    );
+    assert.ok(control.body.revisions.length > 0, 'control: the owner reads its setting’s history');
+    const history = await rival.get(`/api/v1/history/setting/${entityId}`);
+    assert.equal(history.status, 200, history.text);
+    assert.deepEqual(
+      history.body.revisions,
+      [],
+      'the rival reads another channel’s setting history',
+    );
+  } finally {
+    const now = (await level(owner)).levels.channel;
+    if (now?.set) {
+      const reset = await owner.del(`${url}?level=channel&version=${now.version}`);
+      assert.equal(reset.status, 200, reset.text);
+    }
+  }
+});
+
 test('isolation: the rival’s socket heard nothing of the owner’s channel, while the owner’s heard it all', async (t) => {
   if (!present(t)) return;
   // The control first: everything above made events in the owner's channel, and its socket got them.

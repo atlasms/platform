@@ -338,6 +338,43 @@ scope-by-level check is an ordinary rule predicate, not a new mechanism.
 | 5 | Studio generated Settings + Vocabulary admin pages | Beta |
 | 6 | Seed bundles, export/import CLI, CI drift report | Beta → v1.0 |
 
+## 11. As built — EP-33.2, settings rows and `config.changed`
+
+Step 2 of §10, decided and built 2026-11-27. What it settled:
+
+- **The table is `settings`, one per service schema**, given to every service like `outbox` and
+  `seen` (`settingsMigration` in `@atlas/data` and `@atlas/data-pg`, one conformance suite):
+  `(area, key, level, scope_id)` keyed, the value as JSON, a `version` per row. `channel_id` is
+  NULL only at `deployment` ([tables.json](schemas/tables.json)). The generator's `--db --broker`
+  migrates it.
+- **A write is compare-and-set on the row's `version`**, which is also the setting's audit revision
+  at that level. So a **reset keeps the row** (`set: false`, no value) instead of deleting it. A
+  deleted row would restart at 1, a revision the audit sink already holds.
+- **`@atlas/settings`** sits between the descriptor library and the table:
+  - who may write a level (§8): the caller's own channel under `config:admin` there; `deployment`
+    under an UNSCOPED grant (a channel's cannot reach it); a `user` value is the caller's own and
+    needs no permission. `category` is refused until an owner of categories wires the subtree check;
+  - the reader's view: descriptor, resolved value and origin, the rows behind it, the writable
+    levels; sensitive values never shown;
+  - the `audit.recorded` (entity `setting`, id `<area>.<key>@<level>[:<scopeId>]`, sensitive values
+    `(changed)`) and the `config.changed` each write commits with. It plans; the owning service
+    commits the row, the snapshot's version bump and both records in ONE transaction.
+- **The route is `/settings/<area>`**: every owning service answers its own prefix, so the gateway
+  routes per owner and no path is shared. `GET /settings/<area>`, `PUT /settings/<area>/{key}`
+  `{ level, scopeId?, value }` with `?version=`, `DELETE …?level=&version=`. An older `/settings`
+  stub in mam.yaml that nothing implemented is gone.
+- **Holders refresh on `config.changed`** (§5 step 3): the owning service clears its in-process
+  settings cache after its own write and on every `config.changed` for its area, subscribed in
+  BROADCAST mode, with a 10 s TTL covering a lost event. Its `GET /reference` carries the values
+  resolved for the channel (`settings`, by qualified key, sensitive ones left out).
+- **Who reads the history**: logging reads `setting` entries, and `config.changed` itself, under
+  `config:admin`. The default `config:read` is held by no role.
+- **The first setting**: MAM's `review.rejectedRetention` (FR-APP-8; [mam.md §13ad](services/mam.md)).
+
+Not yet: Studio's generated settings UI (EP-33.3), `category` values, the vault reference behind
+`sensitive`, and a `config.changed` from MAM's vocabulary writes (they still bump the version, so
+holders converge on their TTL).
+
 ---
 _Related: [Data Model §5](data-model.md#5-the-configuration--reference-data-aggregate) ·
 [Authorization Model](authorization-model.md) · [Service Catalog](03-service-catalog.md) ·

@@ -604,6 +604,51 @@ export function assetStoreConformance(name: string, harness: StoreHarness): void
     });
   });
 
+  test(`${name}: a settings write moves the snapshot WITH it, answers the new version, and is compare-and-set`, async () => {
+    // EP-33.2. The version the write answers is the one its config.changed names, so it must be
+    // the bump THIS transaction made — and roll back with it when the write does not commit.
+    await withFixture(async ({ store }) => {
+      const row = {
+        area: 'mam',
+        key: 'review.rejectedRetention',
+        level: 'channel',
+        scopeId: 'ch12',
+        channelId: 'ch12',
+        value: 'P30D',
+        set: true,
+        version: 1,
+        updatedBy: 'u1',
+        updatedAt: '2026-11-27T10:00:00.000Z',
+      };
+      const start = await store.configVersion();
+      const answered = await store.transaction((tx) => tx.putSetting(row));
+      assert.equal(answered, start + 1);
+      assert.equal(await store.configVersion(), start + 1);
+      assert.deepEqual(await store.setting('review.rejectedRetention', 'channel', 'ch12'), row);
+      assert.deepEqual(await store.settings({ channelId: 'ch12' }), [row]);
+      assert.deepEqual(await store.settings({ channelId: 'ch99' }), []);
+
+      // A stale write: refused, and neither the row nor the version moves.
+      await assert.rejects(
+        store.transaction((tx) => tx.putSetting({ ...row, value: 'P1D', version: 2 }, 7)),
+        (e: Error) => e.name === 'StaleSetting',
+      );
+      // A write whose transaction fails after it: the bump rolls back with the row.
+      await assert.rejects(
+        store.transaction(async (tx) => {
+          await tx.putSetting({ ...row, value: 'P2D', version: 2 }, 1);
+          throw new Error('boom');
+        }),
+        /boom/,
+      );
+      assert.equal(await store.configVersion(), start + 1);
+      assert.equal(
+        (await store.setting('review.rejectedRetention', 'channel', 'ch12'))?.value,
+        'P30D',
+      );
+    });
+  });
+
   test(`${name}: DANGER — a descending page is newest-first, and its cursor pages the same way`, async () => {
     // EP-20.1 needs "recent", and sorting a PAGE client-side cannot produce it: page one of an
     // ascending list is the OLDEST assets in the channel, so a Recent heading over it is exactly

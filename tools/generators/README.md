@@ -60,7 +60,13 @@ The six tests that come with the scaffold are the definition of "compliant". The
    `infra/k8s/base/api-gateway.yaml`, then a probe in the smoke suite's upstream gate. Not wired by the
    generator, and the staging overlay's registry image (`infra/k8s/overlays/staging`) neither —
    `k8s:check` says so.
-4. `npm run k8s:up` builds and deploys it with the rest. `kubectl -n atlas rollout restart
+4. **An admin-tunable knob** (EP-33.2) is one descriptor, not a table or a form: `--db --broker`
+   already migrates `settings`. Declare the knob with `defineSettings('<name>', { … })`
+   (`@atlas/reference`) beside the code that reads it. `new SettingsAdmin(registry)` (`@atlas/settings`)
+   then decides who may write each level and plans each write's row, `audit.recorded` and
+   `config.changed`, which you commit in one transaction. Serve them at
+   `/settings/<name>` and `/settings/<name>/{key}`. MAM's `settings.ts` is the precedent.
+5. `npm run k8s:up` builds and deploys it with the rest. `kubectl -n atlas rollout restart
 deployment/<name>` after a rebuild — `IfNotPresent` keeps the old pod otherwise.
 
 ## Implementation notes

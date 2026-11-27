@@ -9,8 +9,10 @@ import {
   outboxHeadersMigration,
   outboxMigration,
   seenMigration,
+  settingsMigration,
   SqliteOutboxStore,
   SqliteSeenStore,
+  SqliteSettingsTable,
   withTransactionAsync,
   type Db,
   type Migration,
@@ -270,9 +272,12 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
     sqliteShotlistMigration,
     sqliteSchemaVersionMigration,
     sqliteEditProjectsMigration,
+    // EP-33.2: the Tier-3 settings rows every service is given (@atlas/data).
+    settingsMigration,
   ]);
   const outbox = new SqliteOutboxStore(db);
   const seen = new SqliteSeenStore(db);
+  const settings = new SqliteSettingsTable();
 
   const read = (row: { data: string } | undefined): Asset | undefined =>
     row ? (JSON.parse(row.data) as Asset) : undefined;
@@ -522,6 +527,14 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         JSON.stringify(file),
       );
     },
+    async putSetting(row, ifVersion) {
+      settings.put(db, { ...row, area: 'mam' }, ifVersion);
+      // Read back through the SAME connection, inside the transaction — the bump this write made.
+      const bumped = db
+        .prepare('UPDATE mam_config SET version = version + 1 WHERE id = 1 RETURNING version')
+        .get() as { version: number };
+      return Number(bumped.version);
+    },
     async appendVerdict(verdict) {
       db.prepare(
         `INSERT INTO review_verdicts (id, channel_id, asset_id, decided_at, data)
@@ -706,6 +719,12 @@ export function sqliteAssetStore(path = ':memory:'): AssetStore & { db: Db } {
         .prepare('SELECT state, COUNT(*) AS n FROM assets WHERE channel_id = ? GROUP BY state')
         .all(channelId) as { state: string; n: number }[];
       return Object.fromEntries(rows.map((r) => [r.state, r.n]));
+    },
+    async settings(filter) {
+      return settings.list(db, { area: 'mam', ...filter });
+    },
+    async setting(key, level, scopeId) {
+      return settings.get(db, 'mam', key, level, scopeId);
     },
     async configVersion() {
       const row = db.prepare('SELECT version FROM mam_config WHERE id = 1').get() as

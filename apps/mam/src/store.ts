@@ -7,6 +7,7 @@
 // Everything is async. You can make a synchronous driver satisfy an async contract; you cannot do
 // the reverse, and the production store is Postgres.
 
+import type { StoredSetting } from '@atlas/data';
 import type { OutboxRecord } from '@atlas/messaging';
 import { Conflict } from '@atlas/service-kit';
 import type { Asset } from './asset.ts';
@@ -123,6 +124,14 @@ export interface AssetStore {
    * a HIGHER version".
    */
   configVersion(): Promise<number>;
+
+  /**
+   * MAM's settings rows a reader in `channelId` may see (EP-33.2): the platform's, the channel's,
+   * and — with `userId` — that user's own. Area `mam`; @atlas/data's settings table.
+   */
+  settings(filter: { channelId: string; userId?: string }): Promise<StoredSetting[]>;
+  /** One settings row at one level, if it exists (set or reset). */
+  setting(key: string, level: string, scopeId: string): Promise<StoredSetting | undefined>;
 
   /** The tags on one asset, ordered by normalized label (EP-17.3). */
   tagsOf(assetId: string): Promise<Tag[]>;
@@ -392,4 +401,10 @@ export interface AssetTx {
    * exactly when its transition does. Append-only: the table refuses an update or a delete.
    */
   appendVerdict(verdict: Verdict): Promise<void>;
+  /**
+   * Write a settings row — compare-and-set like the rest (`StaleSetting` from @atlas/data) — and
+   * advance the reference snapshot with it, answering the version the snapshot moved TO: the
+   * `config.changed` this write commits with names it (configuration §5 step 3).
+   */
+  putSetting(row: StoredSetting, ifVersion?: number): Promise<number>;
 }

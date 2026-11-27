@@ -4589,3 +4589,125 @@ test('smoke: the state-counts aggregate answers, and is not read as an asset id'
     assert.ok(Number.isInteger(n) && n >= 0, `count for "${state}" must be a non-negative integer`);
   }
 });
+
+test('smoke: EP-33.2 — a setting through the gateway: set for the channel, read back with its origin, audited, announced on the bus, reset', async () => {
+  // MAM's first Tier-3 setting, `review.rejectedRetention` (FR-APP-8), over the whole spine: the
+  // gateway's `/settings/mam` prefix, MAM's descriptor-validated write, the settings row with its
+  // `audit.recorded` and `config.changed` in one transaction, the relay, the audit sink, and the
+  // aggregated reference snapshot. Reset in `finally` so a run leaves the channel as it found it:
+  // unset keeps rejected media, and the next run must not inherit a retention from this one.
+  const token = await seedToken();
+  if (!token) return;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const KEY = 'review.rejectedRetention';
+  const read = async () => {
+    const res = await get('/api/v1/settings/mam', { headers });
+    assert.equal(res.status, 200, `settings read failed: ${res.text}`);
+    const one = json(res).settings.find((s) => s.key === KEY);
+    assert.ok(one, `${KEY} in MAM's settings`);
+    return one;
+  };
+
+  const before = await read();
+  assert.equal(before.descriptor.type, 'duration');
+  assert.ok(
+    before.writable.includes('channel'),
+    `the smoke user administers ch12: ${JSON.stringify(before.writable)}`,
+  );
+  assert.equal(
+    before.writable.includes('deployment'),
+    false,
+    'a channel grant does not reach the platform',
+  );
+
+  // A previous run may have left a row at this level (set or reset): name its version.
+  const prior = before.levels.channel;
+  const value = prior?.set && prior.value === 'P30D' ? 'P31D' : 'P30D';
+  const versioned = (v) => (v === undefined ? '' : `?version=${v}`);
+  let current = prior?.version;
+  try {
+    const put = await get(`/api/v1/settings/mam/${KEY}${versioned(current)}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ level: 'channel', value }),
+    });
+    assert.equal(put.status, 200, `write failed: ${put.text}`);
+    const written = json(put);
+    current = written.levels.channel.version;
+    assert.equal(written.resolved.value, value);
+    assert.equal(written.resolved.origin, 'channel');
+    assert.equal(current, (prior?.version ?? 0) + 1);
+    const correlationId = put.headers.get('x-correlation-id');
+    assert.ok(correlationId);
+
+    // The same version again is stale; the platform's level is not the channel admin's; a value
+    // the descriptor refuses is a 422 by key. None of them writes.
+    const stale = await get(`/api/v1/settings/mam/${KEY}${versioned(prior?.version)}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ level: 'channel', value: 'P1D' }),
+    });
+    assert.equal(stale.status, 409, stale.text);
+    const platform = await get(`/api/v1/settings/mam/${KEY}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ level: 'deployment', value: 'P1D' }),
+    });
+    assert.equal(platform.status, 403, platform.text);
+    const invalid = await get(`/api/v1/settings/mam/${KEY}?version=${current}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ level: 'channel', value: 'a month' }),
+    });
+    assert.equal(invalid.status, 422, invalid.text);
+
+    // Its history, under the setting's own identity — the channel's level, not the platform's.
+    const entityId = encodeURIComponent(`mam.${KEY}@channel:ch12`);
+    // The record crosses the broker to logging's sink, so the history catches up — poll it.
+    let history;
+    let revision;
+    for (const deadline = Date.now() + 20_000; ;) {
+      history = json(await get(`/api/v1/history/setting/${entityId}`, { headers }));
+      revision = history.revisions.find((r) => r.revision === current);
+      if (revision || Date.now() > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    assert.ok(revision, `revision ${current} in the history: ${JSON.stringify(history)}`);
+    assert.equal(revision.action, 'setting.set');
+    assert.equal(revision.delta.value.after, value);
+
+    // Both envelopes the write committed, relayed and in the log under its correlation id.
+    const deadline = Date.now() + 20_000;
+    let types = [];
+    for (;;) {
+      const res = await get(`/api/v1/logs?correlationId=${encodeURIComponent(correlationId)}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (res.status !== 503) assert.equal(res.status, 200, `browse failed: ${res.text}`);
+      types =
+        res.status === 200
+          ? json(res)
+              .items.map((e) => e.type)
+              .sort()
+          : [];
+      if (types.length >= 2 || Date.now() > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    assert.deepEqual(types, ['audit.recorded', 'config.changed']);
+
+    // And the reference snapshot carries the resolved value (configuration §5 step 1).
+    const snapshot = json(await get('/api/v1/reference', { headers }));
+    assert.equal(snapshot.services.mam.settings[`mam.${KEY}`], value);
+  } finally {
+    if (current !== undefined) {
+      const reset = await get(`/api/v1/settings/mam/${KEY}?level=channel&version=${current}`, {
+        method: 'DELETE',
+        headers,
+      });
+      assert.equal(reset.status, 200, `reset failed: ${reset.text}`);
+      const after = json(reset);
+      assert.notEqual(after.resolved.origin, 'channel', 'reset to inherited');
+      assert.equal(after.levels.channel?.set ?? false, false);
+    }
+  }
+});
