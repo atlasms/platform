@@ -94,6 +94,14 @@ counts and what's-new against real MAM, live-refreshed. State counts page the ch
 **EP-20.9** — live updates: panels and the asset editor subscribe to `atlas.<channel>.asset.>`
 and reconcile by refetch; a live event never clobbers a dirty form.
 
+**Settings** (EP-33.3) is the Admin panel's settings view, revealed by `config:read` or `config:admin`.
+It is **generated**: [`settings-view.ts`](src/app/panels/admin/settings-view.ts) renders each
+owner's `GET /settings/<area>` from its descriptors, and no form is written per setting. The
+descriptor's type picks the control. Every draft is validated with `@atlas/reference`'s
+`validateWrite`, the same function the owner runs. The editable levels are the owner's
+`writable`, never a client-side guess. A new owner of settings is one entry in
+[`settings.service.ts`](src/app/core/settings.service.ts) `AREAS`, plus its contract in `SPECS`.
+
 **EP-20.5** — the schedule editor v0: the Schedule panel (pick a broadcast day, open or create
 its program table) and the reel editor tab — add, move, resize, remove, and one save. See
 [The schedule editor owns reel correctness](#the-schedule-editor-owns-reel-correctness-ep-205).

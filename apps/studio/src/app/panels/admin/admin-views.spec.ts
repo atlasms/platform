@@ -105,7 +105,7 @@ describe('AdminPanel', () => {
     expect(root.querySelector('atlas-roles-view')).not.toBeNull();
   });
 
-  it('shows each view by its own permission: config alone shows Transcode profiles, and opens on it', () => {
+  it('shows each view by its own permission: config alone shows Transcode profiles and Settings, and opens on the first', () => {
     localStorage.clear();
     TestBed.configureTestingModule({ providers: providers() });
     signIn(['config:read'], { channelIds: ['ch12'] });
@@ -113,12 +113,12 @@ describe('AdminPanel', () => {
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;
     // No user:admin: the people views are not offered, and the panel lands on what IS.
-    expect(tabNames(root)).toEqual(['admin.profiles']);
+    expect(tabNames(root)).toEqual(['admin.profiles', 'admin.settings']);
     expect(root.querySelector('atlas-profiles-view')).not.toBeNull();
     expect(root.querySelector('atlas-users-view')).toBeNull();
   });
 
-  it('shows all four to someone holding both, and drops a view when its grant goes mid-session', () => {
+  it('shows all five to someone holding both, and drops a view when its grant goes mid-session', () => {
     localStorage.clear();
     TestBed.configureTestingModule({ providers: providers() });
     signIn(['user:admin', 'config:admin']);
@@ -130,6 +130,7 @@ describe('AdminPanel', () => {
       'admin.groups',
       'admin.roles',
       'admin.profiles',
+      'admin.settings',
     ]);
     (root.querySelectorAll('[role=tab]')[3] as HTMLButtonElement).click();
     fixture.detectChanges();

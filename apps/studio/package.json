@@ -20,6 +20,7 @@
     "@angular/router": "^22.3.0",
     "@atlas/contracts": "*",
     "@atlas/policy": "*",
+    "@atlas/reference": "*",
     "@foblex/2d": "^1.2.2",
     "@foblex/flow": "^19.4.0",
     "@foblex/mediator": "^1.1.3",
