@@ -14,6 +14,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { y4m } from './media.mjs';
 
@@ -3733,7 +3734,7 @@ test('smoke: EP-15.5 — an accepted upload becomes an asset: its original in HS
   assert.deepEqual(kinds.sort(), ['original', 'proxy']);
 });
 
-test('smoke: EP-26.3/26.6/26.7 — an edit is listed, rendered by FFmpeg into the source’s next version; a render MTS refuses fails its project', async () => {
+test('smoke: EP-26.3/26.6/26.7 + ADR-0012 — an edit is listed, its proxy read through a signed URL, rendered by FFmpeg into the source’s next version; a render MTS refuses fails its project', async () => {
   // The render path on a live cluster (media-editor.md §5.1). A real video is uploaded and
   // becomes an asset with its original in HSM. An edit project cuts two spans of that original;
   // the render — asked to be the source's next version — is MTS cutting them out of HSM's copy with
@@ -3876,6 +3877,44 @@ test('smoke: EP-26.3/26.6/26.7 — an edit is listed, rendered by FFmpeg into th
     90_000,
     'the source never got its editing proxy',
   );
+
+  // ADR-0012 (EP-26.4's media path): MAM signs a URL to the editing proxy; the browser reads it
+  // through the gateway with NO bearer — a range as a seek asks, the whole file as HSM holds it — and
+  // a URL altered in any granted field is refused.
+  const signed = await poll(
+    async () => get(`/api/v1/assets/${sourceId}/files/proxy/url?variant=edit`, { headers: fresh }),
+    (res) => res.status === 200,
+    30_000,
+    'MAM never signed a URL to the editing proxy (its file row not mirrored yet?)',
+  );
+  const { url: mediaUrl, expiresAt } = json(signed);
+  assert.match(mediaUrl, new RegExp(`^/media/v1/${sourceId}/proxy\\?`));
+  assert.ok(Date.parse(expiresAt) > Date.now(), expiresAt);
+  const media = (path, init = {}) =>
+    fetch(new URL(path, BASE), { ...init, signal: AbortSignal.timeout(TIMEOUT) });
+
+  const seek = await media(mediaUrl, { headers: { range: 'bytes=0-99' } });
+  assert.equal(seek.status, 206);
+  assert.equal(seek.headers.get('content-type'), 'video/mp4');
+  assert.equal(seek.headers.get('accept-ranges'), 'bytes');
+  assert.match(seek.headers.get('content-range') ?? '', /^bytes 0-99\/\d+$/);
+  assert.equal(seek.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal((await seek.arrayBuffer()).byteLength, 100);
+
+  const whole = await media(mediaUrl);
+  assert.equal(whole.status, 200);
+  const bytes = Buffer.from(await whole.arrayBuffer());
+  const editProxy = json(await get(`/api/v1/assets/${sourceId}/location`, { headers })).find(
+    (f) => f.kind === 'proxy' && f.variant === 'edit',
+  );
+  assert.equal(
+    createHash('sha256').update(bytes).digest('hex'),
+    editProxy.checksum.value,
+    'the bytes HSM holds, through the gateway, untouched',
+  );
+  const tampered = await media(mediaUrl.replace(`/${sourceId}/`, `/${outputAssetId}/`));
+  assert.equal(tampered.status, 403, 'another asset under the same signature');
+  assert.equal((await media(mediaUrl.split('&sig=')[0])).status, 403, 'unsigned');
 
   // A profile that makes a still: MTS refuses the command, and the project fails with why.
   const again = json(await get(`/api/v1/edit-projects/${project.id}`, { headers: fresh }));

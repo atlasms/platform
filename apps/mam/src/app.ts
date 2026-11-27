@@ -534,6 +534,19 @@ export function buildMamApp(options: MamAppOptions): FastifyInstance {
       return reply.code(201).send(project);
     }),
   );
+  // ADR-0012: a short-lived URL a browser reads one file through (HSM serves it, with Range).
+  app.get('/api/v1/assets/:id/files/:kind/url', async (req, reply) =>
+    handle(req, reply, async () => {
+      const { id, kind } = req.params as { id: string; kind: string };
+      const { variant } = req.query as { variant?: string };
+      return options.service.mediaUrl(
+        await callerOf(req),
+        id,
+        kind,
+        variant !== undefined && variant !== '' ? variant : undefined,
+      );
+    }),
+  );
   app.get('/api/v1/assets/:id/edit-projects', async (req, reply) =>
     handle(req, reply, async () => ({
       items: await options.service.editProjectsOf(

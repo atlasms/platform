@@ -21,6 +21,7 @@ export {
 export {
   FACETS,
   MamService,
+  mediaTypeOf,
   systemCaller,
   type CacheOutcome,
   type MirrorOutcome,

@@ -73,6 +73,7 @@ stateDiagram-v2
 | Method | Path | Purpose | Authz |
 |--------|------|---------|-------|
 | `GET` | `/assets/{id}/location` | Current tier/status/checksum of each rendition. | `asset:read` |
+| `GET` | `/media/v1/{assetId}/{kind}?ch&v&ct&exp&sig` | A file's bytes for a **browser**, through a URL MAM signed ([ADR-0012](../../adr/0012-signed-media-urls.md)): verified and re-checked against the ledger on every request (live, in the signed channel, online), `Accept-Ranges: bytes` (206 / 200 / 416), `nosniff` + a sandboxing CSP. Reached through the gateway's public, streaming `/media/` route. ✅ EP-26.4 | the signed URL (`media-url-keys`) |
 | `POST` | `/assets/{id}/restore` | Request restore to online; returns ETA. | `asset:restore` |
 | `POST` | `/files/operations` | Copy/move/delete (internal, permissioned; not user-facing). | Service |
 | `POST` | `/playout/exports` | Copy schedule outputs (hi-res + playlist) to a network destination with path rewrite. | Service (from Scheduling) |
@@ -241,6 +242,21 @@ follows from them. In short:
 Not yet: restore, tiering policy, integrity sweeps (EP-36); send-to-air export (EP-31); a separate
 worker deployment; worker-threads for hashing (only if profiling asks); more than one replica on a
 ReadWriteOnce volume.
+
+### EP-26.4 — media for browsers ([ADR-0012](../../adr/0012-signed-media-urls.md))
+
+The first read of bytes that is not a producer's. `GET /media/v1/{assetId}/{kind}` verifies a URL
+MAM signed (`verifyMediaUrl`, `@atlas/service-kit`) under `media-url-keys`, any current key. It
+refuses an altered, expired or unsigned URL, or one that lives longer than the 4-hour ceiling,
+with a 403; the reason goes to the log, with the path but never the query. It then re-checks the
+ledger the way the producers' read does: the live file of `(asset, kind, variant)`, **in the
+signed channel** (#577), online and available (409 otherwise). The bytes stream from the storage
+driver: whole, or the one inclusive range asked for. `read(key, range)` is new on the driver
+port: fs reads `start`/`end`, S3 sends `Range`, and the conformance suite holds both to it.
+`ETag` is the file's checksum (`If-None-Match` → 304; a stale `If-Range` → the whole file).
+`Cache-Control: private` lives as long as the URL. Metrics: `atlas_hsm_media_refused_total`,
+`atlas_hsm_media_bytes_total`. **Owed:** the paired review of §5.7, as for the rest of HSM
+(ADR-0009).
 
 ## 14. Open questions / future
 

@@ -11,13 +11,23 @@ import { Readable } from 'node:stream';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { isUlid, ulid } from '@atlas/contracts';
 import type { EffectivePolicy } from '@atlas/policy';
-import { CHANNEL, fileView, parseAvailability, parsePlacement, type FileKind } from './file.ts';
+import {
+  CHANNEL,
+  FILE_KINDS,
+  fileView,
+  parseAvailability,
+  parsePlacement,
+  type FileKind,
+} from './file.ts';
+import { loggablePath, parseRange, SANDBOX_CSP } from './media.ts';
 import { operationView, OPERATION_KINDS, type OperationKind } from './operation.ts';
 import type { Caller as ServiceCaller, HsmService } from './service.ts';
 import { parseTargetInput } from './targets.ts';
 import {
+  Forbidden,
   INTERNAL_SIGNATURE_HEADER,
   NotFound,
+  verifyMediaUrl,
   preflightInternal,
   ValidationError,
   verifyInternal,
@@ -50,6 +60,13 @@ export interface HsmAppOptions {
    * deletes nothing.
    */
   readKeys?: readonly string[];
+  /**
+   * Keys a media URL is signed with (`media-url-keys`; ADR-0012) — MAM signs, HSM verifies. None:
+   * every `/media/` request is refused.
+   */
+  mediaKeys?: readonly string[];
+  /** Why a media URL was refused — the log's business; the path is logged, never the query. */
+  onMediaRefused?: (reason: string, context: { correlationId: string; path: string }) => void;
   /** Why an internal request was refused — the log's business, never the caller's. */
   onInternalRefused?: (reason: string, context: { correlationId: string; url: string }) => void;
   /** An fs target's root must lie under this — the storage mounted into HSM (targets.ts). */
@@ -227,7 +244,7 @@ export async function buildHsmApp(options: HsmAppOptions): Promise<FastifyInstan
     // trains everyone to ignore the error log. A 500 is deliberately opaque to the caller, which
     // makes it invisible to the operator too unless the service says so itself, here.
     if (problem.status >= 500) {
-      options.onError?.(err, { correlationId: req.correlationId, url: req.url });
+      options.onError?.(err, { correlationId: req.correlationId, url: loggablePath(req.url) });
     }
     return reply.code(problem.status).type(PROBLEM_CONTENT_TYPE).send(problem);
   });
@@ -274,9 +291,18 @@ export async function buildHsmApp(options: HsmAppOptions): Promise<FastifyInstan
   const problem = (req: FastifyRequest, reply: FastifyReply, err: unknown): FastifyReply => {
     const doc = toProblem(err, req.correlationId);
     if (doc.status >= 500)
-      options.onError?.(err, { correlationId: req.correlationId, url: req.url });
+      options.onError?.(err, { correlationId: req.correlationId, url: loggablePath(req.url) });
     return reply.code(doc.status).type(PROBLEM_CONTENT_TYPE).send(doc);
   };
+  const mediaKeys = options.mediaKeys ?? [];
+  const mediaRefused = metrics.counter({
+    name: 'atlas_hsm_media_refused_total',
+    help: 'Media URL requests refused — expired, tampered, or signed with no current key.',
+  });
+  const mediaBytes = metrics.counter({
+    name: 'atlas_hsm_media_bytes_total',
+    help: 'Bytes served to browsers through signed media URLs (ADR-0012).',
+  });
   const refuse = (req: FastifyRequest, reason: string): never => {
     refused.inc();
     options.onInternalRefused?.(reason, { correlationId: req.correlationId, url: req.url });
@@ -428,6 +454,92 @@ export async function buildHsmApp(options: HsmAppOptions): Promise<FastifyInstan
         placements.inc({ outcome });
         if (outcome !== 'unchanged') placedBytes.inc({}, file.sizeBytes);
         return reply.code(outcome === 'created' ? 201 : 200).send(fileView(file));
+      } catch (err) {
+        return problem(req, reply, err);
+      }
+    },
+  );
+
+  /**
+   * A file's bytes for a BROWSER, through a signed media URL (ADR-0012). No bearer and no gateway
+   * identity: the signature is the credential — MAM authorized `asset:read` on the files group when
+   * it signed one file of one asset in one channel, as one content type, until a time. Every request
+   * is verified, and the ledger re-checked (the file live, in the SIGNED channel, online), so an
+   * expired URL stops mid-playback and a moved or deleted file is not served from a stale grant.
+   *
+   * Served with `Accept-Ranges: bytes` — one range is a 206, anything else the whole file, past the
+   * end a 416 — and headers that keep a URL on the platform's origin from ever being a page:
+   * `nosniff`, a sandboxing CSP, `inline`. The query (the signature) never reaches a log.
+   */
+  app.get<{ Params: { assetId: string; kind: string }; Querystring: Record<string, string> }>(
+    '/media/v1/:assetId/:kind',
+    async (req, reply) => {
+      try {
+        const verdict = verifyMediaUrl(
+          mediaKeys,
+          { assetId: req.params.assetId, kind: req.params.kind, query: req.query },
+          now(),
+        );
+        if (!verdict.ok) {
+          mediaRefused.inc();
+          options.onMediaRefused?.(verdict.reason, {
+            correlationId: req.correlationId,
+            path: loggablePath(req.url),
+          });
+          throw new Forbidden('this media URL is not valid');
+        }
+        const { grant } = verdict;
+        if (!(FILE_KINDS as readonly string[]).includes(grant.kind)) {
+          throw new NotFound(`no ${grant.kind} file for asset ${grant.assetId}`);
+        }
+        const { file, open } = await service.mediaFile(
+          grant.channelId,
+          grant.assetId,
+          grant.kind as FileKind,
+          grant.variant,
+        );
+        const etag = `"${file.checksum.value}"`;
+        const left = Math.max(0, grant.exp - Math.floor(now().getTime() / 1000));
+        void reply
+          .header('accept-ranges', 'bytes')
+          .header('content-type', grant.contentType)
+          .header('x-content-type-options', 'nosniff')
+          .header('content-security-policy', SANDBOX_CSP)
+          .header('content-disposition', 'inline')
+          .header('cache-control', `private, max-age=${left}`)
+          .header('etag', etag);
+        if (req.headers['if-none-match'] === etag) return reply.code(304).send();
+        // `If-Range` naming another version of the file: the client's cached part is stale, so it
+        // gets the whole of this one rather than a slice that would not join what it holds.
+        const ifRange = req.headers['if-range'];
+        const asked = ifRange === undefined || ifRange === etag ? req.headers.range : undefined;
+        const answer = parseRange(asked, file.sizeBytes);
+        if (answer.kind === 'unsatisfiable') {
+          return reply
+            .code(416)
+            .header('content-range', `bytes */${file.sizeBytes}`)
+            .type(PROBLEM_CONTENT_TYPE)
+            .send(
+              toProblem(
+                new ValidationError(`the range lies outside the file's ${file.sizeBytes} bytes`),
+                req.correlationId,
+              ),
+            );
+        }
+        if (answer.kind === 'partial') {
+          const { start, end } = answer.range;
+          mediaBytes.inc({}, end - start + 1);
+          return reply
+            .code(206)
+            .header('content-range', `bytes ${start}-${end}/${file.sizeBytes}`)
+            .header('content-length', String(end - start + 1))
+            .send(req.method === 'HEAD' ? undefined : await open(answer.range));
+        }
+        mediaBytes.inc({}, file.sizeBytes);
+        return reply
+          .code(200)
+          .header('content-length', String(file.sizeBytes))
+          .send(req.method === 'HEAD' ? undefined : await open());
       } catch (err) {
         return problem(req, reply, err);
       }

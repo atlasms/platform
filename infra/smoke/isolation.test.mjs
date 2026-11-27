@@ -318,6 +318,9 @@ test('isolation: MAM — another channel’s asset is not found: read, written, 
     `/api/v1/assets/${id}/verdicts`,
     `/api/v1/assets/${id}/versions`,
     `/api/v1/assets/${id}/shotlist`,
+    // EP-26.3 and ADR-0012: an asset's edits, and a signed URL to its media — both its channel's.
+    `/api/v1/assets/${id}/edit-projects`,
+    `/api/v1/assets/${id}/files/original/url`,
   ]) {
     hidden(await rival.get(path), `GET ${path}`);
   }

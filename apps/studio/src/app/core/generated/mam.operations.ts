@@ -47,6 +47,12 @@ export const MamOperations = {
   getAssetInherited: { method: 'GET', path: '/api/v1/assets/{id}/inherited', params: ['id'] },
   /** The asset's files as mirrored from the HSM ledger (scope asset:read / files) */
   listAssetFiles: { method: 'GET', path: '/api/v1/assets/{id}/files', params: ['id'] },
+  /** A short-lived URL a browser reads one file through — ADR-0012 (scope asset:read / files) */
+  getAssetMediaUrl: {
+    method: 'GET',
+    path: '/api/v1/assets/{id}/files/{kind}/url',
+    params: ['id', 'kind'],
+  },
   /** The asset's shot list — time-coded segments, ordered by start (scope asset:read / shotlist) */
   getAssetShotList: { method: 'GET', path: '/api/v1/assets/{id}/shotlist', params: ['id'] },
   /** Replace the asset's shot list, whole (scope asset:write / shotlist) */

@@ -47,13 +47,14 @@ so an install without them starts cleanly — and then refuses those calls, whic
 | `rim-internal-keys` | `rim`, `rim-recorder`             | recordings are captured but never handed over to ingest                    |
 | `hsm-read-keys`     | `hsm`, `scheduling`               | schedule validation reports availability as `unchecked`                    |
 | `iam-read-keys`     | `iam`, `notifications`            | inboxes show only tasks assigned by name (`partial: true`), and a task offered to a role cannot be claimed |
+| `media-url-keys`    | `mam`, `hsm`                      | Studio plays no media: a media URL is a 503, and HSM refuses every `/media/` request (ADR-0012) |
 
 Each holds one key `keys`: a comma-separated list, at least 32 bytes each. The verifier accepts any
 of them and the signer uses the first, so a key rotates without downtime — put the new key first,
 roll the services, then drop the old one.
 
 ```sh
-for s in hsm-internal-keys rim-internal-keys hsm-read-keys iam-read-keys; do
+for s in hsm-internal-keys rim-internal-keys hsm-read-keys iam-read-keys media-url-keys; do
   kubectl -n atlas create secret generic "$s" --from-literal=keys="$(openssl rand -hex 32)"
 done
 ```

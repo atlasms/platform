@@ -22,7 +22,7 @@ import {
 import type { OutboxRecord } from '@atlas/messaging';
 import { canEnforce, type EffectivePolicy } from '@atlas/policy';
 import { Conflict, Forbidden, NotFound, Unauthorized, ValidationError } from '@atlas/service-kit';
-import { StorageMissing } from './driver.ts';
+import { StorageMissing, type ByteRange } from './driver.ts';
 import {
   keyFor,
   type Availability,
@@ -215,6 +215,44 @@ export class HsmService {
       }
       throw err;
     }
+  }
+
+  /**
+   * A live file for a signed media URL (ADR-0012): the browser's read, authorized by MAM when it
+   * signed the URL, re-checked against the ledger here on EVERY request. The file must be the live
+   * one of `(asset, kind, variant)` IN THE SIGNED CHANNEL — another channel's file is answered as a
+   * missing one (#577) — and online and available: a near-line or offline file is a 409 (restore
+   * first), never a slow read from tape. `open` streams it whole, or the inclusive range asked for.
+   */
+  async mediaFile(
+    channelId: string,
+    assetId: string,
+    kind: FileKind,
+    variant?: string,
+  ): Promise<{ file: FileEntry; open: (range?: ByteRange) => Promise<Readable> }> {
+    const file = await this.store.liveFile(assetId, kind, variant);
+    if (!file || file.channelId !== channelId) {
+      throw new NotFound(`no ${kind} file for asset ${assetId}`);
+    }
+    if (file.storage.tier !== 'online' || file.storage.status !== 'available') {
+      throw new Conflict(
+        `the ${kind} file of asset ${assetId} is ${file.storage.tier}/${file.storage.status} — restore it first`,
+      );
+    }
+    const driver = await this.drivers(await this.requireTarget(file.storage.targetId));
+    return {
+      file,
+      open: async (range) => {
+        try {
+          return await driver.read(file.storage.path, range);
+        } catch (err) {
+          if (err instanceof StorageMissing) {
+            throw new Conflict(`the ledger's bytes for ${kind} of asset ${assetId} are missing`);
+          }
+          throw err;
+        }
+      },
+    };
   }
 
   // --- reads (EP-14.6) ------------------------------------------------------------------------------

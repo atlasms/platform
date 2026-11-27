@@ -92,3 +92,12 @@ export {
   type InternalRequest,
   type InternalVerdict,
 } from './internal-auth.ts';
+export {
+  DEFAULT_MEDIA_URL_SECONDS,
+  MAX_MEDIA_URL_SECONDS,
+  MEDIA_URL_PREFIX,
+  signMediaUrl,
+  verifyMediaUrl,
+  type MediaGrant,
+  type MediaVerdict,
+} from './media-url.ts';

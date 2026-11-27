@@ -342,6 +342,26 @@ paths:
       responses:
         '200': { description: 'Files, by kind then variant', content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/FileRef' } } } } }
         '404': { $ref: '#/components/responses/Error' }
+  /assets/{id}/files/{kind}/url:
+    parameters:
+      - { name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }
+      - { name: kind, in: path, required: true, schema: { type: string, enum: [original, proxy, broadcast, thumbnail, vtt-filmstrip, hover-preview] } }
+      - { name: variant, in: query, required: false, schema: { type: string }, description: 'Which file of the kind (`edit` for the editing proxy).' }
+    get:
+      operationId: getAssetMediaUrl
+      tags: [assets]
+      summary: "A short-lived URL a browser reads one file through — ADR-0012 (scope asset:read / files)"
+      description: >-
+        A `<video src>` cannot carry a bearer, so MAM answers the authorization question here and
+        signs it into a URL that HSM serves, with HTTP Range, through the gateway's `/media/` route —
+        one file of one asset in one channel, as one content type, until `expiresAt` (30 minutes by
+        default, never more than 4 hours). The file must be online and available: a near-line or
+        offline file is a 409 (restore it first). 503 when the platform has no media-url key.
+      responses:
+        '200': { description: The URL, content: { application/json: { schema: { $ref: '#/components/schemas/MediaUrl' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /assets/{id}/shotlist:
     parameters: [{ name: id, in: path, required: true, schema: { $ref: '#/components/schemas/Ulid' } }]
     get:
@@ -831,9 +851,17 @@ components:
             value: { type: string }
         sizeBytes: { type: integer, minimum: 0 }
         durationSec: { type: number, minimum: 0 }
+        fileType: { type: string, description: 'The container as MTS named it (`mp4`, `mxf`, …) — absent on a row no transcode announced. A media URL takes its content type from it (ADR-0012).' }
         sourceMessageId: { $ref: '#/components/schemas/Ulid', description: The event that last wrote this row — the ledger entry it mirrors. }
         version: { type: integer, minimum: 1, description: Bumped on every write to the row; the audit revision. }
         updatedAt: { type: string, format: date-time }
+    MediaUrl:
+      type: object
+      description: 'A signed URL for one file (ADR-0012). A bearer capability until `expiresAt`: kept in memory, never logged. Relative to the platform origin.'
+      required: [url, expiresAt]
+      properties:
+        url: { type: string, description: '`/media/v1/{assetId}/{kind}?ch=…&v=…&ct=…&exp=…&sig=…` — served by HSM, no bearer.' }
+        expiresAt: { type: string, format: date-time }
     Tag:
       type: object
       required: [id, channelId, label, normalized]

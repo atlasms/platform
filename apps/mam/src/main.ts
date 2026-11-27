@@ -10,8 +10,11 @@ import { PgOutboxStore } from '@atlas/data-pg';
 import {
   createTracer,
   createLogger,
+  DEFAULT_MEDIA_URL_SECONDS,
   HealthRegistry,
+  internalKeys,
   loadConfig,
+  MAX_MEDIA_URL_SECONDS,
   MetricRegistry,
 } from '@atlas/service-kit';
 import {
@@ -59,7 +62,21 @@ const config = loadConfig({
   traceSampleRatio: { env: 'ATLAS_TRACE_SAMPLE_RATIO', type: 'number', default: 1 },
   // EP-24.5: how often lapsed approvals are swept to `expired` (review plan WS-D1, default 60 s).
   expirySweepMs: { env: 'ATLAS_MAM_EXPIRY_SWEEP_MS', type: 'number', default: 60_000 },
+  // ADR-0012: the keys media URLs are signed with (media-url-keys; the first one signs) and how long
+  // a URL lives. No key: a media URL is a 503 and Studio plays nothing.
+  mediaUrlKeys: { env: 'ATLAS_MEDIA_URL_KEYS', type: 'string', default: '' },
+  mediaUrlTtlS: {
+    env: 'ATLAS_MEDIA_URL_TTL_S',
+    type: 'number',
+    default: DEFAULT_MEDIA_URL_SECONDS,
+  },
 });
+if (config.mediaUrlTtlS < 60 || config.mediaUrlTtlS > MAX_MEDIA_URL_SECONDS) {
+  throw new Error(
+    `ATLAS_MEDIA_URL_TTL_S must be between 60 and ${MAX_MEDIA_URL_SECONDS} seconds (ADR-0012)`,
+  );
+}
+const [mediaUrlKey] = internalKeys(config.mediaUrlKeys);
 
 const log = createLogger('mam');
 
@@ -119,6 +136,9 @@ const cache =
 const service = new MamService({
   store,
   ...(cache ? { cache } : {}),
+  ...(mediaUrlKey !== undefined
+    ? { mediaUrls: { key: mediaUrlKey, ttlSeconds: config.mediaUrlTtlS } }
+    : {}),
   onCacheRead: (family, outcome) => cacheReads.inc({ family, outcome }),
 });
 const policies = new PolicyClient({ origin: config.iamOrigin, ttlMs: config.policyTtlMs });
