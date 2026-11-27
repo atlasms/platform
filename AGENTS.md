@@ -42,8 +42,9 @@ Then read **only** the specific docs your task touches — e.g.
 
 **Phase 1 (MVP) is built** — the ingest → validate → transcode → metadata → search → schedule
 spine is on `main`, held by the smoke suite, the MVP acceptance journey, a performance sanity
-check and a rehearsed restore drill (EP-21). **Phase 2 is storied and under way**: BMS (EP-22) and
-its workflow designer (EP-23) are done; Notifications (EP-25) and MTS/MAM v2 work are in progress.
+check and a rehearsed restore drill (EP-21). **Phase 2 is storied and under way**: BMS (EP-22), its
+workflow designer (EP-23), Notifications (EP-25) and the Media Editor (EP-26) are done; MAM/MTS v2,
+classification, channel isolation, scheduling v1, inbound feeds and configuration admin are in progress.
 The nine Phase-2 product decisions were taken on 2026-10-12 (doc 21's Phase-2 table).
 
 | Item           | State                                                                                           |

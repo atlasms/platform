@@ -385,7 +385,7 @@ on-demand, deliberately not a write gate.
 | 22.1 | BMS durable runtime | Temporal (TS SDK), self-hosted on the platform's Postgres | [ADR-0010](../adr/0010-bms-durable-runtime.md) |
 | 23.3 | Designer canvas | Foblex Flow (D8 confirmed) | [brief D8](../01-technical-brief.md), [DSL §12](../architecture/bms-workflow-dsl-and-designer.md) |
 | 23.6 | Expression language scope | A restricted FEEL subset, refused beyond it at publish | [DSL §3](../architecture/bms-workflow-dsl-and-designer.md#3-expression-language--feel) |
-| 25.7 | Live notifications | Per-user streams by identity match; PR held for security review | [websocket §5](../architecture/services/websocket.md#5-messaging) |
+| 25.7 | Live notifications | Per-user streams by identity match; merged after security review (#580) | [websocket §5](../architecture/services/websocket.md#5-messaging) |
 | 26.1 | Editor playback | Short-GOP H.264 editing proxy in `<video>`; spike confirms | [media-editor §7](../architecture/services/media-editor.md#7-dependencies) |
 | 27.2 | MAM search store | Postgres; OpenSearch only past a measured threshold (27.7) | [mam.md §13](../architecture/services/mam.md) |
 | 29.2 | MTS autoscaling | Optional KEDA; MTS holds no cluster permissions | [mts.md §6.2](../architecture/services/mts.md#62-elasticity) |
@@ -475,7 +475,7 @@ Source: [notifications-plan](services/notifications-plan.md) §2; lift from [`re
 | 25.4 | ✅ User and group messaging, permission-aware: `message:send`, to any user or group of the channel; a group's message read by its members at read time; the audit holds metadata, not the body (decided 2026-10-18; notifications.md §13d) | 5 |
 | 25.5 | ✅ Notification-type registry + templates (Tier 1) and the event → notification pipeline (`asset.approved`, `asset.expired`, `transcode.failed`, `alert.raised`, mentions): the registry, the pipeline with every recipient re-checked, an alert as one notification for the holders of `ops:read` resolved at read (decided 2026-10-18; notifications.md §13e) | 5 |
 | 25.6 | ✅ Per-user preferences — per type, opt in/out: the channel's `defaultOn` until chosen, a `mandatory` type never off (the write refused); a shared alert filtered at read (decided 2026-10-18; notifications.md §13f) | 3 |
-| 25.7 | 🔍 (PR open, held for the product owner's security review) Live delivery on **per-user streams** (decided 2026-10-12: a message naming `recipientUserId` reaches only that user's connections — [websocket §5](../architecture/services/websocket.md#5-messaging)); a new eligibility rule, so its PR waits for the product owner's security review | 3 |
+| 25.7 | ✅ (merged 2026-11-08 after the product owner's security review, #580) Live delivery on **per-user streams** (decided 2026-10-12: a message naming `recipientUserId` reaches only that user's connections — [websocket §5](../architecture/services/websocket.md#5-messaging)); a new eligibility rule, so its PR waits for the product owner's security review | 3 |
 | 25.8 | ✅ Task → BMS feedback — completing a task resolves the waiting workflow step (BMS's completion router consumes `task.updated`; bms.md §13e) | 3 |
 | 25.9 | ✅ Studio inbox panel — tasks, messages, notifications, live: tasks (claim, outcomes, a review task pointing at MAM), notifications (read, open), messages, preferences; re-read every 30 s and on resync until 25.7's live delivery (studio-frontend.md, Inbox) | 5 |
 
