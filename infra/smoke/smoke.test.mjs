@@ -3912,6 +3912,14 @@ test('smoke: EP-26.3/26.6/26.7 + ADR-0012 — an edit is listed, its proxy read 
     editProxy.checksum.value,
     'the bytes HSM holds, through the gateway, untouched',
   );
+  // EP-26.4: the player's frame grid — MTS measured the editing proxy's rate, MAM mirrored it.
+  const mirrored = json(await get(`/api/v1/assets/${sourceId}/files`, { headers: fresh })).find(
+    (f) => f.kind === 'proxy' && f.variant === 'edit',
+  );
+  assert.ok(
+    typeof mirrored?.frameRate === 'number' && mirrored.frameRate > 0,
+    `the editing proxy names its frame rate: ${JSON.stringify(mirrored)}`,
+  );
   const tampered = await media(mediaUrl.replace(`/${sourceId}/`, `/${outputAssetId}/`));
   assert.equal(tampered.status, 403, 'another asset under the same signature');
   assert.equal((await media(mediaUrl.split('&sig=')[0])).status, 403, 'unsigned');

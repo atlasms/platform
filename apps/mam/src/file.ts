@@ -41,6 +41,11 @@ export interface FileRef {
    * `fileType` says).
    */
   fileType?: string;
+  /**
+   * Frames per second of its video, as MTS measured it (`Rendition.frameRate`; EP-26.4) — the
+   * editing proxy's frame grid, which the Studio player maps with `floor(mediaTime·fps)` (ADR-0011).
+   */
+  frameRate?: number;
   technical?: TechnicalMetadata;
   /** The message that last wrote this row — the ledger entry it mirrors. */
   sourceMessageId: string;
@@ -80,6 +85,7 @@ export function fileFromRendition(
     ...(rendition.sizeBytes !== undefined ? { sizeBytes: rendition.sizeBytes } : {}),
     ...(rendition.durationSec !== undefined ? { durationSec: rendition.durationSec } : {}),
     ...(rendition.fileType !== undefined ? { fileType: rendition.fileType } : {}),
+    ...(rendition.frameRate !== undefined ? { frameRate: rendition.frameRate } : {}),
     sourceMessageId: context.messageId,
     version: (context.existing?.version ?? 0) + 1,
     updatedAt: context.now,
@@ -117,6 +123,7 @@ export function fileFromPlacement(
         : {}),
     ...(existing?.durationSec !== undefined ? { durationSec: existing.durationSec } : {}),
     ...(existing?.fileType !== undefined ? { fileType: existing.fileType } : {}),
+    ...(existing?.frameRate !== undefined ? { frameRate: existing.frameRate } : {}),
     ...(existing?.technical !== undefined ? { technical: existing.technical } : {}),
     sourceMessageId: context.messageId,
     version: (existing?.version ?? 0) + 1,

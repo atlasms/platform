@@ -139,7 +139,7 @@ constructed for them. A caller who already has a session is sent off `/signin` t
 [`app.routes.spec.ts`](src/app/app.routes.spec.ts) builds the Router from the real table and
 walks both directions; the dev cluster's seed account is `dev` / `dev-password`.
 
-`npm start` proxies `/auth` and `/api` to the gateway on `localhost:30080`, so the dev server talks
+`npm start` proxies `/auth`, `/api` and `/media` (signed media URLs, ADR-0012) to the gateway on `localhost:30080`, so the dev server talks
 to a real deployed cluster ([infra/k8s](../../infra/k8s/)) — `npm run k8s:up` first.
 
 **Tokens live in memory, and only in memory.** Not `localStorage`, not `sessionStorage`: both are

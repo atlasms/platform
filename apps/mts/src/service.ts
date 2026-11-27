@@ -970,6 +970,11 @@ export class MtsService {
     },
   ): Promise<RenditionResult> {
     const checksum = await sha256(localPath);
+    // EP-26.4: a moving picture's rate, measured on what was WRITTEN (a profile may conform it) —
+    // the editing proxy's frame grid (ADR-0011). Best-effort: an unreadable rate is no rate.
+    const frameRate = desc.still
+      ? undefined
+      : await this.options.transcoder.probeFrameRate(localPath).catch(() => undefined);
     let path = localPath;
     let sizeBytes = (await stat(localPath)).size;
     if (this.options.files) {
@@ -984,8 +989,13 @@ export class MtsService {
           profile: desc.profileId,
           ...(desc.producedBy !== undefined ? { producedBy: desc.producedBy } : {}),
           ...(desc.variant !== undefined ? { variant: desc.variant } : {}),
-          ...(!desc.still && desc.durationSec !== undefined
-            ? { technical: { durationSec: desc.durationSec } }
+          ...(!desc.still && (desc.durationSec !== undefined || frameRate !== undefined)
+            ? {
+                technical: {
+                  ...(desc.durationSec !== undefined ? { durationSec: desc.durationSec } : {}),
+                  ...(frameRate !== undefined ? { frameRate } : {}),
+                },
+              }
             : {}),
         },
         localPath,
@@ -1006,6 +1016,7 @@ export class MtsService {
       ...(desc.encoder !== undefined ? { encoder: desc.encoder } : {}),
       ...(desc.fallback ? { fallback: true } : {}),
       ...(!desc.still && desc.durationSec !== undefined ? { durationSec: desc.durationSec } : {}),
+      ...(frameRate !== undefined ? { frameRate } : {}),
     };
   }
 

@@ -7,10 +7,13 @@ import { AssetsService } from '../core/assets.service.ts';
 import { EditProjectsService, type Timeline } from '../core/edit-projects.service.ts';
 import type { Asset, EditProject, FileRef } from '../core/generated/mam.types.ts';
 import { LocaleService } from '../core/locale.service.ts';
+import { MediaService } from '../core/media.service.ts';
 import { PermissionService } from '../core/permission.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { WebSocketService } from '../core/websocket.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
+import { By } from '@angular/platform-browser';
+import { EditPlayer } from './edit-player.ts';
 import { EditProjectEditor } from './edit-project-editor.ts';
 
 const SOURCE = '01K00000000000000000000SRC';
@@ -65,7 +68,10 @@ class FakeProjects {
   }
 }
 
-function setup(canWrite = true) {
+const DEFAULT_FILES = [{ kind: 'original' }, { kind: 'proxy', variant: 'edit' }] as FileRef[];
+
+function setup(canWrite = true, files: FileRef[] = DEFAULT_FILES) {
+  const signed: string[] = [];
   const projects = new FakeProjects();
   const events = new Subject<{ subject: string; payload: unknown }>();
   const subscribed: string[] = [];
@@ -78,7 +84,17 @@ function setup(canWrite = true) {
         provide: AssetsService,
         useValue: {
           get: () => of(source),
-          files: () => of([{ kind: 'original' }, { kind: 'proxy', variant: 'edit' }] as FileRef[]),
+          files: () => of(files),
+        },
+      },
+      {
+        provide: MediaService,
+        useValue: {
+          url: (_a: string, kind: string, variant?: string) => {
+            signed.push(variant ? `${kind}/${variant}` : kind);
+            return of({ url: `/media/v1/${kind}?sig=x`, expiresAt: '2099-01-01T00:00:00Z' });
+          },
+          text: () => of('WEBVTT\n'),
         },
       },
       { provide: PermissionService, useValue: { can: () => canWrite } },
@@ -126,6 +142,7 @@ function setup(canWrite = true) {
     fixture.detectChanges();
   };
   return {
+    signed,
     projects,
     events,
     subscribed,
@@ -303,5 +320,64 @@ describe('EditProjectEditor', () => {
         transitionSec: 0.75,
       },
     ]);
+  });
+
+  it('EP-26.4: a video project plays its editing proxy; marks land in the selected clip, and selecting a clip seeks to its in', () => {
+    const online = { tier: 'online', status: 'available' };
+    const t = setup(true, [
+      { kind: 'original', storage: { path: '/o', ...online } },
+      { kind: 'proxy', variant: 'edit', frameRate: 25, storage: { path: '/e', ...online } },
+    ] as FileRef[]);
+    t.answer(
+      project({
+        timeline: {
+          clips: [
+            { renditionRef: 'original', inSec: 1, outSec: 5 },
+            { renditionRef: 'original', inSec: 8, outSec: 12 },
+          ],
+        },
+      }),
+    );
+    expect(t.signed).toEqual(['proxy/edit']);
+    const player = t.fixture.debugElement.query(By.directive(EditPlayer));
+    expect(player).not.toBeNull();
+    const video = t.root.querySelector('video') as HTMLVideoElement;
+    expect(video.getAttribute('src')).toBe('/media/v1/proxy?sig=x');
+
+    // The first clip is selected to begin with; a mark writes its in, as a timecode.
+    expect(t.root.querySelector('tbody tr')!.getAttribute('aria-selected')).toBe('true');
+    (player.componentInstance as EditPlayer).mark.emit({ which: 'in', sec: 1.04 });
+    t.fixture.detectChanges();
+    expect(t.inputs()[0]!.value).toBe('00:00:01.040');
+    expect(t.dirty.at(-1)).toBe(true);
+
+    // Selecting the second puts the playhead on its in (the middle of frame 200), and marks go there.
+    t.click('tbody tr:nth-child(2) button.select');
+    expect(video.currentTime).toBeCloseTo(8.02, 6);
+    (player.componentInstance as EditPlayer).mark.emit({ which: 'out', sec: 11.52 });
+    t.fixture.detectChanges();
+    expect(t.inputs().map((i) => i.value)).toEqual([
+      '00:00:01.040',
+      '00:00:05.000',
+      '00:00:08.000',
+      '00:00:11.520',
+    ]);
+    // Reordering carries the selection with the clip.
+    t.click('tbody tr:nth-child(2) button.up');
+    expect(t.root.querySelector('tbody tr')!.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('EP-26.4: no player for an audio project, and none offers marks to a reader', () => {
+    const audio = setup();
+    audio.answer(project({ mediaKind: 'audio' }));
+    expect(audio.root.querySelector('atlas-edit-player')).toBeNull();
+    TestBed.resetTestingModule();
+    const online = { tier: 'online', status: 'available' };
+    const reader = setup(false, [
+      { kind: 'proxy', variant: 'edit', frameRate: 25, storage: { path: '/e', ...online } },
+    ] as FileRef[]);
+    reader.answer(project());
+    expect(reader.root.querySelector('video')).not.toBeNull();
+    expect(reader.root.querySelector('button.mark-in')).toBeNull();
   });
 });

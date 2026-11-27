@@ -30,6 +30,10 @@ release is a statement of what changed, not a deploy step.
 
 ### Added
 
+- **`Rendition.frameRate`** in `common.schema.json` (EP-26.4): the frames per second MTS measured on
+  a video rendition, unrounded. It is the editing proxy's edit grid, which ADR-0011 says is recorded
+  with the proxy; the Studio player maps a frame as `floor(mediaTime·fps)` from it. Optional, absent
+  on a still or audio.
 - **`$defs/Transition`** (`dissolve`, `fade-black`, `wipe-left`, `wipe-right`) and **`$defs/ClipFilter`**
   (`grayscale`, `sepia`, `brighten`, `darken`, `contrast`, `blur`, `sharpen`, `mute`) in
   `common.schema.json` (EP-26.5): the media editor's Tier-0 sets, each value an FFmpeg graph MTS

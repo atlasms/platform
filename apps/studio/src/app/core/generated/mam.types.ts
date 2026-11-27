@@ -129,6 +129,8 @@ export interface FileRef {
   durationSec?: number;
   /** The container as MTS named it (`mp4`, `mxf`, …) — absent on a row no transcode announced. A media URL takes its content type from it (ADR-0012). */
   fileType?: string;
+  /** Frames per second of its video, as MTS measured it — unrounded. The editing proxy's frame grid: the player shows frame floor(mediaTime·fps) (ADR-0011). Absent on a still, audio, or a row no transcode announced. */
+  frameRate?: number;
   /** The event that last wrote this row — the ledger entry it mirrors. */
   sourceMessageId: Ulid;
   /** Bumped on every write to the row; the audit revision. */
