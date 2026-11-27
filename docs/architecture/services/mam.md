@@ -723,6 +723,13 @@ late completion making nothing). The smoke suite renders a real upload through t
 the source's next version, sees the new asset's original in HSM (`producedBy: editor`) and its own
 proxy and thumbnail, and fails a second render that MTS refuses.
 
+## 13ac. As built — EP-26.4, a file's frame rate
+
+`FileRef.frameRate` mirrors `Rendition.frameRate` from `transcode.completed` (unrounded), and a
+later `file.placed` or `file.moved` keeps it: the ledger moves bytes, not their rate. It is what the
+Studio player maps frames with (media-editor.md §5.2). No migration: a FileRef is a JSON document
+in `asset_files`. A row written before 26.4 has none until its rendition is produced again.
+
 ## 14. Open questions / future
 
 - Vocabulary governance/merge tooling as taxonomies grow.

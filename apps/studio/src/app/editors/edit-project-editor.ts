@@ -9,6 +9,7 @@ import {
   input,
   signal,
   untracked,
+  viewChild,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AssetsService } from '../core/assets.service.ts';
@@ -19,6 +20,7 @@ import { PermissionService } from '../core/permission.service.ts';
 import { SessionStore } from '../core/session.store.ts';
 import { WebSocketService } from '../core/websocket.service.ts';
 import { EditorStore } from '../workbench/editor.store.ts';
+import { EditPlayer } from './edit-player.ts';
 import {
   changed,
   DEFAULT_TRANSITION_SEC,
@@ -35,7 +37,7 @@ import {
   transitionsFor,
   type ClipRow,
 } from './edit-project.model.ts';
-import { formatTimecode } from './shotlist.model.ts';
+import { formatTimecode, parseTimecode } from './shotlist.model.ts';
 
 /**
  * The media editor, as an editor tab (EP-26.3 / 26.8's editor half; media-editor.md §3–5.1): an
@@ -43,8 +45,11 @@ import { formatTimecode } from './shotlist.model.ts';
  * compare-and-set, and rendered into an asset of its own.
  *
  * - A clip is a span of ONE file of the source (`original`, `broadcast`, `proxy`, a proxy variant),
- *   its in and out typed as timecodes; rows are reordered by ↑/↓. Playing and scrubbing the editing
- *   proxy is EP-26.4's, once Studio has a media path (signed URLs, decided 2026-11-21).
+ *   its in and out typed as timecodes; rows are reordered by ↑/↓.
+ * - EP-26.4: a video project plays the source's editing proxy above the table ({@link EditPlayer}).
+ *   Selecting a clip puts the playhead on its in; Set in / Set out write the frame shown into the
+ *   selected clip. The proxy and every file of the source share one timeline, so a mark made on
+ *   the proxy cuts the same frame from the original.
  * - Save is a compare-and-set on the version read: a 409 is a reload, never a retry; a 422 lands
  *   under the clip and field it names.
  * - Render asks MAM to flatten the SAVED timeline (so it is offered only when nothing is unsaved),
@@ -56,6 +61,7 @@ import { formatTimecode } from './shotlist.model.ts';
 @Component({
   selector: 'atlas-edit-project-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [EditPlayer],
   template: `
     @if (loadError()) {
       <p class="error" role="alert">{{ loadError() }}</p>
@@ -110,6 +116,15 @@ import { formatTimecode } from './shotlist.model.ts';
         <p class="error" role="alert">{{ error() }}</p>
       }
 
+      @if (project()!.mediaKind === 'video') {
+        <atlas-edit-player
+          [assetId]="project()!.sourceAssetId"
+          [files]="files()"
+          [markable]="canEdit() && project()!.state !== 'rendering' && selected() !== null"
+          (mark)="onMark($event)"
+        />
+      }
+
       <fieldset [disabled]="!canEdit() || busy() || project()!.state === 'rendering'">
         @if (rows()!.length === 0) {
           <p class="muted">{{ locale.t('editProject.empty') }}</p>
@@ -130,8 +145,18 @@ import { formatTimecode } from './shotlist.model.ts';
             </thead>
             <tbody>
               @for (row of rows(); track row.key; let i = $index, first = $first, last = $last) {
-                <tr>
-                  <td class="n">{{ i + 1 }}</td>
+                <tr [attr.aria-selected]="selected() === i">
+                  <td class="n">
+                    <button
+                      type="button"
+                      class="link select"
+                      [attr.aria-label]="locale.t('editProject.select')"
+                      [attr.aria-pressed]="selected() === i"
+                      (click)="select(i)"
+                    >
+                      {{ i + 1 }}
+                    </button>
+                  </td>
                   <td>
                     <select
                       [attr.aria-label]="locale.t('editProject.file')"
@@ -355,6 +380,9 @@ import { formatTimecode } from './shotlist.model.ts';
     .n {
       color: var(--color-fg-muted);
     }
+    tr[aria-selected='true'] {
+      background: var(--color-accent-bg);
+    }
     .tc {
       width: 8.5rem;
       font-family: ui-monospace, monospace;
@@ -419,7 +447,7 @@ export class EditProjectEditor {
 
   protected readonly project = signal<EditProject | null>(null);
   protected readonly source = signal<Asset | null>(null);
-  private readonly files = signal<FileRef[]>([]);
+  protected readonly files = signal<FileRef[]>([]);
   protected readonly rows = signal<ClipRow[] | null>(null);
   protected readonly profile = signal<string | undefined>(undefined);
   /** Render as the source's next version (the version chain) — the editor's usual intent. */
@@ -430,6 +458,9 @@ export class EditProjectEditor {
   protected readonly conflict = signal(false);
   protected readonly error = signal('');
   protected readonly loadError = signal('');
+  /** The clip the player's marks write into (EP-26.4). */
+  protected readonly selected = signal<number | null>(null);
+  private readonly player = viewChild(EditPlayer);
 
   protected readonly refs = computed(() => refsOf(this.files()));
   /** EP-26.5: what this media can take — the Tier-0 sets, less what has no meaning for audio. */
@@ -552,6 +583,20 @@ export class EditProjectEditor {
     return row.filters.map((f) => this.locale.t('editProject.filterNames.' + f)).join(', ');
   }
 
+  /** EP-26.4: the clip marks go to — and the playhead to its in. */
+  protected select(i: number): void {
+    this.selected.set(i);
+    const inMs = parseTimecode(this.rows()?.[i]?.in ?? '');
+    if (inMs !== undefined) this.player()?.seek(inMs / 1000);
+  }
+
+  /** A mark from the player: the frame shown, as the selected clip's in or out. */
+  protected onMark({ which, sec }: { which: 'in' | 'out'; sec: number }): void {
+    const i = this.selected();
+    if (i === null || !this.rows()?.[i]) return;
+    this.edit(i, which, formatTimecode(Math.round(sec * 1000)));
+  }
+
   protected edit(i: number, field: 'renditionRef' | 'in' | 'out', value: string): void {
     this.rows.update((rows) => rows!.map((r, j) => (j === i ? { ...r, [field]: value } : r)));
     this.markDirty();
@@ -562,17 +607,26 @@ export class EditProjectEditor {
       ...(rows ?? []),
       newRow(rows ?? [], this.refs(), `new-${this.nextKey++}`),
     ]);
+    // A new clip is where the next marks go.
+    this.selected.set(this.rows()!.length - 1);
     this.markDirty();
   }
 
   protected move(i: number, by: -1 | 1): void {
+    const n = this.rows()?.length ?? 0;
     this.rows.update((rows) => moved(rows ?? [], i, by));
+    // The selection follows the clip it was on.
+    const j = i + by;
+    const s = this.selected();
+    if (j >= 0 && j < n) this.selected.set(s === i ? j : s === j ? i : s);
     this.problems.set({});
     this.markDirty();
   }
 
   protected remove(i: number): void {
     this.rows.update((rows) => rows!.filter((_, j) => j !== i));
+    const s = this.selected();
+    if (s !== null) this.selected.set(s === i ? null : s > i ? s - 1 : s);
     this.problems.set({});
     this.markDirty();
   }
@@ -657,6 +711,9 @@ export class EditProjectEditor {
     const wasRendering = this.project()?.state === 'rendering';
     this.project.set(project);
     this.rows.set(rowsOf(project, () => `c-${this.nextKey++}`));
+    const count = project.timeline.clips.length;
+    const s = this.selected();
+    this.selected.set(count === 0 ? null : s === null || s >= count ? 0 : s);
     this.profile.set(project.outputProfile);
     if (project.targetAssetId !== undefined) this.asVersion.set(true);
     this.problems.set({});

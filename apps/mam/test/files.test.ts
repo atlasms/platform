@@ -549,3 +549,33 @@ test('ingest.accepted: the asset is created under RIM’s id, once; another chan
   await assert.rejects(service.createFromIngest(accepted('ch99')), /another channel/);
   assert.equal((await store.get(assetId))?.channelId, CHANNEL);
 });
+
+test('EP-26.4: a rendition’s frame rate is mirrored onto its FileRef, and a later placement keeps it', async () => {
+  const { service, caller, drain } = harness();
+  const asset = await service.create(caller(), {
+    title: 'Cut',
+    mediaType: 'video',
+    fileType: 'mxf',
+  });
+  await drain();
+  const proxy = { ...rendition('proxy'), variant: 'edit', frameRate: 30000 / 1001 };
+  assert.equal(await service.mirrorTranscode(transcodeMessage(asset.id, [proxy])), 'applied');
+  const [row] = await service.files(caller(), asset.id);
+  assert.equal(row!.frameRate, 30000 / 1001, 'unrounded: the grid is exact');
+
+  assert.equal(
+    await service.mirrorPlacement(
+      placedMessage({
+        assetId: asset.id,
+        renditionKind: 'proxy',
+        variant: 'edit',
+        path: row!.storage.path,
+        tier: 'online',
+      }),
+    ),
+    'applied',
+  );
+  const [after] = await service.files(caller(), asset.id);
+  assert.equal(after!.version, 2);
+  assert.equal(after!.frameRate, 30000 / 1001, 'the ledger moved it; the rate is the file’s');
+});

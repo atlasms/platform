@@ -1067,7 +1067,8 @@
       "blur": "Blur",
       "sharpen": "Sharpen",
       "mute": "Mute sound"
-    }
+    },
+    "select": "Select this clip — the player’s marks go to it"
   },
   "edits": {
     "none": "No edits of this asset yet.",
@@ -1077,5 +1078,19 @@
     "notEditable": "Only video and audio can be edited.",
     "createError": "The edit could not be started.",
     "loadError": "The edits could not be loaded."
+  },
+  "editPlayer": {
+    "noProxy": "No editing proxy to play yet — it is made when the source is transcoded.",
+    "loadError": "The proxy could not be played.",
+    "retry": "Try again",
+    "play": "Play",
+    "pause": "Pause",
+    "prevFrame": "Previous frame",
+    "nextFrame": "Next frame",
+    "setIn": "Set in",
+    "setOut": "Set out",
+    "scrub": "Playhead (frame)",
+    "filmstrip": "Filmstrip — click or drag to scrub",
+    "noRate": "frame rate not recorded — marks are to the millisecond"
   }
 }

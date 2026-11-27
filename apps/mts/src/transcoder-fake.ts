@@ -65,6 +65,10 @@ export function fakeTranscoder(options: { available?: boolean } = {}): FakeTrans
     async hasAudio(inputPath) {
       return !inputPath.toLowerCase().includes('silent');
     },
+    // A moving picture is 25 fps; a still, a sound or a text file has no video rate.
+    async probeFrameRate(path) {
+      return /\.(jpg|png|vtt|m4a|mp3|wav|aac|ogg)$/i.test(path) ? undefined : 25;
+    },
     async probeDuration(inputPath) {
       return inputPath.toLowerCase().includes('noduration') ? undefined : 12.5;
     },

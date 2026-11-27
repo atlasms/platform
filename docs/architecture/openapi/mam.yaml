@@ -852,6 +852,7 @@ components:
         sizeBytes: { type: integer, minimum: 0 }
         durationSec: { type: number, minimum: 0 }
         fileType: { type: string, description: 'The container as MTS named it (`mp4`, `mxf`, …) — absent on a row no transcode announced. A media URL takes its content type from it (ADR-0012).' }
+        frameRate: { type: number, exclusiveMinimum: 0, description: 'Frames per second of its video, as MTS measured it — unrounded. The editing proxy''s frame grid: the player shows frame floor(mediaTime·fps) (ADR-0011). Absent on a still, audio, or a row no transcode announced.' }
         sourceMessageId: { $ref: '#/components/schemas/Ulid', description: The event that last wrote this row — the ledger entry it mirrors. }
         version: { type: integer, minimum: 1, description: Bumped on every write to the row; the audit revision. }
         updatedAt: { type: string, format: date-time }

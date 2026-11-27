@@ -196,6 +196,11 @@ requirement (point 4). The approach is sound in both browsers; WebCodecs was not
   EP-26.3:** the `edit-proxy` preset, `proxy`/`variant: edit`, closed GOP 12, in every video's first
   renditions ([mts.md §13](../architecture/services/mts.md#ep-263--the-editing-proxy)). Its GOP and fps
   are fixed by this ADR and carried in the rendition's metadata.
+- **Built in EP-26.4:** the proxy's rate is **recorded**. MTS measures `frameRate` on every moving
+  rendition (`Rendition.frameRate`, `FileRef.frameRate`, unrounded). Studio's player maps with
+  `floor(mediaTime·fps + 10⁻³)`, seeks to `(n + ½)/fps`, and bounds the wait for a frame callback
+  at 400 ms before reading `currentTime`
+  ([media-editor.md §5.2](../architecture/services/media-editor.md#52-the-editor-in-studio-as-built-ep-263--ep-268)).
 - The proxy is **~9% larger** than a playback proxy at the same quality (at GOP 12) — storage and the
   sizing profile account for one extra rendition at roughly playback-proxy size.
 - The editor serves proxies over **HTTP Range** (206); whatever fronts them (gateway/CDN) must pass

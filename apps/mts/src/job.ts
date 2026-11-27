@@ -28,6 +28,8 @@ export interface RenditionResult extends Rendition {
   checksum: Checksum;
   sizeBytes: number;
   durationSec?: number;
+  /** Frames per second of its video, measured on the output (EP-26.4: the editing proxy's grid). */
+  frameRate?: number;
   /** The FFmpeg encoder that produced it (EP-16.6), e.g. `libx264`, `h264_nvenc`. */
   encoder?: string;
   /** The profile asked for a GPU this node could not use, and the CPU encoded it. */

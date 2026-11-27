@@ -148,3 +148,23 @@ test('a filmstrip whose input has no readable duration is refused, not retried',
     await h.cleanup();
   }
 });
+
+test('EP-26.4: a moving rendition carries the frame rate measured on it; a still carries none', async () => {
+  const h = await harness();
+  try {
+    const assetId = ulid();
+    await h.service.enqueue(caller, {
+      assetId,
+      presetIds: ['edit-proxy', 'thumbnail'],
+      inputPath: 'samples/clip.mp4',
+    });
+    assert.equal(await h.service.runNext(), 'completed');
+    const completed = (await h.drain()).find((e) => e.type === 'transcode.completed')!
+      .payload as unknown as EventPayloads['transcode.completed'];
+    const by = new Map(completed.renditions.map((r) => [r.variant ?? r.kind, r]));
+    assert.equal(by.get('edit')!.frameRate, 25, 'the editing proxy names its frame grid');
+    assert.equal(by.get('thumbnail')!.frameRate, undefined, 'a still has no rate');
+  } finally {
+    await h.cleanup();
+  }
+});

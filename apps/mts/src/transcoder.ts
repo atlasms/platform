@@ -84,6 +84,12 @@ export interface Transcoder {
    */
   hasAudio(inputPath: string): Promise<boolean>;
   /**
+   * The video stream's frame rate in frames per second, unrounded (`30000/1001` → 29.97…), or
+   * undefined when there is no video stream or it cannot be read. EP-26.4: recorded on every moving
+   * rendition, because the editing proxy's rate IS the editor's frame grid (ADR-0011 point 5).
+   */
+  probeFrameRate(path: string): Promise<number | undefined>;
+  /**
    * Can this node actually encode with `encoder` (e.g. `h264_nvenc`)? Decided by a one-frame test
    * encode, not by `-encoders`: a build that LISTS NVENC on a node without the card is the normal
    * case, and it fails only when used. Cached per encoder for the life of the process.
@@ -269,6 +275,31 @@ export function ffmpegTranscoder(options: FfmpegOptions = {}): Transcoder {
       });
     },
 
+    async probeFrameRate(path) {
+      return new Promise<number | undefined>((resolve) => {
+        let out = '';
+        const child = spawn(
+          probeBinary,
+          [
+            '-v',
+            'error',
+            '-select_streams',
+            'v:0',
+            '-show_entries',
+            'stream=avg_frame_rate',
+            '-of',
+            'csv=p=0',
+            path,
+          ],
+          { stdio: ['ignore', 'pipe', 'ignore'] },
+        );
+        child.stdout?.setEncoding('utf8');
+        child.stdout?.on('data', (chunk: string) => (out += chunk));
+        child.on('error', () => resolve(undefined));
+        child.on('close', (code) => resolve(code === 0 ? parseFrameRate(out) : undefined));
+      });
+    },
+
     async hasAudio(inputPath) {
       return new Promise<boolean>((resolve) => {
         let out = '';
@@ -353,4 +384,16 @@ export function inputArgs(spec: Pick<TranscodeSpec, 'inputPath' | 'inputs'>): st
  */
 function seconds(value: number): string {
   return value.toFixed(6);
+}
+
+/**
+ * ffprobe's rate, `num/den` (`30000/1001`, `25/1`) or a bare number, as frames per second.
+ * `0/0` — what ffprobe says of a stream with no rate (a still, a data track) — is undefined.
+ */
+export function parseFrameRate(text: string): number | undefined {
+  const first = text.trim().split(/\r?\n/)[0]?.trim() ?? '';
+  const m = /^(\d+(?:\.\d+)?)(?:\/(\d+(?:\.\d+)?))?$/.exec(first);
+  if (!m) return undefined;
+  const fps = Number(m[1]) / (m[2] !== undefined ? Number(m[2]) : 1);
+  return Number.isFinite(fps) && fps > 0 ? fps : undefined;
 }

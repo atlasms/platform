@@ -364,6 +364,13 @@ frame and nowhere else, at 25/1. It is in `FIRST_RENDITIONS` for video (`proxy`,
 `thumbnail`), so every video, and every video render, is editable from ingest. That costs one
 more rendition at about the browse proxy's size (~9% more bytes than a long GOP).
 
+**EP-26.4: the rate is recorded.** Every moving rendition (not a still) is probed after it is
+written for its video stream's `avg_frame_rate` (`probeFrameRate`, ffprobe's `num/den` →
+fps, unrounded; `0/0` or no video stream is none). It goes out as `Rendition.frameRate` and in
+HSM's `technical`. Measured on the OUTPUT, because a profile may conform the rate. For the editing
+proxy it is the editor's frame grid (ADR-0011 point 5), and a real-binary test reads 25 back
+from a 25 fps proxy.
+
 ### EP-15.5 — the first renditions of an ingested asset
 
 MTS consumes `ingest.accepted` and queues the asset's first renditions from its `original` in HSM:

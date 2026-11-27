@@ -134,7 +134,7 @@ settings** ([FR-MTS-7](../requirements/05-functional-requirements.md#transcode))
 | `checksum` | {algorithm, value} | **system-generated on placement**, re-verified by integrity sweeps |
 | `lastVerifiedAt` | date-time? | last integrity check |
 | `sizeBytes` | integer | |
-| `technical` | object | container, video/audio codec, duration, width/height, aspect, frame rate, audio channels, bitrate (ffprobe-derived, additive) |
+| `technical` | object | container, video/audio codec, duration, width/height, aspect, frame rate, audio channels, bitrate (ffprobe-derived, additive). MAM's mirror carries `durationSec`, `fileType` and `frameRate` (EP-26.4: MTS-measured, unrounded; the editing proxy's frame grid) at the top level |
 | `provenance` | object | `producedBy` (ingest/transcode/editor/import), `jobId`, `profile` |
 | `createdAt` / `deletedAt?` | date-time | row retained after purge for audit |
 

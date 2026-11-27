@@ -181,10 +181,38 @@ had no way to give a browser media: HSM's content reads are internal signed call
 URLs**. MAM's `GET /assets/{id}/files/{kind}/url` authorizes `asset:read` on `files` and returns
 `{ url, expiresAt }`; HSM serves that URL with HTTP Range, verifying an HMAC from `media-url-keys`;
 the gateway's `/media/` route is public and streamed, because the signature is the credential.
-**Still to come in 26.4:** the player in the timeline. A `<video>` on the editing proxy (every
-video gets one at ingest, mts.md §13), frames identified by `requestVideoFrameCallback` with
-`floor(mediaTime·fps)`, a bounded seek wait (ADR-0011), a fresh URL when the old one expires, and
-scrubbing on the VTT filmstrip.
+**The player, as built (EP-26.4's second half).** A video project's tab plays the source's
+**editing proxy** (`proxy`/`edit`; the playback proxy when there is none) above the clip table,
+in a plain `<video>` on a signed URL:
+
+- **The frame grid is recorded, not guessed.** MTS measures the frame rate of every moving
+  rendition it writes (`Rendition.frameRate`, unrounded: 29.97 is `30000/1001`), and MAM mirrors it
+  onto the FileRef. This is ADR-0011 point 5 ("the proxy's fps … recorded with it"), which 26.3
+  had not done. A proxy with no recorded rate still plays and marks to the millisecond, but
+  without frame stepping, and the player says so.
+- **The frame shown** is `floor(mediaTime·fps)` from `requestVideoFrameCallback` (ADR-0011 point
+  2), with an epsilon of 10⁻³ frame. A seek aims at the middle of its frame, `(n + ½)/fps`. It
+  waits **400 ms at most** for its frame callback, then reads `currentTime` (point 4), so a missed
+  callback never hangs a scrub. While playing, every presented frame moves the readout
+  (`hh:mm:ss:ff · hh:mm:ss.mmm`).
+- **Marks.** Selecting a clip (its number) puts the playhead on its in. *Set in* / *Set out* write
+  the frame shown into that clip, as timecodes. `in` is the frame's start and `out` the NEXT
+  frame's start, so both include what the person sees. Both are rounded **down** to the
+  millisecond, because an input seek keeps the frames at or after it: a start a fraction early
+  still begins on the marked frame, while a fraction late would skip it. The proxy and the other
+  files share one timeline, so a mark made on the proxy cuts the same frame from the original.
+- **The URL.** It is re-signed a minute before `expiresAt`. While playing, that waits for the next
+  pause, because swapping `src` restarts the load and the buffer plays on. A media error (an
+  expired or refused URL) re-signs **once**, keeping the position and the play state; a second
+  error in a row is shown, with a retry.
+- **The filmstrip** (EP-29.4) appears when the asset has both its files online. The sprite and
+  the cues are each signed on their own. The cues' relative `filmstrip.jpg` cannot be resolved
+  beside a signed URL, so the player draws the cells from the signed sprite. A press or drag
+  along the strip seeks to that point in the cell's span (mirrored under `dir="rtl"`), and the
+  cell under the playhead is marked. The cues are fetched **without** the bearer: `/media/` is
+  public, and a token has no business on it.
+- Not in v1: an audio project has no player (the table edits it as before), and there is no
+  preview of transitions or filters. The render is the only place they are seen.
 
 ### 5.3 Transitions and filters, as decided in building them (EP-26.5)
 

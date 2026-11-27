@@ -20,6 +20,7 @@ import {
   filmstripFilter,
   filmstripVtt,
   planFilmstrip,
+  parseFrameRate,
   presetById,
   TranscodeRefusal,
   type FilmstripSpec,
@@ -142,7 +143,19 @@ test('the editing proxy is closed GOP 12 (ADR-0011): a keyframe every 12 frames 
       output,
     ]);
     assert.equal(rate.stdout.trim(), '25/1', 'the proxy’s frames are the source’s: the edit grid');
+    // EP-26.4: and the adapter reads that grid back, as the rendition will carry it.
+    assert.equal(await ffmpegTranscoder().probeFrameRate(output), 25);
+    assert.equal(await ffmpegTranscoder().probeFrameRate(join(dir, 'nope.mp4')), undefined);
   });
+});
+
+test('parseFrameRate: ffprobe’s num/den, unrounded; no rate is no rate', () => {
+  assert.equal(parseFrameRate('25/1\n'), 25);
+  assert.equal(parseFrameRate('30000/1001'), 30000 / 1001);
+  assert.equal(parseFrameRate('24'), 24);
+  assert.equal(parseFrameRate('0/0'), undefined, 'what ffprobe says of a still');
+  assert.equal(parseFrameRate(''), undefined);
+  assert.equal(parseFrameRate('N/A'), undefined);
 });
 
 test('the input’s duration comes from ffprobe, and speed rides along with progress', async (t) => {

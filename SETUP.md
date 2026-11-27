@@ -180,7 +180,7 @@ has its endpoint), so it is safe to run straight after `k8s:up`.
 npm start -w @atlas/studio      # http://localhost:4200
 ```
 
-The dev server proxies `/auth` and `/api` to the gateway and `/ws` to the WebSocket port
+The dev server proxies `/auth`, `/api` and `/media` to the gateway and `/ws` to the WebSocket port
 ([`apps/studio/proxy.conf.json`](apps/studio/proxy.conf.json)), so Studio talks to the real
 cluster. Sign in with the dev seed account:
 

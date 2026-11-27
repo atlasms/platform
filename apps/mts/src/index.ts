@@ -63,6 +63,7 @@ export {
   DEFAULT_TRANSCODE_TIMEOUT_MS,
   TranscodeRefusal,
   ffmpegTranscoder,
+  parseFrameRate,
   type FfmpegOptions,
   type Transcoder,
   type TranscodeInput,

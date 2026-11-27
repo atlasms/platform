@@ -43,6 +43,8 @@ export interface Rendition {
   fileType?: string;
   sizeBytes?: number;
   durationSec?: number;
+  /** Frames per second of the video stream, as MTS measured it on the output (`30000/1001` is 29.97002997…, not rounded). The edit grid of an editing proxy (ADR-0011: `floor(mediaTime·fps)`). Absent on a still, on audio, and when it could not be read. */
+  frameRate?: number;
 }
 
 /** ffprobe-derived technical metadata; additive fields allowed. */
